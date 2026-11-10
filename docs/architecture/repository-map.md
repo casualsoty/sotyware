@@ -41,7 +41,8 @@ Where things are. Generated and ignored paths are listed in
         ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher); --reject, --no-host
         ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
-        └── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches
+        ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches
+        └── windows-isolated.ps1  Unattended Windows test on a private desktop: window, hide button, close, launches (no tray)
 ```
 
 ## Where to look for…
@@ -59,5 +60,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` (static); the runtime capability `tray-mode` in `setup` in `lib.rs` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1` Windows); all headless tests: `npm run test:headless` |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows); all headless tests: `npm run test:headless` |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

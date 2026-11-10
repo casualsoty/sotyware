@@ -96,6 +96,18 @@ needs an unlocked, logged-in desktop with a taskbar and exits 3 without starting
 sotyware if there is none.
 Details: [testing.md](testing.md#windows-desktop-test).
 
+## Desktop test (Windows, private desktop)
+
+```powershell
+npm run tauri build -- --no-bundle
+npm run test:desktop:windows:isolated       # = powershell ... -File tests\desktop\windows-isolated.ps1 [-Exe <path>]
+```
+
+Runs sotyware on a desktop that is never shown and uses no mouse or keyboard, so
+you can keep working. It needs a logged-in session but no visible screen; it does
+not cover the tray. Details:
+[testing.md](testing.md#windows-isolated-desktop-test).
+
 ## Generated and ignored paths
 
 - `dist/`: Vite output, consumed by Tauri as `frontendDist`. Ignored.

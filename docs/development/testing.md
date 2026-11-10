@@ -9,13 +9,23 @@ others.
 | **A. Headless** | `npm run test:headless` | no | Node, Rust and the Tauri build libraries; **no** display, window manager, tray host or D-Bus session |
 | **B. Virtual display** (Linux) | `npm run test:desktop:virtual` | yes | Xvfb, openbox, D-Bus, AT-SPI and Python tools; no monitor, no desktop session |
 | B′. Simulated desktop on an existing display (Linux) | `tests/desktop/run.sh` | yes | an X11 display you already have (WSLg, or a desktop session) |
+| **B″. Private desktop** (Windows) | `npm run test:desktop:windows:isolated` (`tests/desktop/windows-isolated.ps1`) | yes | Windows, a logged-in session (window station `WinSta0`); **no** visible or unlocked screen, no mouse, no taskbar |
 | **C. Real desktop**: Windows | `npm run test:desktop:windows` (`tests/desktop/windows.ps1`) | yes | Windows, an unlocked interactive desktop with a taskbar that nobody touches for 30 s |
 | **C. Real desktop**: manual | [checklist](#manual-check-real-desktop-linux-or-windows) | yes | a real desktop and a person |
 
 Static checks (`npm run check`, `cargo fmt --check`, `cargo clippy`) need nothing
 special and run before every commit ([workflow.md](workflow.md)).
 
+**Only category A is headless.** Every test that starts the release binary needs a
+display: on Linux an X server (B, B′), on Windows a logged-in session with a window
+station (B″, C). No Windows test of the real binary runs without one; see
+[Headless Windows desktop testing](#headless-windows-desktop-testing).
+
 ### What each category really exercises
+
+B″ (Windows private desktop) covers the rows marked for the Windows test except
+the tray rows, real mouse clicks and Quit; details in
+[its section](#windows-isolated-desktop-test).
 
 | Behaviour | A. Headless | B. Virtual display | C. Windows test | C. Manual |
 | --- | --- | --- | --- | --- |
@@ -296,6 +306,81 @@ still covers looking at it.
 Verified that it detects a broken button: with `hideDashboard` changed to do
 nothing, all three hide checks failed (2026-11-10).
 
+## Windows isolated-desktop test
+
+```powershell
+npm run tauri build -- --no-bundle
+npm run test:desktop:windows:isolated              # = powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-isolated.ps1
+npm run test:desktop:windows:isolated -- -Exe <path>
+```
+
+`tests/desktop/windows-isolated.ps1` creates a new desktop (`CreateDesktop`) in the
+session's window station and starts a copy of itself on it (`CreateProcess` with
+`lpDesktop`). That copy starts sotyware, which inherits the desktop, and runs the
+checks; the launcher prints the copy's output and returns its exit code. The
+desktop is never switched to, so nothing appears on your screen, and the test
+sends no mouse or keyboard input: you can keep working while it runs (about
+40 seconds).
+
+It checks, against the real release binary and WebView2: startup (one process,
+one visible `Tauri Window` titled sotyware); the "Hide dashboard" button read and
+invoked through UI Automation inside WebView2 (hidden, process alive, window not
+destroyed); second launches while hidden, visible and minimized (exit 0, same
+pid, one window, shown or restored); `WM_CLOSE` (what ✕ and Alt+F4 send) and UIA
+`WindowPattern.Close` hide instead of quitting; 3 sequential and 4 concurrent
+launches; Hide still works afterwards. It records the primary's stderr as INFO.
+
+What it **cannot** cover, and why: a private desktop has no taskbar, so
+`Shell_NotifyIcon` has no notification area to add to. sotyware still starts in
+tray mode, because `tray-icon` keeps its window and waits for Explorer's
+`TaskbarCreated` message (which never comes there), so the Hide button exists,
+but there is no tray icon, tray menu, left click or Quit to test. The test ends
+sotyware with `Stop-Process` (cleanup, not a check of Quit). Real mouse clicks,
+focus and the title-bar ✕ position are not tested either. Those stay in the
+[Windows desktop test](#windows-desktop-test).
+
+It is **not headless**: it needs a logged-in session (window station `WinSta0`)
+to create the desktop and windows in, but not an unlocked or visible screen.
+Before any check, the copy verifies that it really runs on the private desktop
+and exits 3 otherwise. Exit codes: 0 all passed, 1 a check failed, 2 binary
+missing or already running, 3 the private desktop could not be created or used,
+124 timeout (`-Timeout`, default 180 s).
+
+## Headless Windows desktop testing
+
+Investigated 2026-11-10 on Windows 11 Home 25H2. What each part of
+`windows.ps1` needs:
+
+| Part of the Windows desktop test | Needs |
+| --- | --- |
+| Starting sotyware, the dashboard window, WebView2 rendering | a window station and desktop in a logged-in session |
+| Reading and invoking the page through UI Automation; window state through `user32` | the same desktop as the test (`EnumWindows` lists only the caller's desktop; the test drives UIA from that desktop too) |
+| Second launch, concurrent launches | the same desktop: the single-instance plugin hands over through a named mutex and `FindWindowW` + `WM_COPYDATA`, and `FindWindowW` searches only the caller's desktop |
+| Tray icon, menu (`MN_GETHMENU`), left click, Quit, icon removed | Explorer's notification area (`Shell_TrayWnd`) on that desktop |
+| Real mouse clicks (Hide, tray, title-bar ✕) | the **input** desktop: unlocked, not disconnected, not minimised away (RDP) |
+
+Findings:
+
+- Nothing that starts sotyware runs without a session: there is no Windows
+  equivalent of Xvfb. `npm run test:headless` (category A) is the only headless
+  Windows suite; it runs on Windows unchanged and needs no desktop.
+- A private desktop in the logged-in session runs everything except the tray and
+  real input, without touching the screen: that is the
+  [isolated-desktop test](#windows-isolated-desktop-test).
+- The tray and real-click checks need the interactive, unlocked desktop with
+  Explorer. `windows.ps1` detects when it does not have one and exits 3 instead
+  of reporting failures.
+- Not tried: Session 0 (a service or a scheduled task set to run whether the
+  user is logged on or not). Registering such a task was not permitted in the
+  investigating session. Windows services cannot show UI and Session 0 has no
+  Explorer, so the tray checks cannot run there in any case; whether WebView2 and
+  the isolated-desktop test work there is unknown.
+- GitHub-hosted Windows runners: not tried. Public reports disagree on whether
+  their job runs in an interactive desktop session with Explorer. Until a trial
+  job shows otherwise, treat them as headless only (category A), and run the
+  isolated-desktop test there only as an experiment: its exit code 3 tells you
+  the environment could not run it.
+
 ## CI
 
 There is no CI configuration in the repository yet. When one is added, run the
@@ -306,15 +391,18 @@ headless results:
 | --- | --- | --- | --- |
 | headless | `ubuntu-24.04` | the Tauri build libraries from [setup.md](setup.md#linux-system-packages), Node, Rust | `npm ci`, `npm run check`, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` (in `src-tauri/`), `npm run test:headless` |
 | headless | `windows-latest` | Node, Rust (MSVC) | same commands |
+| private desktop (trial) | `windows-latest` | Node, Rust (MSVC) | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated`; exit 3 means the runner has no usable session, which must fail the job, not pass it |
+| real desktop | self-hosted Windows runner, started with `run.cmd` in an auto-logged-on user session (not installed as a service), screen never locked, nobody using it | Node, Rust (MSVC) | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows` |
 | virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
 
 The headless job still compiles the Tauri crate, so on Linux it needs the
 build packages from [setup.md](setup.md#linux-system-packages), but no display server, window
 manager, tray host or D-Bus session. A CI job for the virtual display must also
 fail on `SKIP` in the summary if the goal is to prove focus and minimize; the exit
-code alone ignores SKIPs. The Windows desktop test needs an interactive desktop
-session and moves the mouse; hosted CI runners usually provide neither, so it is
-not suitable for them. None of this has been run in an actual CI service.
+code alone ignores SKIPs. The Windows desktop test needs an interactive, unlocked
+desktop session with Explorer and moves the mouse; a runner installed as a
+service runs in Session 0, which has neither. None of this has been run in an
+actual CI service.
 
 ## Manual check (real desktop, Linux or Windows)
 
