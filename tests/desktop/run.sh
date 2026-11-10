@@ -32,8 +32,8 @@ trap 'kill "${WATCHER:-}" 2>/dev/null || true' EXIT
 REG="$WORK/tray-registrations"
 touch "$REG"
 
+# The driver waits until the watcher owns its bus name before launching sotyware.
 python3 "$H/sni_watcher.py" "$REG" &
 WATCHER=$!
-sleep 1
 
 GDK_BACKEND=x11 python3 "$H/single_instance.py" "$BIN" "$REG"

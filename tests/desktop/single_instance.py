@@ -241,6 +241,16 @@ def second_launch(label):
 
 # ---------- D-Bus tray menu ----------
 bus = dbus.SessionBus()
+WATCHER_NAME = "org.kde.StatusNotifierWatcher"
+
+
+def wait_for_bus_name(name, timeout=10.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if bus.name_has_owner(name):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def tray_menu():
@@ -277,6 +287,9 @@ def expect_reused(label, win, primary_pid):
 
 # ---------- scenario ----------
 assert not sotyware_pids(), f"sotyware already running from {BIN}: {sotyware_pids()}"
+# Without the stub tray host, sotyware would register no tray item (or a legacy
+# XEmbed icon) and every tray check would fail for the wrong reason.
+assert wait_for_bus_name(WATCHER_NAME), f"stub tray host ({WATCHER_NAME}) did not appear on the session bus"
 
 # 1. First launch.
 proc = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -391,6 +404,32 @@ except subprocess.TimeoutExpired:
     again.kill()
     code = None
 check("relaunch after Quit: tray Quit exits with code 0", code == 0, f"exit code={code}")
+
+# 10. Startup failure: the tray icon cannot be created, so sotyware must exit 1
+# instead of running on unreachable. As under WSL (/run/user/<uid> missing,
+# /run/user owned by root), $XDG_RUNTIME_DIR names a directory that cannot be
+# created, so the tray icon image cannot be written
+# (see docs/development/setup.md#wsl2-notes). A writable parent is not enough:
+# the tray library would just create the directory.
+open(REG, "w").close()
+read_only_parent = os.path.join(os.path.dirname(os.path.abspath(REG)), "read-only")
+os.mkdir(read_only_parent, 0o500)
+missing_dir = os.path.join(read_only_parent, "runtime")
+bad = subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+try:
+    bad_out = bad.communicate(timeout=30)[0].decode(errors="replace")
+    code = bad.returncode
+except subprocess.TimeoutExpired:
+    bad.kill()
+    bad_out = bad.communicate()[0].decode(errors="replace")
+    code = None
+check("10 tray failure: process exits with code 1", code == 1, f"exit code={code}")
+check("10 tray failure: reports the tray error", "sotyware: cannot create system tray icon" in bad_out,
+      f"output={bad_out.strip()!r}")
+check("10 tray failure: no process or tray item left behind",
+      wait_for(lambda: not sotyware_pids(), 5) and not tray_registrations(),
+      f"pids={sotyware_pids()} tray={len(tray_registrations())}")
 
 out = proc.stdout.read().decode(errors="replace").strip()
 if out:
