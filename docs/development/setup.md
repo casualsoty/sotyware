@@ -77,6 +77,38 @@ npm run tauri build
 
 The first `npm run tauri build` downloads WiX 3.14 and NSIS 3.13 for the bundles.
 
+### Testing unpushed commits on Windows
+
+To test commits that exist only in the WSL repository, move them with a Git
+bundle instead of pushing or copying files; the Windows checkout then has the
+same commit hashes. Used on 2026-11-10 to move `f8174da..1f5853b`. In WSL, with
+`<base>` a commit the Windows checkout already has:
+
+```bash
+git bundle create /mnt/c/Users/<you>/AppData/Local/Temp/sotyware.bundle <base>..main
+```
+
+In Windows PowerShell:
+
+```powershell
+cd C:\dev\sotyware
+git bundle verify $env:TEMP\sotyware.bundle
+git fetch $env:TEMP\sotyware.bundle main:refs/remotes/wsl-bundle/main
+git merge --ff-only wsl-bundle/main
+```
+
+`--ff-only` refuses rather than creating a merge if the checkout has diverged.
+Afterwards delete the bundle and, if you like, the `wsl-bundle/main` ref
+(`git update-ref -d refs/remotes/wsl-bundle/main`).
+
+A PowerShell started from WSL (`powershell.exe`) inherits WSL's `PATH`, which may
+lack `%USERPROFILE%\.cargo\bin`. Reload the Windows `PATH` first so `cargo` is
+the native one:
+
+```powershell
+$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+```
+
 ## WSL2 notes
 
 These apply to the machine sotyware is currently developed on. They are
