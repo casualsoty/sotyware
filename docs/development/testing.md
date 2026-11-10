@@ -197,7 +197,7 @@ clicks an icon, and the window manager is whatever serves `$DISPLAY`.
 
 ```bash
 npm run tauri build -- --no-bundle
-npm run test:desktop:virtual              # = tests/desktop/virtual.sh [binary]
+npm run test:desktop:virtual              # = bash tests/desktop/virtual.sh [binary]
 ```
 
 `tests/desktop/virtual.sh` runs the [simulated desktop test](#simulated-desktop-test)

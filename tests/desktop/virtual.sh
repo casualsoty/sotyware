@@ -90,7 +90,7 @@ echo "virtual display :$DISP (Xvfb, $(openbox --version | head -n 1))"
 
 # WAYLAND_DISPLAY unset so nothing reaches a real Wayland session.
 set +e
-env -u WAYLAND_DISPLAY DISPLAY=":$DISP" timeout --kill-after=10 "$TIMEOUT" "$H/run.sh" "$BIN" \
+env -u WAYLAND_DISPLAY DISPLAY=":$DISP" timeout --kill-after=10 "$TIMEOUT" bash "$H/run.sh" "$BIN" \
   2>&1 | tee "$LOGS/run.out"
 rc=${PIPESTATUS[0]}
 set -e

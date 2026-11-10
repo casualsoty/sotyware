@@ -22,7 +22,7 @@ if [ -z "${SOTYWARE_TEST_WORK:-}" ]; then
   mkdir -m 700 "$WORK/runtime"
   rc=0
   SOTYWARE_TEST_WORK="$WORK" XDG_RUNTIME_DIR="$WORK/runtime" \
-    dbus-run-session -- "$0" "$BIN" || rc=$?
+    dbus-run-session -- bash "$0" "$BIN" || rc=$?
   # xdg-document-portal (activated by WebKitGTK) may leave a FUSE mount here.
   fusermount3 -uz "$WORK/runtime/doc" 2>/dev/null || fusermount -uz "$WORK/runtime/doc" 2>/dev/null || true
   rm -rf "$WORK" 2>/dev/null || echo "note: could not fully remove $WORK" >&2
