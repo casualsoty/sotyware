@@ -234,8 +234,10 @@ affected.
 
 ## CI
 
-- **`ci.yml` has not run on GitHub yet**; the two manual desktop workflows ran
-  and did not pass (results and causes in
+- **No `ci.yml` result is recorded.** It is pushed and its `push` trigger matched
+  two pushes to `main` (2026-11-10), but no run has been checked; the two manual
+  desktop workflows ran and did not pass (the isolated-desktop one now reports
+  NOT RUN, which is not a pass) (results and causes in
   [status.md](status.md#ci-github-actions-2026-11-10)).
 - **CI time is a limited allowance.** The repository is private on GitHub Free:
   $12 of hosted compute a month, after which Actions is blocked until the next

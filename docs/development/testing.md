@@ -427,9 +427,9 @@ Findings:
   investigating session. Windows services cannot show UI and Session 0 has no
   Explorer, so the tray checks cannot run there in any case; whether WebView2 and
   the isolated-desktop test work there is unknown.
-- GitHub-hosted Windows runners: the isolated-desktop test ran once, in the
-  manual, experimental workflow ([CI](#manual-desktop-workflows)), and could not
-  render WebView2. The runner's session has an input desktop (`Default`) and a
+- GitHub-hosted Windows runners: the isolated-desktop test ran twice, in the
+  manual, experimental workflow ([CI](#manual-desktop-workflows)). The first run
+  could not render WebView2; the second reported NOT RUN (exit 4). The runner's session has an input desktop (`Default`) and a
   private desktop could be created, but the job runs elevated, which the test
   cannot support ([why](#windows-isolated-desktop-test)); it now reports exit 4
   there. The automatic CI uses these runners for category A only.
@@ -529,7 +529,7 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   or use a private desktop, so the test did not run** (never a pass), **4 the
   job is elevated, so the test did not run** (never a pass), 124 timeout. With
   exit 0 it also requires `summary: 56 passed, 0 failed` (`EXPECTED_CHECKS`).
-  Its one hosted run (Windows Server 2025, before the elevation check existed)
+  Its first hosted run (Windows Server 2025, before the elevation check existed)
   failed: the primary panicked creating the WebView2 controller (`0x80070578`)
   and the second launches exited `0xC0000409`; the same failure reproduces on
   Windows 11 when the suite runs elevated ([why](#windows-isolated-desktop-test)).

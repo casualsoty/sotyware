@@ -114,16 +114,18 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - CI (GitHub Actions, private repo on GitHub Free: $12 of hosted compute a
   month, then blocked): `ci.yml` runs automatically on pull requests to and
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
-  `test:headless`; docs-only changes skipped). Manual only:
+  `test:headless`; docs-only changes skipped). It is pushed (since `3f3b9b9`),
+  but no run of it has been checked: no `ci.yml` result is recorded. Manual only:
   `desktop-virtual.yml` (virtual display, not a real desktop) and
   `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
   is not in CI. `desktop-virtual.yml` ran once (`14a5de1`, ubuntu-26.04
   runner) and failed 89/2/1 on a driver bug (AT-SPI role name renamed in
   at-spi2-core 2.60), fixed in `ead47e7` and passing 3/3 in an Ubuntu 26.04
-  container; not re-run on GitHub yet. `desktop-windows-isolated.yml` ran once
-  (Windows Server 2025) and failed on the elevated hosted job, reproduced on
-  Windows 11 elevated; re-run (2026-11-10) it printed `elevated: True` and
-  reported NOT RUN, exit 4: hosted runners cannot run this test.
+  container; not re-run on GitHub yet. `desktop-windows-isolated.yml` ran twice
+  (Windows Server 2025): the first run failed on the elevated hosted job,
+  reproduced on Windows 11 elevated; the second (2026-11-10) printed
+  `elevated: True` and reported NOT RUN, exit 4 (not a pass): hosted runners
+  cannot run this test.
   No other workflow result is recorded.
   [testing.md](development/testing.md#ci).
 

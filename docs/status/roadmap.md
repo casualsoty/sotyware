@@ -34,8 +34,8 @@ Fixes found during validation come before anything below.
 ## Known follow-ups (not started, no design yet)
 
 - First CI runs (the workflows exist since `5fe62b9`, see
-  [testing.md](../development/testing.md#ci)): after the first push, check that
-  `ci.yml` passes on both runners, record the real job durations, and replace
+  [testing.md](../development/testing.md#ci); pushed 2026-11-10): check whether
+  `ci.yml` ran and passed on both runners, record the real job durations, and replace
   the cost estimate; start `desktop-virtual.yml` once; `desktop-windows-isolated.yml` is
   settled (hosted jobs are elevated: NOT RUN, exit 4). Record results in
   [status.md](status.md#ci-github-actions-2026-11-10).
