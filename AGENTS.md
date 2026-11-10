@@ -11,7 +11,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   `sotyware`; Rust library `sotyware_lib` ([why](docs/architecture/decisions.md#adr-007-library-crate-named-sotyware_lib)).
 - **Purpose:** a cross-platform desktop app for Windows 10/11 and Linux that runs
   continuously in the background, stays lightweight, lives in the system tray and
-  opens a dashboard window on demand.
+  opens a dashboard window on demand. Where Linux has no tray host, it runs as a
+  plain window instead (dashboard-only mode).
 - **Current scope:** only the desktop runtime (window, tray, lifecycle, single
   instance). No product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
@@ -23,8 +24,10 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | dashboard | the one webview window, label `main` (`DASHBOARD_LABEL`) |
 | tray | the system tray icon and its menu |
 | hide | make the dashboard invisible; process keeps running |
-| close | the window manager's close (✕, Alt+F4); sotyware turns it into hide |
-| quit | end the process; only the tray "Quit" does this |
+| close | the window manager's close (✕, Alt+F4); sotyware turns it into hide in tray mode, into quit in dashboard-only mode |
+| quit | end the process; the tray "Quit" does this, and close in dashboard-only mode |
+| tray mode | the tray icon exists; the normal, background-running mode (`OperatingMode::Tray`) |
+| dashboard-only mode | Linux without a reachable tray host: no tray, no hide, close quits (`OperatingMode::DashboardOnly`) |
 | open / show | `show_dashboard()`: un-minimize, show, focus the existing window |
 | primary instance / second launch | the running process / a later start that hands over and exits |
 
@@ -54,7 +57,8 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | Node.js | `^20.19 \|\| ^22.12 \|\| >=24` (dependency `engines`) | developed with 24.22.0 |
 | Package manager | npm (lockfile v3) | developed with 11.19.1 |
 | `tray-icon` (through Tauri; Linux-only direct dependency adds feature `ksni`) | `0.25` | 0.25.1 |
-| `ksni` (Linux tray backend, pure Rust over `zbus` 5.19.0) | through `tray-icon` | 0.3.7 |
+| `ksni` (Linux tray backend, pure Rust over `zbus` 5.19.0) | through `tray-icon`; also a Linux-only direct dependency `0.3` (no features, to name its error types) | 0.3.7 |
+| `zbus` (Linux only) | through `ksni` and the single-instance plugin; also a Linux-only direct dependency `5` (no features, to name its error types) | 5.19.0 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
 
@@ -67,22 +71,31 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 - **Entry point:** `src-tauri/src/main.rs` → `sotyware_lib::run()` in
   `src-tauri/src/lib.rs`.
 - **Runtime:** `run()` builds the Tauri app: single-instance plugin (first, desktop
-  only) → window `main` from `tauri.conf.json` → `setup` creates the tray → event
-  loop.
-- **Window lifecycle:** close is turned into hide; implicit exits
-  (`ExitRequested { code: None }`) are blocked; only `exit(code)` ends the process.
+  only) → window `main` from `tauri.conf.json` → `setup` creates the tray and
+  picks the `OperatingMode` (`select_mode`) → event loop.
+- **Operating modes:** tray mode when the tray is created. Dashboard-only mode
+  when `tray::unavailable_reason()` recognises a missing Linux tray host (no
+  session bus, no StatusNotifierWatcher, no StatusNotifierHost). Any other tray
+  error → `exit(1)`. Platform checks stay in `unavailable_reason()`; other code
+  sees only the mode.
+- **Window lifecycle:** close is turned into hide in tray mode and into `exit(0)`
+  in dashboard-only mode; implicit exits (`ExitRequested { code: None }`) are
+  blocked; only `exit(code)` ends the process.
 - **Tray:** `src-tauri/src/tray.rs`, "Open Dashboard" → `show_dashboard()`,
-  "Quit" → `exit(0)`. Tray creation failure → `exit(1)`.
+  "Quit" → `exit(0)`. Exists in tray mode only.
 - **Single instance:** second launch hands over to the primary, which calls
-  `show_dashboard()`; the new process exits 0.
-- **Frontend:** `src/App.svelte`, a static page. Its only access to Rust is
-  `getCurrentWindow().hide()`, allowed by `core:window:allow-hide` in
-  `src-tauri/capabilities/default.json`. No custom Tauri commands or events.
+  `show_dashboard()`; the new process exits 0. Same in both modes.
+- **Frontend:** `src/App.svelte`, a static page. Its only access to Rust is the
+  `operating_mode` command (permission `allow-operating-mode` in
+  `src-tauri/capabilities/default.json`) and, in tray mode only,
+  `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at runtime by the
+  `tray-mode` capability in `setup`). No other custom command, no custom events.
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence, settings, autostart, feature/plugin system, sync, backend service,
-custom command or custom event. Never describe these as existing.
+XEmbed tray fallback, custom event, or custom command besides `operating_mode`.
+Never describe these as existing.
 
 ## Coding conventions
 
@@ -108,7 +121,10 @@ Follow what the code already does. When in doubt, read `lib.rs` and `tray.rs`.
 - A failing window operation that leaves the app usable is logged and the flow
   continues (`if let Err(e) = window.show() { eprintln!(...) }`).
 - A failure that would leave the app unreachable is fatal: log it and
-  `app.handle().exit(1)` (as for the tray).
+  `app.handle().exit(1)` (as for an unexpected tray error). Downgrade to a
+  reduced mode only for errors you can identify by type as an expected
+  environment condition (as `tray::unavailable_reason()` does); never by
+  catching every error or matching message text.
 - `expect` only where the app cannot start at all (`Builder::build`). No `unwrap`
   in runtime paths.
 - Frontend: catch errors from Tauri API calls and show them in the UI (see
@@ -150,7 +166,8 @@ Follow what the code already does. When in doubt, read `lib.rs` and `tray.rs`.
   `[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]`
   section and their use behind `#[cfg(desktop)]`.
 - A new Tauri plugin or frontend API call needs the narrowest capability
-  permission in `src-tauri/capabilities/default.json`.
+  permission in `src-tauri/capabilities/default.json`. A new custom command must
+  also be declared in the app manifest in `src-tauri/build.rs`.
 - Commit `package-lock.json` and `Cargo.lock` changes together with the manifest
   change. Install with `npm ci` unless you are changing dependencies.
 - Keep versions in `package.json`, `src-tauri/Cargo.toml` and

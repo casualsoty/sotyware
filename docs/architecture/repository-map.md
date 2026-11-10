@@ -26,20 +26,20 @@ Where things are. Generated and ignored paths are listed in
 ├── src-tauri/                Rust crate and Tauri configuration
 │   ├── Cargo.toml            Crate `sotyware`, lib `sotyware_lib`, dependencies, release profile
 │   ├── Cargo.lock            Pinned Rust dependency tree
-│   ├── build.rs              tauri_build::build()
+│   ├── build.rs              tauri_build with an app manifest declaring the operating_mode command
 │   ├── tauri.conf.json       Product name, identifier, window `main`, CSP, bundles, dev/build hooks
 │   ├── capabilities/
-│   │   └── default.json      Frontend permissions for window `main`
+│   │   └── default.json      Frontend permissions for window `main` (hide is added at runtime, tray mode only)
 │   ├── icons/                Bundle and tray icons (Tauri placeholders)
 │   └── src/
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
-│       ├── lib.rs            App builder, lifecycle, single instance, show_dashboard(), AppControl + unit tests
-│       └── tray.rs           Tray icon, menu, TrayAction + unit tests
+│       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests
+│       └── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
 └── tests/
     └── desktop/              Desktop tests of the release binary
         ├── run.sh            Linux/X11 simulated test: private D-Bus session + runtime dir
-        ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher)
-        ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure
+        ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher); --reject, --no-host
+        ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
         └── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches
 ```
@@ -50,12 +50,13 @@ Where things are. Generated and ignored paths are listed in
 | --- | --- |
 | Where does the app start? | `src-tauri/src/main.rs` → `run()` in `src-tauri/src/lib.rs` |
 | Where are Tauri plugins registered? | `run()` in `lib.rs`, on the builder; the single-instance plugin must stay first |
-| Where are Tauri commands defined? | Nowhere yet. A new command would be registered with `invoke_handler` in `run()` |
+| Where are Tauri commands defined? | `operating_mode` in `lib.rs`, registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permission `allow-operating-mode`) |
+| Where is the operating mode chosen? | `select_mode()` in `lib.rs`, from `tray::create()`'s result classified by `tray::unavailable_reason()` |
 | Where are events emitted or listened to? | No custom events exist. Window events: `on_window_event` in `run()`. Exit events: `app.run(...)` closure in `run()` |
 | Where is tray behaviour? | `src-tauri/src/tray.rs`, created from `setup` in `lib.rs` |
 | Where is "show the dashboard"? | `show_dashboard()` in `lib.rs`, used by the tray and the single-instance callback |
 | Where is the window declared? | `app.windows` in `src-tauri/tauri.conf.json` (label `main`, mirrored by `DASHBOARD_LABEL`) |
-| Where are frontend permissions? | `src-tauri/capabilities/default.json` |
+| Where are frontend permissions? | `src-tauri/capabilities/default.json` (static); the runtime capability `tray-mode` in `setup` in `lib.rs` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
 | Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1` Windows); all headless tests: `npm run test:headless` |

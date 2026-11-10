@@ -19,8 +19,13 @@ sotyware allows one running instance per user session. It uses Tauri's official
   `show_dashboard()`, the same function the tray "Open Dashboard" item uses. It
   works whether the dashboard is visible, hidden or minimized. Arguments and
   working directory are ignored for now.
+- **Both operating modes.** The plugin is registered before the tray exists, so
+  it works the same in tray mode and in dashboard-only mode. In dashboard-only
+  mode the second launch shows (and un-minimizes) the visible dashboard. Checked
+  under the virtual display (scenario 13).
 - **Quit releases the lock.** The lock is released when the process exits (and by
-  the OS if it crashes), so launching after "Quit" starts a fresh instance.
+  the OS if it crashes), so launching after "Quit", or after closing the
+  dashboard in dashboard-only mode, starts a fresh instance.
 - **Desktop only.** Gated by
   `cfg(any(target_os = "macos", windows, target_os = "linux"))` in `Cargo.toml` and
   `#[cfg(desktop)]` in `lib.rs`.
@@ -37,7 +42,9 @@ other.
   `ExecuteCallback` on it, then exits 0.
   - **No session bus:** the plugin emits a `tracing::warn!` and starts normally,
     so the guard is off. sotyware installs no `tracing` subscriber, so **this
-    warning is not printed anywhere**.
+    warning is not printed anywhere**. sotyware then runs in dashboard-only mode
+    (no tray without a bus), so each further launch opens another dashboard-only
+    process with its own window (derived from the code; not tested).
 - **Windows:** a named mutex `com.sotyware.desktop-sim` plus a hidden message
   window that receives arguments via `WM_COPYDATA`. The second instance calls
   `AllowSetForegroundWindow` for the first one before exiting. Observed on

@@ -7,7 +7,7 @@ others.
 | Category | Command | Runs the release binary? | Needs |
 | --- | --- | --- | --- |
 | **A. Headless** | `npm run test:headless` | no | Node, Rust and the Tauri build libraries; **no** display, window manager, tray host or D-Bus session |
-| **B. Virtual display** (Linux) | `npm run test:desktop:virtual` | yes | Xvfb, openbox, D-Bus and Python tools; no monitor, no desktop session |
+| **B. Virtual display** (Linux) | `npm run test:desktop:virtual` | yes | Xvfb, openbox, D-Bus, AT-SPI and Python tools; no monitor, no desktop session |
 | B′. Simulated desktop on an existing display (Linux) | `tests/desktop/run.sh` | yes | an X11 display you already have (WSLg, or a desktop session) |
 | **C. Real desktop**: Windows | `tests/desktop/windows.ps1` | yes | Windows, an interactive desktop nobody touches for 30 s |
 | **C. Real desktop**: manual | [checklist](#manual-check-real-desktop-linux-or-windows) | yes | a real desktop and a person |
@@ -20,10 +20,13 @@ special and run before every commit ([workflow.md](workflow.md)).
 | Behaviour | A. Headless | B. Virtual display | C. Windows test | C. Manual |
 | --- | --- | --- | --- | --- |
 | Close → hide; second launch → show dashboard | ✅ unit tests (the decision) | ✅ real binary | ✅ real binary | ✅ |
-| Tray failure → exit 1 | ✅ unit tests (the decision) | ✅ real binary (session bus without a StatusNotifierWatcher) | — | — |
+| Mode selection: tray created ⇒ tray mode; no session bus / watcher / host ⇒ dashboard-only; other errors ⇒ exit 1 | ✅ unit tests (classification of the real error types) | ✅ real binary (no watcher, no host, no bus, rejecting watcher) | — (tray mode only) | — |
+| Unexpected tray failure → exit 1 | ✅ unit tests (the decision) | ✅ real binary (watcher answers `AccessDenied`) | — | — |
+| Dashboard-only: starts visible, note on the page, no Hide button, close → exit 0, second launch → show | ✅ unit tests (decisions), mocked IPC (page) | ✅ real binary, page read via AT-SPI | — | — |
 | Implicit exit (`code: None`) blocked | ✅ unit tests (the decision) | — not triggered: the window is never destroyed | — | — |
 | Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
-| "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | — | ✅ real button | ✅ |
+| "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | ✅ real button via AT-SPI (tray mode, hides the window) | ✅ real button | ✅ |
+| Hide permission granted in tray mode only (runtime capability) | ✅ unit test (the decision) | ✅ tray mode: Hide works; dashboard-only: no button | ✅ tray mode | — |
 | The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
 | Focus and un-minimize on second launch | — | ✅ openbox honours the requests | ✅ | ✅ |
 | Single-instance handover (D-Bus on Linux, Win32 on Windows), concurrent launches | — | ✅ private session bus | ✅ | ✅ |
@@ -36,8 +39,8 @@ special and run before every commit ([workflow.md](workflow.md)).
 of `AppControl`/`DashboardWindow`), the webview (happy-dom) and IPC
 (`@tauri-apps/api/mocks`). In B, the tray host (a stub
 `StatusNotifierWatcher`; nobody sees an icon), the display (Xvfb, no GPU) and the
-desktop (openbox, not GNOME/KDE, not Wayland), and the user (X11 client messages
-and D-Bus calls instead of clicks).
+desktop (openbox, not GNOME/KDE, not Wayland), and the user (X11 client messages,
+D-Bus calls and AT-SPI actions instead of clicks).
 
 
 ## Headless tests
@@ -77,12 +80,23 @@ npm run test:frontend
 `src/App.test.ts` mounts the real `App.svelte` (and imports `main.ts`) in
 [happy-dom](https://github.com/capricorn86/happy-dom) under Vitest, with Tauri's
 official mocks (`mockWindows`, `mockIPC` from `@tauri-apps/api/mocks`) in place of
-the Rust side. It checks that "Hide dashboard" sends exactly
-`plugin:window|hide` for window `main` once per click, that a failing or denied
-call shows the error in a `role="alert"`, that a successful retry clears it, and
-that `main.ts` throws without `#app`. It does **not** show that the OS window hides:
-no webview, no Rust, no capability check runs. That is the
-[Windows desktop test](#windows-desktop-test)'s job.
+the Rust side. The mocked Rust side answers `operating_mode` with `"tray"` unless
+a test says otherwise. It checks that:
+
+- the page asks for the mode once on mount and makes no other call;
+- in tray mode, "Hide dashboard" sends exactly `plugin:window|hide` for window
+  `main` once per click, a failing or denied call shows the error in a
+  `role="alert"`, and a successful retry clears it;
+- in dashboard-only mode, a `role="status"` note says that no compatible tray is
+  available, the dashboard cannot be hidden, the window must stay open, and
+  closing it quits; there is no button and no hide call;
+- if `operating_mode` fails or returns an unknown value, the error is shown and
+  there is no Hide button;
+- `main.ts` throws without `#app`.
+
+It does **not** show that the OS window hides: no webview, no Rust, no
+capability check runs. That is the job of the virtual-display test (scenario 12)
+and the [Windows desktop test](#windows-desktop-test).
 
 ## Simulated desktop test
 
@@ -94,37 +108,58 @@ tests/desktop/run.sh [binary]
 Files:
 
 - `tests/desktop/run.sh`: creates a temporary private `$XDG_RUNTIME_DIR` and a
-  private D-Bus session (`dbus-run-session`), starts the stub tray host, then runs
-  the Python driver with `GDK_BACKEND=x11`. A sotyware already running on your
-  desktop is not affected. Exits 2 if the binary is missing.
+  private D-Bus session (`dbus-run-session`), then runs the Python driver with
+  `GDK_BACKEND=x11`. A sotyware already running on your desktop is not affected.
+  Exits 2 if the binary is missing.
 - `tests/desktop/sni_watcher.py`: a minimal `org.kde.StatusNotifierWatcher`, so
-  sotyware's tray (`ksni` backend) registers a tray item. It records each registration in a
-  file that the driver counts.
-- `tests/desktop/single_instance.py`: drives the binary. It inspects X11 windows via
-  `ctypes` (no extra Python packages), sends `WM_DELETE_WINDOW` to simulate the
-  close button, clicks tray menu items over `com.canonical.dbusmenu`, and launches
-  further instances sequentially and concurrently. Then it starts the binary on
-  a private session bus of its own (`dbus-run-session`), where no
-  StatusNotifierWatcher exists, and checks the fatal tray failure: exit code 1,
-  the `cannot create system tray icon` message, nothing left running. Last, it
-  starts the binary with `$XDG_RUNTIME_DIR` under a read-only directory (as under
-  WSL) and checks that it still starts with one tray item and quits with 0,
-  because the `ksni` backend writes no icon file.
-  It waits for the stub tray host's bus name instead of sleeping. Each walk of
+  sotyware's tray (`ksni` backend) registers a tray item. It records each
+  registration in a file that the driver counts. `--reject` answers every
+  registration with `AccessDenied` (a broken watcher); `--no-host` reports
+  `IsStatusNotifierHostRegistered = false`.
+- `tests/desktop/single_instance.py`: drives the binary. It starts and stops the
+  stub tray host itself, on the private bus, and waits for its bus name to appear
+  or vanish instead of sleeping. It inspects X11 windows via `ctypes`, sends
+  `WM_DELETE_WINDOW` to simulate the close button, clicks tray menu items over
+  `com.canonical.dbusmenu`, reads and clicks the page inside the webview through
+  AT-SPI (WebKitGTK's accessibility tree), and launches further instances
+  sequentially and concurrently. Scenarios:
+  - 1–9: tray mode: first launch, second launches while visible, hidden and
+    minimized, sequential and concurrent launches, close → hide, tray Open
+    Dashboard, tray Quit, relaunch.
+  - 10: unexpected tray failure: a watcher that rejects the item. Exit 1, the
+    `cannot create system tray icon` message, no claim of dashboard-only mode,
+    nothing left running.
+  - 11: `$XDG_RUNTIME_DIR` under a read-only directory (as under WSL): still
+    starts with one tray item and quits with 0, because the `ksni` backend
+    writes no icon file.
+  - 12: tray mode, the page: tray hint and a "Hide dashboard" button; activating
+    it through AT-SPI hides the window (so the runtime `tray-mode` capability
+    works); tray Open Dashboard restores it; Quit.
+  - 13: dashboard-only mode, session bus without a watcher: process alive and
+    dashboard visible; mode and reason on stderr; no item registered and no
+    `org.kde.StatusNotifierItem-<pid>-*` name owned; the page shows the no-tray
+    note and no button (scenario 12 is the control that proves a button would
+    be found); a second launch exits 0 and restores the minimized dashboard
+    without a new window or process; a watcher started afterwards gets no
+    registration (no retry); closing the dashboard exits 0 and leaves nothing.
+  - 14: relaunch with the watcher back: tray mode again, close hides, Quit.
+  - 15: watcher without a host (`--no-host`): dashboard-only mode, no item left
+    served, close exits 0.
+  - 16: no session bus at all: dashboard-only mode, close exits 0. Each walk of
   the X11 window tree holds a server grab, so it cannot miss a window that the
   window manager is moving out of its frame (the dashboard right after a close).
   Tray menu clicks do not wait for a D-Bus reply, because "Quit" ends the process
   while it handles the call; the checks look at the effect instead. If the first
   launch registers no tray item within 10 s, the driver reports a FAIL with the
   primary's output and stops, since every later scenario needs the tray menu; the
-  relaunch after Quit has its own tray-registration check. It does **not**
-  click the dashboard's "Hide dashboard" button; on Linux that path is covered only
-  by the mocked [frontend tests](#frontend-tests) (the
-  [Windows desktop test](#windows-desktop-test) clicks it on Windows).
+  relaunch after Quit has its own tray-registration check. The only fixed wait
+  is the 2 s in scenario 13 that gives a late watcher the chance to receive a
+  registration that must not come.
 
-Requirements: `python3`, `python3-dbus`, `python3-gi`, `libX11`,
-`dbus-run-session`, and an X11 display (`$DISPLAY`: WSLg or a desktop session; for
-a display of its own use the [virtual-display test](#virtual-display-test)).
+Requirements: `python3`, `python3-dbus`, `python3-gi`, the AT-SPI typelib
+(`gir1.2-atspi-2.0`) and registry (`at-spi2-core`), `libX11`, `dbus-run-session`,
+and an X11 display (`$DISPLAY`: WSLg or a desktop session; for a display of its
+own use the [virtual-display test](#virtual-display-test)).
 
 Results: each check prints `PASS`, `FAIL` or `SKIP`, then a summary line. `SKIP`
 means the environment could not exercise the behaviour (for example, a window
@@ -163,12 +198,12 @@ unchanged, against the same release binary, on a display it creates itself:
   run instead of being skipped.
 - `WAYLAND_DISPLAY` is unset and `DISPLAY` points at the private server, so
   nothing reaches the display you are using. `run.sh` still adds its private
-  D-Bus session, runtime directory and stub tray host.
+  D-Bus session and runtime directory, and the driver its stub tray host.
 - The whole run has a timeout (`SOTYWARE_VIRTUAL_TIMEOUT`, default 300 s). On
   exit, the script kills sotyware processes started on its display, openbox and
   Xvfb, and prints the Xvfb and openbox logs if the run did not pass.
 
-Requirements (Debian/Ubuntu): `sudo apt install xvfb openbox python3-dbus python3-gi dbus-x11`.
+Requirements (Debian/Ubuntu): `sudo apt install xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11`.
 A missing tool is reported by name and the script exits 2 without starting
 anything. These packages alone were enough on Ubuntu 24.04.1 (versions in the
 [validation matrix](../status/status.md#validation-matrix)); `xvfb` pulls in
@@ -259,7 +294,7 @@ headless results:
 | --- | --- | --- | --- |
 | headless | `ubuntu-24.04` | the Tauri build libraries from [setup.md](setup.md#linux-system-packages), Node, Rust | `npm ci`, `npm run check`, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` (in `src-tauri/`), `npm run test:headless` |
 | headless | `windows-latest` | Node, Rust (MSVC) | same commands |
-| virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
+| virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
 
 The headless job still compiles the Tauri crate, so on Linux it needs the
 build packages from [setup.md](setup.md#linux-system-packages), but no display server, window
@@ -288,6 +323,18 @@ result there.
    normally.
 8. Windows only: left-click the tray icon. Expected: the dashboard opens.
    Right-click shows the menu.
+
+Dashboard-only mode (Linux desktops without a tray host, for example vanilla
+GNOME without the AppIndicator extension):
+
+9. Start sotyware. Expected: the dashboard opens, shows the note that no
+   compatible system tray is available, and has no Hide button. No tray icon.
+10. Minimize it, start sotyware again. Expected: the same dashboard comes back,
+    still one process.
+11. Close the dashboard with ✕. Expected: the process is gone
+    (`pgrep -a sotyware` prints nothing).
+12. Enable a tray host (for example the AppIndicator extension) and start
+    sotyware again. Expected: tray mode, as in steps 1–7.
 
 ## Rules
 

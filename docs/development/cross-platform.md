@@ -7,8 +7,12 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 
 ## Rules
 
-- **Prefer cross-platform Tauri APIs.** All current code uses them; there is no
-  `#[cfg(target_os = ...)]` in sotyware's own source.
+- **Prefer cross-platform Tauri APIs.** All current code uses them. The one
+  `#[cfg(target_os = "linux")]` in sotyware's own source is
+  `tray::unavailable_reason()` (and its tests): only Linux has tray errors that
+  mean "no tray host", and they are typed by the Linux-only `ksni` and `zbus`
+  crates. Keep platform checks there instead of spreading them through the
+  lifecycle code; the rest of the code sees only the `OperatingMode`.
 - **Gate desktop-only code twice, as the single-instance plugin is gated:** in
   `Cargo.toml` with
   `[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]`,
@@ -28,7 +32,9 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 | Area | Windows | Linux |
 | --- | --- | --- |
 | Webview | WebView2 | WebKitGTK 4.1 |
-| Tray protocol | native notification area | StatusNotifierItem via `tray-icon`'s `ksni` backend (pure Rust, `zbus`); no watcher or no session bus ⇒ tray creation fails ⇒ exit 1; no XEmbed fallback |
+| Tray protocol | native notification area | StatusNotifierItem via `tray-icon`'s `ksni` backend (pure Rust, `zbus`); no XEmbed fallback |
+| Without a tray | every tray creation error ⇒ exit 1 | no session bus, no watcher or no host ⇒ dashboard-only mode (close quits, no hide); other tray errors ⇒ exit 1 ([ADR-012](../architecture/decisions.md#adr-012-the-tray-is-optional-tray-mode-and-dashboard-only-mode)) |
+| Operating modes in practice | tray mode only | tray mode with a StatusNotifierItem host (KDE, GNOME with the AppIndicator extension, XFCE plugin, …); dashboard-only mode on vanilla GNOME and XEmbed-only panels (expected, not yet checked on a real desktop) |
 | Tray icon click events | emitted; left click opens the dashboard | left click (`Activate`) and middle click (`SecondaryActivate`) emitted if the tray host sends them; left click opens the dashboard |
 | Tray icon image | in memory | sent over D-Bus as a pixmap; nothing written to disk |
 | Tray backend selection | `tray-icon` Windows backend | Linux-only `tray-icon` dependency with feature `ksni` in `Cargo.toml` ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)) |

@@ -28,7 +28,8 @@ Status: Accepted
 
 ## ADR-002: The dashboard window is hidden, never destroyed
 
-Status: Accepted
+Status: Accepted. Applies to tray mode; in dashboard-only mode close ends the
+process instead ([ADR-012](#adr-012-the-tray-is-optional-tray-mode-and-dashboard-only-mode)).
 
 - **Context:** sotyware runs in the background. Recreating the window on every
   open risks duplicate windows and loses frontend state.
@@ -52,7 +53,10 @@ Status: Accepted
 
 ## ADR-004: Failure to create the tray is fatal
 
-Status: Accepted
+Status: Superseded by [ADR-012](#adr-012-the-tray-is-optional-tray-mode-and-dashboard-only-mode).
+The tray is now optional: a Linux environment without a reachable tray host
+starts in dashboard-only mode. Every other tray failure is still fatal (exit 1),
+as decided here.
 
 - **Context:** Without a tray, a hidden dashboard can never be restored and the
   process could only be killed.
@@ -81,7 +85,7 @@ Status: Accepted
 
 ## ADR-006: Minimal frontend capability
 
-Status: Accepted
+Status: Superseded by [ADR-013](#adr-013-the-frontend-reads-the-mode-through-one-command-hiding-is-granted-only-in-tray-mode).
 
 - **Context:** Tauri capabilities decide what the webview may call.
 - **Decision:** The `default` capability grants window `main` only
@@ -193,3 +197,91 @@ Status: Accepted
   - If Tauri ever pins a `tray-icon` other than 0.25, this declaration stops
     unifying with it. Revisit it with any Tauri upgrade, and drop it once Tauri
     lets apps choose the backend.
+
+## ADR-012: The tray is optional: tray mode and dashboard-only mode
+
+Status: Accepted. Supersedes ADR-004.
+
+- **Context:** Since ADR-011 the Linux tray registers with the
+  StatusNotifierWatcher before `tray::create()` returns. Vanilla GNOME has no
+  watcher unless the AppIndicator extension is installed, so under ADR-004
+  sotyware exited 1 there, with the message on stderr only. Running without a
+  tray is safe only if the dashboard can never be hidden. Otherwise the process
+  becomes unreachable.
+- **Decision:** `setup` tries to create the tray once and picks an
+  `OperatingMode`, stored as Tauri state for the life of the process:
+  - **Tray mode** (tray created): unchanged behaviour. Close hides, the Hide
+    button hides, tray "Open Dashboard" restores, tray "Quit" calls `exit(0)`.
+  - **Dashboard-only mode** (no tray host reachable): the dashboard starts
+    visible as always, closing it calls `exit(0)`, the frontend is never granted
+    the hide permission ([ADR-013](#adr-013-the-frontend-reads-the-mode-through-one-command-hiding-is-granted-only-in-tray-mode))
+    and shows a note instead of the Hide button. No tray object exists, so no
+    tray handler can run.
+  - **Fatal** (any other tray error): exit 1, as under ADR-004.
+
+  `tray::unavailable_reason()` decides which errors mean "no tray host". It
+  matches the typed errors `tray-icon` 0.25.1's `ksni` backend (`ksni` 0.3.7,
+  `zbus` 5.19) returns, never message text:
+
+  | Error | Meaning | Mode |
+  | --- | --- | --- |
+  | `ksni::Error::Dbus(zbus::Error::Connection(io, _))` with `io.kind()` `NotFound` or `ConnectionRefused` | no session bus: socket missing or nobody listening. zbus produces `Connection` only in the connect step | dashboard-only |
+  | `ksni::Error::Watcher(ServiceUnknown \| NameHasNoOwner)` from `RegisterStatusNotifierItem` | nobody owns `org.kde.StatusNotifierWatcher` (dbus-daemon / dbus-broker wording), also when the watcher left just before the call | dashboard-only |
+  | `ksni::Error::WontShow` | the watcher reports no StatusNotifierHost | dashboard-only |
+  | every other `ksni`, `zbus`, `tray-icon` or Tauri error: unparsable bus address, `PermissionDenied`, handshake failure, a watcher replying with another error (`AccessDenied`, `Failed`, `UnknownMethod`), `NoReply` (watcher left during the call, or hung), errors after registration, menu or thread errors | a defect or a broken environment | fatal, exit 1 |
+
+  Off Linux, `unavailable_reason()` always returns `None`, so Windows keeps
+  ADR-004's behaviour. `ksni` and `zbus` are declared as Linux-only
+  dependencies only to name these types. Both were already in the tree through
+  `tray-icon`, and `Cargo.lock` gained no crate. Rejected: retrying or waiting
+  for a watcher (no delays, polling or retries, as in ADR-011),
+  `ksni`'s `assume_sni_available` (it is not reachable through `tray-icon`, and it
+  would hide the missing tray), an XEmbed fallback, and matching error strings.
+- **Consequences:**
+  - sotyware starts on desktops without a tray host (vanilla GNOME, some window
+    managers, XEmbed-only panels) and says so in the dashboard. It does not run
+    in the background there: closing the window quits.
+  - ADR-003 still holds: the dashboard-only close goes through `exit(0)`.
+    "Quit" is no longer the only user-facing exit.
+  - A tray host that appears after startup is not used until the next start.
+  - A watcher that vanishes *during* the registration call (`NoReply`) is
+    treated as fatal: it cannot be told apart from a hung watcher. A watcher
+    that accepts the item while no panel shows it is still not detected.
+  - Without a session bus the single-instance guard is off (ADR-005), so two
+    dashboard-only processes can run side by side there.
+  - `tray_failure_exit_code` became `select_mode`; `close_action` takes the mode
+    (ADR-009's pattern, new function `frontend_may_hide`).
+
+## ADR-013: The frontend reads the mode through one command; hiding is granted only in tray mode
+
+Status: Accepted. Supersedes ADR-006.
+
+- **Context:** The frontend must know the operating mode (ADR-012) to show the
+  right UI, and in dashboard-only mode nothing may hide the window, whether
+  through the button or any other `window.hide()` call. The OS and D-Bus
+  detection must stay in Rust.
+- **Decision:**
+  - One custom command, `operating_mode`, returns `"tray"` or
+    `"dashboard-only"` from the managed `OperatingMode`. `build.rs` declares it
+    in the app manifest (`tauri_build::AppManifest::commands`), so it needs the
+    generated permission `allow-operating-mode`. The static capability
+    `default` grants window `main` only that permission. The frontend asks once,
+    on mount.
+  - `core:window:allow-hide` is no longer in the static capability. In tray
+    mode only, `setup` adds a runtime capability `tray-mode` (Tauri's
+    `dynamic-acl`, on by default) that grants it to window `main`. In
+    dashboard-only mode the permission is never granted, so a hide call is
+    rejected by Tauri's ACL.
+  - The frontend shows the Hide button only for `"tray"`. For
+    `"dashboard-only"`, it shows a `role="status"` note. If the command fails or
+    returns anything else, it shows the error and no Hide button.
+  - Rejected: an event pushed from Rust (needs `core:event` permissions and
+    races the page load), injecting a script into the page, and leaving hide in the
+    static capability (it would rely only on the UI).
+- **Consequences:** The frontend's permissions are still minimal: one app
+  command, plus hide in tray mode only. CSP unchanged. The generated file
+  `src-tauri/permissions/autogenerated/operating_mode.toml` is rebuilt by every
+  build and is ignored by git. A new command must be added to the app manifest
+  and given its own permission. The runtime capability is checked by the
+  virtual-display test (scenario 12 clicks Hide in the real WebKitGTK webview),
+  not yet on Windows.

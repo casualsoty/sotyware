@@ -28,10 +28,11 @@ For Fedora, Arch, openSUSE and others, use the package lists in the official
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux). They have
 not been tested for sotyware.
 
-The simulated desktop test ([testing.md](testing.md)) also needs:
+The simulated desktop test ([testing.md](testing.md)) also needs (the AT-SPI
+packages let the driver read and click the page inside the webview):
 
 ```bash
-sudo apt install -y python3-dbus python3-gi dbus-x11
+sudo apt install -y python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11
 ```
 
 The [virtual-display test](testing.md#virtual-display-test) additionally needs:
@@ -43,8 +44,12 @@ sudo apt install -y xvfb openbox
 The [headless tests](testing.md#headless-tests) need nothing beyond the build
 packages above.
 
-At runtime, end users need WebKitGTK 4.1, GTK 3, a D-Bus session bus and a
-StatusNotifierItem tray host. libayatana-appindicator3 is no longer loaded: the
+At runtime, end users need WebKitGTK 4.1 and GTK 3. A D-Bus session bus and a
+StatusNotifierItem tray host are needed for tray mode (background running);
+without them sotyware runs in dashboard-only mode
+([lifecycle.md](../architecture/lifecycle.md#operating-modes)), and without a
+session bus the single-instance guard is off. libayatana-appindicator3 is no
+longer loaded: the
 tray uses the pure-Rust `ksni` backend
 ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 The `.deb` still declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0`

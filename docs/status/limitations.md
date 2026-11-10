@@ -11,33 +11,58 @@ backend (`ksni` 0.3.7 over `zbus`), not libayatana-appindicator
 ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 
 - **Desktop support is unverified.** KDE Plasma, Cinnamon, XFCE (status notifier
-  plugin) and Budgie are expected to show the item. Vanilla **GNOME has no
-  StatusNotifierWatcher** unless the *AppIndicator and KStatusNotifierItem
-  Support* extension is installed (Ubuntu enables it by default). None of this
-  has been verified.
-- **No tray host means sotyware does not start.** `ksni` registers with
-  `org.kde.StatusNotifierWatcher` before tray creation returns. Without a
-  watcher, or without a session bus, tray creation fails and sotyware exits
-  with code 1 ([ADR-004](../architecture/decisions.md#adr-004-failure-to-create-the-tray-is-fatal)).
-  The error goes to stderr only, so someone starting sotyware from a launcher
-  sees nothing happen. There is **no XEmbed fallback**: desktops with only a
-  legacy XEmbed tray (for example some window-manager panels) cannot run
-  sotyware. A watcher that starts *after* sotyware (for example a login race,
-  if autostart is ever added) is not waited for. Checked under the virtual
+  plugin) and Budgie are expected to show the item (tray mode). Vanilla **GNOME
+  has no StatusNotifierWatcher** unless the *AppIndicator and KStatusNotifierItem
+  Support* extension is installed (Ubuntu enables it by default), so it is
+  expected to run in dashboard-only mode. None of this has been verified on a
+  real desktop.
+- **Without a tray host sotyware does not run in the background.** No session
+  bus, no `org.kde.StatusNotifierWatcher`, or a watcher reporting no
+  StatusNotifierHost selects dashboard-only mode
+  ([ADR-012](../architecture/decisions.md#adr-012-the-tray-is-optional-tray-mode-and-dashboard-only-mode)):
+  the dashboard stays open, cannot be hidden, and closing it quits. There is
+  **no XEmbed fallback**: on desktops with only a legacy XEmbed tray (for
+  example some window-manager panels) sotyware runs dashboard-only. A watcher
+  that starts *after* sotyware (for example a login race, if autostart is ever
+  added) is not picked up until the next start. Checked under the virtual
   display only (2026-11-10).
-- **A watcher without a visible host is not detected.** If a watcher accepts
-  the registration but no panel displays it, sotyware runs with an invisible
-  icon. A hidden dashboard can then be reached only by launching sotyware again.
-  Real watchers (KDE, the GNOME extension) always report a host as registered,
-  according to `ksni`'s source comments; this has not been checked.
+- **Some tray-host failures are still fatal.** Only the errors listed in
+  [lifecycle.md](../architecture/lifecycle.md#mode-selection) select
+  dashboard-only mode. A watcher that disappears *during* the registration call
+  (`NoReply`, the same error as a hung watcher), a watcher that answers with
+  another error, a bus socket sotyware may not open (`PermissionDenied`) or a
+  malformed `DBUS_SESSION_BUS_ADDRESS` exit 1. The message goes to stderr only,
+  so someone starting sotyware from a launcher sees nothing happen.
+- **A watcher without a visible host is only partly detected.** A watcher that
+  reports `IsStatusNotifierHostRegistered = false` selects dashboard-only mode.
+  Real watchers (KDE, the GNOME extension) always report `true`, according to
+  `ksni`'s source comments (not checked). If such a watcher accepts the item but
+  no panel displays it, sotyware runs in tray mode with an invisible icon. A
+  hidden dashboard can then be reached only by launching sotyware again.
 - **Left click depends on the tray host.** The item is not marked menu-only, so
   hosts are expected to send a left click as `Activate`, which opens the
   dashboard. The menu is on right click. Seen only with D-Bus calls against the
   stub tray host, not with a real panel.
 - **The `.deb` still declares `libayatana-appindicator3-1`.** Tauri's bundler
   adds it whenever the tray feature is on, although the binary never loads the
-  library. It costs an unnecessary package, nothing more. Running without the
-  library installed has not been tried.
+  library. It costs an unnecessary package, nothing more, and is unrelated to
+  dashboard-only mode. Running without the library installed has not been
+  tried. Tracked as a separate follow-up in [roadmap.md](roadmap.md).
+
+## Dashboard-only mode
+
+- **Only the virtual display has run it.** The no-watcher, no-host and no-bus
+  cases ran under Xvfb + openbox with a stub watcher (2026-11-10). Not run on a
+  real GNOME, an XEmbed-only panel, Wayland or any other real desktop, and never
+  looked at by a person.
+- **The note is the only indication.** Nothing is shown outside the window (no
+  notification, no dialog). The reason is printed on stderr.
+- **Closing quits without asking.** The note says so, but there is no
+  confirmation. Unsaved state does not exist yet, so nothing is lost today.
+- **The mode cannot change while running.** A tray host that appears later is
+  ignored until sotyware is started again; one that disappears in tray mode is
+  re-registered by `ksni` when it comes back, as before, but the dashboard can
+  still be hidden in the meantime.
 
 ### Historical: libayatana-appindicator registration race
 
@@ -97,10 +122,10 @@ affected.
 - **D-Bus fallback.** Linux needs a D-Bus session bus. Without one (bare SSH, cron),
   the plugin starts normally, so the guard is off. Its warning goes through
   `tracing`, and sotyware installs no subscriber, so **nothing is printed**.
-  Since the `ksni` tray backend, the tray also needs the session bus, so such a
-  process exits 1 right after (`cannot create system tray icon: … D-Bus
-  connection error`). A second process therefore cannot keep running either.
-  The guard itself is still off.
+  The tray also needs the session bus, so such a process runs in dashboard-only
+  mode (`no system tray available (no D-Bus session bus)` on stderr). Further
+  launches then start further dashboard-only processes, each with its own
+  window (derived from the code; not tested).
 - **Startup race.** If a second launch arrives after the first instance took the
   lock but before its window exists, the callback logs
   `sotyware: dashboard window 'main' not found` and does nothing. The first
@@ -161,15 +186,17 @@ affected.
   installed (no display server, though).
 - **The implicit-exit guard (`code: None` blocked) is unit-tested only.** No
   desktop test triggers it, because the dashboard is never destroyed.
-- **On Linux the "Hide dashboard" button is tested only with mocked IPC.** No
-  Linux test clicks it in the real webview.
+- **On Linux the "Hide dashboard" button is activated through AT-SPI**, not
+  with a pointer click (virtual-display scenario 12). The dashboard-only page is
+  checked the same way. What a person sees is not checked.
 - **The virtual-display test was validated only on WSL2** (Ubuntu 24.04.1, with
   the apt-installed packages from [setup.md](../development/setup.md#linux-system-packages)),
   not on a native Ubuntu install and not in CI. With libayatana-appindicator it
   failed, correctly, about 1 run in 60 on the
   [registration race](#historical-libayatana-appindicator-registration-race).
   With the `ksni` backend no run has failed so far (3 runs and a 420-launch
-  loop, 2026-11-10). That is evidence, not proof.
+  loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
+  2026-11-10). That is evidence, not proof.
 - **No test covers screen-reader access** on either platform.
 
 ## Development environment (WSL)

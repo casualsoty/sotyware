@@ -17,31 +17,37 @@ by an automated test on the real desktop and by the headless suite (last at
 Open: Windows 10, a person's visual check on Windows, the MSI installer, and real
 Linux desktops. The Linux tray uses `tray-icon`'s `ksni` backend since `12a6185`,
 which avoids the libayatana-appindicator registration race
-([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)).
+([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)). Since
+`8ca3bd7`, Linux without a reachable tray host runs in dashboard-only mode
+instead of exiting 1 ([details](#dashboard-only-mode-wsl2-xvfb--openbox-stub-tray-host)).
+The Windows results below predate that change.
 
 ## Implemented
 
 | Feature | Where |
 | --- | --- |
 | Tauri 2 desktop runtime (one process, one window `main`) | `src-tauri/src/lib.rs`, `tauri.conf.json` |
-| Svelte 5 dashboard (static page with a "Hide dashboard" button) | `src/App.svelte` |
+| Svelte 5 dashboard (static page; "Hide dashboard" button in tray mode, a no-tray note in dashboard-only mode) | `src/App.svelte` |
+| Operating modes: tray mode, and dashboard-only mode on Linux without a tray host (close quits, no hide) | `select_mode`, `close_action` in `lib.rs`; `unavailable_reason` in `tray.rs` |
+| `operating_mode` command (the frontend's only custom call) | `lib.rs`, app manifest in `build.rs` |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
-| Hide-on-close lifecycle | `on_window_event` in `lib.rs` |
-| Explicit Quit is the only exit; implicit exits blocked | `app.run` closure in `lib.rs`, `tray.rs` |
-| Fatal exit (code 1) if the tray cannot be created | `setup` in `lib.rs` |
+| Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
+| Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
+| Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`core:window:allow-hide`) and CSP | `capabilities/default.json`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
-Automated tests per platform: the "Hide dashboard" button (real click) and
-left-click-to-open are covered only by the Windows desktop test
-(`tests/desktop/windows.ps1`). On Linux the button is covered only by the headless
-frontend test with mocked IPC. Restoring a minimized dashboard and focus on second
-launch run on Linux only under the virtual display (Xvfb + openbox); WSLg skips
-them. Test categories: [testing.md](../development/testing.md).
+Automated tests per platform: the "Hide dashboard" button with a real mouse
+click, and left-click-to-open, are covered only by the Windows desktop test
+(`tests/desktop/windows.ps1`). On Linux the virtual-display test activates the
+button through AT-SPI and reads the dashboard-only page the same way. Restoring
+a minimized dashboard and focus on second launch run on Linux only under the
+virtual display (Xvfb + openbox); WSLg skips them. Test categories:
+[testing.md](../development/testing.md).
 
 Nothing else exists: no product features, no settings, no persistence, no
-custom Tauri commands or events.
+custom Tauri events, and no custom command other than `operating_mode`.
 
 ## Validation matrix
 
@@ -202,6 +208,34 @@ not tested.
 | NSIS installer with its interactive UI | — not run (silent mode only) | |
 | MSI `msiexec /i … /qn` | ❌ not installed: exit 1603, "Installation UI level is silent, no credential elevation is possible". The MSI installs per machine and needs administrator rights (UAC). Not a sotyware defect; MSI install, run and uninstall remain unvalidated | Native Windows 2026-11-10 |
 
+### Dashboard-only mode (WSL2, Xvfb + openbox, stub tray host)
+
+Run 2026-11-10 at `c2cbeb4` (implementation `8ca3bd7`,
+[ADR-012](../architecture/decisions.md#adr-012-the-tray-is-optional-tray-mode-and-dashboard-only-mode),
+[ADR-013](../architecture/decisions.md#adr-013-the-frontend-reads-the-mode-through-one-command-hiding-is-granted-only-in-tray-mode)),
+same machine and apt packages as the runs below, plus `gir1.2-atspi-2.0` and
+`at-spi2-core` (already installed). Release binary built from `8ca3bd7`.
+
+| Check | Result |
+| --- | --- |
+| `npm run check` 0/0, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run tauri build -- --no-bundle` | ✅ |
+| `cargo test`: 31 tests (17 before, adapted: close action per mode, `select_mode`; new: mode selection from the real `ksni`/`zbus` error values, what stays fatal, hide granted only in tray mode, dashboard starts visible, capability) | ✅ |
+| `npm run test:frontend`: 13 tests (8 before, adapted to the mode request; new: dashboard-only note, no Hide action, failed or unknown mode) | ✅ |
+| `npm run test:headless` (31 Rust + 13 frontend) | ✅ |
+| `npm run test:desktop:virtual`, 92-check driver: **92 passed, 0 failed, 0 skipped**, 3 consecutive runs, no sotyware process left | ✅ |
+| Same suite with the 68-check driver from before, on the new binary: 63 passed, then scenario 10 hung (a missing watcher no longer exits 1) | ❌ expected, driver adapted in `c2cbeb4` |
+| Error shapes from the real binary, before the change: no bus ⇒ `D-Bus connection error: Failed to connect to address …: No such file or directory`; no watcher ⇒ `…ServiceUnknown…` | ✅ matches the classification |
+| `Cargo.lock`: only `ksni` and `zbus` added to `sotyware`'s dependency list, no new crate. `cargo tree --target x86_64-pc-windows-msvc`: `sotyware` still depends only on `tauri` and `tauri-plugin-single-instance`; `ksni` and `zbus` are not in the Windows graph | ✅ |
+
+What the 24 new virtual-display checks cover: [testing.md](../development/testing.md#simulated-desktop-test)
+(scenarios 12–16). The tray-mode checks of scenarios 1–9 and 11 are unchanged.
+Scenario 10 now uses a watcher that rejects the item instead of no watcher.
+
+Not run: native Windows (shared Rust code changed: operating mode, the
+`operating_mode` command, hide through a runtime capability; not compiled or run
+for Windows), `run.sh` on WSLg, a real GNOME or any real Linux desktop, an
+XEmbed-only panel, Wayland, and a person looking at the dashboard-only note.
+
 ### ksni tray backend (WSL2, Xvfb + openbox, stub tray host)
 
 Run 2026-11-10 at `12a6185` (Linux tray switched to `tray-icon`'s `ksni` backend,
@@ -237,8 +271,8 @@ before the change.
 | 420 consecutive launches, each: wait ≤ 10 s for one registration, read the menu, tray "Quit", wait ≤ 10 s for exit. No retries | ✅ **420/420** registered (0.148 s min, 0.178 s median, 0.203 s p95, 0.293 s max), 420 menus with exactly Open Dashboard / Quit, 420 exits with 0 through tray Quit, 0 `CRITICAL` / `G_IS_DBUS_CONNECTION`, 0 hangs, 0 processes left |
 | Left click (`Activate` over D-Bus) on a hidden dashboard shows the same window. Middle click (`SecondaryActivate`) does not | ✅ |
 | Stub watcher killed and restarted: the item registers again after 0.10 s, and its menu still works | ✅ |
-| Private bus without a watcher: exit 1 after 0.36 s, `cannot create system tray icon: … failed to register to the StatusNotifierWatcher: …ServiceUnknown…`, nothing left | ✅ |
-| No session bus: exit 1, `cannot create system tray icon: … D-Bus connection error …`, nothing left | ✅ |
+| Private bus without a watcher: exit 1 after 0.36 s, `cannot create system tray icon: … failed to register to the StatusNotifierWatcher: …ServiceUnknown…`, nothing left (behaviour at the time; since `8ca3bd7` dashboard-only mode) | ✅ |
+| No session bus: exit 1, `cannot create system tray icon: … D-Bus connection error …`, nothing left (behaviour at the time; since `8ca3bd7` dashboard-only mode) | ✅ |
 | After all runs: no Xvfb, openbox, stub watcher, portal, session `dbus-daemon` or sotyware process of these runs left (an unrelated Xvfb on `:25059`, started hours earlier, was still running) | ✅ |
 | `npm run tauri build -- --bundles deb`: `.deb` declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0` | ⚠️ the first one is no longer needed ([limitations](limitations.md#linux-tray)) |
 
@@ -374,7 +408,9 @@ tray icon was ever seen or clicked by a person.
 | Windows 11: a person's visual check of tray icon and menu (manual checklist) | — |
 | Windows 11: MSI install/run/uninstall; NSIS interactive install | — |
 | Windows 11: focus on second launch while another app is actively in use | — |
-| Real GNOME (with and without the AppIndicator extension) | — |
+| Real GNOME (with and without the AppIndicator extension; without it, dashboard-only mode) | — |
+| Dashboard-only mode on any real desktop, an XEmbed-only panel, or Wayland | — (virtual display only) |
+| Windows at or after `8ca3bd7` (operating mode, `operating_mode` command, runtime hide capability) | — not compiled or run |
 | Real KDE Plasma | — |
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
