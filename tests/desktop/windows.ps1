@@ -37,6 +37,7 @@ public static class W {
   }
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+  public static string ClassOf(IntPtr h) { var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
   public delegate bool EnumProc(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
@@ -99,12 +100,19 @@ function Foreground { (Hwnd) -eq [W]::GetForegroundWindow() }
 # The sotyware icon sits in the "hidden icons" overflow flyout (Windows 11 default for
 # new icons). The flyout closes whenever focus moves, so open it before every lookup.
 # UIA only lists the flyout window while it is shown.
-function OverflowOpen {
-  $o = $root.FindFirst($S::Children, (PC $A::ClassNameProperty "TopLevelWindowForOverflowXamlIsland"))
+$OverflowClass = "TopLevelWindowForOverflowXamlIsland"
+function OverflowShown {
+  $o = $root.FindFirst($S::Children, (PC $A::ClassNameProperty $OverflowClass))
   ($null -ne $o) -and -not $o.Current.BoundingRectangle.IsEmpty
 }
+# When hiding the dashboard moves the foreground to another app, the flyout loses
+# focus and starts closing, but UIA still reports it and its icons for a moment; a
+# click then lands on nothing. It is only really open while it is the foreground.
+function OverflowOpen { (OverflowShown) -and [W]::ClassOf([W]::GetForegroundWindow()) -eq $OverflowClass }
 function OpenOverflow {
-  if ((TrayIcons).Count -ge 1 -or (OverflowOpen)) { return }
+  if (OverflowOpen) { return }
+  if (OverflowShown) { WaitFor { -not (OverflowShown) } 3 | Out-Null }
+  if ((TrayIcons).Count -ge 1) { return }  # icon pinned to the taskbar itself
   $chev = $root.FindFirst($S::Descendants, (PC $A::NameProperty "Show Hidden Icons"))
   if ($chev) { $chev.GetCurrentPattern($Invoke).Invoke(); WaitFor { OverflowOpen } 3 | Out-Null; Start-Sleep -Milliseconds 400 }
 }
