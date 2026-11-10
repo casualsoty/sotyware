@@ -19,9 +19,19 @@
 # desktop. The process is ended with Stop-Process at the end, which is cleanup,
 # not a check of Quit.
 #
+# It does not run in an elevated session (administrator token, as on GitHub-hosted
+# runners): an elevated WebView2 host gets its browser process started
+# de-elevated through explorer.exe, so that process lands on explorer's desktop
+# (WinSta0\Default) instead of the private one and cannot attach to the dashboard
+# window; sotyware then panics with "failed to create webview ... 0x80070578
+# Invalid window handle". That is this test's environment, not sotyware: elevated
+# on the Default desktop it works. The script reports NOT RUN and exits 4 before
+# starting anything (docs/development/testing.md#windows-isolated-desktop-test).
+#
 # Each check prints PASS or FAIL, INFO lines are observations. Exit code: 0 all
 # passed, 1 a check failed, 2 binary missing or already running, 3 the private
-# desktop could not be created or the copy did not run on it, 124 timeout.
+# desktop could not be created or the copy did not run on it, 4 not run: elevated
+# session, 124 timeout.
 param(
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$OnDesktop = "",
@@ -95,6 +105,12 @@ if ($OnDesktop -eq "") {
   "os: $((Get-CimInstance Win32_OperatingSystem).Caption) $($cv.DisplayVersion) build $($cv.CurrentBuild).$($cv.UBR)"
   "binary: $Exe"
   if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
+  $elevated = (New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  "elevated: $elevated"
+  if ($elevated) {
+    "NOT RUN: this session is elevated. WebView2 then starts its browser process de-elevated on the Default desktop, which cannot attach to a window on the private desktop, so no check could tell anything about sotyware. Run the test from a non-elevated PowerShell."
+    exit 4
+  }
   $name = "sotyware-test-$PID"
   $desk = [I]::CreateDesktop($name, [IntPtr]::Zero, [IntPtr]::Zero, 0, 0x10000000, [IntPtr]::Zero)
   if ($desk -eq [IntPtr]::Zero) { "ABORT: CreateDesktop failed (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))"; exit 3 }
