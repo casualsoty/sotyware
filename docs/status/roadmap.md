@@ -27,6 +27,9 @@ Fixes found during validation come before anything below.
 - Replace the placeholder icons.
 - Decide whether and how to handle a missing tray host on Linux (see
   [limitations.md](limitations.md#linux-tray)).
+- Report the libayatana-appindicator registration race upstream, and track a
+  Tauri release that exposes another Linux tray backend
+  ([limitations.md](limitations.md#linux-tray)).
 - Make the D-Bus fallback warning visible (for example by installing a logging
   subscriber), if that is wanted.
 

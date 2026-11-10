@@ -89,8 +89,9 @@ Windows 11 is validated by the automated Windows test (no person's visual check
 yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE, real
 Wayland) are **not validated**. Windows 11 puts the tray icon in the hidden-icons
 flyout. Linux: no tray click events; vanilla GNOME hides tray icons; a missing
-tray host is not detected; about 1 launch in 140 registers no tray item (seen
-under the virtual display only); single instance silently turns off without a D-Bus
+tray host is not detected; about 1 launch in 140 to 420 registers no tray item, a
+race inside libayatana-appindicator with no fix available (seen under the virtual
+display only); single instance silently turns off without a D-Bus
 session bus. Placeholder icons; no autostart. Full list:
 [limitations.md](status/limitations.md).
 

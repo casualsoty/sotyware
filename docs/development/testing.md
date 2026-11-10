@@ -180,7 +180,8 @@ removed (checked 2026-11-10).
 A FAIL on "one tray item" (first launch, or relaunch after Quit) with
 `G_IS_DBUS_CONNECTION` in the instance output is the known intermittent
 [missing tray item](../status/limitations.md#linux-tray), a real defect, not a
-test flake. Do not retry it away.
+test flake. Its cause is a race inside libayatana-appindicator, and it is not
+fixed. Do not retry it away.
 
 Because the environment is fully controlled, **a SKIP fails this run**: the
 script exits 1 if the summary reports any skipped check. Exit codes: 0 all

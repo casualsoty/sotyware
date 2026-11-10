@@ -64,6 +64,9 @@ icon open the dashboard and a right click open the menu, **on Windows**. Linux
 no default window icon, a warning is logged and the tray may be invisible.
 
 On Linux the tray is a StatusNotifierItem via libayatana-appindicator, which falls
-back to a legacy XEmbed icon when no StatusNotifierItem host exists. See
+back to a legacy XEmbed icon when no StatusNotifierItem host exists. Its
+registration with the host is asynchronous and happens after `tray::create()`
+returned, so a registration that never happens is not a creation error. A race
+inside the library occasionally causes exactly that. See
 [cross-platform.md](../development/cross-platform.md) and
 [limitations.md](../status/limitations.md).

@@ -233,11 +233,32 @@ and pid) was reported as "new" or the "8 close" check missed it; the tray "Quit"
 click raised D-Bus `NoReply` when sotyware exited before replying; and a missing
 tray registration crashed the driver. None was a sotyware defect.
 
-**Found, not fixed (sotyware/tray library):** a launch occasionally registers no
+**Found, not fixed (tray library):** a launch occasionally registers no
 tray item at all and prints
 `GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`;
-3 of about 420 primary launches. See
-[limitations.md](limitations.md#linux-tray). The suite reports it as a FAIL.
+3 of about 420 primary launches. Root cause investigated below. The suite
+reports it as a FAIL.
+
+### Missing tray item investigation (WSL2, Xvfb + openbox, stub tray host)
+
+Run 2026-11-10 at `c5540c9`, the machine and packages above (GLib
+2.80.0-6ubuntu3.10), release binary sha256 `10c5e588…29512` (same as at
+`53d9743`). The launch loop and the diagnostic shim were scratch tools outside
+the repository. The loop used the same isolation as `virtual.sh`: private Xvfb
+display, openbox, `dbus-run-session`, private `XDG_RUNTIME_DIR`,
+`sni_watcher.py`. Each launch waited up to 10 s for one registration, then ended
+with tray "Quit" (SIGTERM if not registered). No retries.
+
+| Check | Result |
+| --- | --- |
+| 420 consecutive launches, unmodified binary | ❌ 1 without a tray item (launch 58: alive, watcher owned its name, `G_IS_DBUS_CONNECTION` in the output, nothing else), 419 registered in ≤ 714 ms with no critical, all exited 0 |
+| 420 consecutive launches with a logging `LD_PRELOAD` shim, no delay | ✅ 0 failures. In every launch libayatana's own `g_bus_get` result arrived before the watcher's name-appeared callback, by 0.03 ms (minimum) to about 1.4 ms (median) |
+| Shim delays only libayatana's `g_bus_get` result by 300 ms | ❌ 2 of 2 without a tray item, same critical. `g_dbus_proxy_new` called from `libayatana-appindicator3.so.1` with `connection=(nil)` (the forced-order proof) |
+| After every launch, both loops: no sotyware process left; display, bus and runtime directory removed | ✅ |
+
+Result: the defect is a race in libayatana-appindicator (cause, evidence and
+fix status in [limitations.md](limitations.md#linux-tray)). No sotyware change;
+the limitation stays open. Not run outside WSL2.
 
 The headless suite, static checks and release build on the same machine and
 commit: `npm run test:headless` 8 + 17 passed with `DISPLAY`, `WAYLAND_DISPLAY`,
