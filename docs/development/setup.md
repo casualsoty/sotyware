@@ -75,9 +75,13 @@ environment issues, not sotyware bugs.
   ```bash
   PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd:) npm run tauri build
   ```
-- **`$XDG_RUNTIME_DIR` may be missing or unusable.** The tray icon image is written
-  there; without it sotyware exits with code 1. `tests/desktop/run.sh` creates a
-  private runtime directory for this reason.
+- **`$XDG_RUNTIME_DIR` may point to a directory that does not exist** (seen here:
+  `XDG_RUNTIME_DIR=/run/user/1000` with no such directory). The tray icon image
+  is written there, so tray creation fails with
+  `sotyware: cannot create system tray icon: tray icon error: Permission denied`
+  and sotyware exits with code 1. With the variable unset, the tray is created
+  normally. Fix: point it at a private `chmod 700` directory you own, as
+  `tests/desktop/run.sh` does.
 - **WSLg's window manager ignores focus and minimize requests.** Focus and
   un-minimize behaviour cannot be verified under WSLg (see
   [testing.md](testing.md)).
