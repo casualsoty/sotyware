@@ -78,6 +78,54 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Why the tray cannot exist in this environment, if `error` (from [`create`]) says
+/// so; `None` for every other error, which stays fatal.
+///
+/// Only Linux has such errors. tray-icon's ksni backend reports each step of
+/// registering a StatusNotifierItem separately, and three of them mean that no
+/// tray host is reachable rather than that sotyware is broken:
+/// - connecting to the session bus fails because nothing is there (socket missing
+///   or refusing). zbus's `Connection` error comes only from that connect step;
+/// - the `RegisterStatusNotifierItem` call fails because nobody owns
+///   `org.kde.StatusNotifierWatcher` (`ServiceUnknown`, or `NameHasNoOwner` from
+///   dbus-broker), which also covers a watcher that left before the call;
+/// - the watcher reports that no StatusNotifierHost is registered (`WontShow`).
+///
+/// Anything else (an unparsable bus address, permission or handshake errors, a
+/// watcher that answers with another error or never replies, a failure after
+/// registration, menu or thread errors) is not classified and stays fatal.
+#[cfg(target_os = "linux")]
+pub fn unavailable_reason(error: &tauri::Error) -> Option<&'static str> {
+    use std::io::ErrorKind;
+    use zbus::fdo;
+
+    let tauri::Error::Tray(tray_icon::Error::Ksni(error)) = error else {
+        return None;
+    };
+    match error {
+        ksni::Error::Dbus(zbus::Error::Connection(io, _))
+            if matches!(
+                io.kind(),
+                ErrorKind::NotFound | ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Some("no D-Bus session bus")
+        }
+        ksni::Error::Watcher(fdo::Error::ServiceUnknown(_) | fdo::Error::NameHasNoOwner(_)) => {
+            Some("no StatusNotifierWatcher")
+        }
+        ksni::Error::WontShow => Some("no StatusNotifierHost"),
+        _ => None,
+    }
+}
+
+/// Windows (and every other platform) always has a tray, so every tray error is a
+/// real failure.
+#[cfg(not(target_os = "linux"))]
+pub fn unavailable_reason(_error: &tauri::Error) -> Option<&'static str> {
+    None
+}
+
 fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     if let Some(action) = TrayAction::from_menu_id(event.id().as_ref()) {
         action.perform(app);
@@ -170,5 +218,109 @@ mod tests {
         let app = RecordingApp::default();
         TrayAction::Quit.perform(&app);
         assert_eq!(*app.calls.borrow(), ["quit"]);
+    }
+
+    #[test]
+    fn errors_outside_the_tray_backend_are_not_an_unavailable_tray() {
+        for e in [
+            tauri::Error::FailedToReceiveMessage,
+            tauri::Error::WindowNotFound,
+            tauri::Error::Io(std::io::ErrorKind::NotFound.into()),
+        ] {
+            assert_eq!(unavailable_reason(&e), None, "{e}");
+        }
+    }
+
+    /// The errors tray-icon's ksni backend returns, built exactly as it builds
+    /// them (`ksni` 0.3.7 `service::run`, zbus 5.19 `address::transport`).
+    #[cfg(target_os = "linux")]
+    mod linux {
+        use std::{io, str::FromStr, sync::Arc};
+
+        use super::super::unavailable_reason;
+        use zbus::fdo;
+
+        fn ksni(e: ksni::Error) -> tauri::Error {
+            tauri::Error::Tray(tray_icon::Error::Ksni(e))
+        }
+
+        fn connect_failed(kind: io::ErrorKind) -> tauri::Error {
+            let address = zbus::Address::from_str("unix:path=/run/user/1000/bus").unwrap();
+            ksni(ksni::Error::Dbus(zbus::Error::Connection(
+                Arc::new(kind.into()),
+                address,
+            )))
+        }
+
+        #[test]
+        fn no_session_bus_means_no_tray() {
+            // Socket file missing (no bus started) or nobody listening on it.
+            for kind in [io::ErrorKind::NotFound, io::ErrorKind::ConnectionRefused] {
+                assert_eq!(
+                    unavailable_reason(&connect_failed(kind)),
+                    Some("no D-Bus session bus"),
+                    "{kind:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn no_watcher_means_no_tray() {
+            let message =
+                "The name org.kde.StatusNotifierWatcher was not provided by any .service files";
+            for e in [
+                fdo::Error::ServiceUnknown(message.into()),
+                fdo::Error::NameHasNoOwner(message.into()),
+            ] {
+                assert_eq!(
+                    unavailable_reason(&ksni(ksni::Error::Watcher(e))),
+                    Some("no StatusNotifierWatcher")
+                );
+            }
+        }
+
+        #[test]
+        fn no_host_means_no_tray() {
+            assert_eq!(
+                unavailable_reason(&ksni(ksni::Error::WontShow)),
+                Some("no StatusNotifierHost")
+            );
+        }
+
+        #[test]
+        fn other_bus_connection_failures_stay_fatal() {
+            assert_eq!(
+                unavailable_reason(&connect_failed(io::ErrorKind::PermissionDenied)),
+                None
+            );
+            for e in [
+                zbus::Error::Address("garbage".into()),
+                zbus::Error::Handshake("auth failed".into()),
+                zbus::Error::InputOutput(Arc::new(io::ErrorKind::NotFound.into())),
+                zbus::Error::NameTaken,
+            ] {
+                assert_eq!(unavailable_reason(&ksni(ksni::Error::Dbus(e))), None);
+            }
+        }
+
+        #[test]
+        fn a_watcher_that_fails_otherwise_stays_fatal() {
+            for e in [
+                fdo::Error::AccessDenied("no".into()),
+                fdo::Error::NoReply("watcher left during the call".into()),
+                fdo::Error::Failed("broken".into()),
+                fdo::Error::UnknownMethod("old watcher".into()),
+            ] {
+                assert_eq!(unavailable_reason(&ksni(ksni::Error::Watcher(e))), None);
+            }
+        }
+
+        #[test]
+        fn other_tray_icon_errors_stay_fatal() {
+            let e = tauri::Error::Tray(tray_icon::Error::OsError(io::ErrorKind::NotFound.into()));
+            assert_eq!(unavailable_reason(&e), None);
+            let e = tauri::Error::Tray(tray_icon::Error::NotMainThread);
+            assert_eq!(unavailable_reason(&e), None);
+        }
     }
 }

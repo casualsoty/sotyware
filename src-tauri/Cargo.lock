@@ -3271,11 +3271,13 @@ dependencies = [
 name = "sotyware"
 version = "0.1.0"
 dependencies = [
+ "ksni",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
  "tray-icon",
+ "zbus",
 ]
 
 [[package]]

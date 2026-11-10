@@ -14,13 +14,23 @@ interface IpcCall {
   payload: unknown;
 }
 
+const MODE_CMD = "operating_mode"; // #[tauri::command] in src-tauri/src/lib.rs
+const HIDE_CMD = "plugin:window|hide";
+
 let calls: IpcCall[];
+let mode: unknown;
 let respond: (cmd: string) => unknown;
 let app: ReturnType<typeof mount> | undefined;
 
+/** The Rust side: answers the mode command with `mode`, everything else with null. */
+function backend(cmd: string): unknown {
+  return cmd === MODE_CMD ? mode : null;
+}
+
 beforeEach(() => {
   calls = [];
-  respond = (): null => null;
+  mode = "tray";
+  respond = backend;
   mockWindows(DASHBOARD_LABEL);
   mockIPC((cmd, payload) => {
     calls.push({ cmd, payload });
@@ -37,59 +47,78 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function render(): HTMLElement {
-  const target = document.createElement("div");
-  document.body.append(target);
-  app = mount(App, { target });
-  flushSync();
-  return target;
-}
-
-function hideButton(root: HTMLElement): HTMLButtonElement {
-  const button = [...root.querySelectorAll("button")].find((b) => b.textContent === "Hide dashboard");
-  if (!button) {
-    throw new Error(`no "Hide dashboard" button in: ${root.innerHTML}`);
-  }
-  return button;
-}
-
 /** Runs every pending promise callback (the mocked IPC round trip), then Svelte's updates. */
 async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   flushSync();
 }
 
-describe("dashboard", () => {
-  it("renders the heading and a plain button, no error", () => {
-    const root = render();
+/** Mounts the dashboard and waits until it has its operating mode from Rust. */
+async function render(): Promise<HTMLElement> {
+  const target = document.createElement("div");
+  document.body.append(target);
+  app = mount(App, { target });
+  flushSync();
+  await settle();
+  return target;
+}
+
+function findHideButton(root: HTMLElement): HTMLButtonElement | undefined {
+  return [...root.querySelectorAll("button")].find((b) => b.textContent === "Hide dashboard");
+}
+
+function hideButton(root: HTMLElement): HTMLButtonElement {
+  const button = findHideButton(root);
+  if (!button) {
+    throw new Error(`no "Hide dashboard" button in: ${root.innerHTML}`);
+  }
+  return button;
+}
+
+function hideCalls(): IpcCall[] {
+  return calls.filter((c) => c.cmd === HIDE_CMD);
+}
+
+describe("dashboard in tray mode", () => {
+  it("asks Rust for the mode once, and nothing else, when it renders", async () => {
+    await render();
+    expect(calls.map((c) => c.cmd)).toEqual([MODE_CMD]);
+  });
+
+  it("renders the heading, the tray hint and a plain button, no error", async () => {
+    const root = await render();
     expect(root.querySelector("h1")?.textContent).toBe("sotyware");
+    expect(root.textContent).toContain("reopen it any time from the system tray");
     // type="button" so it never submits a form if the page grows one.
     expect(hideButton(root).type).toBe("button");
     expect(root.querySelector('[role="alert"]')).toBeNull();
-    expect(calls, "rendering must not call Tauri").toEqual([]);
+    expect(root.querySelector('[role="status"]')).toBeNull();
   });
 
   it("hides its own window when the button is clicked", async () => {
-    const root = render();
+    const root = await render();
     hideButton(root).click();
     await settle();
-    expect(calls).toEqual([{ cmd: "plugin:window|hide", payload: { label: DASHBOARD_LABEL } }]);
+    expect(hideCalls()).toEqual([{ cmd: HIDE_CMD, payload: { label: DASHBOARD_LABEL } }]);
     expect(root.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("calls hide once per click", async () => {
-    const root = render();
+    const root = await render();
     hideButton(root).click();
     hideButton(root).click();
     await settle();
-    expect(calls.map((c) => c.cmd)).toEqual(["plugin:window|hide", "plugin:window|hide"]);
+    expect(hideCalls()).toHaveLength(2);
   });
 
   it("shows the error when hiding fails, and keeps the button usable", async () => {
-    respond = (): never => {
-      throw new Error("window.hide not allowed");
+    respond = (cmd): unknown => {
+      if (cmd === HIDE_CMD) {
+        throw new Error("window.hide not allowed");
+      }
+      return backend(cmd);
     };
-    const root = render();
+    const root = await render();
     hideButton(root).click();
     await settle();
     const alert = root.querySelector('[role="alert"]');
@@ -99,8 +128,11 @@ describe("dashboard", () => {
 
   it("shows a rejected non-Error value too", async () => {
     // Tauri rejects with a plain string when the capability denies a command.
-    respond = (): Promise<never> => Promise.reject("window.hide not allowed. Permissions associated with this command: core:window:allow-hide");
-    const root = render();
+    respond = (cmd): unknown =>
+      cmd === HIDE_CMD
+        ? Promise.reject("window.hide not allowed. Permissions associated with this command: core:window:allow-hide")
+        : backend(cmd);
+    const root = await render();
     hideButton(root).click();
     await settle();
     expect(root.querySelector('[role="alert"]')?.textContent).toMatch(
@@ -110,13 +142,13 @@ describe("dashboard", () => {
 
   it("clears an earlier error when a retry succeeds", async () => {
     let fail = true;
-    respond = (): null => {
-      if (fail) {
+    respond = (cmd): unknown => {
+      if (cmd === HIDE_CMD && fail) {
         throw new Error("busy");
       }
-      return null;
+      return backend(cmd);
     };
-    const root = render();
+    const root = await render();
     hideButton(root).click();
     await settle();
     expect(root.querySelector('[role="alert"]')).not.toBeNull();
@@ -125,7 +157,53 @@ describe("dashboard", () => {
     hideButton(root).click();
     await settle();
     expect(root.querySelector('[role="alert"]')).toBeNull();
-    expect(calls).toHaveLength(2);
+    expect(hideCalls()).toHaveLength(2);
+  });
+});
+
+describe("dashboard in dashboard-only mode", () => {
+  beforeEach(() => {
+    mode = "dashboard-only";
+  });
+
+  it("explains that there is no tray and that closing quits", async () => {
+    const root = await render();
+    // Whitespace as a reader sees it: the template wraps the text over lines.
+    const status = root.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, " ");
+    expect(status).toContain("No compatible system tray is available");
+    expect(status).toContain("the dashboard cannot be hidden");
+    expect(status).toContain("Keep this window open while you use sotyware.");
+    expect(status).toContain("Closing it quits sotyware.");
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("offers no Hide action and never asks Tauri to hide", async () => {
+    const root = await render();
+    expect(findHideButton(root)).toBeUndefined();
+    expect(root.querySelectorAll("button")).toHaveLength(0);
+    expect(root.textContent).not.toContain("from the system tray");
+    expect(calls.map((c) => c.cmd)).toEqual([MODE_CMD]);
+  });
+});
+
+describe("dashboard when the mode cannot be read", () => {
+  it("shows the error and offers no Hide action when the command fails", async () => {
+    respond = (cmd): unknown => (cmd === MODE_CMD ? Promise.reject("operating_mode not allowed") : null);
+    const root = await render();
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe(
+      "Could not check whether a system tray is available: operating_mode not allowed",
+    );
+    expect(findHideButton(root)).toBeUndefined();
+    expect(root.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("treats an unknown mode as an error, not as tray mode", async () => {
+    mode = "background";
+    const root = await render();
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not check whether a system tray is available: Error: unknown operating mode: "background"',
+    );
+    expect(findHideButton(root)).toBeUndefined();
   });
 });
 

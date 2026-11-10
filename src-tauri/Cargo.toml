@@ -40,3 +40,8 @@ serde_json = "1"
 # race in libayatana-appindicator. Same version range as Tauri's, so Cargo
 # unifies it with Tauri's copy instead of adding a second one.
 tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+# Not new crates either: both are in the tree through tray-icon's ksni backend.
+# Declared only so tray.rs can name the error types ksni returns and tell "no
+# tray host here" apart from real failures (ADR-012). No features are added.
+ksni = { version = "0.3", default-features = false }
+zbus = { version = "5", default-features = false }

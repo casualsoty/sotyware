@@ -1,30 +1,66 @@
-//! sotyware desktop runtime: one dashboard window plus a system tray icon.
+//! sotyware desktop runtime: one dashboard window plus, where possible, a system
+//! tray icon.
 //!
-//! Lifecycle rules:
-//! - Hiding the dashboard (button) only hides the window.
-//! - Closing the dashboard (title-bar X, Alt+F4) is intercepted and turned into a hide.
-//! - Only the tray "Quit" item terminates the process, via `AppHandle::exit(0)`.
-//! - If the tray icon cannot be created, the app exits with code 1.
-//! - Only one instance runs: launching the app again shows the existing dashboard
-//!   (via `tauri-plugin-single-instance`) and the new process exits.
+//! `setup` tries to create the tray once and picks the [`OperatingMode`]:
+//! - **Tray mode** (tray created): hiding the dashboard (button) only hides the
+//!   window; closing it (title-bar X, Alt+F4) is turned into a hide; only the tray
+//!   "Quit" item ends the process, via `AppHandle::exit(0)`.
+//! - **Dashboard-only mode** (Linux without a reachable tray host): the dashboard is
+//!   the only way to reach sotyware, so the frontend may not hide it and closing it
+//!   ends the process, via `AppHandle::exit(0)`.
+//! - Any other tray error is fatal: the app exits with code 1.
 //!
-//! The decisions behind these rules are plain functions (`close_action`,
-//! `exit_allowed`, `tray_failure_exit_code`, `on_second_launch`, `reveal`) so that
-//! unit tests can check them without a display, a tray host or an event loop. The
-//! Tauri handlers below only wire them to the runtime.
+//! In both modes only one instance runs: launching the app again shows the existing
+//! dashboard (via `tauri-plugin-single-instance`) and the new process exits.
+//!
+//! The decisions behind these rules are plain functions (`select_mode`,
+//! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
+//! `reveal`) so that unit tests can check them without a display, a tray host or an
+//! event loop. The Tauri handlers below only wire them to the runtime.
 
 mod tray;
 
-use tauri::{AppHandle, Manager, RunEvent, Runtime, WebviewWindow, WindowEvent};
+use tauri::{
+    AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WindowEvent,
+    ipc::CapabilityBuilder,
+};
 
 /// Label of the single dashboard window, as declared in `tauri.conf.json`.
 pub const DASHBOARD_LABEL: &str = "main";
 
-/// Exit code of the tray "Quit" item.
+/// Exit code of the tray "Quit" item, and of closing the dashboard in
+/// dashboard-only mode.
 const EXIT_QUIT: i32 = 0;
 
-/// Exit code when the tray icon cannot be created.
+/// Exit code when the tray icon cannot be created for a reason other than a
+/// missing tray host.
 const EXIT_TRAY_FAILED: i32 = 1;
+
+/// Runtime capability that lets the dashboard hide itself. Granted only in tray
+/// mode, where the tray can bring the window back (ADR-012).
+const TRAY_MODE_CAPABILITY: &str = "tray-mode";
+const HIDE_PERMISSION: &str = "core:window:allow-hide";
+
+/// How sotyware runs. Chosen once in `setup` from the result of creating the tray
+/// and stored as Tauri state; it never changes while the process runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OperatingMode {
+    /// The tray exists. sotyware runs in the background; the tray restores and quits it.
+    Tray,
+    /// No tray host is reachable (Linux only). The dashboard stays the one way to
+    /// reach sotyware, so it is never hidden and closing it ends the process.
+    DashboardOnly,
+}
+
+impl OperatingMode {
+    /// The value the frontend receives from the `operating_mode` command.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tray => "tray",
+            Self::DashboardOnly => "dashboard-only",
+        }
+    }
+}
 
 /// The app-level actions the tray and the single-instance callback trigger.
 ///
@@ -99,38 +135,63 @@ fn reveal(window: &impl DashboardWindow) {
 enum CloseAction {
     /// Keep the window and hide it; the process keeps running.
     HideInstead,
+    /// End the process with `exit(EXIT_QUIT)`: nothing could bring a closed
+    /// dashboard back.
+    Quit,
     /// Let the runtime close it.
     Allow,
 }
 
-fn close_action(label: &str) -> CloseAction {
-    if label == DASHBOARD_LABEL {
-        CloseAction::HideInstead
-    } else {
-        CloseAction::Allow
+fn close_action(label: &str, mode: OperatingMode) -> CloseAction {
+    match (label == DASHBOARD_LABEL, mode) {
+        (false, _) => CloseAction::Allow,
+        (true, OperatingMode::Tray) => CloseAction::HideInstead,
+        (true, OperatingMode::DashboardOnly) => CloseAction::Quit,
     }
+}
+
+/// Whether the frontend gets the permission to hide the dashboard. Only the tray
+/// can show a hidden dashboard again, so without one hiding is never allowed: not
+/// by the button, which the frontend does not render then, nor by any other call.
+fn frontend_may_hide(mode: OperatingMode) -> bool {
+    mode == OperatingMode::Tray
 }
 
 /// Whether a runtime exit request may end the process.
 ///
 /// `code: None` means the runtime wants to exit because no windows remain. That
 /// must never stop the background process; only an explicit `exit(code)` (tray
-/// "Quit", fatal tray failure) carries `Some(code)` and is allowed through.
+/// "Quit", closing the dashboard in dashboard-only mode, fatal tray failure)
+/// carries `Some(code)` and is allowed through.
 fn exit_allowed(code: Option<i32>) -> bool {
     code.is_some()
 }
 
-/// The exit code `setup` must use after trying to create the tray, or `None` if the
-/// app can continue. Without a tray there is no way to restore or quit a hidden
-/// dashboard, so a tray failure is fatal instead of leaving an unreachable process.
-fn tray_failure_exit_code(result: tauri::Result<()>) -> Option<i32> {
-    match result {
-        Ok(()) => None,
-        Err(e) => {
-            eprintln!("sotyware: cannot create system tray icon: {e}");
-            Some(EXIT_TRAY_FAILED)
-        }
+/// The operating mode after trying to create the tray, or the exit code `setup`
+/// must use if sotyware cannot run.
+///
+/// Only an error that `tray::unavailable_reason` recognises as "no tray host in this
+/// environment" selects dashboard-only mode. Every other error is a defect or a
+/// broken environment and stays fatal, as it was before dashboard-only mode existed.
+fn select_mode(result: tauri::Result<()>) -> Result<OperatingMode, i32> {
+    let Err(e) = result else {
+        return Ok(OperatingMode::Tray);
+    };
+    if let Some(reason) = tray::unavailable_reason(&e) {
+        eprintln!("sotyware: no system tray available ({reason}): {e}");
+        eprintln!("sotyware: running in dashboard-only mode; closing the dashboard quits");
+        Ok(OperatingMode::DashboardOnly)
+    } else {
+        eprintln!("sotyware: cannot create system tray icon: {e}");
+        Err(EXIT_TRAY_FAILED)
     }
+}
+
+/// Tells the frontend the operating mode: `"tray"` or `"dashboard-only"`.
+/// Allowed for the dashboard by the `allow-operating-mode` permission.
+#[tauri::command]
+fn operating_mode(mode: State<'_, OperatingMode>) -> &'static str {
+    mode.as_str()
 }
 
 /// What the primary instance does when a second launch hands over to it.
@@ -157,22 +218,49 @@ pub fn run() {
     }
 
     let app = builder
-        // `setup` runs exactly once, so the tray and its handlers are registered once.
+        .invoke_handler(tauri::generate_handler![operating_mode])
+        // `setup` runs exactly once, so the tray and its handlers are registered once,
+        // and the mode is chosen once. Without a tray host the tray is not retried.
         .setup(|app| {
-            if let Some(code) = tray_failure_exit_code(tray::create(app.handle())) {
-                app.handle().exit(code);
+            match select_mode(tray::create(app.handle())) {
+                Ok(mode) => {
+                    if frontend_may_hide(mode) {
+                        app.add_capability(
+                            CapabilityBuilder::new(TRAY_MODE_CAPABILITY)
+                                .window(DASHBOARD_LABEL)
+                                .permission(HIDE_PERMISSION),
+                        )?;
+                    }
+                    app.manage(mode);
+                }
+                Err(code) => app.handle().exit(code),
             }
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event
-                && close_action(window.label()) == CloseAction::HideInstead
-            {
-                // Closing the dashboard must not end the app: keep the window, hide it.
-                api.prevent_close();
-                if let Err(e) = window.hide() {
-                    eprintln!("sotyware: failed to hide dashboard on close: {e}");
+            let WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            // The mode is managed in `setup`, before the event loop delivers window
+            // events. Should it ever be missing, no tray is known to exist, so the
+            // dashboard must not be hidden.
+            let mode = window
+                .try_state::<OperatingMode>()
+                .map_or(OperatingMode::DashboardOnly, |mode| *mode);
+            match close_action(window.label(), mode) {
+                CloseAction::HideInstead => {
+                    // Closing the dashboard must not end the app: keep the window, hide it.
+                    api.prevent_close();
+                    if let Err(e) = window.hide() {
+                        eprintln!("sotyware: failed to hide dashboard on close: {e}");
+                    }
                 }
+                CloseAction::Quit => {
+                    // An explicit exit code, so `exit_allowed` lets it through.
+                    api.prevent_close();
+                    window.app_handle().exit(EXIT_QUIT);
+                }
+                CloseAction::Allow => {}
             }
         })
         .build(tauri::generate_context!())
@@ -276,16 +364,47 @@ mod tests {
         }
     }
 
+    const MODES: [OperatingMode; 2] = [OperatingMode::Tray, OperatingMode::DashboardOnly];
+
     #[test]
-    fn closing_the_dashboard_hides_it() {
-        assert_eq!(close_action(DASHBOARD_LABEL), CloseAction::HideInstead);
+    fn tray_mode_closing_the_dashboard_hides_it() {
+        assert_eq!(
+            close_action(DASHBOARD_LABEL, OperatingMode::Tray),
+            CloseAction::HideInstead
+        );
+    }
+
+    #[test]
+    fn dashboard_only_closing_the_dashboard_quits() {
+        assert_eq!(
+            close_action(DASHBOARD_LABEL, OperatingMode::DashboardOnly),
+            CloseAction::Quit
+        );
     }
 
     #[test]
     fn closing_another_window_is_allowed() {
-        assert_eq!(close_action("other"), CloseAction::Allow);
-        // Labels are case-sensitive in Tauri; only the exact dashboard label is kept.
-        assert_eq!(close_action("Main"), CloseAction::Allow);
+        for mode in MODES {
+            assert_eq!(close_action("other", mode), CloseAction::Allow);
+            // Labels are case-sensitive in Tauri; only the exact dashboard label is kept.
+            assert_eq!(close_action("Main", mode), CloseAction::Allow);
+        }
+    }
+
+    #[test]
+    fn tray_mode_lets_the_frontend_hide_the_dashboard() {
+        assert!(frontend_may_hide(OperatingMode::Tray));
+    }
+
+    #[test]
+    fn dashboard_only_never_lets_the_frontend_hide_the_dashboard() {
+        assert!(!frontend_may_hide(OperatingMode::DashboardOnly));
+    }
+
+    #[test]
+    fn frontend_receives_the_mode_names() {
+        assert_eq!(OperatingMode::Tray.as_str(), "tray");
+        assert_eq!(OperatingMode::DashboardOnly.as_str(), "dashboard-only");
     }
 
     #[test]
@@ -303,16 +422,43 @@ mod tests {
     }
 
     #[test]
-    fn tray_success_lets_the_app_continue() {
-        assert_eq!(tray_failure_exit_code(Ok(())), None);
+    fn tray_success_selects_tray_mode() {
+        assert_eq!(select_mode(Ok(())), Ok(OperatingMode::Tray));
     }
 
     #[test]
-    fn tray_failure_exits_with_code_1() {
+    fn unexpected_tray_failure_exits_with_code_1() {
         assert_eq!(
-            tray_failure_exit_code(Err(tauri::Error::FailedToReceiveMessage)),
-            Some(1)
+            select_mode(Err(tauri::Error::FailedToReceiveMessage)),
+            Err(1)
         );
+        assert_eq!(select_mode(Err(tauri::Error::WindowNotFound)), Err(1));
+    }
+
+    /// The real errors are classified in `tray::unavailable_reason` (tested there);
+    /// this checks that `select_mode` turns them into a mode, not an exit.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_tray_host_selects_dashboard_only_mode() {
+        let no_watcher = ksni::Error::Watcher(zbus::fdo::Error::ServiceUnknown(
+            "The name org.kde.StatusNotifierWatcher was not provided by any .service files".into(),
+        ));
+        let no_bus = ksni::Error::Dbus(zbus::Error::Connection(
+            std::sync::Arc::new(std::io::ErrorKind::NotFound.into()),
+            "unix:path=/nonexistent/bus".parse().unwrap(),
+        ));
+        for e in [no_watcher, no_bus, ksni::Error::WontShow] {
+            let e = tauri::Error::Tray(tray_icon::Error::Ksni(e));
+            assert_eq!(select_mode(Err(e)), Ok(OperatingMode::DashboardOnly));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unexpected_ksni_failure_is_not_turned_into_dashboard_only_mode() {
+        let e = ksni::Error::Watcher(zbus::fdo::Error::AccessDenied("rejected".into()));
+        let e = tauri::Error::Tray(tray_icon::Error::Ksni(e));
+        assert_eq!(select_mode(Err(e)), Err(1));
     }
 
     #[test]
@@ -345,14 +491,27 @@ mod tests {
     }
 
     #[test]
-    fn capability_targets_the_dashboard_and_only_allows_hide() {
+    fn dashboard_starts_visible() {
+        // In both modes the dashboard is on screen at startup; in dashboard-only
+        // mode it is the only way to reach sotyware.
+        let conf = read_json("tauri.conf.json");
+        assert_eq!(
+            conf["app"]["windows"][0]["visible"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn capability_targets_the_dashboard_and_only_allows_reading_the_mode() {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
-        // Widening the frontend's permissions is a design decision (ADR-006);
-        // update this test together with decisions.md.
+        // Widening the frontend's permissions is a design decision (ADR-006,
+        // ADR-012); update this test together with decisions.md. Hiding is granted
+        // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
-            serde_json::json!(["core:window:allow-hide"])
+            serde_json::json!(["allow-operating-mode"])
         );
+        assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");
     }
 }
