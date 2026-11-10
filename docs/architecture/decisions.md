@@ -113,3 +113,27 @@ Status: Accepted
   and `docs/CONTEXT.md`.
 - **Consequences:** Documentation must be updated in the same change as the
   behaviour it describes. Rules: [AGENTS.md](../../AGENTS.md#documentation-rules).
+
+## ADR-009: Lifecycle decisions are plain functions behind small traits
+
+Status: Accepted
+
+- **Context:** The lifecycle rules (close → hide, implicit exit blocked, tray
+  failure → exit 1, second launch → show dashboard, tray dispatch) lived inside
+  Tauri closures and could only be checked with a display, a tray host and the
+  release binary. Tauri's `test` feature (`MockRuntime`) does not help: its window
+  `show`/`hide` are no-ops that record nothing, `exit` is `unimplemented!()`, and
+  tray creation waits for an event loop that never runs during `setup`.
+- **Decision:** Each decision is a plain function in `lib.rs` (`close_action`,
+  `exit_allowed`, `tray_failure_exit_code`, `on_second_launch`, `reveal`) or a
+  method on `TrayAction` in `tray.rs`. Where a decision triggers an operation, it
+  calls one of two small traits: `AppControl` (`show_dashboard`, `quit`,
+  implemented by `AppHandle`) and `DashboardWindow` (`unminimize`, `show`,
+  `set_focus`, implemented by `WebviewWindow`). Unit tests pass recording doubles.
+  `serde_json` (already in the tree through `tauri`) is a dev-dependency so a test
+  can check `tauri.conf.json` and the capability against `DASHBOARD_LABEL`.
+- **Consequences:** `cargo test` covers the decisions without a graphical session.
+  It does not cover the wiring to the real runtime (that the handlers are
+  registered and Tauri delivers the events); the desktop tests still do. New
+  lifecycle rules should follow the same pattern; do not add traits for code that
+  has no decision to test.

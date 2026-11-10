@@ -32,8 +32,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── icons/                Bundle and tray icons (Tauri placeholders)
 │   └── src/
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
-│       ├── lib.rs            App builder, lifecycle, single instance, show_dashboard()
-│       └── tray.rs           Tray icon, menu, TrayAction + unit test
+│       ├── lib.rs            App builder, lifecycle, single instance, show_dashboard(), AppControl + unit tests
+│       └── tray.rs           Tray icon, menu, TrayAction + unit tests
 └── tests/
     └── desktop/              Desktop tests of the release binary
         ├── run.sh            Linux/X11 simulated test: private D-Bus session + runtime dir

@@ -20,9 +20,12 @@ cd src-tauri && cargo test
 ```
 
 Keep logic that can be tested without a running Tauri app in plain functions or
-types (as `TrayAction::from_menu_id` is) and test it next to its code. Window,
-tray and single-instance behaviour cannot run under `cargo test`; they need a
-display and an event loop.
+types (as `TrayAction::from_menu_id` is) and test it next to its code. Where a
+decision triggers an app or window operation, it goes through a small trait
+(`AppControl`, `DashboardWindow` in `lib.rs`) so the test can pass a recording
+double ([ADR-009](../architecture/decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)).
+The real window, tray and single-instance plugin cannot run under `cargo test`;
+they need a display and an event loop.
 
 ## Simulated desktop test
 

@@ -55,8 +55,8 @@ the app's default window icon, and a menu:
 
 | Menu id | Label | `TrayAction` | Effect |
 | --- | --- | --- | --- |
-| `open-dashboard` | Open Dashboard | `OpenDashboard` | `crate::show_dashboard(app)` |
-| `quit` | Quit | `Quit` | `app.exit(0)` |
+| `open-dashboard` | Open Dashboard | `OpenDashboard` | `AppControl::show_dashboard` → `show_dashboard(app)` |
+| `quit` | Quit | `Quit` | `AppControl::quit` → `app.exit(0)` |
 
 Unknown ids are ignored. `show_menu_on_left_click(false)` makes a left click on the
 icon open the dashboard and a right click open the menu, **on Windows**. Linux

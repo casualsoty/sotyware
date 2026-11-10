@@ -2,15 +2,20 @@
 
 use tauri::{
     AppHandle,
-    menu::{Menu, MenuEvent, MenuItem},
+    menu::{IsMenuItem, Menu, MenuEvent, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+
+use crate::AppControl;
 
 const TRAY_ID: &str = "sotyware-tray";
 const MENU_OPEN: &str = "open-dashboard";
 const MENU_QUIT: &str = "quit";
 
-/// What a tray menu item does.
+/// The tray menu, in display order: (menu id, label).
+const MENU_ITEMS: [(&str, &str); 2] = [(MENU_OPEN, "Open Dashboard"), (MENU_QUIT, "Quit")];
+
+/// What a tray menu item or tray icon click does.
 #[derive(Debug, PartialEq, Eq)]
 enum TrayAction {
     OpenDashboard,
@@ -25,13 +30,32 @@ impl TrayAction {
             _ => None,
         }
     }
+
+    /// Left click (on release) opens the dashboard; every other click does nothing
+    /// here (right click shows the menu, handled by the OS).
+    fn from_icon_click(button: MouseButton, state: MouseButtonState) -> Option<Self> {
+        match (button, state) {
+            (MouseButton::Left, MouseButtonState::Up) => Some(Self::OpenDashboard),
+            _ => None,
+        }
+    }
+
+    fn perform(self, app: &impl AppControl) {
+        match self {
+            Self::OpenDashboard => app.show_dashboard(),
+            Self::Quit => app.quit(),
+        }
+    }
 }
 
 /// Creates the tray icon. Must be called once, from `setup`.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, MENU_OPEN, "Open Dashboard", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let items = MENU_ITEMS
+        .iter()
+        .map(|(id, label)| MenuItem::with_id(app, *id, *label, true, None::<&str>))
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let refs: Vec<&dyn IsMenuItem<_>> = items.iter().map(|i| i as &dyn IsMenuItem<_>).collect();
+    let menu = Menu::with_items(app, &refs)?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("sotyware")
@@ -54,28 +78,28 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
-    match TrayAction::from_menu_id(event.id().as_ref()) {
-        Some(TrayAction::OpenDashboard) => crate::show_dashboard(app),
-        Some(TrayAction::Quit) => app.exit(0),
-        None => {}
+    if let Some(action) = TrayAction::from_menu_id(event.id().as_ref()) {
+        action.perform(app);
     }
 }
 
 /// Tray icon click events are emitted on Windows (and macOS) only, not on Linux.
 fn handle_tray_icon_event(tray: &tauri::tray::TrayIcon, event: TrayIconEvent) {
     if let TrayIconEvent::Click {
-        button: MouseButton::Left,
-        button_state: MouseButtonState::Up,
+        button,
+        button_state,
         ..
     } = event
+        && let Some(action) = TrayAction::from_icon_click(button, button_state)
     {
-        crate::show_dashboard(tray.app_handle());
+        action.perform(tray.app_handle());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::RecordingApp;
 
     #[test]
     fn menu_ids_map_to_actions() {
@@ -85,5 +109,63 @@ mod tests {
         );
         assert_eq!(TrayAction::from_menu_id(MENU_QUIT), Some(TrayAction::Quit));
         assert_eq!(TrayAction::from_menu_id("unknown"), None);
+        assert_eq!(TrayAction::from_menu_id(""), None);
+    }
+
+    #[test]
+    fn menu_shows_open_dashboard_then_quit() {
+        let labels: Vec<&str> = MENU_ITEMS.iter().map(|(_, label)| *label).collect();
+        assert_eq!(labels, ["Open Dashboard", "Quit"]);
+    }
+
+    #[test]
+    fn every_menu_item_has_an_action_and_a_unique_kebab_case_id() {
+        for (i, (id, _)) in MENU_ITEMS.iter().enumerate() {
+            assert!(
+                TrayAction::from_menu_id(id).is_some(),
+                "menu id {id} has no action"
+            );
+            assert!(
+                !id.is_empty()
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                "menu id {id} is not lowercase kebab-case"
+            );
+            assert!(
+                MENU_ITEMS[i + 1..].iter().all(|(other, _)| other != id),
+                "menu id {id} is used twice"
+            );
+        }
+    }
+
+    #[test]
+    fn only_left_click_release_opens_the_dashboard() {
+        use MouseButton::*;
+        use MouseButtonState::*;
+        assert_eq!(
+            TrayAction::from_icon_click(Left, Up),
+            Some(TrayAction::OpenDashboard)
+        );
+        // Opening on press as well would show the dashboard twice per click.
+        assert_eq!(TrayAction::from_icon_click(Left, Down), None);
+        for state in [Up, Down] {
+            assert_eq!(TrayAction::from_icon_click(Right, state), None);
+            assert_eq!(TrayAction::from_icon_click(Middle, state), None);
+        }
+    }
+
+    #[test]
+    fn open_dashboard_shows_and_never_quits() {
+        let app = RecordingApp::default();
+        TrayAction::OpenDashboard.perform(&app);
+        assert_eq!(*app.calls.borrow(), ["show_dashboard"]);
+    }
+
+    #[test]
+    fn quit_only_quits() {
+        let app = RecordingApp::default();
+        TrayAction::Quit.perform(&app);
+        assert_eq!(*app.calls.borrow(), ["quit"]);
     }
 }

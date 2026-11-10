@@ -176,8 +176,8 @@ commit message on which platforms a change was actually run.
 Every coding agent must:
 
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
-2. Understand existing abstractions (`show_dashboard()`, `TrayAction`, the
-   capability file) before introducing new ones.
+2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
+   `TrayAction`, the capability file) before introducing new ones.
 3. Avoid unnecessary dependencies.
 4. Avoid speculative abstractions and premature architecture. Build what the task
    needs, nothing for hypothetical features.

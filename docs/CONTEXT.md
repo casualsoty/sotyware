@@ -62,7 +62,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- `cargo test`: one unit test (tray menu id mapping).
+- `cargo test`: 17 unit tests of lifecycle and tray decisions (close → hide,
+  implicit exit blocked, tray failure → exit 1, second launch, tray dispatch,
+  config labels). No display needed.
 - `tests/desktop/run.sh`: 54 passed, 0 failed, 2 skipped on WSL2/WSLg
   (2026-11-10). The tray host is a stub; SKIP is never a pass.
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2

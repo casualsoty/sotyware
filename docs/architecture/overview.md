@@ -32,8 +32,8 @@ and shown, never destroyed, and only the tray "Quit" ends the process.
 | Component | File | Responsibility |
 | --- | --- | --- |
 | Binary entry point | `src-tauri/src/main.rs` | Calls `sotyware_lib::run()`. Nothing else. |
-| Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup`, turns window close into hide, blocks implicit exits. Owns `show_dashboard()` and `DASHBOARD_LABEL`. |
-| System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu, maps menu ids to `TrayAction`, handles clicks. Calls back into `crate::show_dashboard`. |
+| Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup`, turns window close into hide, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`close_action`, `exit_allowed`, `tray_failure_exit_code`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
+| System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). |
 | Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
 | Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `core:window:allow-hide`. |
 | Frontend | `index.html`, `src/main.ts`, `src/App.svelte` | Static dashboard with a "Hide dashboard" button. |
