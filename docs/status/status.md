@@ -242,11 +242,9 @@ were scratch scripts, not in the repository.
 
 Conclusion: the private-desktop test cannot run elevated, because WebView2
 launches its de-elevated browser process on Explorer's desktop. sotyware itself
-is unaffected on a real desktop, elevated or not, so the app is unchanged. Not
-verified on a GitHub-hosted runner: that the hosted job is elevated is
-inferred from the identical failure and from hosted jobs running as
-administrator; the next hosted run prints `elevated:` and should end with exit
-4.
+is unaffected on a real desktop, elevated or not, so the app is unchanged. The
+hosted job is elevated: the second hosted run printed `elevated: True` and
+reported NOT RUN, exit 4 ([CI](#ci-github-actions-2026-11-10)).
 
 ### CI: GitHub Actions (2026-11-10)
 
@@ -257,7 +255,7 @@ repository is private on GitHub Free ($12 of hosted compute a month).
 | --- | --- | --- |
 | `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | — **not run on GitHub yet** (nothing pushed). Its command sequence passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
 | `desktop-virtual.yml` | manual | ❌ run once on GitHub, at `14a5de1` (runner image ubuntu-26.04 20261101.186, 2026-11-10): build 5 min 27 s, then **89 passed, 2 failed, 1 skipped**, exit 1. Scenario 12 found no Hide button; cause was the driver matching the AT-SPI role name, renamed in at-spi2-core 2.60 ([below](#virtual-display-test-on-ubuntu-2604-container-2026-11-10)). Fixed in `ead47e7`; **not re-run on GitHub yet** |
-| `desktop-windows-isolated.yml` | manual, experimental | ❌ run once on GitHub ([run 42919688755](https://github.com/casualsoty/sotyware/actions/runs/42919688755), Windows Server 2025; commit and duration not recorded here): private desktop `sotyware-test-8872` created, input desktop `Default`, no taskbar; the window appeared, then the title and Hide-button checks failed, the primary panicked (`failed to create webview`, `0x80070578` Invalid window handle) and second launches exited -1073740791. Reproduced on Windows 11 by running the suite elevated; cause and evidence [above](#windows-11-isolated-desktop-test-elevated-2026-11-11). Since `468a2c3` an elevated job reports NOT RUN (exit 4); **not re-run on GitHub yet** |
+| `desktop-windows-isolated.yml` | manual, experimental | ❌ run once on GitHub ([run 42919688755](https://github.com/casualsoty/sotyware/actions/runs/42919688755), Windows Server 2025; commit and duration not recorded here): private desktop `sotyware-test-8872` created, input desktop `Default`, no taskbar; the window appeared, then the title and Hide-button checks failed, the primary panicked (`failed to create webview`, `0x80070578` Invalid window handle) and second launches exited -1073740791. Reproduced on Windows 11 by running the suite elevated; cause and evidence [above](#windows-11-isolated-desktop-test-elevated-2026-11-11). Since `468a2c3` an elevated job reports NOT RUN (exit 4). **Second run** (2026-11-10 23:41 UTC, Windows Server 2025 Datacenter 24H2 build 26100.33674; run id and commit not in the pasted log, `origin/main` was `44be84e`): `elevated: True`, `NOT RUN`, exit 4, job failed as intended; no check ran |
 | Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint` and not accepted by GitHub yet |
 
 Record the first GitHub results here, with the real job durations, and replace

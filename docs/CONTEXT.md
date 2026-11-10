@@ -122,7 +122,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   at-spi2-core 2.60), fixed in `ead47e7` and passing 3/3 in an Ubuntu 26.04
   container; not re-run on GitHub yet. `desktop-windows-isolated.yml` ran once
   (Windows Server 2025) and failed on the elevated hosted job, reproduced on
-  Windows 11 elevated; it now reports NOT RUN (exit 4) there, not re-run yet.
+  Windows 11 elevated; re-run (2026-11-10) it printed `elevated: True` and
+  reported NOT RUN, exit 4: hosted runners cannot run this test.
   No other workflow result is recorded.
   [testing.md](development/testing.md#ci).
 

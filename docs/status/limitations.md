@@ -221,8 +221,9 @@ affected.
   GitHub-hosted runners.** With an administrator token, WebView2 starts its
   browser process de-elevated through `explorer.exe`, on Explorer's desktop
   instead of the private one, and sotyware's webview cannot be created there
-  (`0x80070578`). The test reports NOT RUN (exit 4) when elevated. Hosted jobs run
-  as administrator; the one hosted run failed this way before the check existed
+  (`0x80070578`). The test reports NOT RUN (exit 4) when elevated. Hosted jobs are
+  elevated: the first hosted run failed this way, the second (with the check)
+  printed `elevated: True` and reported NOT RUN
   ([testing.md](../development/testing.md#windows-isolated-desktop-test),
   [evidence](status.md#windows-11-isolated-desktop-test-elevated-2026-11-11)).
   Starting sotyware non-elevated from an elevated job has not been tried.
@@ -234,7 +235,7 @@ affected.
 ## CI
 
 - **`ci.yml` has not run on GitHub yet**; the two manual desktop workflows ran
-  once each and failed (results and causes in
+  and did not pass (results and causes in
   [status.md](status.md#ci-github-actions-2026-11-10)).
 - **CI time is a limited allowance.** The repository is private on GitHub Free:
   $12 of hosted compute a month, after which Actions is blocked until the next

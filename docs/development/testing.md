@@ -533,8 +533,9 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   failed: the primary panicked creating the WebView2 controller (`0x80070578`)
   and the second launches exited `0xC0000409`; the same failure reproduces on
   Windows 11 when the suite runs elevated ([why](#windows-isolated-desktop-test)).
-  Hosted jobs run as administrator, so this workflow is expected to end with
-  exit 4 until the test can start sotyware non-elevated, which has not been
+  Its second hosted run (2026-11-10, Windows Server 2025 Datacenter 24H2 build
+  26100.33674) printed `elevated: True` and ended with exit 4, NOT RUN: hosted
+  jobs are elevated, so this workflow ends with exit 4 until the test can start sotyware non-elevated, which has not been
   tried. It does not cover the tray, tray menu or Quit.
 - **The real-desktop Windows test (`npm run test:desktop:windows`) is not in
   CI.** It needs an unlocked interactive desktop with Explorer's taskbar and moves
