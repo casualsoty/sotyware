@@ -9,13 +9,16 @@ architectural decision it needs in
 
 In priority order:
 
-1. **Validate on Windows 10 and 11.** Build on Windows (not from a WSL path), run the
-   [manual checklist](../development/testing.md#manual-check-real-desktop-linux-or-windows),
-   including left-click-to-open and focus on second launch. Record results in the
-   [validation matrix](status.md#validation-matrix).
+1. **Finish Windows validation.** Windows 11 is built and passes the automated
+   [Windows desktop test](../development/testing.md#windows-desktop-test). Still to
+   do: a person running the
+   [manual checklist](../development/testing.md#manual-check-real-desktop-linux-or-windows)
+   on Windows 11, the MSI installer (needs an elevated install), and everything on
+   Windows 10. Record results in the [validation matrix](status.md#validation-matrix).
 2. **Validate on real Linux desktops:** GNOME (with and without the AppIndicator
    extension), KDE Plasma, XFCE, and a real Wayland session.
-3. **Install and run the bundles** (`.deb`, `.rpm`, AppImage, Windows installers).
+3. **Install and run the bundles** (`.deb`, `.rpm`, AppImage, the Windows MSI). The
+   NSIS installer is done on Windows 11 (silent mode).
 
 Fixes found during validation come before anything below.
 

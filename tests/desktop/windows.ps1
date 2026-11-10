@@ -121,8 +121,8 @@ function TrayIcon {
   $t = TrayIcons; if ($t.Count -ge 1) { $t[0] } else { $null }
 }
 # Opens the tray context menu with a real right click and returns its HMENU (or zero).
-# The menu items are owner-drawn and invisible to UI Automation, so they are read
-# through the Win32 menu handle (MN_GETHMENU) instead.
+# UI Automation exposes none of the menu's items, so they are read through the
+# Win32 menu handle (MN_GETHMENU) instead.
 function OpenTrayMenu {
   $icon = TrayIcon; if (-not $icon) { $script:why = "tray icon not found"; return [IntPtr]::Zero }
   $r = $icon.Current.BoundingRectangle

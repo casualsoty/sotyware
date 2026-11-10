@@ -7,8 +7,9 @@ in the system tray and opens a dashboard window on demand.
 **Current state:** only the minimal desktop runtime exists: one dashboard window,
 a system tray icon with "Open Dashboard" and "Quit", hide-on-close, and
 single-instance handling. No product features exist yet. It has been validated
-only in a simulated Linux environment (WSL2); Windows and real Linux desktops are
-not yet validated. See [docs/status/status.md](docs/status/status.md).
+natively on Windows 11 (automated desktop test) and in a simulated Linux
+environment (WSL2); Windows 10 and real Linux desktops are not yet validated.
+See [docs/status/status.md](docs/status/status.md).
 
 Built with [Tauri 2](https://v2.tauri.app/) (Rust) and Svelte 5 + TypeScript
 (Vite).

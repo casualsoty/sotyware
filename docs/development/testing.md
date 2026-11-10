@@ -98,8 +98,8 @@ What it does, and how:
   (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
   so the test opens it first. It left-clicks the icon (expects the dashboard and no
   menu) and right-clicks it for the menu.
-- Reads the tray menu through the Win32 menu handle (`MN_GETHMENU`), because the
-  items are owner-drawn and invisible to UI Automation. It clicks items at their
+- Reads the tray menu through the Win32 menu handle (`MN_GETHMENU`), because UI
+  Automation exposes none of its items. It clicks items at their
   `GetMenuItemRect` position.
 - Clicks the real title-bar close button, located with `WM_NCHITTEST` = `HTCLOSE`
   (the title bar is not in the UI Automation tree), and also sends a programmatic

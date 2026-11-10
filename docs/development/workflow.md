@@ -53,7 +53,7 @@ npm run tauri build -- --no-bundle          # release binary only (fast; needed 
 Outputs under `src-tauri/target/release/`:
 
 - Linux: `sotyware`, `bundle/deb/*.deb`, `bundle/rpm/*.rpm`, `bundle/appimage/*.AppImage`
-- Windows (not yet built): `sotyware.exe`, `bundle/msi/*.msi`, `bundle/nsis/*-setup.exe`
+- Windows: `sotyware.exe`, `bundle/msi/*.msi`, `bundle/nsis/*-setup.exe`
 
 Under WSL the AppImage step needs the `PATH` filter from [setup.md](setup.md#wsl2-notes).
 

@@ -40,7 +40,8 @@ been inspected. The AppImage bundles the libraries.
 
 ## Windows 10 / 11
 
-Not yet exercised for sotyware. Requirements according to Tauri:
+Exercised on Windows 11 only (25H2, build 26200.9711, 2026-11-10); Windows 10 has
+not been tried. Requirements according to Tauri, all confirmed on that machine:
 
 - **Microsoft C++ Build Tools** (or Visual Studio) with the *Desktop development
   with C++* workload.
@@ -51,6 +52,21 @@ Not yet exercised for sotyware. Requirements according to Tauri:
 
 Build Windows binaries on Windows itself, from a normal Windows path. Do not build
 from a WSL path (`\\wsl.localhost\...`).
+
+Used on the Windows 11 machine: Rust 1.99.1 (`stable-x86_64-pc-windows-msvc`, from
+`rustup-init.exe`), Visual Studio Community 2022 C++ tools, Node.js 24.14.1, npm
+11.12.1, WebView2 Runtime 157.0.4341.42. Checkout steps that worked there, keeping
+the WSL repository untouched (a separate clone from `origin`, so only pushed commits
+are in it):
+
+```powershell
+git clone https://github.com/casualsoty/sotyware.git C:\dev\sotyware
+cd C:\dev\sotyware
+npm ci
+npm run tauri build
+```
+
+The first `npm run tauri build` downloads WiX 3.14 and NSIS 3.13 for the bundles.
 
 ## WSL2 notes
 

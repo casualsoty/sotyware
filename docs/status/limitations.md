@@ -38,11 +38,34 @@ fixed, remove it here in the same change and update
   `com.sotyware.desktop.SingleInstance`.
 - **Focus is up to the platform.** The app calls `set_focus()`, but Wayland
   compositors and Windows' foreground-lock rules may refuse and flash the taskbar
-  entry or notify instead. The dashboard is still shown and un-minimized. Not
-  verified on any real window manager.
+  entry or notify instead. The dashboard is still shown and un-minimized. On
+  Windows 11 the dashboard did become the foreground window in every tested case
+  (second launch while hidden, visible or minimized; tray left click), but the
+  launches came from a script, not while a person was typing in another app. Not
+  verified on Windows 10 or any real Linux window manager.
 - **Per user session.** Two users logged in at once each get their own instance.
 - **Arguments ignored.** The second launch's arguments and working directory reach
   the running instance but are not used.
+
+## Windows tray
+
+- **The icon starts in the hidden-icons flyout.** Windows 11 puts a new
+  notification-area icon behind the "Show Hidden Icons" (^) button, so on first
+  run users do not see sotyware in the taskbar until they open the flyout or pin
+  the icon. This is the OS default for every app; sotyware cannot change it.
+  Observed on Windows 11 25H2.
+- **Tray menu items are invisible to UI Automation.** The menu opens as a Win32
+  popup menu (class `#32768`) whose items carry their labels (readable through the
+  Win32 menu handle, which the test uses), but UI Automation exposes no menu item
+  elements, only an empty pane. The cause is not confirmed (likely custom drawing
+  in the menu library, `muda`). Screen readers may therefore not announce "Open
+  Dashboard" and "Quit". Not checked with an actual screen reader.
+
+## Windows installers
+
+- **The MSI needs administrator rights.** It installs per machine, so a silent
+  (`/qn`) install from a non-elevated shell fails with exit 1603. The NSIS
+  installer installs per user and needs no elevation.
 
 ## General
 

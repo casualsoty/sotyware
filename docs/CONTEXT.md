@@ -65,12 +65,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - `cargo test`: one unit test (tray menu id mapping).
 - `tests/desktop/run.sh`: 54 passed, 0 failed, 2 skipped on WSL2/WSLg
   (2026-11-10). The tray host is a stub; SKIP is never a pass.
+- `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
+  (2026-11-10), real desktop; it moves the mouse. Covers the Hide button.
 - No frontend tests, no JS linter, no CI.
 
 ## Platform limitations (summary)
 
-Windows and real Linux desktops (GNOME, KDE, XFCE, real Wayland) are **not
-validated**. Linux: no tray click events; vanilla GNOME hides tray icons; a missing
+Windows 11 is validated by the automated Windows test (no person's visual check
+yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE, real
+Wayland) are **not validated**. Windows 11 puts the tray icon in the hidden-icons
+flyout. Linux: no tray click events; vanilla GNOME hides tray icons; a missing
 tray host is not detected; single instance silently turns off without a D-Bus
 session bus. Placeholder icons; no autostart. Full list:
 [limitations.md](status/limitations.md).
@@ -78,8 +82,8 @@ session bus. Placeholder icons; no autostart. Full list:
 ## Milestone and next steps
 
 Milestone 0: prove the desktop runtime on Windows and Linux. Implemented;
-validated only in simulation. Next: validate on Windows 10/11, then on real Linux
-desktops, and record results in the
+validated natively on Windows 11 (automated) and in Linux simulation. Next: the
+manual check on Windows 11, Windows 10, then real Linux desktops; record results in the
 [validation matrix](status/status.md#validation-matrix). See
 [roadmap.md](status/roadmap.md). SQLite, feature manager, plugins, sync and
 autostart are undecided ideas, not tasks.

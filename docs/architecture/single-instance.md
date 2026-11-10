@@ -40,8 +40,10 @@ other.
     warning is not printed anywhere**.
 - **Windows:** a named mutex `com.sotyware.desktop-sim` plus a hidden message
   window that receives arguments via `WM_COPYDATA`. The second instance calls
-  `AllowSetForegroundWindow` for the first one before exiting. Read in source only;
-  never built or run.
+  `AllowSetForegroundWindow` for the first one before exiting. Observed on
+  Windows 11: the primary owns a hidden window `com.sotyware.desktop-siw` (class
+  `com.sotyware.desktop-sic`), and second launches hand over and exit 0 (see the
+  [validation matrix](../status/status.md#validation-matrix)).
 
 ## Scope
 
