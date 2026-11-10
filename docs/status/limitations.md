@@ -205,6 +205,23 @@ affected.
   loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
   2026-11-10). That is evidence, not proof.
 - **No test covers screen-reader access** on either platform.
+- **No Windows test of the real binary is headless.** Starting sotyware needs a
+  logged-in session (window station and desktop); there is no Windows
+  counterpart of Xvfb. `npm run test:headless` is the only Windows suite that
+  needs no session.
+- **The Windows private-desktop test does not cover the tray.** A private
+  desktop has no taskbar, so the tray icon, menu, left click and Quit are
+  tested only by `windows.ps1` on the interactive, unlocked desktop, which moves
+  the mouse. The private-desktop test also does not use real clicks or check
+  focus. On quit it is ended with `Stop-Process`.
+- **Windows Session 0 and CI runners are untested.** Whether WebView2 and the
+  private-desktop test work in Session 0 (a service, a scheduled task without a
+  logged-on user) or on a GitHub-hosted runner is unknown
+  ([testing.md](../development/testing.md#headless-windows-desktop-testing)).
+- **No real Linux desktop is available in the development environment**
+  (2026-11-10: WSL2 only, Windows 11 Home without a VM;
+  [survey](status.md#real-linux-desktop-availability-2026-11-10)). Linux results
+  come only from WSLg and Xvfb with a stub tray host.
 
 ## Development environment (WSL)
 

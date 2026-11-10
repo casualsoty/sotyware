@@ -18,7 +18,11 @@ In priority order:
    on Windows 11, the MSI installer (needs an elevated install), and everything on
    Windows 10. Record results in the [validation matrix](status.md#validation-matrix).
 2. **Validate on real Linux desktops:** GNOME (with and without the AppIndicator
-   extension), KDE Plasma, XFCE, and a real Wayland session. With the `ksni`
+   extension), KDE Plasma, XFCE, and a real Wayland session. Blocked on access:
+   the development machine has none
+   ([survey](status.md#real-linux-desktop-availability-2026-11-10)); it needs a
+   VM (for example VirtualBox with Ubuntu Desktop), a live USB session or a
+   Linux machine, which is the user's decision. With the `ksni`
    backend, check in particular that the icon shows and that a left click opens the
    dashboard. Without a tray host (vanilla GNOME, an XEmbed-only panel), run the
    dashboard-only steps of the manual checklist.
@@ -29,6 +33,11 @@ Fixes found during validation come before anything below.
 
 ## Known follow-ups (not started, no design yet)
 
+- Add CI as described in
+  [testing.md](../development/testing.md#ci): headless jobs on Linux and
+  Windows, the virtual-display job on Linux, a trial of the Windows
+  private-desktop test on a hosted runner (exit 3 = no usable session), and the
+  real-desktop Windows test only on a self-hosted runner in a logged-on session.
 - Replace the placeholder icons.
 - Drop `libayatana-appindicator3-1` from the `.deb` dependencies: the binary
   never loads it since `12a6185` ([limitations.md](limitations.md#linux-tray)).

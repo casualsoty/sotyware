@@ -410,7 +410,19 @@ Use this on any environment listed as not validated in
 [the validation matrix](../status/status.md#validation-matrix), and record the
 result there.
 
-1. Start sotyware once. Note the single tray icon.
+Start sotyware from a terminal (`./sotyware 2>&1 | tee sotyware.log` on Linux)
+so its startup and shutdown messages are kept. In tray mode sotyware itself
+prints nothing; in dashboard-only mode it prints `no system tray available (…)`
+and `running in dashboard-only mode; …`. Anything else from sotyware, the
+webview or the desktop is worth recording. Note the desktop environment, its version, X11 or Wayland
+(`echo $XDG_SESSION_TYPE`), and the tray host (for GNOME: whether the
+AppIndicator extension is enabled).
+
+1. Start sotyware once. Note the single tray icon: does it look right (not a blank
+   or broken image), and does hovering show "sotyware"? Open its menu: exactly
+   "Open Dashboard" and "Quit". Click "Hide dashboard" on the page. Expected: the
+   dashboard disappears, the tray icon stays; tray → Open Dashboard brings back
+   the same window.
 2. Start it again (app menu, shortcut, or the binary/`.exe`). Expected: no second
    tray icon, and the existing dashboard comes to the front.
 3. Click another app, then start sotyware again. Expected: the dashboard gets focus,
@@ -419,8 +431,8 @@ result there.
 5. Close the dashboard with ✕, start sotyware again. Expected: it reappears.
 6. Repeat a few times. Check the process list (Task Manager, or
    `pgrep -a sotyware`): always exactly one `sotyware` process.
-7. Tray → Quit. Expected: the process is gone. Start sotyware again: it starts
-   normally.
+7. Tray → Quit. Expected: the process is gone, the tray icon disappears, and the
+   log shows no error. Start sotyware again: it starts normally.
 8. Windows only: left-click the tray icon. Expected: the dashboard opens.
    Right-click shows the menu.
 
@@ -428,11 +440,13 @@ Dashboard-only mode (Linux desktops without a tray host, for example vanilla
 GNOME without the AppIndicator extension):
 
 9. Start sotyware. Expected: the dashboard opens, shows the note that no
-   compatible system tray is available, and has no Hide button. No tray icon.
+   compatible system tray is available, and has no Hide button. No tray icon. The
+   log names dashboard-only mode and the reason.
 10. Minimize it, start sotyware again. Expected: the same dashboard comes back,
     still one process.
 11. Close the dashboard with ✕. Expected: the process is gone
-    (`pgrep -a sotyware` prints nothing).
+    (`pgrep -a sotyware` prints nothing), the shell prompt returns, and the exit
+    status is 0 (`echo ${PIPESTATUS[0]}` after the `tee` command above).
 12. Enable a tray host (for example the AppIndicator extension) and start
     sotyware again. Expected: tray mode, as in steps 1–7.
 

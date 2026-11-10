@@ -33,7 +33,7 @@ src/                 Svelte frontend (main.ts, App.svelte)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/App.test.ts      Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop)
 docs/                architecture/, development/, status/
 ```
 
@@ -68,6 +68,8 @@ npm run check && npm run build
 npm run test:headless                      # frontend + Rust unit tests, no display needed
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 npm run tauri build -- --no-bundle && tests/desktop/run.sh   # or: npm run test:desktop:virtual
+npm run test:desktop:windows               # Windows, real desktop, moves the mouse
+npm run test:desktop:windows:isolated      # Windows, private desktop, unattended (no tray)
 ```
 
 **WSL:** non-interactive shells may pick up Windows `npm` from `/mnt/c` and not find
@@ -82,7 +84,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   failure → exit 1, second launch, tray dispatch, config labels). No display needed.
 - `npm run test:headless` (31 Rust + 13 frontend tests): passes on WSL2
   (2026-11-10, `8ca3bd7`) and natively on Windows 11 (2026-11-10, `e8834fd`;
-  23 Rust tests there, the 8 `ksni`/`zbus` ones are Linux-only).
+  23 Rust tests there, the 8 `ksni`/`zbus` ones are Linux-only; again at
+  `195fa8a`). This is the only headless suite on either platform.
 - `npm run test:desktop:virtual`: 92 passed, 0 failed, 0 skipped on Xvfb +
   openbox, 3 runs in a row (2026-11-10, `c2cbeb4`, WSL2 Ubuntu 24.04.1); real
   release binary, stub tray host, page read via AT-SPI. Covers tray mode and
@@ -95,8 +98,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
   (2026-11-10, `e8834fd` with the test fix `71442d3`: 3 runs on the release
   binary, 2 on the NSIS-installed copy), real desktop; it moves the mouse.
-  Covers the Hide button, which works with hide granted at runtime.
-- Test categories (headless / virtual display / real desktop):
+  Covers the Hide button, which works with hide granted at runtime. Again 80/80,
+  3 runs, at `195fa8a` (`npm run test:desktop:windows`). Needs the unlocked,
+  interactive desktop with a taskbar; otherwise it exits 3 without running.
+- `tests/desktop/windows-isolated.ps1`: 56 passed, 0 failed, 3 runs each at
+  `195fa8a` and `0131e09`, native Windows 11. Real binary on a private desktop:
+  unattended, nothing on screen, no input, but **not headless** (needs a
+  logged-in session) and no tray, tray menu or Quit. A close-quits mutant fails
+  9 checks.
+- Test categories (headless / virtual display / private desktop / real desktop):
   [testing.md](development/testing.md). No JS linter, no CI.
 
 ## Platform limitations (summary)
@@ -104,7 +114,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 Windows 11, the primary runtime platform, is validated by the automated Windows
 test at `e8834fd`, including the NSIS-installed copy (no person's visual check
 yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE,
-real Wayland) are **not validated**. Windows 11 puts the tray icon in the
+real Wayland) are **not validated**; the development machine has no real Linux
+desktop (WSL2 only, Windows 11 Home without a VM, surveyed 2026-11-10). Windows 11 puts the tray icon in the
 hidden-icons flyout. Linux: the tray is a StatusNotifierItem via `tray-icon`'s
 pure-Rust `ksni` backend, which avoids a registration race in
 libayatana-appindicator. Without a StatusNotifierWatcher (vanilla GNOME), host or
@@ -118,10 +129,10 @@ Full list: [limitations.md](status/limitations.md).
 ## Milestone and next steps
 
 Milestone 0: prove the desktop runtime on Windows and Linux. Implemented;
-validated natively on Windows 11 (automated, at `e8834fd`) and in Linux
+validated natively on Windows 11 (automated, last at `195fa8a`) and in Linux
 simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
-dashboard-only mode on vanilla GNOME); record results in the
+dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
 [roadmap.md](status/roadmap.md). SQLite, feature manager, plugins, sync and
 autostart are undecided ideas, not tasks.

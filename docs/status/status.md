@@ -24,6 +24,10 @@ race ([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)). Since
 `8ca3bd7`, Linux without a reachable tray host runs in dashboard-only mode
 instead of exiting 1 ([details](#dashboard-only-mode-wsl2-xvfb--openbox-stub-tray-host)).
 Dashboard-only mode cannot occur on Windows, where every tray error stays fatal.
+On 2026-11-10 (at `0131e09`) no real Linux desktop was available to test on
+([survey](#real-linux-desktop-availability-2026-11-10)), and the Windows tests
+were split into headless, private-desktop and real-desktop categories
+([results](#windows-test-categories-native-windows-11-0131e09)).
 
 ## Implemented
 
@@ -184,6 +188,58 @@ closing one. No check was removed and no timeout raised.
 
 Not run on Windows: dashboard-only mode (it cannot occur there), Alt+F4, the
 interactive NSIS UI, the MSI, a person's visual check, and Windows 10.
+
+### Windows test categories, native Windows 11 (`0131e09`)
+
+Run 2026-11-10 on the machine and toolchain described
+[above](#dashboard-only-mode-regression-run-native-windows-11) (Windows 11 Home
+25H2, build 26200.9711, WebView2 157.0.4341.46). The Windows checkout
+`C:\dev\sotyware` was fast-forwarded from `798e312` to `195fa8a` and then
+`0131e09` with `git bundle` (identical hashes, clean tree). Release binary
+rebuilt at `195fa8a` (`npm run tauri build -- --no-bundle`); `0131e09` changes
+only the test script. Commands started from WSL through interop in PowerShell 5.1
+with the registry `PATH`. Categories: [testing.md](../development/testing.md).
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0 errors, 0 warnings) | static | ✅ |
+| `npm run test:headless`: 13 frontend + 23 Rust tests, exit 0 | headless | ✅ (`195fa8a`) |
+| `npm run test:desktop:windows:isolated` (private desktop, no input, nothing on screen) | private desktop | ✅ **56 passed, 0 failed**, 3 consecutive runs at `195fa8a` and 3 more at `0131e09`; primary's stderr empty |
+| Same suite on a mutant build (outside the checkout, from `git archive`) whose close quits in tray mode | private desktop | ✅ detected: 43 passed, 9 failed, exit 1 at `0131e09`. At `195fa8a` it also failed 9 checks but exited 0, a launcher bug fixed in `0131e09` |
+| Same suite with `-Timeout 5` | private desktop | ✅ exit 124, no sotyware process left |
+| `npm run test:desktop:windows` (`windows.ps1`, real desktop, real mouse) | real desktop | ✅ **80 passed, 0 failed**, 3 consecutive runs at `195fa8a` |
+| `windows.ps1` started on a private desktop (no input desktop, no taskbar) | guard | ✅ `ABORT`, exit 3, no sotyware process started (pre-commit copy of `44a131d`'s script) |
+| Isolated-desktop probe (scratch script, not in the repository): on a private desktop sotyware starts in tray mode, the WebView2 page is readable through UIA, Hide, second launch and `WM_CLOSE` behave as on the real desktop; no `Shell_TrayWnd`, so no tray icon | investigation | ✅ observed |
+| Session 0 (scheduled task "run whether the user is logged on or not") | investigation | — not run: registering the task was not permitted in the investigating session |
+| A GitHub-hosted Windows runner | CI | — not run (no CI exists) |
+
+Conclusion: no Windows test of the real binary runs headlessly. The
+private-desktop suite runs unattended inside a logged-in session without using
+the screen or the input devices; the tray, real clicks and Quit need the
+interactive desktop. Details:
+[testing.md](../development/testing.md#headless-windows-desktop-testing).
+
+### Real Linux desktop availability (2026-11-10)
+
+Surveyed on the development machine before planning any Linux desktop run.
+
+| Looked for | Found |
+| --- | --- |
+| WSL distributions | only `Ubuntu` (24.04.1), the development environment; WSLg serves its display (`DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`), no desktop session (`XDG_CURRENT_DESKTOP` empty) |
+| Desktop environments in that distribution | none installed (no `gnome-shell`, `plasmashell`, `xfce4-panel`, `gdm3`, `lightdm`, `mutter`) |
+| Virtual machines on the Windows host | none: Windows 11 **Home** (no Hyper-V Manager, no `Get-VM`), no VirtualBox or VMware installed |
+| Other Linux machines | none configured (no SSH hosts) |
+| Docker Desktop | present, but runs Linux containers without a desktop session or tray host; not a real desktop |
+
+**No real Linux desktop was tested.** GNOME, KDE Plasma, XFCE and real Wayland
+stay unvalidated; the only Linux results remain the virtual-display and
+simulated-desktop runs below, which use a stub tray host. Installing a full
+desktop environment inside WSL was not done: it would still run under WSLg's
+compositor with no real shell tray host, so it would not be a real desktop
+either, and it would add several hundred packages to the development
+environment. Options that would give a real desktop: a VirtualBox (or VMware
+Workstation) VM with Ubuntu Desktop (GNOME), a live USB session on real
+hardware, or a separate Linux machine. Each needs the user's decision.
 
 ### Headless tests, native Windows 11
 
@@ -475,14 +531,15 @@ tray icon was ever seen or clicked by a person.
 | Windows 11: a person's visual check of tray icon and menu (manual checklist) | — |
 | Windows 11: MSI install/run/uninstall; NSIS interactive install | — |
 | Windows 11: focus on second launch while another app is actively in use | — |
-| Real GNOME (with and without the AppIndicator extension; without it, dashboard-only mode) | — |
+| Real GNOME (with and without the AppIndicator extension; without it, dashboard-only mode) | — no real Linux desktop available on 2026-11-10 ([survey](#real-linux-desktop-availability-2026-11-10)) |
 | Dashboard-only mode on any real desktop, an XEmbed-only panel, or Wayland | — (virtual display only) |
-| Windows at or after `8ca3bd7` (operating mode, `operating_mode` command, runtime hide capability) | — not compiled or run |
 | Real KDE Plasma | — |
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
 | Headless suite and virtual-display test in a CI service | — no CI exists (the headless suite ran natively on Windows 11 and WSL2, by hand) |
+| Windows private-desktop test in Session 0 or on a CI runner | — (runs only in a logged-in session so far) |
+| Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 
