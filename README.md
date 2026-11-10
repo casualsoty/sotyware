@@ -36,6 +36,7 @@ src-tauri/
   src/tray.rs             Tray icon + menu ("Open Dashboard", "Quit")
   src/main.rs             Binary entry point
   icons/                  Placeholder icons (Tauri defaults, to be replaced)
+tests/desktop/            Simulated-desktop test of the release binary (Linux/X11)
 ```
 
 ## Prerequisites
@@ -117,6 +118,25 @@ cargo test
 ```
 
 No JS linter (ESLint/Prettier) is configured yet. `svelte-check` runs in strict mode.
+
+`cargo test` only covers pure logic (tray menu id mapping). Window, tray and
+single-instance behaviour need a real display and are covered by the desktop test
+below.
+
+### Desktop test (Linux, simulated)
+
+```bash
+npm run tauri build -- --no-bundle
+tests/desktop/run.sh
+```
+
+It drives the release binary on the current X11 display (`$DISPLAY`, e.g. WSLg, or
+Xvfb with a window manager). Needs `python3`, `python3-dbus`, `python3-gi`, `libX11`
+and `dbus-run-session`. It runs inside a private D-Bus session with a stub tray host
+(`tests/desktop/sni_watcher.py`), so it does not touch a sotyware that is already
+running on your desktop. Each check prints `PASS`, `FAIL` or `SKIP`. `SKIP` means the
+environment could not exercise the behaviour (e.g. the window manager ignored a
+minimize request) and is never counted as a pass.
 
 ## Lifecycle design
 
@@ -214,6 +234,42 @@ close button, and uses XTest to click the Hide button.
 
 This is **not** a real desktop environment. The tray host was a test stub, so no tray
 icon was ever seen or clicked by a person.
+
+#### Single instance (same environment, `tests/desktop/run.sh`, release binary)
+
+Run result: 54 passed, 0 failed, 2 skipped.
+
+- First launch: dashboard visible, one tray item with "Open Dashboard" / "Quit". ✅
+- Second launch, dashboard visible: new process exits 0, no other window ever appears,
+  only the original PID runs, still one tray registration, still one window. ✅
+- Second launch, dashboard hidden by close: same checks, plus the dashboard is shown
+  again and has focus. ✅
+- 5 more sequential launches (dashboard alternately hidden and visible), then 4
+  concurrent launches: every new process exits 0; always one process, one tray item,
+  one window; dashboard restored. ✅
+- Close still hides; tray "Open Dashboard" still restores the same window. ✅
+- Tray "Quit" exits 0 and leaves no process. A new launch after that starts as a fresh
+  primary instance (the lock was released) and quits cleanly. ✅
+- **Skipped: focusing an already visible dashboard.** WSLg's window manager ignores
+  all `_NET_ACTIVE_WINDOW` requests, even between two plain X windows. Focus can't be
+  moved programmatically there, so the test can't check that a second launch takes it
+  back. The app does request focus (`set_focus()`), as the tray item always has.
+- **Skipped: restoring a minimized dashboard.** The same window manager ignores
+  minimize requests (`XIconifyWindow`). `unminimize()` is called, but not exercised here.
+
+#### Manual check (real desktop, Linux or Windows)
+
+1. Start sotyware once. Note the single tray icon.
+2. Start it again (from the app menu, a shortcut, or the binary/`.exe`). Expected: no
+   second tray icon, and the existing dashboard comes to the front.
+3. Click another app, then start sotyware again. Expected: the dashboard gets focus,
+   or at least flashes in the taskbar if the OS blocks focus stealing.
+4. Minimize the dashboard, start sotyware again. Expected: the dashboard is restored.
+5. Close the dashboard with ✕, start sotyware again. Expected: it reappears.
+6. Repeat a few times. Check the process list (Task Manager, or
+   `pgrep -a sotyware`): always exactly one `sotyware` process.
+7. Tray → Quit. Expected: the process is gone. Start sotyware again: it starts
+   normally.
 
 ### Not tested
 
