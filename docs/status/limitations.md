@@ -196,9 +196,12 @@ affected.
 - **On Linux the "Hide dashboard" button is activated through AT-SPI**, not
   with a pointer click (virtual-display scenario 12). The dashboard-only page is
   checked the same way. What a person sees is not checked.
-- **The virtual-display test was validated only on WSL2** (Ubuntu 24.04.1, with
-  the apt-installed packages from [setup.md](../development/setup.md#linux-system-packages)),
-  not on a native Ubuntu install and not in CI. With libayatana-appindicator it
+- **The virtual-display test passes only on WSL2** (Ubuntu 24.04.1, with
+  the apt-installed packages from [setup.md](../development/setup.md#linux-system-packages))
+  and in an Ubuntu 26.04 Docker container on that machine
+  ([status](status.md#virtual-display-test-on-ubuntu-2604-container-2026-11-10)),
+  not on a native Ubuntu install. Its one GitHub run failed on a driver bug
+  since fixed, and has not been repeated. With libayatana-appindicator it
   failed, correctly, about 1 run in 60 on the
   [registration race](#historical-libayatana-appindicator-registration-race).
   With the `ksni` backend no run has failed so far (3 runs and a 420-launch

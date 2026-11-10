@@ -115,7 +115,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   `test:headless`; docs-only changes skipped). Manual only:
   `desktop-virtual.yml` (virtual display, not a real desktop) and
   `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
-  is not in CI. **None has run on GitHub yet.**
+  is not in CI. `desktop-virtual.yml` ran once (`14a5de1`, ubuntu-26.04
+  runner) and failed 89/2/1 on a driver bug (AT-SPI role name renamed in
+  at-spi2-core 2.60), fixed in `ead47e7` and passing 3/3 in an Ubuntu 26.04
+  container; not re-run on GitHub yet. No other workflow result is recorded.
   [testing.md](development/testing.md#ci).
 
 ## Platform limitations (summary)

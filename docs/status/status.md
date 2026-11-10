@@ -227,12 +227,28 @@ repository is private on GitHub Free ($12 of hosted compute a month).
 | Workflow | Trigger | Result |
 | --- | --- | --- |
 | `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | — **not run on GitHub yet** (nothing pushed). Its command sequence passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
-| `desktop-virtual.yml` | manual | — not run on GitHub. `npm run test:desktop:virtual` locally on WSL2 at `5fe62b9`: 92 passed, 0 failed, 0 skipped (matches `EXPECTED_CHECKS`) |
+| `desktop-virtual.yml` | manual | ❌ run once on GitHub, at `14a5de1` (runner image ubuntu-26.04 20261101.186, 2026-11-10): build 5 min 27 s, then **89 passed, 2 failed, 1 skipped**, exit 1. Scenario 12 found no Hide button; cause was the driver matching the AT-SPI role name, renamed in at-spi2-core 2.60 ([below](#virtual-display-test-on-ubuntu-2604-container-2026-11-10)). Fixed in `ead47e7`; **not re-run on GitHub yet** |
 | `desktop-windows-isolated.yml` | manual, experimental | — not run on GitHub; **GitHub-hosted support unknown** |
 | Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint` and not accepted by GitHub yet |
 
 Record the first GitHub results here, with the real job durations, and replace
 the cost estimate in [testing.md](../development/testing.md#github-free-budget).
+
+### Virtual-display test on Ubuntu 26.04 (container, 2026-11-10)
+
+Reproduces the `desktop-virtual.yml` failure off GitHub. An `ubuntu:26.04`
+Docker image (26.04.1) on the WSL2 machine, with the runtime packages the
+workflow installs (at-spi2-core 2.60.4, GTK 3.24.52, GLib 2.88.0, WebKitGTK
+2.52.6), runs `bash tests/desktop/virtual.sh` as a non-root user against the
+release binary built at `14a5de1` on WSL2 Ubuntu 24.04.1. Xvfb + openbox, stub
+tray host, as on the runner. Not a real desktop.
+
+| Check | Result |
+| --- | --- |
+| Driver before the fix (`14a5de1`) | ❌ 2 of 2 runs 89 passed, 2 failed, 1 skipped, exit 1: the same two scenario 12 failures and scenario 13 skip as on GitHub |
+| AT-SPI tree in tray mode, read directly | ✅ page rendered, `button 'Hide dashboard'` present; at-spi2-core 2.60 names the role "button", 2.52 "push button" (enum value 43 in both) |
+| Driver after the fix (`ead47e7`, roles matched by enum) | ✅ 3 consecutive runs 92 passed, 0 failed, 0 skipped, exit 0 |
+| Same fixed driver on WSL2 Ubuntu 24.04.1 (at-spi2-core 2.52.0) | ✅ 3 consecutive runs 92/0/0 |
 
 ### Real Linux desktop availability (2026-11-10)
 
@@ -552,7 +568,7 @@ tray icon was ever seen or clicked by a person.
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
-| Headless suite and virtual-display test on GitHub Actions | — workflows exist (`5fe62b9`), not run on GitHub yet ([CI](#ci-github-actions-2026-11-10)) |
+| Headless suite and virtual-display test on GitHub Actions | — headless results not recorded; virtual-display failed once at `14a5de1` (driver bug, fixed in `ead47e7`, passes 3/3 in an Ubuntu 26.04 container), not re-run on GitHub ([CI](#ci-github-actions-2026-11-10)) |
 | Windows private-desktop test in Session 0 or on a GitHub-hosted runner | — (runs only in a logged-in session so far; the manual workflow is untried) |
 | Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |
