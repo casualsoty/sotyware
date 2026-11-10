@@ -154,3 +154,42 @@ Status: Accepted
 - **Consequences:** Neither package is shipped (`vite build` output is
   unchanged). Tests check what the frontend asks Tauri to do, not what the OS
   does.
+
+## ADR-011: Linux tray uses tray-icon's ksni backend, not libayatana-appindicator
+
+Status: Accepted
+
+- **Context:** With libayatana-appindicator, about 1 launch in 140 to 420
+  registered no tray item. The cause is a race inside that library (details in
+  [limitations.md](../status/limitations.md#historical-libayatana-appindicator-registration-race)).
+  No released version fixes it. Tauri 2.12.5 enables `tray-icon` 0.25's
+  `libappindicator` feature and offers no option to change it. `tray-icon`
+  0.25.1 also ships a pure-Rust StatusNotifierItem backend behind its `ksni`
+  feature, and its `platform_impl/mod.rs` selects `ksni` whenever that feature
+  is on, even with `libappindicator` also enabled.
+- **Decision:** `src-tauri/Cargo.toml` declares
+  `tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }`
+  under `[target.'cfg(target_os = "linux")'.dependencies]`. sotyware's code does
+  not use the crate. The declaration only adds the feature. Cargo unifies it
+  with Tauri's dependency into one `tray-icon` 0.25.1 that has both features, so
+  the Linux tray runs on `ksni` 0.3.7 over `zbus` (already in the tree through
+  the single-instance plugin). No Tauri upgrade, patch or second `tray-icon`.
+  Rejected: delaying startup, opening the session bus early, or retrying
+  registration. These narrow the race but do not remove it.
+- **Consequences:**
+  - New Linux-only crates: `ksni` 0.3.7, `arc-swap`, `crossbeam-queue`,
+    `pastey`, `task-local`. The Windows and macOS graphs are unchanged. The
+    release binary grew by about 0.5 MB (4.43 to 4.98 MB).
+  - libayatana-appindicator is never loaded: the `libappindicator` crate
+    still compiles, but only its unused code references the library, and it
+    loaded it at runtime with `dlopen`, never at link time.
+  - `ksni` registers with the StatusNotifierWatcher before `tray::create()`
+    returns. Under ADR-004, no watcher (or no session bus) now means exit 1 at
+    startup. There is no XEmbed fallback any more.
+  - The icon is sent over D-Bus as a pixmap and is not written to
+    `$XDG_RUNTIME_DIR`.
+  - The tray host's left click (`Activate`) reaches sotyware as a left-click
+    event and opens the dashboard, as on Windows.
+  - If Tauri ever pins a `tray-icon` other than 0.25, this declaration stops
+    unifying with it. Revisit it with any Tauri upgrade, and drop it once Tauri
+    lets apps choose the backend.

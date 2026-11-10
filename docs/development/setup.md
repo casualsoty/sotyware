@@ -43,8 +43,14 @@ sudo apt install -y xvfb openbox
 The [headless tests](testing.md#headless-tests) need nothing beyond the build
 packages above.
 
-At runtime, end users need WebKitGTK 4.1, GTK 3 and libayatana-appindicator3. The
-`.deb` declares these as dependencies (verified). The `.rpm` dependencies have not
+At runtime, end users need WebKitGTK 4.1, GTK 3, a D-Bus session bus and a
+StatusNotifierItem tray host. libayatana-appindicator3 is no longer loaded: the
+tray uses the pure-Rust `ksni` backend
+([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
+The `.deb` still declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0`
+(verified 2026-11-10 at `12a6185`), because Tauri's bundler adds the first one
+whenever the tray feature is on. `libayatana-appindicator3-dev` stays in the
+build list above; building without it has not been tried. The `.rpm` dependencies have not
 been inspected. The AppImage bundles the libraries.
 
 ## Windows 10 / 11
@@ -133,12 +139,12 @@ environment issues, not sotyware bugs.
   PATH=$(echo "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd:) npm run tauri build
   ```
 - **`$XDG_RUNTIME_DIR` may point to a directory that does not exist** (seen here:
-  `XDG_RUNTIME_DIR=/run/user/1000` with no such directory). The tray icon image
-  is written there, so tray creation fails with
-  `sotyware: cannot create system tray icon: tray icon error: Permission denied`
-  and sotyware exits with code 1. With the variable unset, the tray is created
-  normally. Fix: point it at a private `chmod 700` directory you own, as
-  `tests/desktop/run.sh` does.
+  `XDG_RUNTIME_DIR=/run/user/1000` with no such directory). Until `12a6185` the
+  tray icon image was written there, so sotyware exited with code 1
+  (`cannot create system tray icon: tray icon error: Permission denied`). The
+  `ksni` backend writes no file, and sotyware starts normally (desktop test
+  scenario 11). Other programs may still need the directory. Fix: point it at a
+  private `chmod 700` directory you own, as `tests/desktop/run.sh` does.
 - **WSLg's window manager ignores focus and minimize requests.** Focus and
   un-minimize behaviour cannot be verified under WSLg; the
   [virtual-display test](testing.md#virtual-display-test) checks them under openbox.

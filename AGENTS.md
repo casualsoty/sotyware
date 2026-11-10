@@ -53,7 +53,9 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | Vite | `^8.3.7` | 8.3.7 |
 | Node.js | `^20.19 \|\| ^22.12 \|\| >=24` (dependency `engines`) | developed with 24.22.0 |
 | Package manager | npm (lockfile v3) | developed with 11.19.1 |
-| Linux webview / tray | WebKitGTK 4.1 / libayatana-appindicator3 | system packages |
+| `tray-icon` (through Tauri; Linux-only direct dependency adds feature `ksni`) | `0.25` | 0.25.1 |
+| `ksni` (Linux tray backend, pure Rust over `zbus` 5.19.0) | through `tray-icon` | 0.3.7 |
+| Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
 
 Re-check this table against the lockfiles when you change dependencies.

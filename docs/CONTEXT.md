@@ -36,6 +36,8 @@ Full map: [repository-map.md](architecture/repository-map.md).
 ## Entry points and boundaries
 
 - Startup: `src-tauri/src/main.rs` → `sotyware_lib::run()` in `src-tauri/src/lib.rs`.
+- The Linux tray backend is chosen in `src-tauri/Cargo.toml` (Linux-only
+  `tray-icon` with feature `ksni`, ADR-011), not in code.
 - Showing the dashboard always goes through `show_dashboard()` in `lib.rs`; the
   window is never created at runtime or destroyed.
 - The frontend may only call `getCurrentWindow().hide()`
@@ -70,10 +72,11 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - `npm run test:headless` (17 Rust + 8 frontend tests): passes with no display,
   window manager, tray host or D-Bus session (2026-11-10, WSL2), and natively on
   Windows 11 (2026-11-10, `1f5853b`).
-- `npm run test:desktop:virtual`: 66 passed, 0 failed, 0 skipped on Xvfb +
-  openbox, twice in a row and 30 more times (2026-11-10, `53d9743`, WSL2 Ubuntu
-  24.04.1 with apt-installed packages); real release binary, stub tray host.
-  Intermittently fails on a real tray defect (below), about 1 run in 60.
+- `npm run test:desktop:virtual`: 68 passed, 0 failed, 0 skipped on Xvfb +
+  openbox, 3 runs in a row (2026-11-10, `12a6185`, `ksni` tray backend, WSL2
+  Ubuntu 24.04.1 with apt-installed packages); real release binary, stub tray
+  host. A 420-launch loop registered every tray item. With libayatana (66-check
+  driver, `53d9743`) it failed about 1 run in 60 on a library race.
 - `tests/desktop/run.sh`: 57 passed, 0 failed, 2 skipped on WSL2/WSLg
   (2026-11-10, 65-check driver before `53d9743`). The tray host is a stub; SKIP
   is never a pass.
@@ -88,11 +91,12 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 Windows 11 is validated by the automated Windows test (no person's visual check
 yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE, real
 Wayland) are **not validated**. Windows 11 puts the tray icon in the hidden-icons
-flyout. Linux: no tray click events; vanilla GNOME hides tray icons; a missing
-tray host is not detected; about 1 launch in 140 to 420 registers no tray item, a
-race inside libayatana-appindicator with no fix available (seen under the virtual
-display only); single instance silently turns off without a D-Bus
-session bus. Placeholder icons; no autostart. Full list:
+flyout. Linux: the tray is a StatusNotifierItem via `tray-icon`'s pure-Rust
+`ksni` backend, which avoids a registration race in libayatana-appindicator;
+without a StatusNotifierWatcher or session bus sotyware exits 1 (no XEmbed
+fallback); vanilla GNOME has no watcher; left click needs the tray host to send
+`Activate`; single instance silently turns off without a D-Bus session bus.
+Placeholder icons; no autostart. Full list:
 [limitations.md](status/limitations.md).
 
 ## Milestone and next steps

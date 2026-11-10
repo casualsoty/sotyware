@@ -20,7 +20,7 @@ special and run before every commit ([workflow.md](workflow.md)).
 | Behaviour | A. Headless | B. Virtual display | C. Windows test | C. Manual |
 | --- | --- | --- | --- | --- |
 | Close → hide; second launch → show dashboard | ✅ unit tests (the decision) | ✅ real binary | ✅ real binary | ✅ |
-| Tray failure → exit 1 | ✅ unit tests (the decision) | ✅ real binary (unwritable `$XDG_RUNTIME_DIR`) | — | — |
+| Tray failure → exit 1 | ✅ unit tests (the decision) | ✅ real binary (session bus without a StatusNotifierWatcher) | — | — |
 | Implicit exit (`code: None`) blocked | ✅ unit tests (the decision) | — not triggered: the window is never destroyed | — | — |
 | Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
 | "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | — | ✅ real button | ✅ |
@@ -98,14 +98,18 @@ Files:
   the Python driver with `GDK_BACKEND=x11`. A sotyware already running on your
   desktop is not affected. Exits 2 if the binary is missing.
 - `tests/desktop/sni_watcher.py`: a minimal `org.kde.StatusNotifierWatcher`, so
-  libayatana-appindicator registers a tray item. It records each registration in a
+  sotyware's tray (`ksni` backend) registers a tray item. It records each registration in a
   file that the driver counts.
 - `tests/desktop/single_instance.py`: drives the binary. It inspects X11 windows via
   `ctypes` (no extra Python packages), sends `WM_DELETE_WINDOW` to simulate the
   close button, clicks tray menu items over `com.canonical.dbusmenu`, and launches
-  further instances sequentially and concurrently. Last, it starts the binary with
-  `$XDG_RUNTIME_DIR` under a read-only directory and checks the fatal tray failure:
-  exit code 1, the `cannot create system tray icon` message, nothing left running.
+  further instances sequentially and concurrently. Then it starts the binary on
+  a private session bus of its own (`dbus-run-session`), where no
+  StatusNotifierWatcher exists, and checks the fatal tray failure: exit code 1,
+  the `cannot create system tray icon` message, nothing left running. Last, it
+  starts the binary with `$XDG_RUNTIME_DIR` under a read-only directory (as under
+  WSL) and checks that it still starts with one tray item and quits with 0,
+  because the `ksni` backend writes no icon file.
   It waits for the stub tray host's bus name instead of sleeping. Each walk of
   the X11 window tree holds a server grab, so it cannot miss a window that the
   window manager is moving out of its frame (the dashboard right after a close).
@@ -177,11 +181,12 @@ Interrupting the run (Ctrl+C, or SIGTERM to `virtual.sh`) cleans up like a norma
 exit: nothing it started is left running and its temporary directories are
 removed (checked 2026-11-10).
 
-A FAIL on "one tray item" (first launch, or relaunch after Quit) with
-`G_IS_DBUS_CONNECTION` in the instance output is the known intermittent
-[missing tray item](../status/limitations.md#linux-tray), a real defect, not a
-test flake. Its cause is a race inside libayatana-appindicator, and it is not
-fixed. Do not retry it away.
+A FAIL on "one tray item" (first launch, or relaunch after Quit) is a real
+defect, not a test flake. Do not retry it away. Until `12a6185`, it was the
+intermittent
+[libayatana-appindicator race](../status/limitations.md#historical-libayatana-appindicator-registration-race)
+(`G_IS_DBUS_CONNECTION` in the instance output). The `ksni` backend avoids that
+library, and with it no such FAIL has been seen.
 
 Because the environment is fully controlled, **a SKIP fails this run**: the
 script exits 1 if the summary reports any skipped check. Exit codes: 0 all
@@ -257,7 +262,7 @@ headless results:
 | virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
 
 The headless job still compiles the Tauri crate, so on Linux it needs the
-WebKitGTK and AppIndicator *development libraries*, but no display server, window
+build packages from [setup.md](setup.md#linux-system-packages), but no display server, window
 manager, tray host or D-Bus session. A CI job for the virtual display must also
 fail on `SKIP` in the summary if the goal is to prove focus and minimize; the exit
 code alone ignores SKIPs. The Windows desktop test needs an interactive desktop

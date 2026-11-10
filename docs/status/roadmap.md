@@ -16,7 +16,9 @@ In priority order:
    on Windows 11, the MSI installer (needs an elevated install), and everything on
    Windows 10. Record results in the [validation matrix](status.md#validation-matrix).
 2. **Validate on real Linux desktops:** GNOME (with and without the AppIndicator
-   extension), KDE Plasma, XFCE, and a real Wayland session.
+   extension), KDE Plasma, XFCE, and a real Wayland session. With the `ksni`
+   backend, check in particular that the icon shows, that a left click opens the
+   dashboard, and what happens without a tray host.
 3. **Install and run the bundles** (`.deb`, `.rpm`, AppImage, the Windows MSI). The
    NSIS installer is done on Windows 11 (silent mode).
 
@@ -25,11 +27,16 @@ Fixes found during validation come before anything below.
 ## Known follow-ups (not started, no design yet)
 
 - Replace the placeholder icons.
-- Decide whether and how to handle a missing tray host on Linux (see
-  [limitations.md](limitations.md#linux-tray)).
-- Report the libayatana-appindicator registration race upstream, and track a
-  Tauri release that exposes another Linux tray backend
-  ([limitations.md](limitations.md#linux-tray)).
+- Decide whether a missing tray host on Linux should stay a silent exit 1 at
+  startup (stderr only, no XEmbed fallback), or be reported to the user in some
+  other way ([limitations.md](limitations.md#linux-tray)).
+- Optionally report the libayatana-appindicator registration race upstream. It no
+  longer affects sotyware
+  ([limitations.md](limitations.md#historical-libayatana-appindicator-registration-race)).
+- With every Tauri upgrade, check that the Linux-only `tray-icon` declaration
+  still unifies with Tauri's copy and still selects `ksni`, and drop it once Tauri
+  lets apps choose the backend
+  ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 - Make the D-Bus fallback warning visible (for example by installing a logging
   subscriber), if that is wanted.
 

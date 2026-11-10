@@ -15,7 +15,9 @@ State: implemented. Validated natively on **Windows 11** (25H2, build 26200.9711
 by an automated test on the real desktop and by the headless suite (last at
 `1f5853b`), and in simulated Linux environments (WSL2/WSLg; Xvfb + openbox).
 Open: Windows 10, a person's visual check on Windows, the MSI installer, and real
-Linux desktops.
+Linux desktops. The Linux tray uses `tray-icon`'s `ksni` backend since `12a6185`,
+which avoids the libayatana-appindicator registration race
+([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)).
 
 ## Implemented
 
@@ -24,6 +26,7 @@ Linux desktops.
 | Tauri 2 desktop runtime (one process, one window `main`) | `src-tauri/src/lib.rs`, `tauri.conf.json` |
 | Svelte 5 dashboard (static page with a "Hide dashboard" button) | `src/App.svelte` |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
+| Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle | `on_window_event` in `lib.rs` |
 | Explicit Quit is the only exit; implicit exits blocked | `app.run` closure in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created | `setup` in `lib.rs` |
@@ -68,7 +71,7 @@ script or procedure is not in the repository; it was not repeated.
 | `cargo test` (1 test) | ✅ | Re-run 2026-11-10, before the headless suite |
 | `npm run tauri build -- --no-bundle` | ✅ | Re-run 2026-11-10 |
 | `npm run tauri build`: `.deb`, `.rpm`, AppImage built (with WSL `PATH` filter) | ✅ built, not installed or run | Re-run 2026-11-10 |
-| `.deb` declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0` | ✅ | Re-run 2026-11-10 |
+| `.deb` declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0` | ✅ (the first is no longer needed since `12a6185`) | Re-run 2026-11-10, again at `12a6185` |
 
 ### Headless tests (WSL2, Ubuntu 24.04, Rust 1.99.1, Node 24.22.0)
 
@@ -199,6 +202,51 @@ not tested.
 | NSIS installer with its interactive UI | — not run (silent mode only) | |
 | MSI `msiexec /i … /qn` | ❌ not installed: exit 1603, "Installation UI level is silent, no credential elevation is possible". The MSI installs per machine and needs administrator rights (UAC). Not a sotyware defect; MSI install, run and uninstall remain unvalidated | Native Windows 2026-11-10 |
 
+### ksni tray backend (WSL2, Xvfb + openbox, stub tray host)
+
+Run 2026-11-10 at `12a6185` (Linux tray switched to `tray-icon`'s `ksni` backend,
+[ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)),
+same machine and apt packages as the run below. Release binary
+`src-tauri/target/release/sotyware`, sha256 `4dd03869…54176` (4,976,808 bytes;
+the libayatana build `10c5e588…29512` was 4,429,896). The backend probe and the
+launch loop were scratch scripts outside the repository, with the same isolation
+as `virtual.sh`: private Xvfb display, openbox, `dbus-run-session`, private
+`XDG_RUNTIME_DIR`, `sni_watcher.py`. The loop ran a byte-identical copy of the
+release binary (`cmp`).
+
+Dependency graph (`cargo tree`): one `tray-icon` 0.25.1, used by both `tauri`
+and `sotyware`, with features `ksni`, `libappindicator`, `muda-snapshot`,
+`muda-gtk3`, `muda-serde`, `muda-common-controls-v6`, `serde`. New in
+`Cargo.lock`: `ksni` 0.3.7, `arc-swap` 1.9.5, `crossbeam-queue` 0.3.14,
+`pastey` 0.2.3, `task-local` 0.1.1. `zbus` 5.19.0 was already present. No new
+duplicate crate versions. For `x86_64-pc-windows-msvc` and
+`aarch64-apple-darwin`, the resolved packages and features are identical to
+before the change.
+
+| Check | Result |
+| --- | --- |
+| Backend selected in source: `tray-icon` 0.25.1 `platform_impl/mod.rs` compiles `gtk/` only with `libappindicator` and `not(ksni)`, and `ksni/` whenever `ksni` is on | ✅ |
+| Binary: `ldd`/`readelf` NEEDED list no appindicator library (neither did the libayatana build, which `dlopen`ed it) | ✅ |
+| Binary strings: `libayatana-appindicator3.so.1`, `app_indicator_new` and `libappindicator-sys` absent (each present once in the libayatana build). `org.kde.StatusNotifierItem-`, `/StatusNotifierItem`, `/MenuBar` and `ksni-0.3.7` present | ✅ |
+| Running process (`/proc/<pid>/maps`): no `libayatana-*`, `libdbusmenu-*` or `ido` library mapped (the libayatana build mapped 5). Extra thread `tray-icon-menu-watcher` | ✅ |
+| Registration: name `org.kde.StatusNotifierItem-<pid>-1`, path `/StatusNotifierItem`, menu `/MenuBar`, `Id` `sotyware-tray`, `ItemIsMenu` false, one 32×32 `IconPixmap`, tooltip `sotyware` (the libayatana build used `/org/ayatana/NotificationItem/…` and an icon file) | ✅ |
+| `npm run check` 0/0, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | ✅ |
+| `npm run test:headless` with `DISPLAY`, `WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR` unset: 17 Rust + 8 frontend passed | ✅ |
+| `npm run test:desktop:virtual`, 66-check driver, before adapting it: 63 passed, 3 failed. All 3 were scenario 10: the unwritable `$XDG_RUNTIME_DIR` no longer breaks the tray, so the instance ran with its tray and was killed after 30 s | ❌ expected, driver adapted in `12a6185` |
+| `npm run test:desktop:virtual`, 68-check driver at `12a6185`: **68 passed, 0 failed, 0 skipped**, 3 consecutive runs | ✅ |
+| 420 consecutive launches, each: wait ≤ 10 s for one registration, read the menu, tray "Quit", wait ≤ 10 s for exit. No retries | ✅ **420/420** registered (0.148 s min, 0.178 s median, 0.203 s p95, 0.293 s max), 420 menus with exactly Open Dashboard / Quit, 420 exits with 0 through tray Quit, 0 `CRITICAL` / `G_IS_DBUS_CONNECTION`, 0 hangs, 0 processes left |
+| Left click (`Activate` over D-Bus) on a hidden dashboard shows the same window. Middle click (`SecondaryActivate`) does not | ✅ |
+| Stub watcher killed and restarted: the item registers again after 0.10 s, and its menu still works | ✅ |
+| Private bus without a watcher: exit 1 after 0.36 s, `cannot create system tray icon: … failed to register to the StatusNotifierWatcher: …ServiceUnknown…`, nothing left | ✅ |
+| No session bus: exit 1, `cannot create system tray icon: … D-Bus connection error …`, nothing left | ✅ |
+| After all runs: no Xvfb, openbox, stub watcher, portal, session `dbus-daemon` or sotyware process of these runs left (an unrelated Xvfb on `:25059`, started hours earlier, was still running) | ✅ |
+| `npm run tauri build -- --bundles deb`: `.deb` declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0` | ⚠️ the first one is no longer needed ([limitations](limitations.md#linux-tray)) |
+
+Not run: native Windows (the only Windows-relevant change is unused lockfile
+entries), a real Linux desktop or tray host, Wayland, a system without
+libayatana-appindicator installed. Zero failures in 420 launches is evidence,
+not proof. The libayatana build failed 1 in 420 under the same loop.
+
 ### Runtime behaviour, virtual display, standard Ubuntu packages (WSL2, Xvfb + openbox, stub tray host)
 
 Category B, run 2026-11-10 at `53d9743` on Ubuntu 24.04.1 LTS under WSL2 (kernel
@@ -237,7 +285,8 @@ tray registration crashed the driver. None was a sotyware defect.
 tray item at all and prints
 `GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`;
 3 of about 420 primary launches. Root cause investigated below. The suite
-reports it as a FAIL.
+reports it as a FAIL. Avoided since `12a6185`: sotyware no longer uses the library
+([ksni run](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)).
 
 ### Missing tray item investigation (WSL2, Xvfb + openbox, stub tray host)
 
@@ -257,8 +306,9 @@ with tray "Quit" (SIGTERM if not registered). No retries.
 | After every launch, both loops: no sotyware process left; display, bus and runtime directory removed | ✅ |
 
 Result: the defect is a race in libayatana-appindicator (cause, evidence and
-fix status in [limitations.md](limitations.md#linux-tray)). No sotyware change;
-the limitation stays open. Not run outside WSL2.
+fix status in [limitations.md](limitations.md#historical-libayatana-appindicator-registration-race)).
+No sotyware change at the time; the limitation stayed open. Not run outside WSL2.
+Superseded by the switch to the `ksni` backend (`12a6185`).
 
 The headless suite, static checks and release build on the same machine and
 commit: `npm run test:headless` 8 + 17 passed with `DISPLAY`, `WAYLAND_DISPLAY`,
@@ -311,7 +361,7 @@ failure made non-fatal fails the new exit-code check. Not re-run with the
 | "Hide dashboard" button hides the window; process stays | ✅ | Earlier run (no automated test on Linux) |
 | Repeated "Open Dashboard" creates no second window | ✅ | Earlier run (also implied by desktop test window counts) |
 | Native Wayland backend: runs, tray registers, Quit exits 0 (window state not inspected) | ✅ | Earlier run |
-| `XDG_RUNTIME_DIR` that cannot be created (read-only parent): tray error, exit 1, nothing left | ✅ | desktop test (scenario 10) |
+| `XDG_RUNTIME_DIR` that cannot be created (read-only parent): tray error, exit 1, nothing left | ✅ | desktop test (scenario 10, libayatana backend, before `12a6185`; with `ksni` sotyware starts normally, scenario 11) |
 
 This environment is **not a real desktop**: the tray host is a test stub, and no
 tray icon was ever seen or clicked by a person.

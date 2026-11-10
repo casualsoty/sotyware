@@ -6,29 +6,54 @@ fixed, remove it here in the same change and update
 
 ## Linux tray
 
-- **Desktop support is unverified.** The tray uses StatusNotifierItem via
-  libayatana-appindicator. KDE Plasma, Cinnamon, XFCE (status notifier plugin) and
-  Budgie are expected to show it. Vanilla **GNOME hides tray icons** unless the
-  *AppIndicator and KStatusNotifierItem Support* extension is installed (Ubuntu
-  enables it by default). None of this has been verified.
-- **Missing tray host is not detected.** With no StatusNotifierItem host,
-  libayatana falls back to a legacy XEmbed icon. On desktops without an XEmbed
-  tray, the icon is invisible. A hidden dashboard then cannot be restored, and the
-  process keeps running until stopped manually. Tray *creation* succeeded, so the
-  fatal-exit rule does not trigger. (A second launch still shows the dashboard,
-  through the single-instance callback.)
-- **A launch occasionally registers no tray item (race in libayatana-appindicator).**
-  Seen 3 times in about 420 primary launches in the virtual-display test, then
-  1 in 420 in a launch loop (Ubuntu 24.04.1 on WSL2,
-  libayatana-appindicator3-1 0.5.93-1build3, stub tray host), 2026-11-10. The
-  dashboard opens and the process keeps running, but no StatusNotifierItem is
-  registered. The only output is
-  `GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`,
-  which no successful launch prints. Tray creation counts as a success, so the
-  fatal-exit rule does not trigger. After a close, the dashboard can be reached
-  only by launching sotyware again. The desktop test reports it as a FAIL.
+The tray is a StatusNotifierItem served by `tray-icon`'s pure-Rust `ksni`
+backend (`ksni` 0.3.7 over `zbus`), not libayatana-appindicator
+([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 
-  *Cause (established, not fixed):* the defect is in libayatana-appindicator
+- **Desktop support is unverified.** KDE Plasma, Cinnamon, XFCE (status notifier
+  plugin) and Budgie are expected to show the item. Vanilla **GNOME has no
+  StatusNotifierWatcher** unless the *AppIndicator and KStatusNotifierItem
+  Support* extension is installed (Ubuntu enables it by default). None of this
+  has been verified.
+- **No tray host means sotyware does not start.** `ksni` registers with
+  `org.kde.StatusNotifierWatcher` before tray creation returns. Without a
+  watcher, or without a session bus, tray creation fails and sotyware exits
+  with code 1 ([ADR-004](../architecture/decisions.md#adr-004-failure-to-create-the-tray-is-fatal)).
+  The error goes to stderr only, so someone starting sotyware from a launcher
+  sees nothing happen. There is **no XEmbed fallback**: desktops with only a
+  legacy XEmbed tray (for example some window-manager panels) cannot run
+  sotyware. A watcher that starts *after* sotyware (for example a login race,
+  if autostart is ever added) is not waited for. Checked under the virtual
+  display only (2026-11-10).
+- **A watcher without a visible host is not detected.** If a watcher accepts
+  the registration but no panel displays it, sotyware runs with an invisible
+  icon. A hidden dashboard can then be reached only by launching sotyware again.
+  Real watchers (KDE, the GNOME extension) always report a host as registered,
+  according to `ksni`'s source comments; this has not been checked.
+- **Left click depends on the tray host.** The item is not marked menu-only, so
+  hosts are expected to send a left click as `Activate`, which opens the
+  dashboard. The menu is on right click. Seen only with D-Bus calls against the
+  stub tray host, not with a real panel.
+- **The `.deb` still declares `libayatana-appindicator3-1`.** Tauri's bundler
+  adds it whenever the tray feature is on, although the binary never loads the
+  library. It costs an unnecessary package, nothing more. Running without the
+  library installed has not been tried.
+
+### Historical: libayatana-appindicator registration race
+
+Avoided since `12a6185`, **not fixed upstream**. Until then, a launch
+occasionally registered no tray item: 3 times in about 420 primary launches in
+the virtual-display test, then 1 in 420 in a launch loop (Ubuntu 24.04.1 on
+WSL2, libayatana-appindicator3-1 0.5.93-1build3, stub tray host), 2026-11-10.
+The only output was
+`GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`.
+sotyware no longer uses this library; the same launch loop with the `ksni`
+backend registered all 420 launches
+([status](status.md#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)). Any
+other program on the same system that uses libayatana-appindicator is still
+affected.
+
+  *Cause (established, not fixed upstream):* the defect is in libayatana-appindicator
   itself, not in sotyware, Tauri or `tray-icon`. `app_indicator_init()` starts two
   asynchronous operations whose completion order is not defined:
   `g_bus_get()` for its own session-bus connection (stored by `bus_creation()` in
@@ -58,24 +83,24 @@ fixed, remove it here in the same change and update
 
   *Fix status:* upstream master (0.6.1) still has the same
   `name_appeared_handler()`. The likely upstream fix is a one-line change: pass
-  the handler's `connection` argument. No released version and no Tauri
-  configuration avoids the race: Tauri 2.12.5 pins `tray-icon` 0.25 with the
-  libappindicator backend, and `tray-icon` 0.26's pure-Rust `ksni` backend is not
-  exposed by Tauri. Opening the session bus before creating the tray would only
-  narrow the window, because both results still go through the thread pool.
-  sotyware has no local fix. Reproduced only under WSL2 with the stub tray host;
-  not checked on native Linux or with a real tray host, where the same code runs.
-- **No click-to-open on Linux.** AppIndicator emits no icon click events; any click
-  opens the menu.
-- **Tray icon image needs a usable `$XDG_RUNTIME_DIR`.** If it points to a missing
-  directory, tray creation fails and sotyware exits with code 1 (seen under WSL).
+  the handler's `connection` argument. Opening the session bus before creating
+  the tray would only narrow the window, because both results still go through
+  the thread pool. Reproduced only under WSL2 with the stub tray host; not
+  checked on native Linux or with a real tray host, where the same code runs.
+  (An earlier version of this entry said that `ksni` first appears in
+  `tray-icon` 0.26 and that Tauri does not expose it. That was wrong: `tray-icon`
+  0.25.1 has the feature, and Cargo feature unification enables it, see
+  [ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator).)
 
 ## Single instance
 
 - **D-Bus fallback.** Linux needs a D-Bus session bus. Without one (bare SSH, cron),
-  the plugin starts normally, so the guard is off and a second process can start.
-  Its warning goes through `tracing`, and sotyware installs no subscriber, so
-  **nothing is printed**.
+  the plugin starts normally, so the guard is off. Its warning goes through
+  `tracing`, and sotyware installs no subscriber, so **nothing is printed**.
+  Since the `ksni` tray backend, the tray also needs the session bus, so such a
+  process exits 1 right after (`cannot create system tray icon: … D-Bus
+  connection error`). A second process therefore cannot keep running either.
+  The guard itself is still off.
 - **Startup race.** If a second launch arrives after the first instance took the
   lock but before its window exists, the callback logs
   `sotyware: dashboard window 'main' not found` and does nothing. The first
@@ -140,9 +165,11 @@ fixed, remove it here in the same change and update
   Linux test clicks it in the real webview.
 - **The virtual-display test was validated only on WSL2** (Ubuntu 24.04.1, with
   the apt-installed packages from [setup.md](../development/setup.md#linux-system-packages)),
-  not on a native Ubuntu install and not in CI. It fails, correctly, on the
-  intermittent [missing tray item](#linux-tray), so a CI job would be flaky at
-  roughly 1 run in 60 while the library race is unfixed.
+  not on a native Ubuntu install and not in CI. With libayatana-appindicator it
+  failed, correctly, about 1 run in 60 on the
+  [registration race](#historical-libayatana-appindicator-registration-race).
+  With the `ksni` backend no run has failed so far (3 runs and a 420-launch
+  loop, 2026-11-10). That is evidence, not proof.
 - **No test covers screen-reader access** on either platform.
 
 ## Development environment (WSL)

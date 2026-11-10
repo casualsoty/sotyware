@@ -15,8 +15,8 @@ BIN=$(readlink -f "${1:-$H/../../src-tauri/target/release/sotyware}")
 
 if [ -z "${SOTYWARE_TEST_WORK:-}" ]; then
   WORK=$(mktemp -d)
-  # Private runtime dir (WSL may have no usable /run/user/$UID); the tray icon image
-  # goes here. Set before the bus starts so the bus and its services use it too.
+  # Private runtime dir (WSL may have no usable /run/user/$UID). Set before the
+  # bus starts so the bus and its services use it too.
   mkdir -m 700 "$WORK/runtime"
   rc=0
   SOTYWARE_TEST_WORK="$WORK" XDG_RUNTIME_DIR="$WORK/runtime" \

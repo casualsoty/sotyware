@@ -11,7 +11,7 @@ handling is in [single-instance.md](single-instance.md).
 | **Hide** (dashboard button) | Window hidden; process and tray keep running |
 | **Close** (title-bar ✕, Alt+F4, WM close) | Intercepted and turned into hide; process keeps running |
 | **Quit** (tray menu) | Process exits cleanly with code 0 |
-| **Open Dashboard** (tray menu, or left click on the icon on Windows) | Existing window un-minimized, shown, focused |
+| **Open Dashboard** (tray menu, or left click on the icon; on Linux if the tray host sends it) | Existing window un-minimized, shown, focused |
 | **Launch sotyware again** while it runs | No new process, tray icon or window; the existing dashboard is shown, un-minimized, focused |
 
 ## Startup sequence
@@ -43,8 +43,8 @@ handling is in [single-instance.md](single-instance.md).
   An error is shown in the page.
 - **A missing tray is fatal.** Without a tray a hidden dashboard could never be
   restored, so `setup` exits with code 1 if `tray::create()` fails. (This cannot
-  detect a tray that was created but has no host to display it; see
-  [limitations](../status/limitations.md).)
+  detect a watcher that accepts the item while no panel displays it; see
+  [limitations](../status/limitations.md#linux-tray).)
 - **Handlers are registered once.** On the builder and in `setup`, which runs once.
   No polling, timers or background tasks.
 
@@ -59,14 +59,23 @@ the app's default window icon, and a menu:
 | `quit` | Quit | `Quit` | `AppControl::quit` → `app.exit(0)` |
 
 Unknown ids are ignored. `show_menu_on_left_click(false)` makes a left click on the
-icon open the dashboard and a right click open the menu, **on Windows**. Linux
-(AppIndicator) emits no icon click events, so any click opens the menu. If there is
-no default window icon, a warning is logged and the tray may be invisible.
+icon open the dashboard and a right click open the menu on Windows. On Linux the
+tray host decides. The item is not marked menu-only, so hosts send a left click as
+`Activate`, which arrives as a left-click event and opens the dashboard. A middle
+click (`SecondaryActivate`) does nothing, and the host shows the menu on right
+click. If there is no default window icon, a warning is logged and the tray may be
+invisible.
 
-On Linux the tray is a StatusNotifierItem via libayatana-appindicator, which falls
-back to a legacy XEmbed icon when no StatusNotifierItem host exists. Its
-registration with the host is asynchronous and happens after `tray::create()`
-returned, so a registration that never happens is not a creation error. A race
-inside the library occasionally causes exactly that. See
-[cross-platform.md](../development/cross-platform.md) and
-[limitations.md](../status/limitations.md).
+On Linux the tray is a StatusNotifierItem served by `tray-icon`'s pure-Rust
+`ksni` backend over `zbus`, not by libayatana-appindicator
+([ADR-011](decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
+`tray::create()` returns only after `ksni` has opened its session-bus
+connection, served the item (`/StatusNotifierItem`) and its menu (`/MenuBar`),
+taken the name `org.kde.StatusNotifierItem-<pid>-1` and called
+`RegisterStatusNotifierItem` on the watcher. Each step uses that one connection,
+so registration cannot be lost to an ordering race. If any step fails (no session
+bus, no `org.kde.StatusNotifierWatcher`), tray creation fails and sotyware exits 1.
+There is no XEmbed fallback. If the watcher restarts, `ksni` registers again. The
+icon is sent over D-Bus as a pixmap, so nothing is written to `$XDG_RUNTIME_DIR`.
+See [cross-platform.md](../development/cross-platform.md) and
+[limitations.md](../status/limitations.md#linux-tray).
