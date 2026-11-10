@@ -6,8 +6,9 @@
 # usage: tests/desktop/virtual.sh [binary]   (default: src-tauri/target/release/sotyware)
 #
 # Needs: Xvfb, openbox, and everything run.sh needs (python3, python3-dbus,
-# python3-gi, libX11, dbus-run-session). Debian/Ubuntu:
-#   sudo apt install xvfb openbox python3-dbus python3-gi dbus-x11
+# python3-gi, the AT-SPI typelib and registry, libX11, dbus-run-session).
+# Debian/Ubuntu:
+#   sudo apt install xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11
 #
 # Exit code: that of run.sh (0 no check failed, 1 a check failed, 2 binary
 # missing); 2 if a dependency is missing; 3 if Xvfb or openbox did not start;
@@ -22,12 +23,12 @@ missing=()
 for cmd in Xvfb openbox python3 dbus-run-session timeout; do
   command -v "$cmd" >/dev/null || missing+=("$cmd")
 done
-if command -v python3 >/dev/null && ! python3 -c 'import dbus, gi' 2>/dev/null; then
-  missing+=("python3-dbus/python3-gi")
+if command -v python3 >/dev/null && ! python3 -c 'import dbus, gi; gi.require_version("Atspi", "2.0")' 2>/dev/null; then
+  missing+=("python3-dbus/python3-gi/gir1.2-atspi-2.0")
 fi
 if [ ${#missing[@]} -gt 0 ]; then
   echo "missing: ${missing[*]}" >&2
-  echo "install (Debian/Ubuntu): sudo apt install xvfb openbox python3-dbus python3-gi dbus-x11" >&2
+  echo "install (Debian/Ubuntu): sudo apt install xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11" >&2
   exit 2
 fi
 [ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run tauri build -- --no-bundle)" >&2; exit 2; }

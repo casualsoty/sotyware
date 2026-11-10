@@ -4,10 +4,12 @@
 # usage: tests/desktop/run.sh [binary]     (default: src-tauri/target/release/sotyware)
 #
 # Needs: an X11 display ($DISPLAY, e.g. WSLg or Xvfb + a window manager), python3,
-# python3-dbus, python3-gi, libX11 and dbus-run-session.
+# python3-dbus, python3-gi with the AT-SPI typelib (gir1.2-atspi-2.0), at-spi2-core,
+# libX11 and dbus-run-session.
 # Everything runs inside a private D-Bus session bus, so a sotyware already running
-# on your real desktop is not touched, and a stub StatusNotifierWatcher stands in
-# for the tray host.
+# on your real desktop is not touched. The driver starts and stops a stub
+# StatusNotifierWatcher (sni_watcher.py) on that bus to stand in for the tray host,
+# or leaves it out to test dashboard-only mode.
 set -euo pipefail
 H=$(dirname "$(readlink -f "$0")")
 BIN=$(readlink -f "${1:-$H/../../src-tauri/target/release/sotyware}")
@@ -28,12 +30,7 @@ if [ -z "${SOTYWARE_TEST_WORK:-}" ]; then
 fi
 
 WORK=$SOTYWARE_TEST_WORK
-trap 'kill "${WATCHER:-}" 2>/dev/null || true' EXIT
 REG="$WORK/tray-registrations"
 touch "$REG"
-
-# The driver waits until the watcher owns its bus name before launching sotyware.
-python3 "$H/sni_watcher.py" "$REG" &
-WATCHER=$!
 
 GDK_BACKEND=x11 python3 "$H/single_instance.py" "$BIN" "$REG"

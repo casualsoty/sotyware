@@ -1,7 +1,14 @@
 """Minimal org.kde.StatusNotifierWatcher so sotyware (tray-icon's ksni backend) registers a tray item.
 
+usage: sni_watcher.py <registrations-file> [--reject | --no-host]
+
 Stands in for the tray host of KDE / GNOME+AppIndicator extension. Records each
 registration (sender unique name + object path) as a line in argv[1].
+
+--reject   answer RegisterStatusNotifierItem with org.freedesktop.DBus.Error.AccessDenied:
+           a watcher that exists but fails, which sotyware must treat as fatal.
+--no-host  report IsStatusNotifierHostRegistered = false: a watcher with no tray
+           host to display items, which puts sotyware in dashboard-only mode.
 """
 import sys
 
@@ -12,6 +19,8 @@ from gi.repository import GLib
 
 IFACE = "org.kde.StatusNotifierWatcher"
 OUT = sys.argv[1]
+MODE = sys.argv[2] if len(sys.argv) > 2 else None
+assert MODE in (None, "--reject", "--no-host"), f"unknown option {MODE}"
 
 
 class Watcher(dbus.service.Object):
@@ -22,6 +31,9 @@ class Watcher(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="", sender_keyword="sender")
     def RegisterStatusNotifierItem(self, service, sender=None):
+        if MODE == "--reject":
+            raise dbus.exceptions.DBusException("stub watcher rejects every item",
+                                                name="org.freedesktop.DBus.Error.AccessDenied")
         path = service if service.startswith("/") else "/StatusNotifierItem"
         bus_name = sender if service.startswith("/") else service
         entry = f"{bus_name} {path}"
@@ -46,7 +58,7 @@ class Watcher(dbus.service.Object):
     def GetAll(self, iface):
         return {
             "RegisteredStatusNotifierItems": dbus.Array(self.items, signature="s"),
-            "IsStatusNotifierHostRegistered": dbus.Boolean(True),
+            "IsStatusNotifierHostRegistered": dbus.Boolean(MODE != "--no-host"),
             "ProtocolVersion": dbus.Int32(0),
         }
 

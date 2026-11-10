@@ -1,24 +1,37 @@
 """Drives the real sotyware binary and checks single-instance + lifecycle behaviour.
 
 usage: single_instance.py <binary> <sni-registrations-file>
-Run it through run.sh, which provides a private D-Bus session bus, a stub tray host
-(sni_watcher.py) and GDK_BACKEND=x11. This is a SIMULATED environment: the tray
-host is a stub, and the window manager is whatever serves $DISPLAY.
+Run it through run.sh, which provides a private D-Bus session bus and
+GDK_BACKEND=x11. The driver starts the stub tray host (sni_watcher.py) on that bus
+itself, and stops it for the dashboard-only scenarios. This is a SIMULATED
+environment: the tray host is a stub, and the window manager is whatever serves
+$DISPLAY. The page inside the webview is read and clicked through AT-SPI, the
+accessibility interface WebKitGTK exposes.
 
 Each check prints PASS, FAIL or SKIP. SKIP means the environment could not
 exercise that behaviour (for example a window manager that ignores minimize
 requests); it is never counted as a pass.
 """
+import atexit
 import ctypes
 import ctypes.util
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import dbus
+import gi
+
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi  # noqa: E402
 
 BIN, REG = os.path.abspath(sys.argv[1]), sys.argv[2]
+HERE = os.path.dirname(os.path.abspath(__file__))
+LOGS = tempfile.mkdtemp(prefix="sotyware-driver-")
+atexit.register(shutil.rmtree, LOGS, True)
 results = []
 
 
@@ -256,13 +269,135 @@ bus = dbus.SessionBus()
 WATCHER_NAME = "org.kde.StatusNotifierWatcher"
 
 
-def wait_for_bus_name(name, timeout=10.0):
+def wait_for_bus_name(name, timeout=10.0, present=True):
     end = time.time() + timeout
     while time.time() < end:
-        if bus.name_has_owner(name):
+        if bus.name_has_owner(name) == present:
             return True
         time.sleep(0.05)
     return False
+
+
+# ---------- stub tray host ----------
+watcher = None
+
+
+def start_watcher(*flags):
+    """Starts sni_watcher.py on this bus and waits until it owns its name."""
+    global watcher
+    assert watcher is None, "a stub watcher is already running"
+    watcher = subprocess.Popen([sys.executable, os.path.join(HERE, "sni_watcher.py"), REG, *flags])
+    assert wait_for_bus_name(WATCHER_NAME), f"stub tray host ({WATCHER_NAME}) did not appear on the session bus"
+
+
+def stop_watcher():
+    """Stops the stub watcher and waits until its name is gone from the bus."""
+    global watcher
+    if watcher is None:
+        return
+    watcher.terminate()
+    watcher.wait(timeout=10)
+    watcher = None
+    assert wait_for_bus_name(WATCHER_NAME, present=False), f"{WATCHER_NAME} still owned after stopping the stub"
+
+
+atexit.register(stop_watcher)
+
+
+def sni_names(pid):
+    """StatusNotifierItem bus names that process `pid` owns (ksni: ...-<pid>-<n>)."""
+    return [str(n) for n in bus.list_names() if str(n).startswith(f"org.kde.StatusNotifierItem-{pid}-")]
+
+
+# ---------- the page inside the webview, via AT-SPI ----------
+def _page_nodes(pid):
+    """(role, name, text) of every accessible node of process `pid`, [] if not found."""
+    desktop = Atspi.get_desktop(0)
+    for i in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(i)
+        try:
+            if app is None or app.get_process_id() != pid:
+                continue
+            app.clear_cache()
+        except gi.repository.GLib.Error:
+            continue
+        nodes = []
+
+        def walk(node):
+            try:
+                text = ""
+                if node.get_text_iface() is not None:
+                    text = Atspi.Text.get_text(node, 0, Atspi.Text.get_character_count(node))
+                nodes.append((node.get_role_name(), node.get_name() or "", text or "", node))
+                for j in range(node.get_child_count()):
+                    child = node.get_child_at_index(j)
+                    if child is not None:
+                        walk(child)
+            except gi.repository.GLib.Error:
+                pass  # node went away while walking
+
+        walk(app)
+        return nodes
+    return []
+
+
+def page_ready(pid):
+    """True once the dashboard has its operating mode (a Hide button or a status note)."""
+    roles = [r for r, *_ in _page_nodes(pid)]
+    return "push button" in roles or "status bar" in roles
+
+
+def page_text(pid):
+    return " ".join(" ".join((n, t)) for _, n, t, _ in _page_nodes(pid)).replace("\ufffc", " ")
+
+
+def page_buttons(pid):
+    return [(n, node) for r, n, _, node in _page_nodes(pid) if r == "push button"]
+
+
+def click_button(pid, name):
+    """Activates the named button the way a screen reader or keyboard user would."""
+    for n, node in page_buttons(pid):
+        if n == name:
+            return Atspi.Action.do_action(node, 0)
+    return False
+
+
+# ---------- instances whose output is read while they run ----------
+def launch(label, env=None):
+    """Starts the binary with its output in a log file; returns (process, log path)."""
+    log = os.path.join(LOGS, f"{label.split()[0]}-{len(os.listdir(LOGS))}.log")
+    with open(log, "wb") as f:
+        p = subprocess.Popen([BIN], env=env, stdout=f, stderr=subprocess.STDOUT)
+    return p, log
+
+
+def read_log(log):
+    with open(log, errors="replace") as f:
+        return f.read()
+
+
+def log_after_mode(log):
+    """The output once the instance has logged its operating-mode decision.
+
+    The window exists before `setup` creates the tray, so the dashboard can be on
+    screen before the mode is logged. Bounded wait; returns the output regardless.
+    """
+    wait_for(lambda: "sotyware: running in" in read_log(log) or "cannot create" in read_log(log), 10)
+    return read_log(log)
+
+
+def wait_exit(p, timeout=10):
+    try:
+        return p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        return None
+
+
+DASHBOARD_ONLY_LOG = "sotyware: running in dashboard-only mode"
+DASHBOARD_ONLY_TEXT = "No compatible system tray is available"
 
 
 def tray_menu():
@@ -302,9 +437,9 @@ def expect_reused(label, win, primary_pid):
 
 # ---------- scenario ----------
 assert not sotyware_pids(), f"sotyware already running from {BIN}: {sotyware_pids()}"
-# Without the stub tray host, sotyware would exit at once (no StatusNotifierWatcher
-# is a tray failure) and every check would fail for the wrong reason.
-assert wait_for_bus_name(WATCHER_NAME), f"stub tray host ({WATCHER_NAME}) did not appear on the session bus"
+# Scenarios 1-11 run in tray mode. Without the stub tray host, sotyware would start
+# in dashboard-only mode and every tray check would fail for the wrong reason.
+start_watcher()
 
 # 1. First launch.
 proc = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -435,26 +570,27 @@ check("relaunch after Quit: tray Quit exits with code 0", code == 0, f"exit code
 if not (registered and code == 0):
     print("--- relaunched instance output ---\n" + again.communicate()[0].decode(errors="replace").strip())
 
-# 10. Startup failure: the tray icon cannot be created, so sotyware must exit 1
-# instead of running on unreachable. The tray backend (ksni) registers with the
-# StatusNotifierWatcher before tray creation returns, so a session bus without a
-# watcher (a desktop with no tray host) is a creation failure. The instance runs
-# on a private bus of its own, where the stub tray host is absent.
+# 10. Startup failure: the tray icon cannot be created for a reason other than a
+# missing tray host, so sotyware must exit 1 instead of hiding a defect behind
+# dashboard-only mode. The tray backend (ksni) registers with the
+# StatusNotifierWatcher before tray creation returns; here a watcher exists but
+# rejects the item with an unexpected D-Bus error (AccessDenied).
+# (A missing watcher is no longer a failure: see scenario 13.)
 open(REG, "w").close()
-bad = subprocess.Popen(["dbus-run-session", "--", BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-try:
-    bad_out = bad.communicate(timeout=30)[0].decode(errors="replace")
-    code = bad.returncode
-except subprocess.TimeoutExpired:
-    bad.kill()
-    bad_out = bad.communicate()[0].decode(errors="replace")
-    code = None
+stop_watcher()
+start_watcher("--reject")
+bad, bad_log = launch("10 tray failure")
+code = wait_exit(bad, 30)
+bad_out = read_log(bad_log)
 check("10 tray failure: process exits with code 1", code == 1, f"exit code={code}")
-check("10 tray failure: reports the tray error", "sotyware: cannot create system tray icon" in bad_out,
+check("10 tray failure: reports the tray error", "sotyware: cannot create system tray icon" in bad_out
+      and "AccessDenied" in bad_out and DASHBOARD_ONLY_LOG not in bad_out,
       f"output={bad_out.strip()!r}")
 check("10 tray failure: no process or tray item left behind",
       wait_for(lambda: not sotyware_pids(), 5) and not tray_registrations(),
       f"pids={sotyware_pids()} tray={len(tray_registrations())}")
+stop_watcher()
+start_watcher()
 
 # 11. As under WSL (/run/user/<uid> missing, /run/user owned by root),
 # $XDG_RUNTIME_DIR names a directory that cannot be created
@@ -481,6 +617,164 @@ except subprocess.TimeoutExpired:
 check("11 unusable XDG_RUNTIME_DIR: tray Quit exits with code 0", code == 0, f"exit code={code}")
 if not (ok and registered and code == 0):
     print("--- instance output ---\n" + odd.communicate()[0].decode(errors="replace").strip())
+
+# 12. Tray mode, the dashboard's own Hide button (clicked through AT-SPI). Also the
+# control for scenario 13: it proves that AT-SPI reaches the page and its button.
+open(REG, "w").close()
+tm, tm_log = launch("12 tray mode")
+ok = wait_for(lambda: len(dashboards(tm.pid)) == 1 and viewable(dashboards(tm.pid)[0]), 20)
+registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
+check("12 tray mode: starts with dashboard and one tray item", ok and registered and tm.poll() is None,
+      f"registrations={len(tray_registrations())}")
+tm_win = dashboards(tm.pid)[0] if ok else None
+page = wait_for(lambda: page_ready(tm.pid), 20)
+text = page_text(tm.pid) if page else ""
+check("12 tray mode: page shows the tray hint and a Hide button, no dashboard-only note",
+      page and "reopen it any time from the system tray" in text and DASHBOARD_ONLY_TEXT not in text
+      and [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"],
+      f"text={text!r} buttons={[n for n, _ in page_buttons(tm.pid)]}")
+can_click_hide = bool(tm_win) and page and click_button(tm.pid, "Hide dashboard")
+hidden = can_click_hide and wait_for(lambda: not viewable(tm_win))
+check("12 tray mode: Hide button hides the dashboard, process keeps running",
+      hidden and tm.poll() is None and all_dashboards() == [tm_win], f"clicked={can_click_hide}")
+if registered:
+    m4, l4 = tray_menu()
+    tray_click(m4, l4, "Open Dashboard")
+    check("12 tray mode: tray Open Dashboard restores it after Hide",
+          bool(tm_win) and wait_for(lambda: viewable(tm_win)) and all_dashboards() == [tm_win])
+    tray_click(m4, l4, "Quit")
+code = wait_exit(tm)
+check("12 tray mode: tray Quit exits with code 0, nothing left",
+      code == 0 and wait_for(lambda: not sotyware_pids(), 5), f"exit code={code} pids={sotyware_pids()}")
+if not (ok and registered and hidden and code == 0):
+    print("--- instance output ---\n" + read_log(tm_log).strip())
+
+# 13. Dashboard-only mode: a session bus, but no StatusNotifierWatcher (vanilla
+# GNOME). sotyware must start, keep its dashboard on screen, not pretend to have a
+# tray, and end when the dashboard is closed.
+stop_watcher()
+open(REG, "w").close()
+do, do_log = launch("13 dashboard-only")
+ok = wait_for(lambda: len(dashboards(do.pid)) == 1 and viewable(dashboards(do.pid)[0]), 20)
+check("13 dashboard-only: process running and dashboard visible", ok and do.poll() is None)
+do_win = dashboards(do.pid)[0] if ok else None
+page = wait_for(lambda: page_ready(do.pid), 20)
+do_out = log_after_mode(do_log)
+check("13 dashboard-only: reports the mode and the reason",
+      DASHBOARD_ONLY_LOG in do_out and "(no StatusNotifierWatcher)" in do_out
+      and "cannot create system tray icon" not in do_out, f"output={do_out.strip()!r}")
+check("13 dashboard-only: no tray item registered or served",
+      not tray_registrations() and not sni_names(do.pid),
+      f"registrations={len(tray_registrations())} names={sni_names(do.pid)}")
+text = page_text(do.pid) if page else ""
+check("13 dashboard-only: page shows the no-tray note, not the tray hint",
+      page and DASHBOARD_ONLY_TEXT in text and "Closing it quits sotyware" in text
+      and "from the system tray" not in text, f"text={text!r}")
+buttons = [n for n, _ in page_buttons(do.pid)] if page else None
+if can_click_hide:
+    check("13 dashboard-only: page offers no Hide button, dashboard stays visible",
+          buttons == [] and not click_button(do.pid, "Hide dashboard") and viewable(do_win),
+          f"buttons={buttons}")
+else:
+    check("13 dashboard-only: page offers no Hide button, dashboard stays visible", None,
+          "scenario 12 could not click Hide through AT-SPI, so its absence proves nothing")
+
+# Single instance works without a tray: a second launch shows the dashboard.
+if do_win:
+    x.XIconifyWindow(dpy, do_win, x.XDefaultScreen(dpy))
+    x.XFlush(dpy)
+    minimized = wait_for(lambda: iconic(do_win) or not viewable(do_win), 4)
+    code, new_windows = second_launch("13 dashboard-only second launch")
+    check("13 dashboard-only second launch: exits 0, no new window, one process",
+          code == 0 and not new_windows and sotyware_pids() == [do.pid],
+          f"exit code={code} new={[hex(w) for w in new_windows]} pids={sotyware_pids()}")
+    check("13 dashboard-only second launch: minimized dashboard restored",
+          wait_for(lambda: viewable(do_win) and not iconic(do_win)) if minimized else None,
+          "" if minimized else "window manager ignored the minimize request")
+    check("13 dashboard-only second launch: still one window, no tray item",
+          all_dashboards() == [do_win] and not tray_registrations() and not sni_names(do.pid))
+
+# A tray host that appears later is not picked up: no retry, no polling.
+start_watcher()
+time.sleep(2)  # a negative check needs a window to observe; nothing is awaited
+check("13 dashboard-only: a watcher started later gets no registration",
+      not tray_registrations() and not sni_names(do.pid) and do.poll() is None,
+      f"registrations={len(tray_registrations())} names={sni_names(do.pid)}")
+
+# Closing the only window ends the process instead of leaving it unreachable.
+if do_win:
+    send_wm_delete(do_win)
+code = wait_exit(do)
+check("13 dashboard-only close: process exits with code 0", code == 0, f"exit code={code}")
+check("13 dashboard-only close: no process or window left",
+      wait_for(lambda: not sotyware_pids(), 5) and not all_dashboards(),
+      f"pids={sotyware_pids()} windows={[hex(w) for w in all_dashboards()]}")
+if code != 0:
+    print("--- instance output ---\n" + read_log(do_log).strip())
+
+# 14. With the watcher back, the next launch is normal tray mode again.
+open(REG, "w").close()
+back, back_log = launch("14 relaunch with watcher")
+ok = wait_for(lambda: len(dashboards(back.pid)) == 1 and viewable(dashboards(back.pid)[0]), 20)
+registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
+check("14 relaunch with watcher: tray mode with one tray item", ok and registered and back.poll() is None
+      and DASHBOARD_ONLY_LOG not in read_log(back_log), f"registrations={len(tray_registrations())}")
+back_win = dashboards(back.pid)[0] if ok else None
+if back_win:
+    send_wm_delete(back_win)
+check("14 relaunch with watcher: close hides again", bool(back_win) and wait_for(lambda: not viewable(back_win))
+      and back.poll() is None)
+if registered:
+    m5, l5 = tray_menu()
+    tray_click(m5, l5, "Quit")
+code = wait_exit(back)
+check("14 relaunch with watcher: tray Quit exits with code 0, nothing left",
+      code == 0 and wait_for(lambda: not sotyware_pids(), 5), f"exit code={code}")
+if not (ok and registered and code == 0):
+    print("--- instance output ---\n" + read_log(back_log).strip())
+
+# 15. A watcher that reports no StatusNotifierHost (nothing would display the
+# item): dashboard-only mode too, and the item ksni announced is not left behind.
+stop_watcher()
+start_watcher("--no-host")
+open(REG, "w").close()
+nh, nh_log = launch("15 no host")
+ok = wait_for(lambda: len(dashboards(nh.pid)) == 1 and viewable(dashboards(nh.pid)[0]), 20)
+nh_out = log_after_mode(nh_log)
+check("15 no host: dashboard-only mode, dashboard visible",
+      ok and nh.poll() is None and DASHBOARD_ONLY_LOG in nh_out and "(no StatusNotifierHost)" in nh_out,
+      f"output={nh_out.strip()!r}")
+check("15 no host: no tray item served", wait_for(lambda: not sni_names(nh.pid), 5),
+      f"names={sni_names(nh.pid)}")
+nh_win = dashboards(nh.pid)[0] if ok else None
+if nh_win:
+    send_wm_delete(nh_win)
+code = wait_exit(nh)
+check("15 no host: close exits with code 0, nothing left",
+      code == 0 and wait_for(lambda: not sotyware_pids(), 5), f"exit code={code}")
+stop_watcher()
+
+# 16. No D-Bus session bus at all: no address in the environment and no socket in
+# $XDG_RUNTIME_DIR. Single instance is off without a bus (the plugin disables
+# itself), so only the mode and the close behaviour are checked.
+nobus_env = {k: v for k, v in os.environ.items() if k != "DBUS_SESSION_BUS_ADDRESS"}
+nobus_runtime = os.path.join(LOGS, "runtime-without-bus")
+os.mkdir(nobus_runtime, 0o700)
+nobus_env["XDG_RUNTIME_DIR"] = nobus_runtime
+nb, nb_log = launch("16 no session bus", env=nobus_env)
+ok = wait_for(lambda: len(dashboards(nb.pid)) == 1 and viewable(dashboards(nb.pid)[0]), 20)
+nb_out = log_after_mode(nb_log)
+check("16 no session bus: dashboard-only mode, dashboard visible",
+      ok and nb.poll() is None and DASHBOARD_ONLY_LOG in nb_out and "(no D-Bus session bus)" in nb_out,
+      f"output={nb_out.strip()!r}")
+nb_win = dashboards(nb.pid)[0] if ok else None
+if nb_win:
+    send_wm_delete(nb_win)
+code = wait_exit(nb)
+check("16 no session bus: close exits with code 0, nothing left",
+      code == 0 and wait_for(lambda: not sotyware_pids(), 5), f"exit code={code} pids={sotyware_pids()}")
+if not (ok and code == 0):
+    print("--- instance output ---\n" + read_log(nb_log).strip())
 
 out = proc.stdout.read().decode(errors="replace").strip()
 if out:
