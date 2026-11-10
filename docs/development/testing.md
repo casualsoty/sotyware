@@ -217,9 +217,14 @@ npm run test:desktop:virtual              # = bash tests/desktop/virtual.sh [bin
 `tests/desktop/virtual.sh` runs the [simulated desktop test](#simulated-desktop-test)
 unchanged, against the same release binary, on a display it creates itself:
 
-- **Xvfb** on a free display number (searched from `:99` down, skipping any with a
-  lock file or socket), listening only on the abstract socket: no TCP and no file
-  in `/tmp/.X11-unix`. `-displayfd` tells the script when it accepts clients.
+- **Xvfb** on a free display number, listening only on the abstract socket: no
+  TCP and no file in `/tmp/.X11-unix`. `-displayfd` tells the script when it
+  accepts clients. The number is searched from `:99` down. A number is skipped
+  if it has a lock file, a socket file, or a bound abstract socket
+  (`@/tmp/.X11-unix/X<n>` in `/proc/net/unix`). If Xvfb exits before
+  reporting ready, the script tries the next number. The script never lets
+  Xvfb choose its own number: Xvfb would start at `:0` and could take the
+  abstract socket of a real display that has only a socket file.
 - **openbox** as the window manager. It runs `--startup` once it manages the
   screen, which is the ready signal. Unlike WSLg's window manager it honours
   `_NET_ACTIVE_WINDOW` and `XIconifyWindow`, so the focus and un-minimize checks
@@ -243,6 +248,18 @@ affects the result.
 Interrupting the run (Ctrl+C, or SIGTERM to `virtual.sh`) cleans up like a normal
 exit: nothing it started is left running and its temporary directories are
 removed (checked 2026-11-10).
+
+Several runs can share one machine; each gets its own display. With
+`-displayfd`, Xvfb writes no `/tmp/.X<n>-lock`: Xvfb 21.1.12 writes one
+without the option and none with it (checked 2026-11-10, Ubuntu 24.04.1).
+Before the abstract-socket check, the script could not see another run's
+display. A second run started 5 s after the first chose `:99` again, and its
+Xvfb could not bind the socket ("server already running"), so it exited 3.
+Two runs can still pass the check together and pick the same number. Binding
+the socket is atomic, so one Xvfb loses, and its run moves to the next number.
+On WSL2 Ubuntu 24.04.1 (2026-11-10), two runs started 5 s apart and two started
+together each passed 92/0/0, on `:99` and `:98`. The simultaneous pair took the
+retry path ("Xvfb could not take :99, trying the next number").
 
 A FAIL on "one tray item" (first launch, or relaunch after Quit) is a real
 defect, not a test flake. Do not retry it away. Until `12a6185`, it was the

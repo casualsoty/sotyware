@@ -64,21 +64,37 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Pick a display number nobody uses. Start high to stay clear of real desktops,
-# and skip numbers with a lock file or socket (an Xvfb started by someone else).
-for n in $(seq 99 -1 20); do
-  [ -e "/tmp/.X$n-lock" ] || [ -e "/tmp/.X11-unix/X$n" ] || { DISP=$n; break; }
-done
-[ -n "$DISP" ] || { echo "no free X display number in :20-:99" >&2; rc=3; exit 3; }
+in_use() { # <n>: display :n has a lock file, a socket file or an abstract socket
+  [ -e "/tmp/.X$1-lock" ] || [ -e "/tmp/.X11-unix/X$1" ] ||
+    grep -q " @/tmp/.X11-unix/X$1\$" /proc/net/unix 2>/dev/null
+}
+started_or_died() { [ -s "$LOGS/display" ] || ! kill -0 "$XVFB_PID" 2>/dev/null; }
 
-# Listen on the abstract socket only: no TCP, and no file in /tmp/.X11-unix
-# (read-only under WSLg). -displayfd reports when the server accepts clients.
-Xvfb ":$DISP" -screen 0 1280x800x24 -nolisten tcp -nolisten unix -displayfd 3 \
-  3>"$LOGS/display" >"$LOGS/xvfb.log" 2>&1 &
-XVFB_PID=$!
-if ! wait_until 15 test -s "$LOGS/display"; then
-  echo "Xvfb did not start on :$DISP" >&2; rc=3; exit 3
-fi
+# Pick a display number nobody uses, starting high to stay clear of real
+# desktops. Listen on the abstract socket only: no TCP, and no file in
+# /tmp/.X11-unix (read-only under WSLg). -displayfd reports when the server
+# accepts clients, but it also stops Xvfb from writing /tmp/.X<n>-lock, so
+# another virtual.sh run is visible only by its abstract socket. Binding that
+# socket is the atomic claim: if Xvfb exits before reporting (a parallel run
+# took the number between the check and the start), try the next number.
+# Never let Xvfb choose itself: it would start at :0 and could take the
+# abstract socket of a real display that only has a socket file.
+for n in $(seq 99 -1 20); do
+  in_use "$n" && continue
+  : >"$LOGS/display"
+  echo "--- :$n ---" >>"$LOGS/xvfb.log"
+  Xvfb ":$n" -screen 0 1280x800x24 -nolisten tcp -nolisten unix -displayfd 3 \
+    3>"$LOGS/display" >>"$LOGS/xvfb.log" 2>&1 &
+  XVFB_PID=$!
+  if ! wait_until 15 started_or_died; then
+    echo "Xvfb did not start on :$n" >&2; rc=3; exit 3
+  fi
+  if [ -s "$LOGS/display" ]; then DISP=$n; break; fi
+  wait "$XVFB_PID" 2>/dev/null || true
+  XVFB_PID=""
+  echo "Xvfb could not take :$n, trying the next number" >&2
+done
+[ -n "$DISP" ] || { echo "Xvfb did not start on any display in :20-:99" >&2; rc=3; exit 3; }
 
 # openbox runs --startup only once it manages the screen.
 DISPLAY=":$DISP" openbox --sm-disable --startup "touch $LOGS/wm-ready" >"$LOGS/openbox.log" 2>&1 &
