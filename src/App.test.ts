@@ -142,9 +142,15 @@ describe("main.ts", () => {
     const target = document.createElement("div");
     target.id = "app";
     document.body.append(target);
+    // After vi.resetModules() main.ts gets its own copy of svelte; only that copy
+    // knows the component it mounted, so flush and unmount with it.
+    const svelte = await import("svelte");
     const { default: mounted } = await import("./main");
-    app = mounted;
-    flushSync();
-    expect(target.querySelector("h1")?.textContent).toBe("sotyware");
+    try {
+      svelte.flushSync();
+      expect(target.querySelector("h1")?.textContent).toBe("sotyware");
+    } finally {
+      svelte.unmount(mounted);
+    }
   });
 });

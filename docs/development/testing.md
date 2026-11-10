@@ -84,15 +84,6 @@ that `main.ts` throws without `#app`. It does **not** show that the OS window hi
 no webview, no Rust, no capability check runs. That is the
 [Windows desktop test](#windows-desktop-test)'s job.
 
-Expected stderr: the `main.ts` mount test prints Svelte's
-`lifecycle_double_unmount` warning. `vi.resetModules()` makes the dynamically
-imported `main.ts` load its own copy of Svelte, so the test's `unmount` does not
-recognise that component. The test still passes and the DOM is cleared after it;
-the warning appears on Linux and Windows alike. Vitest hides console output of
-passing tests when it detects that an AI agent started it (for example
-`CLAUDECODE=1` is set), so the warning may be missing from an agent's log; that
-is not a platform difference.
-
 ## Simulated desktop test
 
 ```bash

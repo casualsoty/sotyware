@@ -132,9 +132,7 @@ No Unix-only command is on this path: the npm scripts use only `&&`, which
 temporary files or reads runtime environment variables; the only paths are the
 two Rust config tests, which read `tauri.conf.json` and
 `capabilities/default.json` as `CARGO_MANIFEST_DIR` + `/` + name (Windows accepts
-the mixed separator) from the CRLF checkout. Svelte prints a
-`lifecycle_double_unmount` warning during the `main.ts` mount test; it appears on
-Linux too and does not fail the run ([testing.md](../development/testing.md#frontend-tests)).
+the mixed separator) from the CRLF checkout.
 
 ### Static checks and builds, native Windows 11
 
