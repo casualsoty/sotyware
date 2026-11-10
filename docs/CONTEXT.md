@@ -114,8 +114,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - CI (GitHub Actions, private repo on GitHub Free: $12 of hosted compute a
   month, then blocked): `ci.yml` runs automatically on pull requests to and
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
-  `test:headless`; docs-only changes skipped). It is pushed (since `3f3b9b9`),
-  but no run of it has been checked: no `ci.yml` result is recorded. Manual only:
+  `test:headless`; docs-only changes skipped). Its two automatic runs so far
+  passed: both the Ubuntu and the Windows headless job (run ids, commits and
+  durations not recorded). Manual only:
   `desktop-virtual.yml` (virtual display, not a real desktop) and
   `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
   is not in CI. `desktop-virtual.yml` ran once (`14a5de1`, ubuntu-26.04

@@ -253,13 +253,14 @@ repository is private on GitHub Free ($12 of hosted compute a month).
 
 | Workflow | Trigger | Result |
 | --- | --- | --- |
-| `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | — **pushed, no result recorded.** Committed in `5fe62b9`; on GitHub since the push of 2026-11-10 22:53 (+0100) that moved `main` to `3f3b9b9`. That push changed `ci.yml` itself and the push to `14a5de1` changed `package.json`, so both match the `push` trigger, but whether a run started and how it ended has not been checked; neither is recorded here. Later pushes (`55504d4`, `44be84e`) changed only ignored paths. Its command sequence passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
+| `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | ✅ **two automatic runs, both passed**: job `headless (ubuntu-latest)` passed and job `headless (windows-latest)` passed in each (confirmed on GitHub, recorded 2026-11-11; run ids, commits, timestamps and job durations were not recorded). Committed in `5fe62b9`; on GitHub since the push of 2026-11-10 22:53 (+0100) that moved `main` to `3f3b9b9`. That push changed `ci.yml` itself and the push to `14a5de1` changed `package.json`, so both match the `push` trigger; later pushes (`55504d4`, `44be84e`, and the docs-only pushes after them) changed only ignored paths. Its command sequence also passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
 | `desktop-virtual.yml` | manual | ❌ run once on GitHub, at `14a5de1` (runner image ubuntu-26.04 20261101.186, 2026-11-10): build 5 min 27 s, then **89 passed, 2 failed, 1 skipped**, exit 1. Scenario 12 found no Hide button; cause was the driver matching the AT-SPI role name, renamed in at-spi2-core 2.60 ([below](#virtual-display-test-on-ubuntu-2604-container-2026-11-10)). Fixed in `ead47e7`; **not re-run on GitHub yet** |
 | `desktop-windows-isolated.yml` | manual, experimental | ❌ run once on GitHub ([run 42919688755](https://github.com/casualsoty/sotyware/actions/runs/42919688755), Windows Server 2025; commit and duration not recorded here): private desktop `sotyware-test-8872` created, input desktop `Default`, no taskbar; the window appeared, then the title and Hide-button checks failed, the primary panicked (`failed to create webview`, `0x80070578` Invalid window handle) and second launches exited -1073740791. Reproduced on Windows 11 by running the suite elevated; cause and evidence [above](#windows-11-isolated-desktop-test-elevated-2026-11-11). Since `468a2c3` an elevated job reports NOT RUN (exit 4). **Second run** (2026-11-10 23:41 UTC, Windows Server 2025 Datacenter 24H2 build 26100.33674; run id and commit not in the pasted log, `origin/main` was `44be84e`): `elevated: True`, `NOT RUN`, exit 4, job failed as intended; no check ran |
-| Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint`. GitHub accepted the two manual workflows (both ran); for `ci.yml` no run is recorded |
+| Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint`. GitHub accepted all three workflows (each has run) |
 
-Record the first GitHub results here, with the real job durations, and replace
-the cost estimate in [testing.md](../development/testing.md#github-free-budget).
+Record further GitHub results here, with the real job durations when they are
+read, and replace the cost estimate in
+[testing.md](../development/testing.md#github-free-budget).
 
 ### Virtual-display test on Ubuntu 26.04 (container, 2026-11-10)
 
@@ -595,7 +596,7 @@ tray icon was ever seen or clicked by a person.
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
-| Headless suite and virtual-display test on GitHub Actions | — headless: `ci.yml` pushed, results not recorded; virtual-display failed once at `14a5de1` (driver bug, fixed in `ead47e7`, passes 3/3 in an Ubuntu 26.04 container), not re-run on GitHub ([CI](#ci-github-actions-2026-11-10)) |
+| Headless suite and virtual-display test on GitHub Actions | headless: ✅ two automatic `ci.yml` runs passed, Ubuntu and Windows jobs. Virtual-display failed once at `14a5de1` (driver bug, fixed in `ead47e7`, passes 3/3 in an Ubuntu 26.04 container), not re-run on GitHub ([CI](#ci-github-actions-2026-11-10)) |
 | Windows private-desktop test in Session 0 or on a GitHub-hosted runner | — Session 0 not tried. GitHub-hosted runner: not possible, hosted jobs are elevated; the manual workflow failed once and then reported NOT RUN, exit 4 ([CI](#ci-github-actions-2026-11-10)) |
 | Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |

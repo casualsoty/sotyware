@@ -576,8 +576,8 @@ desktop workflows when started by hand. Local runs (`npm run test:headless`,
 `npm run test:desktop:virtual`, the Windows scripts on your own machine) cost
 nothing.
 
-**Estimated cost** (not yet measured on GitHub; replace with the real job times
-after the first runs): a headless run takes roughly 4 min on Linux and 6 min on
+**Estimated cost** (not measured on GitHub: the first `ci.yml` runs passed, but
+their job times were not recorded; replace with the real job times): a headless run takes roughly 4 min on Linux and 6 min on
 Windows with a warm Cargo cache, about twice that cold, so about $0.08 warm to
 $0.17 cold, i.e. roughly 70–140 headless runs a month. A pull request with
 `n` pushes costs `n` runs plus one on merge. A manual virtual-display run is

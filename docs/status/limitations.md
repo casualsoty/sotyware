@@ -234,11 +234,13 @@ affected.
 
 ## CI
 
-- **No `ci.yml` result is recorded.** It is pushed and its `push` trigger matched
-  two pushes to `main` (2026-11-10), but no run has been checked; the two manual
-  desktop workflows ran and did not pass (the isolated-desktop one now reports
-  NOT RUN, which is not a pass) (results and causes in
-  [status.md](status.md#ci-github-actions-2026-11-10)).
+- **Only the headless workflow has passed on GitHub.** Both automatic `ci.yml`
+  runs passed (Ubuntu and Windows jobs). The two manual desktop workflows did
+  not pass there: `desktop-virtual.yml` failed once on a driver bug (fixed,
+  not re-run on GitHub) and `desktop-windows-isolated.yml` reports NOT RUN on
+  elevated hosted runners, which is not a pass (results and causes in
+  [status.md](status.md#ci-github-actions-2026-11-10)). Real job durations are
+  not recorded, so the cost figures are still estimates.
 - **CI time is a limited allowance.** The repository is private on GitHub Free:
   $12 of hosted compute a month, after which Actions is blocked until the next
   cycle (no payment method is set up). Hence only the headless jobs run
