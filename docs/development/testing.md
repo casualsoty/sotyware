@@ -41,8 +41,10 @@ Files:
   file that the driver counts.
 - `tests/desktop/single_instance.py`: drives the binary. It inspects X11 windows via
   `ctypes` (no extra Python packages), sends `WM_DELETE_WINDOW` to simulate the
-  close button, uses XTest to click the Hide button, and clicks tray menu items
-  over `com.canonical.dbusmenu`.
+  close button, clicks tray menu items over `com.canonical.dbusmenu`, and launches
+  further instances sequentially and concurrently. It does **not** click the
+  dashboard's "Hide dashboard" button; that path has no automated test in the
+  repository.
 
 Requirements: `python3`, `python3-dbus`, `python3-gi`, `libX11`,
 `dbus-run-session`, and an X11 display (`$DISPLAY`: WSLg, or Xvfb plus a window
