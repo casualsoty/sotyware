@@ -234,13 +234,13 @@ affected.
 
 ## CI
 
-- **Only the headless workflow has passed on GitHub.** Both automatic `ci.yml`
-  runs passed (Ubuntu and Windows jobs). The two manual desktop workflows did
-  not pass there: `desktop-virtual.yml` failed once on a driver bug (fixed,
-  not re-run on GitHub) and `desktop-windows-isolated.yml` reports NOT RUN on
+- **The Windows private-desktop test cannot pass on GitHub.** Both automatic
+  `ci.yml` runs passed (Ubuntu and Windows jobs) and `desktop-virtual.yml`
+  passed (92/0/0), but `desktop-windows-isolated.yml` reports NOT RUN on
   elevated hosted runners, which is not a pass (results and causes in
-  [status.md](status.md#ci-github-actions-2026-11-10)). Real job durations are
-  not recorded, so the cost figures are still estimates.
+  [status.md](status.md#ci-github-actions-2026-11-10)). A passing virtual-display
+  run is not a real Linux desktop: GNOME, KDE and XFCE remain untested. Real
+  job durations are not recorded, so the cost figures are still estimates.
 - **CI time is a limited allowance.** The repository is private on GitHub Free:
   $12 of hosted compute a month, after which Actions is blocked until the next
   cycle (no payment method is set up). Hence only the headless jobs run

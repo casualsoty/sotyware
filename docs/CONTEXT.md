@@ -119,10 +119,11 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   durations not recorded). Manual only:
   `desktop-virtual.yml` (virtual display, not a real desktop) and
   `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
-  is not in CI. `desktop-virtual.yml` ran once (`14a5de1`, ubuntu-26.04
-  runner) and failed 89/2/1 on a driver bug (AT-SPI role name renamed in
-  at-spi2-core 2.60), fixed in `ead47e7` and passing 3/3 in an Ubuntu 26.04
-  container; not re-run on GitHub yet. `desktop-windows-isolated.yml` ran twice
+  is not in CI. `desktop-virtual.yml` passed on GitHub, 92/0/0 (run id and
+  commit not recorded); this supersedes its first run (`14a5de1`, failed
+  89/2/1 on a driver bug fixed in `ead47e7`). It is a virtual display with a
+  stub tray host, so it says nothing about real GNOME, KDE or XFCE
+  desktops. `desktop-windows-isolated.yml` ran twice
   (Windows Server 2025): the first run failed on the elevated hosted job,
   reproduced on Windows 11 elevated; the second (2026-11-10) printed
   `elevated: True` and reported NOT RUN, exit 4 (not a pass): hosted runners

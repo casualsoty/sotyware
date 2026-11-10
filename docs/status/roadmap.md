@@ -36,8 +36,8 @@ Fixes found during validation come before anything below.
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost
-  estimate; re-run `desktop-virtual.yml` on GitHub after the driver fix
-  `ead47e7`; `desktop-windows-isolated.yml` is
+  estimate (`desktop-virtual.yml` has passed on GitHub too);
+  `desktop-windows-isolated.yml` is
   settled (hosted jobs are elevated: NOT RUN, exit 4). Record results in
   [status.md](status.md#ci-github-actions-2026-11-10).
 - Possibly, a separate decision: making the headless check required by branch
