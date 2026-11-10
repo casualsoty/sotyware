@@ -52,6 +52,7 @@ Details: [overview.md](architecture/overview.md),
 npm ci
 npm run tauri dev
 npm run check && npm run build
+npm run test:headless                      # frontend + Rust unit tests, no display needed
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 npm run tauri build -- --no-bundle && tests/desktop/run.sh
 ```

@@ -13,6 +13,17 @@ replaces another.
 | Manual check | Real tray host, real window manager, focus | checklist below | a real desktop |
 
 
+## Headless tests
+
+```bash
+npm run test:headless        # = npm run test:frontend && npm run test:rust
+```
+
+Runs the [Rust unit tests](#rust-unit-tests) and the
+[frontend tests](#frontend-tests). Neither starts sotyware, opens a window or
+talks to D-Bus, so no display, window manager, tray host or session bus is needed.
+Exits non-zero if any test fails.
+
 ## Rust unit tests
 
 ```bash

@@ -38,7 +38,12 @@ npm run build                               # frontend production build into dis
 cd src-tauri && cargo fmt --check
 cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo test
+npm run test:frontend                       # Vitest: dashboard UI with Tauri IPC mocks
 ```
+
+`npm run test:headless` runs the frontend tests and `cargo test` in one go; it
+needs no display, window manager, tray host or D-Bus session
+([testing.md](testing.md#headless-tests)).
 
 There is no JavaScript linter or formatter (ESLint/Prettier) and no `rustfmt.toml`
 or `clippy.toml`; defaults apply. There is no CI.

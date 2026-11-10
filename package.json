@@ -8,7 +8,9 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "tauri": "tauri",
-    "test:frontend": "vitest run"
+    "test:frontend": "vitest run",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:headless": "npm run test:frontend && npm run test:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4"
