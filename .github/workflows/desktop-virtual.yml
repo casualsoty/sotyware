@@ -1,0 +1,94 @@
+# Manual only: the Linux virtual-display test (tests/desktop/virtual.sh) on a
+# GitHub-hosted runner.
+#
+# This is VIRTUAL-DISPLAY testing (Xvfb + openbox, a stub tray host, a private
+# D-Bus session). It is not a real Linux desktop: no GNOME, KDE or XFCE, no real
+# tray host, no Wayland, no GPU. See docs/development/testing.md#virtual-display-test.
+#
+# It builds a release binary (about 10 minutes of Linux runner time), so it never
+# runs on pushes or pull requests. Start it from the Actions tab or with
+#   gh workflow run desktop-virtual.yml --ref <branch>
+name: desktop-virtual
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-virtual-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Number of checks the driver runs today. A run with fewer is a failure: a check
+  # must never disappear silently. Update it in the same commit that adds or
+  # removes a check in tests/desktop/single_instance.py.
+  EXPECTED_CHECKS: 92
+
+jobs:
+  virtual-display:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Tauri build libraries (docs/development/setup.md#linux-system-packages) plus
+      # exactly what virtual.sh and run.sh need (docs/development/testing.md#virtual-display-test).
+      - name: Install build and test packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev \
+            xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - run: npm ci
+      - name: Build the release binary (no installers)
+        run: npm run tauri build -- --no-bundle
+
+      # virtual.sh already fails on any FAIL or SKIP and on a missing dependency
+      # (exit 2) or display (exit 3). This step additionally requires the full
+      # number of checks, and names the exit code in the run summary.
+      - name: npm run test:desktop:virtual
+        run: |
+          set +e
+          npm run test:desktop:virtual 2>&1 | tee virtual.out
+          rc=${PIPESTATUS[0]}
+          set -e
+          summary=$(grep -E '^[0-9]+ passed, [0-9]+ failed, [0-9]+ skipped$' virtual.out | tail -n 1)
+          case $rc in
+            0) meaning="all checks passed" ;;
+            1) meaning="a check failed or was skipped" ;;
+            2) meaning="binary or test dependency missing" ;;
+            3) meaning="Xvfb or openbox did not start: environment unavailable, NOT a pass" ;;
+            124) meaning="timed out" ;;
+            *) meaning="unexpected exit code" ;;
+          esac
+          if [ "$rc" -eq 0 ] && [ "$summary" != "$EXPECTED_CHECKS passed, 0 failed, 0 skipped" ]; then
+            meaning="expected '$EXPECTED_CHECKS passed, 0 failed, 0 skipped', got '${summary:-no summary line}'"
+            rc=1
+          fi
+          {
+            echo "### Linux virtual-display test (Xvfb + openbox, stub tray host; not a real desktop)"
+            echo ""
+            echo "- exit code: $rc ($meaning)"
+            echo "- summary: ${summary:-no summary line}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::virtual-display test: exit $rc ($meaning)"
+          fi
+          exit "$rc"

@@ -8,6 +8,11 @@ Where things are. Generated and ignored paths are listed in
 ├── AGENTS.md                 Canonical instructions for coding agents
 ├── CLAUDE.md                 Claude Code entry point (imports AGENTS.md)
 ├── README.md                 Human-facing overview and quick start
+├── .github/
+│   └── workflows/
+│       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, fmt, clippy, test:headless
+│       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
+│       └── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, lifecycle, single instance, decisions)
@@ -60,5 +65,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` (static); the runtime capability `tray-mode` in `setup` in `lib.rs` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows); all headless tests: `npm run test:headless` |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

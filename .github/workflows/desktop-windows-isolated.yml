@@ -1,0 +1,92 @@
+# Manual only, EXPERIMENTAL: the Windows isolated-desktop test
+# (tests/desktop/windows-isolated.ps1) on a GitHub-hosted runner.
+#
+# It runs the real release binary on a private desktop in the runner's session.
+# Whether a hosted runner provides a session in which a desktop can be created and
+# WebView2 can render has not been shown yet; until a run here has passed, treat
+# any result as an experiment (docs/development/testing.md#ci).
+#
+# Not covered here (no taskbar on a private desktop): tray icon, tray menu, left
+# click and Quit. The real-desktop test (npm run test:desktop:windows) needs an
+# unlocked desktop with Explorer and moves the mouse; it is not run on hosted
+# runners at all.
+#
+# It builds a release binary (Windows runner time is billed at a higher rate than
+# Linux), so it never runs on pushes or pull requests. Start it from the Actions
+# tab or with
+#   gh workflow run desktop-windows-isolated.yml --ref <branch>
+name: desktop-windows-isolated
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-isolated-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Number of checks the test runs today. A run with fewer is a failure: a check
+  # must never disappear silently. Update it in the same commit that adds or
+  # removes a check in tests/desktop/windows-isolated.ps1.
+  EXPECTED_CHECKS: 56
+
+jobs:
+  isolated-desktop:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - run: npm ci
+      - name: Build the release binary (no installers)
+        run: npm run tauri build -- --no-bundle
+
+      # Exit codes of the test: 0 all passed, 1 a check failed, 2 binary missing or
+      # already running, 3 the private desktop could not be created or used, 124
+      # timeout. Every non-zero code fails this job; 3 means the runner cannot run
+      # the test, which is reported as such and never as a pass.
+      - name: npm run test:desktop:windows:isolated
+        shell: pwsh
+        run: |
+          npm run test:desktop:windows:isolated *> isolated.out
+          $rc = $LASTEXITCODE
+          $out = Get-Content isolated.out
+          $out
+          $summary = @($out | Where-Object { $_ -match '^summary: \d+ passed, \d+ failed' }) | Select-Object -Last 1
+          $meaning = switch ($rc) {
+            0 { "all checks passed" }
+            1 { "a check failed" }
+            2 { "binary missing or sotyware already running" }
+            3 { "private desktop unavailable on this runner: the test did NOT run, NOT a pass" }
+            124 { "timed out" }
+            default { "unexpected exit code" }
+          }
+          if ($rc -eq 0 -and $summary -notmatch "^summary: $env:EXPECTED_CHECKS passed, 0 failed") {
+            $meaning = "expected '$env:EXPECTED_CHECKS passed, 0 failed', got '$(if ($summary) { $summary } else { 'no summary line' })'"
+            $rc = 1
+          }
+          @(
+            "### Windows isolated-desktop test (experimental on hosted runners; no tray, no Quit)"
+            ""
+            "- exit code: $rc ($meaning)"
+            "- summary: $(if ($summary) { $summary } else { 'no summary line' })"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
+          if ($rc -ne 0) { "::error::isolated-desktop test: exit $rc ($meaning)" }
+          exit $rc

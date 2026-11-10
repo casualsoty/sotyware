@@ -1,0 +1,104 @@
+# Headless CI: the only workflow that runs automatically.
+#
+# The repository is private on GitHub Free, so hosted-runner time is a limited
+# monthly allowance (docs/development/testing.md#ci). This workflow therefore:
+# - runs on pull requests to main and pushes to main only (a push to any other
+#   branch runs nothing, so a pull request commit is never built twice);
+# - skips commits that change only documentation or the desktop test scripts,
+#   which the headless jobs do not exercise;
+# - cancels an older run of the same pull request or branch when a newer one starts;
+# - runs no desktop test, builds no release binary or installer, uploads no artifact;
+# - caches only npm downloads and compiled Cargo dependencies, and saves the Cargo
+#   cache from main only, so pull requests reuse it without adding entries.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "tests/desktop/**"
+      - ".github/workflows/desktop-*.yml"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "tests/desktop/**"
+      - ".github/workflows/desktop-*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  headless:
+    name: headless (${{ matrix.os }})
+    strategy:
+      # Independent results per platform: a Linux failure must not hide the
+      # Windows result, or the other way round.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || 30 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Build libraries for the Tauri crate (docs/development/setup.md#linux-system-packages).
+      # No display server, window manager, tray host or D-Bus session: nothing here
+      # starts sotyware.
+      - name: Install Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      # rustup is preinstalled on the hosted images; no toolchain action needed.
+      - name: Install Rust stable with rustfmt and clippy
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: npm ci
+      - run: npm run check
+      # Also produces dist/, which the Tauri crate embeds at compile time.
+      - run: npm run build
+
+      # Fails if Cargo.lock does not match Cargo.toml, so later commands cannot
+      # silently resolve different versions.
+      - name: cargo fetch --locked
+        working-directory: src-tauri
+        run: cargo fetch --locked
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - run: npm run test:headless

@@ -46,8 +46,10 @@ needs no display, window manager, tray host or D-Bus session
 ([testing.md](testing.md#headless-tests)).
 
 There is no JavaScript linter or formatter (ESLint/Prettier) and no `rustfmt.toml`
-or `clippy.toml`; defaults apply. There is no CI; recommended jobs are in
-[testing.md](testing.md#ci).
+or `clippy.toml`; defaults apply. GitHub Actions runs the static checks and the
+headless tests on Linux and Windows for every pull request to `main` and push to
+`main`; it does not replace running them locally before a commit
+([testing.md](testing.md#ci)).
 
 ## Production build
 

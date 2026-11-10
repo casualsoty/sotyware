@@ -16,6 +16,10 @@ others.
 Static checks (`npm run check`, `cargo fmt --check`, `cargo clippy`) need nothing
 special and run before every commit ([workflow.md](workflow.md)).
 
+On GitHub Actions, the static checks and category A run automatically on Linux
+and Windows; B and B″ run only when started by hand; B′ and C never run there
+([CI](#ci)).
+
 **Only category A is headless.** Every test that starts the release binary needs a
 display: on Linux an X server (B, B′), on Windows a logged-in session with a window
 station (B″, C). No Windows test of the real binary runs without one; see
@@ -375,34 +379,176 @@ Findings:
   investigating session. Windows services cannot show UI and Session 0 has no
   Explorer, so the tray checks cannot run there in any case; whether WebView2 and
   the isolated-desktop test work there is unknown.
-- GitHub-hosted Windows runners: not tried. Public reports disagree on whether
-  their job runs in an interactive desktop session with Explorer. Until a trial
-  job shows otherwise, treat them as headless only (category A), and run the
-  isolated-desktop test there only as an experiment: its exit code 3 tells you
-  the environment could not run it.
+- GitHub-hosted Windows runners: not tried yet. Public reports disagree on
+  whether their job runs in an interactive desktop session with Explorer. The
+  automatic CI uses them for category A only; the isolated-desktop test runs
+  there only in the manual, experimental workflow
+  ([CI](#manual-desktop-workflows)), where exit code 3 means the runner could
+  not run it.
 
 ## CI
 
-There is no CI configuration in the repository yet. When one is added, run the
-categories as separate jobs so a missing graphical package never blocks the
-headless results:
+GitHub Actions, in `.github/workflows/`. The repository is **private on GitHub
+Free**, so hosted-runner time comes out of a small monthly allowance (see
+[GitHub Free budget](#github-free-budget)). Only the headless workflow runs
+automatically; the desktop tests run only when started by hand. Nothing in CI
+builds installers, uploads artifacts, runs on a schedule, uses secrets, or uses a
+runner other than standard `ubuntu-latest` and `windows-latest`.
 
-| Job | Runner | Install | Run |
-| --- | --- | --- | --- |
-| headless | `ubuntu-24.04` | the Tauri build libraries from [setup.md](setup.md#linux-system-packages), Node, Rust | `npm ci`, `npm run check`, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` (in `src-tauri/`), `npm run test:headless` |
-| headless | `windows-latest` | Node, Rust (MSVC) | same commands |
-| private desktop (trial) | `windows-latest` | Node, Rust (MSVC) | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated`; exit 3 means the runner has no usable session, which must fail the job, not pass it |
-| real desktop | self-hosted Windows runner, started with `run.cmd` in an auto-logged-on user session (not installed as a service), screen never locked, nobody using it | Node, Rust (MSVC) | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows` |
-| virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
+| Workflow | Trigger | Runner | Runs | Category |
+| --- | --- | --- | --- | --- |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `npm run test:headless` | A. headless |
+| `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands, native Windows (MSVC Rust, no WSL); does not start sotyware | A. headless |
+| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
+| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated` | B″. private desktop |
+| — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
-The headless job still compiles the Tauri crate, so on Linux it needs the
-build packages from [setup.md](setup.md#linux-system-packages), but no display server, window
-manager, tray host or D-Bus session. A CI job for the virtual display must also
-fail on `SKIP` in the summary if the goal is to prove focus and minimize; the exit
-code alone ignores SKIPs. The Windows desktop test needs an interactive, unlocked
-desktop session with Explorer and moves the mouse; a runner installed as a
-service runs in Session 0, which has neither. None of this has been run in an
-actual CI service.
+Start a manual workflow from the repository's **Actions** tab (select the
+workflow, **Run workflow**, pick the branch), or with the GitHub CLI:
+
+```bash
+gh workflow run desktop-virtual.yml --ref main
+```
+
+```bash
+gh workflow run desktop-windows-isolated.yml --ref main
+```
+
+### Automatic headless workflow (`ci.yml`)
+
+- **Triggers.** `pull_request` targeting `main` and `push` to `main` only. A push
+  to any other branch runs nothing, so a pull request's commits are built once
+  (by `pull_request`), not twice. Merging a pull request runs the workflow once
+  more on `main`, which tests the merged result; direct commits to `main` are
+  tested by that same `push` trigger.
+- **Skipped paths.** A commit or pull request that changes only `docs/**`,
+  `**/*.md`, `tests/desktop/**` or the two `desktop-*.yml` workflows starts no
+  run: the headless jobs do not exercise any of them. If branch protection ever
+  makes this check required, such a pull request would wait for a check that
+  never starts; drop `paths-ignore` or add a path filter job then.
+- **Concurrency.** One run per pull request (or per branch for pushes); a newer
+  run cancels the older one (`cancel-in-progress: true`). On `main` that means a
+  quickly superseded commit may have no completed run; the newer commit's run
+  covers it.
+- **Jobs.** Linux and Windows are one matrix with `fail-fast: false`: they run
+  in parallel and neither cancels the other. Timeouts: 30 min (Linux), 40 min
+  (Windows).
+- **Order.** `npm run build` runs before any Cargo command because the Tauri
+  crate embeds `dist/` at compile time. `cargo fetch --locked` fails if
+  `Cargo.lock` does not match `Cargo.toml`; `npm ci` does the same for
+  `package-lock.json`.
+- **Linux packages.** Only the Tauri build libraries from
+  [setup.md](setup.md#linux-system-packages); no display server, window manager,
+  tray host or D-Bus session.
+- **Toolchains.** Node 24 through `actions/setup-node`; Rust stable through the
+  `rustup` preinstalled on the images (with `rustfmt` and `clippy`), not a
+  third-party toolchain action.
+- **Caches.** `actions/setup-node` caches the npm download cache (keyed on
+  `package-lock.json`). `Swatinem/rust-cache` caches the Cargo registry and the
+  compiled **dependencies** in `src-tauri/target` (it prunes sotyware's own build
+  output). The Cargo cache is saved from `main` only; pull requests restore it
+  but add no entries, so cache storage stays at roughly one entry per OS.
+  Nothing else (binaries, `dist/`, whole build directories) is cached.
+- **Security.** `permissions: contents: read`; `actions/checkout` with
+  `persist-credentials: false`; no secrets are used, so pull request code has
+  none to read; every action is pinned to a full commit SHA with its version in
+  a comment. Pinned on 2026-11-10: `actions/checkout` v7.0.1, `actions/setup-node`
+  v7.1.0, `Swatinem/rust-cache` v2.9.3. Update a pin by resolving the new tag to
+  its commit (`git ls-remote --tags https://github.com/<owner>/<repo>`) and
+  reviewing the release.
+- **Failure semantics.** No step uses `continue-on-error`. Any failing command,
+  missing package, compile error, warning under `-D warnings`, formatting
+  difference or test failure fails the job. A green run means every command
+  above ran and passed on both platforms.
+
+### Manual desktop workflows
+
+Neither runs on pushes or pull requests, and neither caches or uploads
+anything. Each builds a release binary (`--no-bundle`, no installers).
+
+- **`desktop-virtual.yml`** (Linux virtual display). Installs the build packages
+  plus exactly what `virtual.sh` needs (`xvfb openbox python3-dbus python3-gi
+  gir1.2-atspi-2.0 at-spi2-core dbus-x11`). `virtual.sh` already fails on any
+  FAIL or SKIP, a missing dependency (exit 2) and a display that does not start
+  (exit 3). The workflow additionally requires the summary line
+  `92 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
+  in the same commit that adds or removes a check), names the exit code in the
+  run summary, and fails on anything else. It is virtual-display testing, not
+  real Linux desktop validation (see [what it does not validate](#virtual-display-test)).
+- **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).
+  Every non-zero exit code fails the job; the run summary says which: 1 a check
+  failed, 2 binary missing or already running, **3 the runner could not create
+  or use a private desktop, so the test did not run** (never a pass), 124
+  timeout. With exit 0 it also requires `summary: 56 passed, 0 failed`
+  (`EXPECTED_CHECKS`). It has **not yet run on a GitHub-hosted runner**; whether
+  the runner's session can create a desktop and render WebView2 is unknown until
+  it does. It does not cover the tray, tray menu or Quit.
+- **The real-desktop Windows test (`npm run test:desktop:windows`) is not in
+  CI.** It needs an unlocked interactive desktop with Explorer's taskbar and moves
+  the mouse. Running it automatically would need a self-hosted runner in an
+  auto-logged-on session, which is a separate decision (security and approval)
+  and is not configured.
+
+### GitHub Free budget
+
+Checked on 2026-11-10 against GitHub's documentation
+([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+[billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage),
+[limits](https://docs.github.com/en/actions/reference/limits),
+[dependency caching](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)).
+These figures change; re-check them before relying on them.
+
+- **Included per month (GitHub Free, private repositories):** compute worth
+  **$12 USD**, expressed as money rather than minutes; **500 MB** artifact
+  storage (shared with GitHub Packages); **10 GB** cache per repository. The
+  allowance resets at the start of each billing cycle.
+- **Per-minute rates of standard runners:** Linux 2-core x64 **$0.006**,
+  Windows 2-core **$0.010** (Windows costs about 1.7 times Linux), macOS $0.062
+  (not used). $12 is therefore about 2,000 Linux minutes, or 1,200 Windows
+  minutes, or any mix. The pages read do not state how a job's time is rounded.
+- **When the allowance is used up:** without a payment method on file, "usage is
+  blocked once you consume the included compute usage" until the next cycle.
+  With a payment method, further usage is billed, limited only by any budgets
+  you set. This project adds no payment method, budget or paid feature.
+- **Public repositories** get standard hosted runners free; this repository is
+  private, so that does not apply.
+- **Cache entries** not accessed for 7 days are removed; beyond 10 GB the least
+  recently used are evicted. Logs do not count toward artifact storage; runs,
+  logs and artifacts are kept 90 days by default.
+
+**What consumes minutes.** Only the workflows above: the two headless jobs on
+every qualifying pull request update and every push to `main`, and the two
+desktop workflows when started by hand. Local runs (`npm run test:headless`,
+`npm run test:desktop:virtual`, the Windows scripts on your own machine) cost
+nothing.
+
+**Estimated cost** (not yet measured on GitHub; replace with the real job times
+after the first runs): a headless run takes roughly 4 min on Linux and 6 min on
+Windows with a warm Cargo cache, about twice that cold, so about $0.08 warm to
+$0.17 cold, i.e. roughly 70–140 headless runs a month. A pull request with
+`n` pushes costs `n` runs plus one on merge. A manual virtual-display run is
+roughly 10–15 Linux minutes ($0.06–0.09); a manual isolated-desktop run roughly
+15–20 Windows minutes ($0.15–0.20).
+
+**Monitoring usage.** Personal account: <https://github.com/settings/billing>,
+then the **Usage** view filtered to Actions (or "Actions grouped by SKU"); GitHub
+emails at 90 % and 100 % of the included amount. Per run: open the run in the
+**Actions** tab; the summary shows each job's duration (see
+[viewing job execution time](https://docs.github.com/en/actions/how-tos/monitor-workflows/view-job-execution-time)).
+Cache size: the repository's **Actions → Caches** page.
+
+### What CI does not validate
+
+- Anything a real desktop shows or does: real tray hosts (GNOME, KDE, XFCE,
+  Windows' notification area), real clicks, focus, visual appearance, Wayland,
+  GPU rendering, screen readers. The automatic jobs never start sotyware.
+- The Windows tray, tray menu, left click and Quit (only `windows.ps1` on a real
+  desktop, by hand).
+- Windows 10, macOS, release builds with LTO in the automatic jobs (only the
+  manual workflows build `--release`), installers (`.msi`, NSIS, `.deb`, `.rpm`,
+  AppImage), code signing.
+- Real Linux desktops: the virtual-display workflow uses Xvfb, openbox and a
+  stub tray host.
 
 ## Manual check (real desktop, Linux or Windows)
 
