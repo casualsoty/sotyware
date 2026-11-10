@@ -41,13 +41,22 @@ public static class I {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr CreateDesktop(string n, IntPtr d, IntPtr m, int f, uint a, IntPtr s);
   [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessW(string a, StringBuilder c, IntPtr pa, IntPtr ta, bool inh, uint f, IntPtr env, string cwd, ref SI si, out PI pi);
-  // Starts a process on the given desktop and returns its pid.
-  public static int Start(string app, string cmd, string desktop) {
+  [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr h, uint code);
+  // Starts a process on the given desktop and returns its process handle, which is
+  // kept open so its exit code can still be read after it ends.
+  public static IntPtr Start(string app, string cmd, string desktop) {
     var si = new SI(); si.cb = Marshal.SizeOf(typeof(SI)); si.desktop = desktop; PI pi;
     if (!CreateProcessW(app, new StringBuilder(cmd, 8192), IntPtr.Zero, IntPtr.Zero, false, 0x08000000, IntPtr.Zero, null, ref si, out pi))
       throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-    return pi.pid;
+    return pi.process;
   }
+  // The exit code of the process, or -1 if it is still running after ms.
+  public static long WaitExit(IntPtr h, uint ms) {
+    if (WaitForSingleObject(h, ms) != 0) return -1; uint c; GetExitCodeProcess(h, out c); return c;
+  }
+  public static void Kill(IntPtr h) { TerminateProcess(h, 1); }
   [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint f, bool inherit, uint access);
   [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint tid);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
@@ -92,18 +101,17 @@ if ($OnDesktop -eq "") {
   $logFile = Join-Path ([IO.Path]::GetTempPath()) "$name.log"
   $ps = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
   $cmd = "`"$ps`" -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Exe `"$Exe`" -OnDesktop `"$name`" -Log `"$logFile`""
-  try { $driverPid = [I]::Start($ps, $cmd, "WinSta0\$name") }
+  try { $driver = [I]::Start($ps, $cmd, "WinSta0\$name") }
   catch { "ABORT: could not start the test on desktop ${name}: $($_.Exception.Message)"; [I]::CloseDesktop($desk) | Out-Null; exit 3 }
-  $driver = Get-Process -Id $driverPid -EA SilentlyContinue
-  $code = 124
-  if ($driver -and $driver.WaitForExit($Timeout * 1000)) { $driver.WaitForExit(); $code = $driver.ExitCode }
-  elseif ($driver) {
-    "TIMEOUT after $Timeout s"
-    Stop-Process -Id $driverPid -Force -EA SilentlyContinue
-  }
+  $code = [I]::WaitExit($driver, [uint32]($Timeout * 1000))
+  if ($code -lt 0) { "TIMEOUT after $Timeout s"; [I]::Kill($driver); $code = 124 }
   # Whatever the copy left running (only after a timeout or a crash) is stopped here.
   Procs | ForEach-Object { Stop-Process -Id $_.Id -Force -EA SilentlyContinue }
-  if (Test-Path $logFile) { Get-Content $logFile; Remove-Item $logFile -EA SilentlyContinue }
+  if (Test-Path $logFile) {
+    $lines = Get-Content $logFile; $lines; Remove-Item $logFile -EA SilentlyContinue
+    # A FAIL line must never end in exit 0, whatever the copy returned.
+    if ($code -eq 0 -and @($lines | Where-Object { $_ -like "FAIL *" }).Count -gt 0) { "ERROR: FAIL lines but exit code 0; reporting 1"; $code = 1 }
+  }
   else { "ABORT: the test on desktop $name wrote no output"; if ($code -ne 124) { $code = 3 } }
   [I]::CloseDesktop($desk) | Out-Null
   exit $code
