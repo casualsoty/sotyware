@@ -39,7 +39,8 @@ Where things are. Generated and ignored paths are listed in
     └── desktop/              Desktop tests of the release binary
         ├── run.sh            Linux/X11 simulated test: private D-Bus session + runtime dir
         ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher)
-        ├── single_instance.py  Linux test driver: windows, tray menu, launches
+        ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure
+        ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
         └── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches
 ```
 
@@ -57,5 +58,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh` Linux, `windows.ps1` Windows) |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1` Windows); all headless tests: `npm run test:headless` |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

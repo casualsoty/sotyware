@@ -1,16 +1,43 @@
 # Testing guide
 
-sotyware has four layers of verification. Each catches different problems; none
-replaces another.
+Tests are grouped by what the environment must provide. Each category catches
+different problems; none replaces another, and passing one says nothing about the
+others.
 
-| Layer | What it covers | Where | Needs |
+| Category | Command | Runs the release binary? | Needs |
 | --- | --- | --- | --- |
-| Static checks | Types, Svelte diagnostics, formatting, Clippy lints | `npm run check`, `cargo fmt --check`, `cargo clippy` | nothing special |
-| Rust unit tests | Lifecycle and tray decisions, config labels | `#[cfg(test)] mod tests` inside the module, e.g. `src-tauri/src/tray.rs` | nothing special |
-| Frontend tests | Dashboard UI: Hide button, error display, `main.ts` mount | `src/App.test.ts` (Vitest, happy-dom) | nothing special |
-| Simulated desktop test | Real release binary: window lifecycle, tray menu, single instance | `tests/desktop/run.sh` | Linux, X11 display, D-Bus tools |
-| Windows desktop test | Real release binary on the real Windows desktop: also the "Hide dashboard" button, tray left click, title-bar close button | `tests/desktop/windows.ps1` | Windows, an unattended desktop session |
-| Manual check | Real tray host, real window manager, focus | checklist below | a real desktop |
+| **A. Headless** | `npm run test:headless` | no | Node, Rust and the Tauri build libraries; **no** display, window manager, tray host or D-Bus session |
+| **B. Virtual display** (Linux) | `npm run test:desktop:virtual` | yes | Xvfb, openbox, D-Bus and Python tools; no monitor, no desktop session |
+| B′. Simulated desktop on an existing display (Linux) | `tests/desktop/run.sh` | yes | an X11 display you already have (WSLg, or a desktop session) |
+| **C. Real desktop**: Windows | `tests/desktop/windows.ps1` | yes | Windows, an interactive desktop nobody touches for 30 s |
+| **C. Real desktop**: manual | [checklist](#manual-check-real-desktop-linux-or-windows) | yes | a real desktop and a person |
+
+Static checks (`npm run check`, `cargo fmt --check`, `cargo clippy`) need nothing
+special and run before every commit ([workflow.md](workflow.md)).
+
+### What each category really exercises
+
+| Behaviour | A. Headless | B. Virtual display | C. Windows test | C. Manual |
+| --- | --- | --- | --- | --- |
+| Close → hide; second launch → show dashboard | ✅ unit tests (the decision) | ✅ real binary | ✅ real binary | ✅ |
+| Tray failure → exit 1 | ✅ unit tests (the decision) | ✅ real binary (unwritable `$XDG_RUNTIME_DIR`) | — | — |
+| Implicit exit (`code: None`) blocked | ✅ unit tests (the decision) | — not triggered: the window is never destroyed | — | — |
+| Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
+| "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | — | ✅ real button | ✅ |
+| The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
+| Focus and un-minimize on second launch | — | ✅ openbox honours the requests | ✅ | ✅ |
+| Single-instance handover (D-Bus on Linux, Win32 on Windows), concurrent launches | — | ✅ private session bus | ✅ | ✅ |
+| Tray icon registers with a tray host | — | stub host (`sni_watcher.py`) | ✅ real notification area | ✅ |
+| Tray icon visible to a person, real tray host (GNOME, KDE, …), Wayland | — | — | partly (icon found by UI Automation) | ✅ |
+| Visual appearance | — | — | — | ✅ |
+| Screen-reader access | — | — | — | — not in the checklist; untested |
+
+**Mocked or simulated, never real:** in A, the Tauri runtime (recording doubles
+of `AppControl`/`DashboardWindow`), the webview (happy-dom) and IPC
+(`@tauri-apps/api/mocks`). In B, the tray host (a stub
+`StatusNotifierWatcher`; nobody sees an icon), the display (Xvfb, no GPU) and the
+desktop (openbox, not GNOME/KDE, not Wayland), and the user (X11 client messages
+and D-Bus calls instead of clicks).
 
 
 ## Headless tests
@@ -73,13 +100,17 @@ Files:
 - `tests/desktop/single_instance.py`: drives the binary. It inspects X11 windows via
   `ctypes` (no extra Python packages), sends `WM_DELETE_WINDOW` to simulate the
   close button, clicks tray menu items over `com.canonical.dbusmenu`, and launches
-  further instances sequentially and concurrently. It does **not** click the
-  dashboard's "Hide dashboard" button; on Linux that path has no automated test
-  (the [Windows desktop test](#windows-desktop-test) covers it on Windows).
+  further instances sequentially and concurrently. Last, it starts the binary with
+  `$XDG_RUNTIME_DIR` under a read-only directory and checks the fatal tray failure:
+  exit code 1, the `cannot create system tray icon` message, nothing left running.
+  It waits for the stub tray host's bus name instead of sleeping. It does **not**
+  click the dashboard's "Hide dashboard" button; on Linux that path is covered only
+  by the mocked [frontend tests](#frontend-tests) (the
+  [Windows desktop test](#windows-desktop-test) clicks it on Windows).
 
 Requirements: `python3`, `python3-dbus`, `python3-gi`, `libX11`,
-`dbus-run-session`, and an X11 display (`$DISPLAY`: WSLg, or Xvfb plus a window
-manager).
+`dbus-run-session`, and an X11 display (`$DISPLAY`: WSLg or a desktop session; for
+a display of its own use the [virtual-display test](#virtual-display-test)).
 
 Results: each check prints `PASS`, `FAIL` or `SKIP`, then a summary line. `SKIP`
 means the environment could not exercise the behaviour (for example, a window
@@ -92,11 +123,48 @@ exit code, so always read the summary line too. It aborts at once if a
 
 Under WSLg two checks are always skipped: focusing an already visible dashboard
 (the WM ignores `_NET_ACTIVE_WINDOW`) and restoring a minimized dashboard (the WM
-ignores `XIconifyWindow`). The latest results are recorded in
+ignores `XIconifyWindow`). The [virtual-display test](#virtual-display-test) runs
+both under openbox. The latest results are recorded in
 [the validation matrix](../status/status.md#validation-matrix).
 
 What this test is **not**: a real desktop. The tray host is a stub, nobody sees or
 clicks an icon, and the window manager is whatever serves `$DISPLAY`.
+
+## Virtual-display test
+
+```bash
+npm run tauri build -- --no-bundle
+npm run test:desktop:virtual              # = tests/desktop/virtual.sh [binary]
+```
+
+`tests/desktop/virtual.sh` runs the [simulated desktop test](#simulated-desktop-test)
+unchanged, against the same release binary, on a display it creates itself:
+
+- **Xvfb** on a free display number (searched from `:99` down, skipping any with a
+  lock file or socket), listening only on the abstract socket: no TCP and no file
+  in `/tmp/.X11-unix`. `-displayfd` tells the script when it accepts clients.
+- **openbox** as the window manager. It runs `--startup` once it manages the
+  screen, which is the ready signal. Unlike WSLg's window manager it honours
+  `_NET_ACTIVE_WINDOW` and `XIconifyWindow`, so the focus and un-minimize checks
+  run instead of being skipped.
+- `WAYLAND_DISPLAY` is unset and `DISPLAY` points at the private server, so
+  nothing reaches the display you are using. `run.sh` still adds its private
+  D-Bus session, runtime directory and stub tray host.
+- The whole run has a timeout (`SOTYWARE_VIRTUAL_TIMEOUT`, default 300 s). On
+  exit, the script kills sotyware processes started on its display, openbox and
+  Xvfb, and prints the Xvfb and openbox logs if the run did not pass.
+
+Requirements (Debian/Ubuntu): `sudo apt install xvfb openbox python3-dbus python3-gi dbus-x11`.
+A missing tool is reported by name and the script exits 2 without starting
+anything.
+
+Because the environment is fully controlled, **a SKIP fails this run**: the
+script exits 1 if the summary reports any skipped check. Exit codes: 0 all
+passed, 1 a check failed or was skipped, 2 binary or dependency missing, 3 Xvfb
+or openbox did not start, 124 timeout.
+
+What it does **not** validate: GNOME, KDE, XFCE or any real tray host, Wayland,
+GPU rendering, what a person sees, or Windows.
 
 ## Windows desktop test
 
@@ -150,6 +218,26 @@ still covers looking at it.
 
 Verified that it detects a broken button: with `hideDashboard` changed to do
 nothing, all three hide checks failed (2026-11-10).
+
+## CI
+
+There is no CI configuration in the repository yet. When one is added, run the
+categories as separate jobs so a missing graphical package never blocks the
+headless results:
+
+| Job | Runner | Install | Run |
+| --- | --- | --- | --- |
+| headless | `ubuntu-24.04` | the Tauri build libraries from [setup.md](setup.md#linux-system-packages), Node, Rust | `npm ci`, `npm run check`, `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` (in `src-tauri/`), `npm run test:headless` |
+| headless | `windows-latest` | Node, Rust (MSVC) | same commands |
+| virtual display | `ubuntu-24.04` | additionally `xvfb openbox python3-dbus python3-gi dbus-x11` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` |
+
+The headless job still compiles the Tauri crate, so on Linux it needs the
+WebKitGTK and AppIndicator *development libraries*, but no display server, window
+manager, tray host or D-Bus session. A CI job for the virtual display must also
+fail on `SKIP` in the summary if the goal is to prove focus and minimize; the exit
+code alone ignores SKIPs. The Windows desktop test needs an interactive desktop
+session and moves the mouse; hosted CI runners usually provide neither, so it is
+not suitable for them. None of this has been run in an actual CI service.
 
 ## Manual check (real desktop, Linux or Windows)
 

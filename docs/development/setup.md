@@ -34,6 +34,15 @@ The simulated desktop test ([testing.md](testing.md)) also needs:
 sudo apt install -y python3-dbus python3-gi dbus-x11
 ```
 
+The [virtual-display test](testing.md#virtual-display-test) additionally needs:
+
+```bash
+sudo apt install -y xvfb openbox
+```
+
+The [headless tests](testing.md#headless-tests) need nothing beyond the build
+packages above.
+
 At runtime, end users need WebKitGTK 4.1, GTK 3 and libayatana-appindicator3. The
 `.deb` declares these as dependencies (verified). The `.rpm` dependencies have not
 been inspected. The AppImage bundles the libraries.

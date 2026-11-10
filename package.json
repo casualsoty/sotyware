@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test:frontend": "vitest run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "test:headless": "npm run test:frontend && npm run test:rust"
+    "test:headless": "npm run test:frontend && npm run test:rust",
+    "test:desktop:virtual": "tests/desktop/virtual.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4"

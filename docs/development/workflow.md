@@ -46,7 +46,8 @@ needs no display, window manager, tray host or D-Bus session
 ([testing.md](testing.md#headless-tests)).
 
 There is no JavaScript linter or formatter (ESLint/Prettier) and no `rustfmt.toml`
-or `clippy.toml`; defaults apply. There is no CI.
+or `clippy.toml`; defaults apply. There is no CI; recommended jobs are in
+[testing.md](testing.md#ci).
 
 ## Production build
 
@@ -71,6 +72,17 @@ tests/desktop/run.sh                        # optional argument: path to another
 
 Needs an X11 display. Details, prerequisites and how to read the results:
 [testing.md](testing.md).
+
+## Desktop test (Linux, virtual display)
+
+```bash
+npm run tauri build -- --no-bundle
+npm run test:desktop:virtual                # optional argument: path to another binary
+```
+
+Same test on a private Xvfb display with openbox; needs no monitor or desktop
+session and leaves your display alone. Details:
+[testing.md](testing.md#virtual-display-test).
 
 ## Desktop test (Windows, real desktop)
 
