@@ -78,6 +78,23 @@ fixed, remove it here in the same change and update
   `@sveltejs/vite-plugin-svelte`, with no fix available (re-checked 2026-11-10).
   It is not shipped to users.
 
+## Tests
+
+- **Headless tests check decisions, not wiring.** `cargo test` proves what the
+  lifecycle functions decide, not that Tauri delivers the events to them or that
+  the OS obeys. Only the desktop tests run the real binary.
+- **Headless still needs the build libraries.** `cargo test` compiles the Tauri
+  crate, so on Linux the WebKitGTK and AppIndicator development packages must be
+  installed (no display server, though).
+- **The implicit-exit guard (`code: None` blocked) is unit-tested only.** No
+  desktop test triggers it, because the dashboard is never destroyed.
+- **On Linux the "Hide dashboard" button is tested only with mocked IPC.** No
+  Linux test clicks it in the real webview.
+- **The virtual-display test was validated only on WSL2**, with Xvfb and openbox
+  extracted from `.deb`s and Xvfb started through a user-namespace shim, not with
+  normally installed packages and not in CI.
+- **No test covers screen-reader access** on either platform.
+
 ## Development environment (WSL)
 
 See [setup.md](../development/setup.md#wsl2-notes): Windows `npm` shadowing the

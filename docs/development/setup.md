@@ -108,6 +108,9 @@ environment issues, not sotyware bugs.
   normally. Fix: point it at a private `chmod 700` directory you own, as
   `tests/desktop/run.sh` does.
 - **WSLg's window manager ignores focus and minimize requests.** Focus and
-  un-minimize behaviour cannot be verified under WSLg (see
-  [testing.md](testing.md)).
+  un-minimize behaviour cannot be verified under WSLg; the
+  [virtual-display test](testing.md#virtual-display-test) checks them under openbox.
+- **`/tmp/.X11-unix` is a read-only mount under WSLg**, so an X server cannot create
+  its socket file there. `tests/desktop/virtual.sh` makes Xvfb listen on the
+  abstract socket only, which works.
 - A `libEGL warning: DRI3 error` on startup under WSLg is harmless.

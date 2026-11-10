@@ -26,7 +26,8 @@ Only the desktop runtime; **no product features exist**.
 src/                 Svelte frontend (main.ts, App.svelte)
 src-tauri/src/       main.rs → lib.rs (builder, lifecycle, single instance) + tray.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; windows.ps1: real Windows desktop)
+src/App.test.ts      Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop)
 docs/                architecture/, development/, status/
 ```
 
@@ -54,7 +55,7 @@ npm run tauri dev
 npm run check && npm run build
 npm run test:headless                      # frontend + Rust unit tests, no display needed
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-npm run tauri build -- --no-bundle && tests/desktop/run.sh
+npm run tauri build -- --no-bundle && tests/desktop/run.sh   # or: npm run test:desktop:virtual
 ```
 
 **WSL:** non-interactive shells may pick up Windows `npm` from `/mnt/c` and not find
@@ -66,11 +67,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - `cargo test`: 17 unit tests of lifecycle and tray decisions (close → hide,
   implicit exit blocked, tray failure → exit 1, second launch, tray dispatch,
   config labels). No display needed.
-- `tests/desktop/run.sh`: 54 passed, 0 failed, 2 skipped on WSL2/WSLg
+- `npm run test:headless` (17 Rust + 8 frontend tests): passes with no display,
+  window manager, tray host or D-Bus session (2026-11-10, WSL2).
+- `npm run test:desktop:virtual`: 65 passed, 0 failed, 0 skipped on Xvfb +
+  openbox (2026-11-10, WSL2); real release binary, stub tray host.
+- `tests/desktop/run.sh`: 57 passed, 0 failed, 2 skipped on WSL2/WSLg
   (2026-11-10). The tray host is a stub; SKIP is never a pass.
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
   (2026-11-10), real desktop; it moves the mouse. Covers the Hide button.
-- No frontend tests, no JS linter, no CI.
+- Test categories (headless / virtual display / real desktop):
+  [testing.md](development/testing.md). No JS linter, no CI.
 
 ## Platform limitations (summary)
 

@@ -29,10 +29,12 @@ installer, and real Linux desktops.
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
 | Minimal capability (`core:window:allow-hide`) and CSP | `capabilities/default.json`, `tauri.conf.json` |
 
-Automated tests per platform: the "Hide dashboard" button, left-click-to-open,
-restoring a minimized dashboard and focus on second launch are covered only by the
-Windows desktop test (`tests/desktop/windows.ps1`). On Linux the button has no
-automated test, and minimize/focus are skipped under WSLg.
+Automated tests per platform: the "Hide dashboard" button (real click) and
+left-click-to-open are covered only by the Windows desktop test
+(`tests/desktop/windows.ps1`). On Linux the button is covered only by the headless
+frontend test with mocked IPC. Restoring a minimized dashboard and focus on second
+launch run on Linux only under the virtual display (Xvfb + openbox); WSLg skips
+them. Test categories: [testing.md](../development/testing.md).
 
 Nothing else exists: no product features, no settings, no persistence, no
 custom Tauri commands or events.
@@ -41,6 +43,13 @@ custom Tauri commands or events.
 
 Legend: ✅ passed · ⏭️ skipped by the environment (not a pass) · ❌ failed ·
 — not run.
+
+Each result belongs to one test category
+([testing.md](../development/testing.md)): **headless** (no display, nothing
+real from the OS), **virtual display** (real release binary, Xvfb + openbox, stub
+tray host), **simulated desktop** (real release binary on WSLg, stub tray host) or
+**real desktop** (Windows test, manual check). A pass in one category says nothing
+about another.
 
 "Re-run 2026-11-10" means the check was repeated while writing this document.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
@@ -55,10 +64,24 @@ script or procedure is not in the repository; it was not repeated.
 | `npm run build` | ✅ | Re-run 2026-11-10 |
 | `cargo fmt --check` | ✅ | Re-run 2026-11-10 |
 | `cargo clippy --all-targets -- -D warnings` | ✅ | Re-run 2026-11-10 |
-| `cargo test` (1 test) | ✅ | Re-run 2026-11-10 |
+| `cargo test` (1 test) | ✅ | Re-run 2026-11-10, before the headless suite |
 | `npm run tauri build -- --no-bundle` | ✅ | Re-run 2026-11-10 |
 | `npm run tauri build`: `.deb`, `.rpm`, AppImage built (with WSL `PATH` filter) | ✅ built, not installed or run | Re-run 2026-11-10 |
 | `.deb` declares `libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0` | ✅ | Re-run 2026-11-10 |
+
+### Headless tests (WSL2, Ubuntu 24.04, Rust 1.99.1, Node 24.22.0)
+
+Category A. Run under `env -i` with only `HOME`, `PATH` and a private `TMPDIR`:
+no `DISPLAY`, `WAYLAND_DISPLAY` or D-Bus session. Nothing here starts sotyware or
+touches the OS window system.
+
+| Check | Result | When |
+| --- | --- | --- |
+| `npm run test:headless`: exit 0 | ✅ | 2026-11-10 |
+| `cargo test`: 17 tests (close → hide, implicit exit blocked, tray failure → exit 1, reveal order and error tolerance, second launch, tray menu and click dispatch, config labels) | ✅ | 2026-11-10 |
+| `npm run test:frontend`: 8 tests (Hide button sends `plugin:window\|hide` for `main`, errors shown and cleared, `main.ts` mount) | ✅ | 2026-11-10 |
+| Not vacuous: 5 Rust and 4 `App.svelte` hand-made mutations each fail ≥ 1 test; `test:headless` exits non-zero for both halves | ✅ | 2026-11-10 |
+| Headless suite on Windows | — not run | |
 
 ### Native Windows 11: environment
 
@@ -136,10 +159,34 @@ not tested.
 | NSIS installer with its interactive UI | — not run (silent mode only) | |
 | MSI `msiexec /i … /qn` | ❌ not installed: exit 1603, "Installation UI level is silent, no credential elevation is possible". The MSI installs per machine and needs administrator rights (UAC). Not a sotyware defect; MSI install, run and uninstall remain unvalidated | Native Windows 2026-11-10 |
 
+### Runtime behaviour, virtual display (WSL2, Xvfb + openbox, stub tray host)
+
+Category B. `npm run test:desktop:virtual` on the release binary (built
+2026-11-10 from the code with the lifecycle decisions extracted):
+**65 passed, 0 failed, 0 skipped**, twice in a row (2026-11-10). Xvfb
+2:21.1.12-1ubuntu1.9 and openbox 3.6.1 came from the Ubuntu 24.04 `.deb`s
+extracted into a user directory (no root on this machine), and Xvfb was started
+through a user-namespace shim so it finds `xkbcomp`; the WSL `/tmp/.X11-unix` is
+read-only, which the script's abstract-socket-only setting handles. Not yet run
+with normally installed packages or in CI.
+
+| Behaviour | Result |
+| --- | --- |
+| Everything in the simulated desktop table below that passed there | ✅ |
+| Second launch focuses an already visible dashboard (`_NET_ACTIVE_WINDOW` observed) | ✅ |
+| Second launch restores a minimized dashboard (no longer iconic) | ✅ |
+| Tray failure (unwritable `$XDG_RUNTIME_DIR`): exit 1, error message, nothing left | ✅ |
+| Timeout path: exit 124, logs printed, no leftover sotyware, openbox or Xvfb | ✅ |
+
+openbox on Xvfb is **not** GNOME, KDE, XFCE or Wayland, and the tray host is a
+stub. Focus behaviour on real Linux window managers remains unvalidated.
+
 ### Runtime behaviour, simulated Linux desktop (WSL2/WSLg, X11, stub tray host)
 
-`tests/desktop/run.sh` on the release binary. Re-run 2026-11-10:
-**54 passed, 0 failed, 2 skipped**.
+`tests/desktop/run.sh` on the release binary. Re-run 2026-11-10 after the
+lifecycle decisions were extracted: **57 passed, 0 failed, 2 skipped** (54/0/2
+before the tray-failure scenario was added; same 2 skips). A build with the tray
+failure made non-fatal fails the new exit-code check.
 
 | Behaviour | Result | Source |
 | --- | --- | --- |
@@ -155,7 +202,7 @@ not tested.
 | "Hide dashboard" button hides the window; process stays | ✅ | Earlier run (no automated test on Linux) |
 | Repeated "Open Dashboard" creates no second window | ✅ | Earlier run (also implied by desktop test window counts) |
 | Native Wayland backend: runs, tray registers, Quit exits 0 (window state not inspected) | ✅ | Earlier run |
-| `XDG_RUNTIME_DIR` pointing to a missing directory: tray error, exit 1 | ✅ | Re-run 2026-11-10 |
+| `XDG_RUNTIME_DIR` that cannot be created (read-only parent): tray error, exit 1, nothing left | ✅ | desktop test (scenario 10) |
 
 This environment is **not a real desktop**: the tray host is a test stub, and no
 tray icon was ever seen or clicked by a person.
@@ -172,7 +219,8 @@ tray icon was ever seen or clicked by a person.
 | Real KDE Plasma | — |
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
-| Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg) |
+| Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
+| Headless suite and virtual-display test in a CI service | — no CI exists |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 
 To validate an environment, follow the manual checklist in
