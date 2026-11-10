@@ -1,4 +1,4 @@
-"""Minimal org.kde.StatusNotifierWatcher so libayatana-appindicator registers a tray item.
+"""Minimal org.kde.StatusNotifierWatcher so sotyware (tray-icon's ksni backend) registers a tray item.
 
 Stands in for the tray host of KDE / GNOME+AppIndicator extension. Records each
 registration (sender unique name + object path) as a line in argv[1].

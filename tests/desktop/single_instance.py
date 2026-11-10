@@ -302,8 +302,8 @@ def expect_reused(label, win, primary_pid):
 
 # ---------- scenario ----------
 assert not sotyware_pids(), f"sotyware already running from {BIN}: {sotyware_pids()}"
-# Without the stub tray host, sotyware would register no tray item (or a legacy
-# XEmbed icon) and every tray check would fail for the wrong reason.
+# Without the stub tray host, sotyware would exit at once (no StatusNotifierWatcher
+# is a tray failure) and every check would fail for the wrong reason.
 assert wait_for_bus_name(WATCHER_NAME), f"stub tray host ({WATCHER_NAME}) did not appear on the session bus"
 
 # 1. First launch.
@@ -436,17 +436,12 @@ if not (registered and code == 0):
     print("--- relaunched instance output ---\n" + again.communicate()[0].decode(errors="replace").strip())
 
 # 10. Startup failure: the tray icon cannot be created, so sotyware must exit 1
-# instead of running on unreachable. As under WSL (/run/user/<uid> missing,
-# /run/user owned by root), $XDG_RUNTIME_DIR names a directory that cannot be
-# created, so the tray icon image cannot be written
-# (see docs/development/setup.md#wsl2-notes). A writable parent is not enough:
-# the tray library would just create the directory.
+# instead of running on unreachable. The tray backend (ksni) registers with the
+# StatusNotifierWatcher before tray creation returns, so a session bus without a
+# watcher (a desktop with no tray host) is a creation failure. The instance runs
+# on a private bus of its own, where the stub tray host is absent.
 open(REG, "w").close()
-read_only_parent = os.path.join(os.path.dirname(os.path.abspath(REG)), "read-only")
-os.mkdir(read_only_parent, 0o500)
-missing_dir = os.path.join(read_only_parent, "runtime")
-bad = subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+bad = subprocess.Popen(["dbus-run-session", "--", BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 try:
     bad_out = bad.communicate(timeout=30)[0].decode(errors="replace")
     code = bad.returncode
@@ -460,6 +455,32 @@ check("10 tray failure: reports the tray error", "sotyware: cannot create system
 check("10 tray failure: no process or tray item left behind",
       wait_for(lambda: not sotyware_pids(), 5) and not tray_registrations(),
       f"pids={sotyware_pids()} tray={len(tray_registrations())}")
+
+# 11. As under WSL (/run/user/<uid> missing, /run/user owned by root),
+# $XDG_RUNTIME_DIR names a directory that cannot be created
+# (see docs/development/setup.md#wsl2-notes). The tray icon image travels over
+# D-Bus and is never written to disk, so sotyware must start with its tray.
+open(REG, "w").close()
+read_only_parent = os.path.join(os.path.dirname(os.path.abspath(REG)), "read-only")
+os.mkdir(read_only_parent, 0o500)
+missing_dir = os.path.join(read_only_parent, "runtime")
+odd = subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+ok = wait_for(lambda: len(dashboards(odd.pid)) == 1 and viewable(dashboards(odd.pid)[0]), 20)
+registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
+check("11 unusable XDG_RUNTIME_DIR: starts with one tray item", ok and registered and odd.poll() is None,
+      f"running={odd.poll() is None} registrations={len(tray_registrations())}")
+if registered:
+    m3, l3 = tray_menu()
+    tray_click(m3, l3, "Quit")
+try:
+    code = odd.wait(timeout=10)
+except subprocess.TimeoutExpired:
+    odd.kill()
+    code = None
+check("11 unusable XDG_RUNTIME_DIR: tray Quit exits with code 0", code == 0, f"exit code={code}")
+if not (ok and registered and code == 0):
+    print("--- instance output ---\n" + odd.communicate()[0].decode(errors="replace").strip())
 
 out = proc.stdout.read().decode(errors="replace").strip()
 if out:

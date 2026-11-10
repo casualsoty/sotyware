@@ -61,7 +61,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("sotyware")
         .menu(&menu)
         // Left click opens the dashboard; the menu is on right click.
-        // (Linux/AppIndicator ignores this and always shows the menu.)
+        // (Linux ignores this: the tray host decides. The ksni backend marks the
+        // item as not menu-only, so hosts send a left click as Activate.)
         .show_menu_on_left_click(false)
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(handle_tray_icon_event);
@@ -83,7 +84,9 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-/// Tray icon click events are emitted on Windows (and macOS) only, not on Linux.
+/// On Linux (ksni backend) only the left click (StatusNotifierItem `Activate`) and
+/// the middle click (`SecondaryActivate`) arrive here, both as button-up events,
+/// and only if the tray host sends them.
 fn handle_tray_icon_event(tray: &tauri::tray::TrayIcon, event: TrayIconEvent) {
     if let TrayIconEvent::Click {
         button,
