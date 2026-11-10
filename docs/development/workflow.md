@@ -107,7 +107,8 @@ npm run test:desktop:windows:isolated       # = powershell ... -File tests\deskt
 
 Runs sotyware on a desktop that is never shown and uses no mouse or keyboard, so
 you can keep working. It needs a logged-in session but no visible screen; it does
-not cover the tray. Details:
+not cover the tray. Run it from a non-elevated PowerShell: elevated, it reports
+NOT RUN (exit 4). Details:
 [testing.md](testing.md#windows-isolated-desktop-test).
 
 ## Generated and ignored paths

@@ -217,17 +217,25 @@ affected.
   tested only by `windows.ps1` on the interactive, unlocked desktop, which moves
   the mouse. The private-desktop test also does not use real clicks or check
   focus. On quit it is ended with `Stop-Process`.
-- **Windows Session 0 and GitHub-hosted runners are untested.** Whether WebView2
-  and the private-desktop test work in Session 0 (a service, a scheduled task
-  without a logged-on user) or on a GitHub-hosted runner is unknown
+- **The Windows private-desktop test cannot run elevated, so not on
+  GitHub-hosted runners.** With an administrator token, WebView2 starts its
+  browser process de-elevated through `explorer.exe`, on Explorer's desktop
+  instead of the private one, and sotyware's webview cannot be created there
+  (`0x80070578`). The test reports NOT RUN (exit 4) when elevated. Hosted jobs run
+  as administrator; the one hosted run failed this way before the check existed
+  ([testing.md](../development/testing.md#windows-isolated-desktop-test),
+  [evidence](status.md#windows-11-isolated-desktop-test-elevated-2026-11-11)).
+  Starting sotyware non-elevated from an elevated job has not been tried.
+- **Windows Session 0 is untested.** Whether WebView2 and the private-desktop
+  test work in Session 0 (a service, a scheduled task without a logged-on user)
+  is unknown
   ([testing.md](../development/testing.md#headless-windows-desktop-testing)).
-  The manual workflow `desktop-windows-isolated.yml` exists for that trial but
-  has not run.
 
 ## CI
 
-- **No workflow has run on GitHub yet** (nothing pushed); only the command
-  sequences were run locally ([status.md](status.md#ci-github-actions-2026-11-10)).
+- **`ci.yml` has not run on GitHub yet**; the two manual desktop workflows ran
+  once each and failed (results and causes in
+  [status.md](status.md#ci-github-actions-2026-11-10)).
 - **CI time is a limited allowance.** The repository is private on GitHub Free:
   $12 of hosted compute a month, after which Actions is blocked until the next
   cycle (no payment method is set up). Hence only the headless jobs run

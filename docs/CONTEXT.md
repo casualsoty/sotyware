@@ -106,7 +106,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   `195fa8a` and `0131e09`, native Windows 11. Real binary on a private desktop:
   unattended, nothing on screen, no input, but **not headless** (needs a
   logged-in session) and no tray, tray menu or Quit. A close-quits mutant fails
-  9 checks.
+  9 checks. It cannot run elevated (WebView2 then starts its browser on the
+  Default desktop; `0x80070578`) and reports NOT RUN, exit 4; again 56/56,
+  3 runs, at `468a2c3`.
 - Test categories (headless / virtual display / private desktop / real desktop):
   [testing.md](development/testing.md). No JS linter.
 - CI (GitHub Actions, private repo on GitHub Free: $12 of hosted compute a
@@ -118,7 +120,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   is not in CI. `desktop-virtual.yml` ran once (`14a5de1`, ubuntu-26.04
   runner) and failed 89/2/1 on a driver bug (AT-SPI role name renamed in
   at-spi2-core 2.60), fixed in `ead47e7` and passing 3/3 in an Ubuntu 26.04
-  container; not re-run on GitHub yet. No other workflow result is recorded.
+  container; not re-run on GitHub yet. `desktop-windows-isolated.yml` ran once
+  (Windows Server 2025) and failed on the elevated hosted job, reproduced on
+  Windows 11 elevated; it now reports NOT RUN (exit 4) there, not re-run yet.
+  No other workflow result is recorded.
   [testing.md](development/testing.md#ci).
 
 ## Platform limitations (summary)

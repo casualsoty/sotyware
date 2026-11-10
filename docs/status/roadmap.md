@@ -36,9 +36,9 @@ Fixes found during validation come before anything below.
 - First CI runs (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci)): after the first push, check that
   `ci.yml` passes on both runners, record the real job durations, and replace
-  the cost estimate; start `desktop-virtual.yml` once; try
-  `desktop-windows-isolated.yml` once to learn whether hosted Windows runners can
-  run it (exit 3 = no usable session). Record results in
+  the cost estimate; start `desktop-virtual.yml` once; re-run
+  `desktop-windows-isolated.yml` once to confirm the hosted job is elevated
+  (expected: `elevated: True`, exit 4, NOT RUN). Record results in
   [status.md](status.md#ci-github-actions-2026-11-10).
 - Possibly, a separate decision: making the headless check required by branch
   protection (needs `paths-ignore` reworked), or the real-desktop Windows test on

@@ -211,13 +211,42 @@ with the registry `PATH`. Categories: [testing.md](../development/testing.md).
 | `windows.ps1` started on a private desktop (no input desktop, no taskbar) | guard | ✅ `ABORT`, exit 3, no sotyware process started (pre-commit copy of `44a131d`'s script) |
 | Isolated-desktop probe (scratch script, not in the repository): on a private desktop sotyware starts in tray mode, the WebView2 page is readable through UIA, Hide, second launch and `WM_CLOSE` behave as on the real desktop; no `Shell_TrayWnd`, so no tray icon | investigation | ✅ observed |
 | Session 0 (scheduled task "run whether the user is logged on or not") | investigation | — not run: registering the task was not permitted in the investigating session |
-| A GitHub-hosted Windows runner | CI | — not run yet: the manual workflow `desktop-windows-isolated.yml` exists since `5fe62b9` but has not been started ([CI](#ci-github-actions-2026-11-10)) |
+| A GitHub-hosted Windows runner | CI | ❌ run once, failed: WebView2 cannot render on a private desktop in an elevated session ([CI](#ci-github-actions-2026-11-10), [cause](#windows-11-isolated-desktop-test-elevated-2026-11-11)) |
 
 Conclusion: no Windows test of the real binary runs headlessly. The
 private-desktop suite runs unattended inside a logged-in session without using
 the screen or the input devices; the tray, real clicks and Quit need the
 interactive desktop. Details:
 [testing.md](../development/testing.md#headless-windows-desktop-testing).
+
+### Windows 11: isolated-desktop test elevated (2026-11-11)
+
+Investigation of the failed hosted run of `desktop-windows-isolated.yml`
+([CI](#ci-github-actions-2026-11-10)). Same machine as
+[above](#windows-test-categories-native-windows-11-0131e09) (Windows 11 Home
+25H2, build 26200.9711, WebView2 157.0.4341.46, UAC on); checkout
+fast-forwarded to `55504d4` with `git bundle`, release binary rebuilt there.
+Elevated runs were started through a UAC prompt the user accepted. The probes
+were scratch scripts, not in the repository.
+
+| Check | Result |
+| --- | --- |
+| Unchanged suite at `55504d4`, non-elevated | ✅ 56 passed, 0 failed, primary's stderr empty |
+| Unchanged suite at `55504d4`, **elevated** | ❌ 13 passed, 39 failed, exit 1: the hosted failure reproduced. Primary's stderr: `failed to create webview: WebView2 error: ... HRESULT(0x80070578) "Invalid window handle."` at `tauri-2.12.5/src/app.rs:1444`; second launches exit -1073740791 (`0xC0000409`, `panic = "abort"`). The window exists briefly before the webview fails, so the startup visibility check passes |
+| Probe: where WebView2's processes run, non-elevated, private desktop | browser `msedgewebview2.exe` is a child of `sotyware.exe` (medium); its windows and the GPU process's (low) are on the private desktop, under the `Tauri Window` |
+| Same probe, elevated | browser `msedgewebview2.exe` is a child of **`explorer.exe`** (medium, de-elevated); all its windows are on **`WinSta0\Default`**, none on the private desktop; sotyware panics as above |
+| Probe: sotyware elevated on `WinSta0\Default` | ✅ WebView2 renders (`Chrome_RenderWidgetHostHWND` under the `Tauri Window`), no panic: elevation alone is not the cause |
+| Private desktop's security descriptor, elevated vs not | same DACL (logon SID, `RC`, `BA`, `SY`, AppContainer ACEs) except the owner; an explicit low label (`S:(ML;;NW;;;LW)`) on an elevated private desktop still fails: not a desktop-access problem |
+| Suite at `468a2c3` (elevation check), elevated | ✅ `NOT RUN`, exit 4, no desktop created, no sotyware process left |
+| Suite at `468a2c3`, non-elevated | ✅ **56 passed, 0 failed**, 3 consecutive runs, primary's stderr empty |
+
+Conclusion: the private-desktop test cannot run elevated, because WebView2
+launches its de-elevated browser process on Explorer's desktop. sotyware itself
+is unaffected on a real desktop, elevated or not, so the app is unchanged. Not
+verified on a GitHub-hosted runner: that the hosted job is elevated is
+inferred from the identical failure and from hosted jobs running as
+administrator; the next hosted run prints `elevated:` and should end with exit
+4.
 
 ### CI: GitHub Actions (2026-11-10)
 
@@ -228,7 +257,7 @@ repository is private on GitHub Free ($12 of hosted compute a month).
 | --- | --- | --- |
 | `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | — **not run on GitHub yet** (nothing pushed). Its command sequence passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
 | `desktop-virtual.yml` | manual | ❌ run once on GitHub, at `14a5de1` (runner image ubuntu-26.04 20261101.186, 2026-11-10): build 5 min 27 s, then **89 passed, 2 failed, 1 skipped**, exit 1. Scenario 12 found no Hide button; cause was the driver matching the AT-SPI role name, renamed in at-spi2-core 2.60 ([below](#virtual-display-test-on-ubuntu-2604-container-2026-11-10)). Fixed in `ead47e7`; **not re-run on GitHub yet** |
-| `desktop-windows-isolated.yml` | manual, experimental | — not run on GitHub; **GitHub-hosted support unknown** |
+| `desktop-windows-isolated.yml` | manual, experimental | ❌ run once on GitHub ([run 42919688755](https://github.com/casualsoty/sotyware/actions/runs/42919688755), Windows Server 2025; commit and duration not recorded here): private desktop `sotyware-test-8872` created, input desktop `Default`, no taskbar; the window appeared, then the title and Hide-button checks failed, the primary panicked (`failed to create webview`, `0x80070578` Invalid window handle) and second launches exited -1073740791. Reproduced on Windows 11 by running the suite elevated; cause and evidence [above](#windows-11-isolated-desktop-test-elevated-2026-11-11). Since `468a2c3` an elevated job reports NOT RUN (exit 4); **not re-run on GitHub yet** |
 | Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint` and not accepted by GitHub yet |
 
 Record the first GitHub results here, with the real job durations, and replace

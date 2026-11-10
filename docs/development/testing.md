@@ -379,7 +379,24 @@ to create the desktop and windows in, but not an unlocked or visible screen.
 Before any check, the copy verifies that it really runs on the private desktop
 and exits 3 otherwise. Exit codes: 0 all passed, 1 a check failed, 2 binary
 missing or already running, 3 the private desktop could not be created or used,
-124 timeout (`-Timeout`, default 180 s).
+4 not run because the session is elevated, 124 timeout (`-Timeout`, default
+180 s).
+
+**It cannot run elevated.** When the WebView2 host process has an administrator
+token, WebView2 starts its browser process (`msedgewebview2.exe`) de-elevated
+through `explorer.exe`. That process inherits Explorer's desktop,
+`WinSta0\Default`, not the private one, and cannot attach to the dashboard
+window there: `CreateCoreWebView2Controller` fails with `0x80070578` (Invalid
+window handle), Tauri's `setup` panics ("failed to create webview") and, with
+`panic = "abort"`, the process exits `0xC0000409` (-1073740791). Every later
+launch then becomes a new primary and fails the same way. Seen on Windows 11
+25H2 on 2026-11-11 ([status.md](../status/status.md#windows-11-isolated-desktop-test-elevated-2026-11-11)):
+elevated on the Default desktop WebView2 renders, so this is not a sotyware
+failure, and the private desktop's DACL is the same elevated or not. The
+launcher therefore prints `elevated: True|False` and, when elevated, prints
+`NOT RUN` and exits 4 before creating the desktop or starting sotyware. Run it
+from a non-elevated PowerShell. GitHub-hosted runners run jobs as administrator
+([CI](#manual-desktop-workflows)).
 
 ## Headless Windows desktop testing
 
@@ -410,12 +427,12 @@ Findings:
   investigating session. Windows services cannot show UI and Session 0 has no
   Explorer, so the tray checks cannot run there in any case; whether WebView2 and
   the isolated-desktop test work there is unknown.
-- GitHub-hosted Windows runners: not tried yet. Public reports disagree on
-  whether their job runs in an interactive desktop session with Explorer. The
-  automatic CI uses them for category A only; the isolated-desktop test runs
-  there only in the manual, experimental workflow
-  ([CI](#manual-desktop-workflows)), where exit code 3 means the runner could
-  not run it.
+- GitHub-hosted Windows runners: the isolated-desktop test ran once, in the
+  manual, experimental workflow ([CI](#manual-desktop-workflows)), and could not
+  render WebView2. The runner's session has an input desktop (`Default`) and a
+  private desktop could be created, but the job runs elevated, which the test
+  cannot support ([why](#windows-isolated-desktop-test)); it now reports exit 4
+  there. The automatic CI uses these runners for category A only.
 
 ## CI
 
@@ -509,11 +526,16 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
 - **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).
   Every non-zero exit code fails the job; the run summary says which: 1 a check
   failed, 2 binary missing or already running, **3 the runner could not create
-  or use a private desktop, so the test did not run** (never a pass), 124
-  timeout. With exit 0 it also requires `summary: 56 passed, 0 failed`
-  (`EXPECTED_CHECKS`). It has **not yet run on a GitHub-hosted runner**; whether
-  the runner's session can create a desktop and render WebView2 is unknown until
-  it does. It does not cover the tray, tray menu or Quit.
+  or use a private desktop, so the test did not run** (never a pass), **4 the
+  job is elevated, so the test did not run** (never a pass), 124 timeout. With
+  exit 0 it also requires `summary: 56 passed, 0 failed` (`EXPECTED_CHECKS`).
+  Its one hosted run (Windows Server 2025, before the elevation check existed)
+  failed: the primary panicked creating the WebView2 controller (`0x80070578`)
+  and the second launches exited `0xC0000409`; the same failure reproduces on
+  Windows 11 when the suite runs elevated ([why](#windows-isolated-desktop-test)).
+  Hosted jobs run as administrator, so this workflow is expected to end with
+  exit 4 until the test can start sotyware non-elevated, which has not been
+  tried. It does not cover the tray, tray menu or Quit.
 - **The real-desktop Windows test (`npm run test:desktop:windows`) is not in
   CI.** It needs an unlocked interactive desktop with Explorer's taskbar and moves
   the mouse. Running it automatically would need a self-hosted runner in an
