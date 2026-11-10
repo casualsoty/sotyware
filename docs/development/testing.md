@@ -106,7 +106,14 @@ Files:
   further instances sequentially and concurrently. Last, it starts the binary with
   `$XDG_RUNTIME_DIR` under a read-only directory and checks the fatal tray failure:
   exit code 1, the `cannot create system tray icon` message, nothing left running.
-  It waits for the stub tray host's bus name instead of sleeping. It does **not**
+  It waits for the stub tray host's bus name instead of sleeping. Each walk of
+  the X11 window tree holds a server grab, so it cannot miss a window that the
+  window manager is moving out of its frame (the dashboard right after a close).
+  Tray menu clicks do not wait for a D-Bus reply, because "Quit" ends the process
+  while it handles the call; the checks look at the effect instead. If the first
+  launch registers no tray item within 10 s, the driver reports a FAIL with the
+  primary's output and stops, since every later scenario needs the tray menu; the
+  relaunch after Quit has its own tray-registration check. It does **not**
   click the dashboard's "Hide dashboard" button; on Linux that path is covered only
   by the mocked [frontend tests](#frontend-tests) (the
   [Windows desktop test](#windows-desktop-test) clicks it on Windows).

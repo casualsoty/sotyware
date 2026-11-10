@@ -51,6 +51,8 @@ x.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
 x.XSendEvent.argtypes = [ctypes.c_void_p, W, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
 x.XIconifyWindow.argtypes = [ctypes.c_void_p, W, ctypes.c_int]
 x.XGetInputFocus.argtypes = [ctypes.c_void_p, ctypes.POINTER(W), ctypes.POINTER(ctypes.c_int)]
+x.XGrabServer.argtypes = [ctypes.c_void_p]
+x.XUngrabServer.argtypes = [ctypes.c_void_p]
 
 
 class XWindowAttributes(ctypes.Structure):
@@ -129,12 +131,22 @@ def all_dashboards():
     """Client windows titled 'sotyware' (any pid), top level or inside a WM frame.
 
     Excludes GTK's tiny client-leader window (10x10, never mapped).
+
+    The walk holds a server grab so it sees one consistent tree. Without it, a
+    walk racing the window manager's unmanage of a just-closed dashboard (client
+    moved from its frame back to the root, frame destroyed) can miss the window:
+    the primary's own dashboard then looks absent, and later "new".
     """
-    candidates = []
-    for top in children(ROOT):
-        candidates.append(top)
-        candidates.extend(children(top))
-    return [w for w in candidates if name(w) == "sotyware" and attrs(w).width > 100]
+    x.XGrabServer(dpy)
+    try:
+        candidates = []
+        for top in children(ROOT):
+            candidates.append(top)
+            candidates.extend(children(top))
+        return [w for w in candidates if name(w) == "sotyware" and attrs(w).width > 100]
+    finally:
+        x.XUngrabServer(dpy)
+        x.XFlush(dpy)
 
 
 def dashboards(pid):
@@ -268,7 +280,10 @@ def tray_menu():
 
 
 def tray_click(menu, labels, label):
-    menu.Event(dbus.Int32(labels[label]), "clicked", dbus.Int32(0, variant_level=1), dbus.UInt32(0))
+    # No reply awaited: "Quit" ends the process while it handles the call, so
+    # whether a reply gets out first is a race (NoReply). Callers check the effect.
+    menu.Event(dbus.Int32(labels[label]), "clicked", dbus.Int32(0, variant_level=1), dbus.UInt32(0),
+               ignore_reply=True)
 
 
 def expect_reused(label, win, primary_pid):
@@ -298,6 +313,16 @@ ok = wait_for(lambda: len(dashboards(proc.pid)) == 1 and viewable(dashboards(pro
 check("1 first launch: process running and dashboard visible", ok and alive())
 win = dashboards(proc.pid)[0]
 ok = wait_for(lambda: len(tray_registrations()) == 1, 10)
+if not ok:
+    # Every later scenario needs the tray menu: stop with a FAIL and the
+    # primary's output instead of a traceback from tray_menu().
+    check("1 first launch: one tray item with Open Dashboard / Quit", False,
+          f"registrations={len(tray_registrations())} after 10 s")
+    proc.kill()
+    print("--- primary instance output ---\n" + proc.communicate()[0].decode(errors="replace").strip())
+    print(f"\n{sum(r == 'PASS' for _, r in results)} passed, {sum(r == 'FAIL' for _, r in results)} failed, "
+          f"{sum(r == 'SKIP' for _, r in results)} skipped (aborted)")
+    sys.exit(1)
 menu, labels = tray_menu()
 check("1 first launch: one tray item with Open Dashboard / Quit",
       ok and set(labels) == {"Open Dashboard", "Quit"}, f"labels={list(labels)}")
@@ -395,7 +420,10 @@ open(REG, "w").close()
 again = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 ok = wait_for(lambda: len(dashboards(again.pid)) == 1 and viewable(dashboards(again.pid)[0]), 20)
 check("relaunch after Quit: starts as a new primary instance", ok and again.poll() is None)
-if wait_for(lambda: len(tray_registrations()) == 1, 10):
+registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
+check("relaunch after Quit: one tray item registered", registered,
+      f"registrations={len(tray_registrations())} after 10 s")
+if registered:
     m2, l2 = tray_menu()
     tray_click(m2, l2, "Quit")
 try:
@@ -404,6 +432,8 @@ except subprocess.TimeoutExpired:
     again.kill()
     code = None
 check("relaunch after Quit: tray Quit exits with code 0", code == 0, f"exit code={code}")
+if not (registered and code == 0):
+    print("--- relaunched instance output ---\n" + again.communicate()[0].decode(errors="replace").strip())
 
 # 10. Startup failure: the tray icon cannot be created, so sotyware must exit 1
 # instead of running on unreachable. As under WSL (/run/user/<uid> missing,
