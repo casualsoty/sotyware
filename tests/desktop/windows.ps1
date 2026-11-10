@@ -13,7 +13,8 @@
 #
 # Each check prints PASS or FAIL; INFO lines record observations that Windows
 # focus rules may legitimately change (which window is in the foreground).
-# Exit code: 0 all passed, 1 a check failed, 2 binary missing or already running.
+# Exit code: 0 all passed, 1 a check failed, 2 binary missing or already running,
+# 3 no interactive desktop (not the input desktop, or no taskbar): nothing was run.
 param([string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"))
 if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
@@ -71,9 +72,26 @@ public static class W {
     return r;
   }
   public static void Esc() { keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero); }
+  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string n);
+  [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint f, bool inherit, uint access);
+  [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint tid);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr h, int i, System.Text.StringBuilder b, int n, out int need);
+  public static string DesktopName(IntPtr h) {
+    if (h == IntPtr.Zero) return ""; var b = new System.Text.StringBuilder(256); int n;
+    return GetUserObjectInformation(h, 2, b, 512, out n) ? b.ToString() : "";
+  }
 }
 "@
 $ErrorActionPreference = "Continue"
+# Real mouse clicks and the notification area exist only on the desktop that receives
+# input and has a taskbar. Without one (locked or disconnected session, a service,
+# a private desktop) every check would fail for reasons unrelated to sotyware, so
+# stop before starting it (exit 3) instead of reporting those failures.
+$inputDesk = [W]::DesktopName([W]::OpenInputDesktop(0, $false, 0x0001))
+$ownDesk = [W]::DesktopName([W]::GetThreadDesktop([W]::GetCurrentThreadId()))
+if ($inputDesk -eq "" -or $inputDesk -ne $ownDesk) { "ABORT: not on the interactive input desktop (this desktop: '$ownDesk', input desktop: '$inputDesk'); this test needs an unlocked, logged-in desktop session"; exit 3 }
+if ([W]::FindWindow("Shell_TrayWnd", $null) -eq [IntPtr]::Zero) { "ABORT: no taskbar (Shell_TrayWnd) on this desktop; the tray checks need Explorer's notification area"; exit 3 }
 [W]::SetProcessDPIAware() | Out-Null
 $A = [System.Windows.Automation.AutomationElement]; $S = [System.Windows.Automation.TreeScope]
 $Invoke = [System.Windows.Automation.InvokePattern]::Pattern

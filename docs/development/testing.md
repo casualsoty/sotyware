@@ -9,7 +9,7 @@ others.
 | **A. Headless** | `npm run test:headless` | no | Node, Rust and the Tauri build libraries; **no** display, window manager, tray host or D-Bus session |
 | **B. Virtual display** (Linux) | `npm run test:desktop:virtual` | yes | Xvfb, openbox, D-Bus, AT-SPI and Python tools; no monitor, no desktop session |
 | B′. Simulated desktop on an existing display (Linux) | `tests/desktop/run.sh` | yes | an X11 display you already have (WSLg, or a desktop session) |
-| **C. Real desktop**: Windows | `tests/desktop/windows.ps1` | yes | Windows, an interactive desktop nobody touches for 30 s |
+| **C. Real desktop**: Windows | `npm run test:desktop:windows` (`tests/desktop/windows.ps1`) | yes | Windows, an unlocked interactive desktop with a taskbar that nobody touches for 30 s |
 | **C. Real desktop**: manual | [checklist](#manual-check-real-desktop-linux-or-windows) | yes | a real desktop and a person |
 
 Static checks (`npm run check`, `cargo fmt --check`, `cargo clippy`) need nothing
@@ -237,7 +237,8 @@ Run on Windows, from a Windows checkout (not a WSL path), after a release build:
 
 ```powershell
 npm run tauri build -- --no-bundle
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
+npm run test:desktop:windows              # = powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1
+npm run test:desktop:windows -- -Exe <path>
 ```
 
 `-Exe` defaults to `src-tauri\target\release\sotyware.exe`. To test an installed
@@ -277,10 +278,18 @@ What it does, and how:
 - Hides, quits from the tray, checks exit code 0, no process and no tray icon left,
   then relaunches a fresh instance and quits it.
 
+Before it starts sotyware it checks that it runs on the desktop that receives
+input (`OpenInputDesktop` names the same desktop as its own thread's) and that
+this desktop has a taskbar (`Shell_TrayWnd`). If not (a locked or disconnected
+session, a service, a private desktop, an SSH session) it prints `ABORT` with the
+reason and exits 3 without running any check, instead of reporting failures that
+say nothing about sotyware. Verified 2026-11-10 by running it on a private
+desktop: exit 3, no sotyware process started.
+
 Results: `PASS`/`FAIL` per check, `INFO` for observations Windows may legitimately
 vary (whether the dashboard ended up in the foreground), then a summary line. Exit
 code 0 if all passed, 1 if any failed, 2 if the binary is missing or a sotyware
-from the same path is already running. It does not catch an icon that is in the
+from the same path is already running, 3 if there is no interactive desktop. It does not catch an icon that is in the
 tray but invisible to a person; the [manual check](#manual-check-real-desktop-linux-or-windows)
 still covers looking at it.
 

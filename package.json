@@ -11,7 +11,8 @@
     "test:frontend": "vitest run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:headless": "npm run test:frontend && npm run test:rust",
-    "test:desktop:virtual": "tests/desktop/virtual.sh"
+    "test:desktop:virtual": "tests/desktop/virtual.sh",
+    "test:desktop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/windows.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4"

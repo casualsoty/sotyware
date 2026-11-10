@@ -88,10 +88,12 @@ session and leaves your display alone. Details:
 
 ```powershell
 npm run tauri build -- --no-bundle
-powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1
+npm run test:desktop:windows                # = powershell ... -File tests\desktop\windows.ps1 [-Exe <path>]
 ```
 
-It moves the mouse and clicks on your desktop; leave it alone while it runs.
+It moves the mouse and clicks on your desktop; leave it alone while it runs. It
+needs an unlocked, logged-in desktop with a taskbar and exits 3 without starting
+sotyware if there is none.
 Details: [testing.md](testing.md#windows-desktop-test).
 
 ## Generated and ignored paths
