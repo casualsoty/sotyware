@@ -166,7 +166,21 @@ unchanged, against the same release binary, on a display it creates itself:
 
 Requirements (Debian/Ubuntu): `sudo apt install xvfb openbox python3-dbus python3-gi dbus-x11`.
 A missing tool is reported by name and the script exits 2 without starting
-anything.
+anything. These packages alone were enough on Ubuntu 24.04.1 (versions in the
+[validation matrix](../status/status.md#validation-matrix)); `xvfb` pulls in
+`x11-xkb-utils` for `xkbcomp`. Xvfb and openbox print harmless warnings
+(unresolved `XF86…` keysyms, no `debian-menu.xml`), and the xdg portals the
+webview activates on the private bus warn about PipeWire and RealtimeKit; none
+affects the result.
+
+Interrupting the run (Ctrl+C, or SIGTERM to `virtual.sh`) cleans up like a normal
+exit: nothing it started is left running and its temporary directories are
+removed (checked 2026-11-10).
+
+A FAIL on "one tray item" (first launch, or relaunch after Quit) with
+`G_IS_DBUS_CONNECTION` in the instance output is the known intermittent
+[missing tray item](../status/limitations.md#linux-tray), a real defect, not a
+test flake. Do not retry it away.
 
 Because the environment is fully controlled, **a SKIP fails this run**: the
 script exits 1 if the summary reports any skipped check. Exit codes: 0 all

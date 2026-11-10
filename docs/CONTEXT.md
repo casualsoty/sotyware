@@ -70,10 +70,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 - `npm run test:headless` (17 Rust + 8 frontend tests): passes with no display,
   window manager, tray host or D-Bus session (2026-11-10, WSL2), and natively on
   Windows 11 (2026-11-10, `1f5853b`).
-- `npm run test:desktop:virtual`: 65 passed, 0 failed, 0 skipped on Xvfb +
-  openbox (2026-11-10, WSL2); real release binary, stub tray host.
+- `npm run test:desktop:virtual`: 66 passed, 0 failed, 0 skipped on Xvfb +
+  openbox, twice in a row and 30 more times (2026-11-10, `53d9743`, WSL2 Ubuntu
+  24.04.1 with apt-installed packages); real release binary, stub tray host.
+  Intermittently fails on a real tray defect (below), about 1 run in 60.
 - `tests/desktop/run.sh`: 57 passed, 0 failed, 2 skipped on WSL2/WSLg
-  (2026-11-10). The tray host is a stub; SKIP is never a pass.
+  (2026-11-10, 65-check driver before `53d9743`). The tray host is a stub; SKIP
+  is never a pass.
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
   (2026-11-10; again at `1f5853b`, release binary and NSIS-installed copy), real
   desktop; it moves the mouse. Covers the Hide button.
@@ -86,7 +89,8 @@ Windows 11 is validated by the automated Windows test (no person's visual check
 yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE, real
 Wayland) are **not validated**. Windows 11 puts the tray icon in the hidden-icons
 flyout. Linux: no tray click events; vanilla GNOME hides tray icons; a missing
-tray host is not detected; single instance silently turns off without a D-Bus
+tray host is not detected; about 1 launch in 140 registers no tray item (seen
+under the virtual display only); single instance silently turns off without a D-Bus
 session bus. Placeholder icons; no autostart. Full list:
 [limitations.md](status/limitations.md).
 

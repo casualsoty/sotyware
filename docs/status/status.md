@@ -199,16 +199,63 @@ not tested.
 | NSIS installer with its interactive UI | — not run (silent mode only) | |
 | MSI `msiexec /i … /qn` | ❌ not installed: exit 1603, "Installation UI level is silent, no credential elevation is possible". The MSI installs per machine and needs administrator rights (UAC). Not a sotyware defect; MSI install, run and uninstall remain unvalidated | Native Windows 2026-11-10 |
 
-### Runtime behaviour, virtual display (WSL2, Xvfb + openbox, stub tray host)
+### Runtime behaviour, virtual display, standard Ubuntu packages (WSL2, Xvfb + openbox, stub tray host)
 
+Category B, run 2026-11-10 at `53d9743` on Ubuntu 24.04.1 LTS under WSL2 (kernel
+6.18.54.1-microsoft-standard-WSL2, x86_64), Node 24.22.0, npm 11.19.1, Rust and
+Cargo 1.99.1, tauri-cli 2.12.4. **All tools installed with `apt` as documented**
+(`sudo apt install -y xvfb openbox python3-dbus python3-gi dbus-x11`): xvfb
+2:21.1.12-1ubuntu1.9, openbox 3.6.1-12build5, x11-xkb-utils 7.7+8build2 (pulled
+in by xvfb, provides `xkbcomp`), dbus-x11 1.14.10-4ubuntu4.1, python3-dbus
+1.3.2-5build3, python3-gi 3.48.2-1, libayatana-appindicator3-1 0.5.93-1build3.
+No extracted `.deb`s, no shim, no `PATH` changes beyond the WSL notes in
+[setup.md](../development/setup.md#wsl2-notes). Simulated: the display (Xvfb),
+the desktop (openbox), the tray host (`sni_watcher.py`) and the user (X11 client
+messages, D-Bus calls). Real: the release binary
+(`src-tauri/target/release/sotyware`, sha256 `10c5e588…29512`; a rebuild from
+unchanged sources was byte-identical).
+
+| Check | Result |
+| --- | --- |
+| Missing `Xvfb`/`openbox` (before installing): names them, prints the install command, exits 2, starts nothing | ✅ |
+| Two consecutive `npm run test:desktop:virtual` runs at `53d9743`: **66 passed, 0 failed, 0 skipped** each, exit 0, about 7 s each | ✅ |
+| 30 further consecutive runs at the same driver: 66/0/0 each | ✅ |
+| Before the driver fix (`53d9743`), 65-check driver: first run 65/0/0, second run 64/1/0. In about 90 runs (the driver and instrumented scratch copies of it), 5 failed or crashed because of races in the driver and 2 because of the tray defect below | ❌ driver fixed |
+| Private display `:99` (abstract socket only); the pre-existing WSLg display `:0` and an unrelated Xvfb on `:25059` were not used and still running afterwards | ✅ |
+| After every run: no Xvfb, openbox, `dbus-daemon --session`, stub tray host, xdg portal or sotyware process left; no new `/tmp` entry or X lock file | ✅ |
+| Interrupted mid-run (SIGINT to the process group: exit 1; SIGTERM to the script: exit 143): same, nothing left | ✅ |
+| A fake "sotyware" window shown during a second launch fails "no other window appeared" (control) | ✅ |
+| A stub tray host that records no registration gives a FAIL, the primary's output and exit 1, not a traceback (control) | ✅ |
+
+**Failures found and fixed (test driver, `53d9743`):** the window-tree walk raced
+openbox unmanaging the just-closed dashboard, so the primary's own window (same id
+and pid) was reported as "new" or the "8 close" check missed it; the tray "Quit"
+click raised D-Bus `NoReply` when sotyware exited before replying; and a missing
+tray registration crashed the driver. None was a sotyware defect.
+
+**Found, not fixed (sotyware/tray library):** a launch occasionally registers no
+tray item at all and prints
+`GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`;
+3 of about 420 primary launches. See
+[limitations.md](limitations.md#linux-tray). The suite reports it as a FAIL.
+
+The headless suite, static checks and release build on the same machine and
+commit: `npm run test:headless` 8 + 17 passed with `DISPLAY`, `WAYLAND_DISPLAY`,
+`DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR` unset, exit 1 with one injected
+failing test; `npm run check` 0/0, `npm run build`, `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings` and `npm run tauri build -- --no-bundle`
+passed.
+
+### Runtime behaviour, virtual display, extracted packages (WSL2, Xvfb + openbox, stub tray host)
+
+Superseded by the standard-package run above; kept as the earlier record.
 Category B. `npm run test:desktop:virtual` on the release binary (built
 2026-11-10 from the code with the lifecycle decisions extracted):
 **65 passed, 0 failed, 0 skipped**, twice in a row (2026-11-10). Xvfb
 2:21.1.12-1ubuntu1.9 and openbox 3.6.1 came from the Ubuntu 24.04 `.deb`s
 extracted into a user directory (no root on this machine), and Xvfb was started
 through a user-namespace shim so it finds `xkbcomp`; the WSL `/tmp/.X11-unix` is
-read-only, which the script's abstract-socket-only setting handles. Not yet run
-with normally installed packages or in CI.
+read-only, which the script's abstract-socket-only setting handles.
 
 | Behaviour | Result |
 | --- | --- |
@@ -226,7 +273,8 @@ stub. Focus behaviour on real Linux window managers remains unvalidated.
 `tests/desktop/run.sh` on the release binary. Re-run 2026-11-10 after the
 lifecycle decisions were extracted: **57 passed, 0 failed, 2 skipped** (54/0/2
 before the tray-failure scenario was added; same 2 skips). A build with the tray
-failure made non-fatal fails the new exit-code check.
+failure made non-fatal fails the new exit-code check. Not re-run with the
+66-check driver from `53d9743`.
 
 | Behaviour | Result | Source |
 | --- | --- | --- |

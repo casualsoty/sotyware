@@ -17,6 +17,18 @@ fixed, remove it here in the same change and update
   process keeps running until stopped manually. Tray *creation* succeeded, so the
   fatal-exit rule does not trigger. (A second launch still shows the dashboard,
   through the single-instance callback.)
+- **A launch occasionally registers no tray item.** Seen 3 times in about 420
+  primary launches under the virtual-display test (Ubuntu 24.04.1 on WSL2,
+  libayatana-appindicator3-1 0.5.93-1build3, stub tray host), 2026-11-10. The
+  dashboard opens and the process keeps running, but no StatusNotifierItem is
+  registered within 30 s, nothing is reported except
+  `GLib-GIO-CRITICAL **: g_dbus_proxy_new: assertion 'G_IS_DBUS_CONNECTION (connection)' failed`
+  (absent from every successful launch), and tray creation counted as a success,
+  so the fatal-exit rule does not trigger. After a close the dashboard can then be
+  reached only by launching sotyware again. Which library emits the message
+  (a GDBus proxy created without a session-bus connection) is not confirmed: no
+  debugger was available for a backtrace. Not yet seen with a real tray host,
+  where it is unverified. The desktop test reports it as a FAIL.
 - **No click-to-open on Linux.** AppIndicator emits no icon click events; any click
   opens the menu.
 - **Tray icon image needs a usable `$XDG_RUNTIME_DIR`.** If it points to a missing
@@ -90,9 +102,11 @@ fixed, remove it here in the same change and update
   desktop test triggers it, because the dashboard is never destroyed.
 - **On Linux the "Hide dashboard" button is tested only with mocked IPC.** No
   Linux test clicks it in the real webview.
-- **The virtual-display test was validated only on WSL2**, with Xvfb and openbox
-  extracted from `.deb`s and Xvfb started through a user-namespace shim, not with
-  normally installed packages and not in CI.
+- **The virtual-display test was validated only on WSL2** (Ubuntu 24.04.1, with
+  the apt-installed packages from [setup.md](../development/setup.md#linux-system-packages)),
+  not on a native Ubuntu install and not in CI. It fails, correctly, on the
+  intermittent [missing tray item](#linux-tray), so a CI job would be flaky at
+  roughly 1 run in 60 until that is fixed.
 - **No test covers screen-reader access** on either platform.
 
 ## Development environment (WSL)
