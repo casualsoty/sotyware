@@ -137,3 +137,20 @@ Status: Accepted
   registered and Tauri delivers the events); the desktop tests still do. New
   lifecycle rules should follow the same pattern; do not add traits for code that
   has no decision to test.
+
+## ADR-010: Frontend tests with Vitest and happy-dom
+
+Status: Accepted
+
+- **Context:** The "Hide dashboard" button and its error message had no test
+  outside the Windows desktop test, which needs a real desktop.
+- **Decision:** Dev-dependencies `vitest` (4.x) and `happy-dom` (21.x). Vitest
+  reuses `vite.config.ts` and the Svelte plugin, so there is no second build
+  setup. Tauri is mocked with `@tauri-apps/api/mocks`, which ships with the
+  existing runtime dependency. Versions were chosen to keep the declared Node
+  range (`^20.19 || ^22.12 || >=24`): Vitest 5 drops Node 20, and jsdom 30+ needs
+  Node ≥ 24.15 (the Windows 11 machine has 24.14.1). No Testing Library: Svelte's
+  own `mount`/`flushSync` and DOM queries are enough for one component.
+- **Consequences:** Neither package is shipped (`vite build` output is
+  unchanged). Tests check what the frontend asks Tauri to do, not what the OS
+  does.

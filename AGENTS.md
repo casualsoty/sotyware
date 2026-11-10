@@ -46,6 +46,8 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `@tauri-apps/cli` | `^2.12.4` | 2.12.4 |
 | Svelte | `^5.57.3` | 5.57.3 |
 | `@sveltejs/vite-plugin-svelte` | `^7.3.1` | 7.3.1 |
+| Vitest (frontend tests) | `^4.1.12` | 4.1.12 |
+| happy-dom (DOM for Vitest) | `^21.0.4` | 21.0.4 |
 | svelte-check | `^4.7.8` | 4.7.8 |
 | TypeScript | `~6.0.3` | 6.0.3 |
 | Vite | `^8.3.7` | 8.3.7 |
@@ -125,6 +127,8 @@ Follow what the code already does. When in doubt, read `lib.rs` and `tray.rs`.
 - Explicit return types on functions (`async function hideDashboard(): Promise<void>`).
 - Fail loudly on broken invariants (`main.ts` throws if `#app` is missing).
 - `npm run check` must report 0 errors and 0 warnings.
+- Frontend tests live next to the code as `src/**/*.test.ts` (Vitest, happy-dom)
+  and mock Tauri with `@tauri-apps/api/mocks`, never by stubbing `App.svelte`.
 
 ### Svelte
 

@@ -16,10 +16,11 @@ Where things are. Generated and ignored paths are listed in
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
 │   ├── main.ts               Mounts App into #app
-│   └── App.svelte            The dashboard UI
+│   ├── App.svelte            The dashboard UI
+│   └── App.test.ts           Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 ├── package.json              npm scripts and JS dependencies
 ├── package-lock.json         Pinned JS dependency tree
-├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/
+├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)
 ├── tsconfig.json             Strict TypeScript settings
 ├── src-tauri/                Rust crate and Tauri configuration
@@ -56,5 +57,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; desktop tests in `tests/desktop/` (`run.sh` Linux, `windows.ps1` Windows) |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts`; desktop tests in `tests/desktop/` (`run.sh` Linux, `windows.ps1` Windows) |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

@@ -6,12 +6,12 @@ replaces another.
 | Layer | What it covers | Where | Needs |
 | --- | --- | --- | --- |
 | Static checks | Types, Svelte diagnostics, formatting, Clippy lints | `npm run check`, `cargo fmt --check`, `cargo clippy` | nothing special |
-| Rust unit tests | Pure logic only (today: tray menu id → action mapping) | `#[cfg(test)] mod tests` inside the module, e.g. `src-tauri/src/tray.rs` | nothing special |
+| Rust unit tests | Lifecycle and tray decisions, config labels | `#[cfg(test)] mod tests` inside the module, e.g. `src-tauri/src/tray.rs` | nothing special |
+| Frontend tests | Dashboard UI: Hide button, error display, `main.ts` mount | `src/App.test.ts` (Vitest, happy-dom) | nothing special |
 | Simulated desktop test | Real release binary: window lifecycle, tray menu, single instance | `tests/desktop/run.sh` | Linux, X11 display, D-Bus tools |
 | Windows desktop test | Real release binary on the real Windows desktop: also the "Hide dashboard" button, tray left click, title-bar close button | `tests/desktop/windows.ps1` | Windows, an unattended desktop session |
 | Manual check | Real tray host, real window manager, focus | checklist below | a real desktop |
 
-There are no frontend unit tests and no test framework for TypeScript.
 
 ## Rust unit tests
 
@@ -26,6 +26,22 @@ decision triggers an app or window operation, it goes through a small trait
 double ([ADR-009](../architecture/decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)).
 The real window, tray and single-instance plugin cannot run under `cargo test`;
 they need a display and an event loop.
+
+## Frontend tests
+
+```bash
+npm run test:frontend
+```
+
+`src/App.test.ts` mounts the real `App.svelte` (and imports `main.ts`) in
+[happy-dom](https://github.com/capricorn86/happy-dom) under Vitest, with Tauri's
+official mocks (`mockWindows`, `mockIPC` from `@tauri-apps/api/mocks`) in place of
+the Rust side. It checks that "Hide dashboard" sends exactly
+`plugin:window|hide` for window `main` once per click, that a failing or denied
+call shows the error in a `role="alert"`, that a successful retry clears it, and
+that `main.ts` throws without `#app`. It does **not** show that the OS window hides:
+no webview, no Rust, no capability check runs. That is the
+[Windows desktop test](#windows-desktop-test)'s job.
 
 ## Simulated desktop test
 
