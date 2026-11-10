@@ -136,7 +136,10 @@ Files:
   `WM_DELETE_WINDOW` to simulate the close button, clicks tray menu items over
   `com.canonical.dbusmenu`, reads and clicks the page inside the webview through
   AT-SPI (WebKitGTK's accessibility tree), and launches further instances
-  sequentially and concurrently. Scenarios:
+  sequentially and concurrently. Page elements are recognised by their
+  `Atspi.Role` enum value (`PUSH_BUTTON`, `STATUS_BAR`), never by the role
+  name: at-spi2-core 2.53.1 renamed "push button" to "button" (Ubuntu 26.04
+  ships 2.60), while the enum value stayed 43. Scenarios:
   - 1–9: tray mode: first launch, second launches while visible, hidden and
     minimized, sequential and concurrent launches, close → hide, tray Open
     Dashboard, tray Quit, relaunch.

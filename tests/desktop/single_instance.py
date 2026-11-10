@@ -311,7 +311,12 @@ def sni_names(pid):
 
 # ---------- the page inside the webview, via AT-SPI ----------
 def _page_nodes(pid):
-    """(role, name, text) of every accessible node of process `pid`, [] if not found."""
+    """(role, name, text, node) of every accessible node of process `pid`, [] if not found.
+
+    `role` is the Atspi.Role enum, never get_role_name(): role names are not stable
+    across at-spi2-core releases (2.53.1 renamed "push button" to "button"), while
+    the enum values are (Atspi.Role.PUSH_BUTTON == 43 on 2.52 and on 2.60).
+    """
     desktop = Atspi.get_desktop(0)
     for i in range(desktop.get_child_count()):
         app = desktop.get_child_at_index(i)
@@ -328,7 +333,7 @@ def _page_nodes(pid):
                 text = ""
                 if node.get_text_iface() is not None:
                     text = Atspi.Text.get_text(node, 0, Atspi.Text.get_character_count(node))
-                nodes.append((node.get_role_name(), node.get_name() or "", text or "", node))
+                nodes.append((node.get_role(), node.get_name() or "", text or "", node))
                 for j in range(node.get_child_count()):
                     child = node.get_child_at_index(j)
                     if child is not None:
@@ -344,7 +349,7 @@ def _page_nodes(pid):
 def page_ready(pid):
     """True once the dashboard has its operating mode (a Hide button or a status note)."""
     roles = [r for r, *_ in _page_nodes(pid)]
-    return "push button" in roles or "status bar" in roles
+    return Atspi.Role.PUSH_BUTTON in roles or Atspi.Role.STATUS_BAR in roles
 
 
 def page_text(pid):
@@ -352,7 +357,7 @@ def page_text(pid):
 
 
 def page_buttons(pid):
-    return [(n, node) for r, n, _, node in _page_nodes(pid) if r == "push button"]
+    return [(n, node) for r, n, _, node in _page_nodes(pid) if r == Atspi.Role.PUSH_BUTTON]
 
 
 def click_button(pid, name):
