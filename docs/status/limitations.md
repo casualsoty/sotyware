@@ -164,6 +164,13 @@ affected.
 - **The MSI needs administrator rights.** It installs per machine, so a silent
   (`/qn`) install from a non-elevated shell fails with exit 1603. The NSIS
   installer installs per user and needs no elevation.
+- **The NSIS uninstaller leaves a registry key.** After `uninstall.exe /S`,
+  `HKCU\Software\sotyware\sotyware` (default value: the install directory) is
+  still present; files, the uninstall entry and the shortcuts are removed.
+  Observed on Windows 11 at `e8834fd` (2026-11-10); the key was already left by the
+  earlier install at `1f5853b`. Whether the WebView2 data folder
+  `%LOCALAPPDATA%\com.sotyware.desktop` would be removed is unknown, because
+  running the build output also creates it.
 
 ## General
 

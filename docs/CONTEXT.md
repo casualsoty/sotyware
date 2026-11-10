@@ -81,8 +81,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   mode, hide granted only in tray mode, implicit exit blocked, unexpected tray
   failure → exit 1, second launch, tray dispatch, config labels). No display needed.
 - `npm run test:headless` (31 Rust + 13 frontend tests): passes on WSL2
-  (2026-11-10, `8ca3bd7`). Natively on Windows 11 only the earlier 17 + 8
-  (`1f5853b`); not re-run since the operating-mode change.
+  (2026-11-10, `8ca3bd7`) and natively on Windows 11 (2026-11-10, `e8834fd`;
+  23 Rust tests there, the 8 `ksni`/`zbus` ones are Linux-only).
 - `npm run test:desktop:virtual`: 92 passed, 0 failed, 0 skipped on Xvfb +
   openbox, 3 runs in a row (2026-11-10, `c2cbeb4`, WSL2 Ubuntu 24.04.1); real
   release binary, stub tray host, page read via AT-SPI. Covers tray mode and
@@ -93,17 +93,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   (2026-11-10, 65-check driver before `53d9743`). The tray host is a stub; SKIP
   is never a pass.
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
-  (2026-11-10; again at `1f5853b`, release binary and NSIS-installed copy), real
-  desktop; it moves the mouse. Covers the Hide button. **Not re-run since
-  `8ca3bd7`** (hide is now granted through a runtime capability).
+  (2026-11-10, `e8834fd` with the test fix `71442d3`: 3 runs on the release
+  binary, 2 on the NSIS-installed copy), real desktop; it moves the mouse.
+  Covers the Hide button, which works with hide granted at runtime.
 - Test categories (headless / virtual display / real desktop):
   [testing.md](development/testing.md). No JS linter, no CI.
 
 ## Platform limitations (summary)
 
-Windows 11 is validated by the automated Windows test up to `1f5853b` (no
-person's visual check yet, MSI not installed, not re-run since the
-operating-mode change). Windows 10 and real Linux desktops (GNOME, KDE, XFCE,
+Windows 11, the primary runtime platform, is validated by the automated Windows
+test at `e8834fd`, including the NSIS-installed copy (no person's visual check
+yet, MSI not installed). Windows 10 and real Linux desktops (GNOME, KDE, XFCE,
 real Wayland) are **not validated**. Windows 11 puts the tray icon in the
 hidden-icons flyout. Linux: the tray is a StatusNotifierItem via `tray-icon`'s
 pure-Rust `ksni` backend, which avoids a registration race in
@@ -118,10 +118,10 @@ Full list: [limitations.md](status/limitations.md).
 ## Milestone and next steps
 
 Milestone 0: prove the desktop runtime on Windows and Linux. Implemented;
-validated natively on Windows 11 (automated, before the operating-mode change)
-and in Linux simulation. Next: re-run the Windows tests, the manual check on
-Windows 11, Windows 10, then real Linux desktops (including dashboard-only mode
-on vanilla GNOME); record results in the
+validated natively on Windows 11 (automated, at `e8834fd`) and in Linux
+simulation (WSL2 is the development environment, not a runtime target). Next:
+the manual check on Windows 11, Windows 10, then real Linux desktops (including
+dashboard-only mode on vanilla GNOME); record results in the
 [validation matrix](status/status.md#validation-matrix). See
 [roadmap.md](status/roadmap.md). SQLite, feature manager, plugins, sync and
 autostart are undecided ideas, not tasks.

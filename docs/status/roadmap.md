@@ -9,11 +9,10 @@ architectural decision it needs in
 
 In priority order:
 
-1. **Finish Windows validation.** Windows 11 is built and passes the automated
-   [Windows desktop test](../development/testing.md#windows-desktop-test) up to
-   `1f5853b`. First re-run it, and the headless suite, at or after `8ca3bd7`: the
-   shared lifecycle code changed (operating mode, `operating_mode` command, hide
-   granted through a runtime capability), and none of it has run on Windows yet.
+1. **Finish Windows validation.** Windows 11 is built and passes the headless
+   suite and the automated
+   [Windows desktop test](../development/testing.md#windows-desktop-test),
+   including the NSIS-installed copy, at `e8834fd` (with the test fix `71442d3`).
    Still to do: a person running the
    [manual checklist](../development/testing.md#manual-check-real-desktop-linux-or-windows)
    on Windows 11, the MSI installer (needs an elevated install), and everything on

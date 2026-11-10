@@ -11,16 +11,19 @@ Svelte 5) and the background lifecycle (tray, hide-on-close, explicit Quit,
 single instance) work on Windows 10/11 and Linux desktops, before any product
 features are built.
 
-State: implemented. Validated natively on **Windows 11** (25H2, build 26200.9711)
-by an automated test on the real desktop and by the headless suite (last at
-`1f5853b`), and in simulated Linux environments (WSL2/WSLg; Xvfb + openbox).
-Open: Windows 10, a person's visual check on Windows, the MSI installer, and real
-Linux desktops. The Linux tray uses `tray-icon`'s `ksni` backend since `12a6185`,
-which avoids the libayatana-appindicator registration race
-([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)). Since
+State: implemented. Validated natively on **Windows 11** (25H2, build 26200.9711),
+sotyware's primary runtime platform, by an automated test on the real desktop, the
+headless suite and the NSIS-installed copy, last at `e8834fd` (application code
+of `8ca3bd7`, with the Windows test fix `71442d3`;
+[details](#dashboard-only-mode-regression-run-native-windows-11)). Linux is
+validated only in simulated environments (WSL2/WSLg; Xvfb + openbox), never on
+a real Linux desktop. Open: Windows 10, a person's visual check on Windows, the
+MSI installer, and real Linux desktops. The Linux tray uses `tray-icon`'s `ksni`
+backend since `12a6185`, which avoids the libayatana-appindicator registration
+race ([details](#ksni-tray-backend-wsl2-xvfb--openbox-stub-tray-host)). Since
 `8ca3bd7`, Linux without a reachable tray host runs in dashboard-only mode
 instead of exiting 1 ([details](#dashboard-only-mode-wsl2-xvfb--openbox-stub-tray-host)).
-The Windows results below predate that change.
+Dashboard-only mode cannot occur on Windows, where every tray error stays fatal.
 
 ## Implemented
 
@@ -123,6 +126,65 @@ versions as in the table; additionally rustup 1.29.3 and Git 2.47.1.windows.1.
 | WebView2 Runtime | 157.0.4341.42 |
 | Windows PowerShell (test) | 5.1 |
 
+### Dashboard-only mode regression run, native Windows 11
+
+Run 2026-11-10 at `e8834fd`, the first native Windows run of the shared Rust
+changes from `8ca3bd7` (operating mode, the `operating_mode` command, and hide
+granted through the runtime `tray-mode` capability instead of the static
+capability file). `c2cbeb4` and `e8834fd` change only Linux tests and docs. The
+Windows checkout had already been fast-forwarded from `5dbafd8` to `e8834fd`
+with a `git bundle` (identical hashes, clean tree); the test fix `71442d3` was
+moved the same way. Same machine and procedure as above: Windows 11 Home 25H2,
+OS build 26200.9711, x64; Windows PowerShell 5.1 started from WSL through
+interop with the registry `PATH`, so every tool was the native Windows binary:
+Rust/Cargo 1.99.1 (`stable-x86_64-pc-windows-msvc`), Visual Studio Community 2022
+17.12 C++ tools, Node.js 24.14.1, npm 11.12.1, Tauri CLI 2.12.4, Git
+2.47.1.windows.1. WebView2 Runtime is now 157.0.4341.46 (was .42).
+
+| Check | Result |
+| --- | --- |
+| `npm ci`, `npm run check` (0 errors, 0 warnings), `npm run build` | ✅ |
+| `npm run test:headless`: exit 0; 13 frontend tests and 23 Rust tests. The other 8 of the 31 Rust tests classify `ksni`/`zbus` errors and are `cfg(target_os = "linux")`, so they are not compiled for Windows | ✅ |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | ✅ |
+| `cargo test` (MSVC): 23 tests in `sotyware_lib`, 0 in the binary, 0 doc-tests | ✅ |
+| Windows graph (`cargo tree --target x86_64-pc-windows-msvc -e features`): no `ksni`, `zbus`, `gtk` or `libappindicator` crate; `sotyware` depends only on `tauri` 2.12.5 and `tauri-plugin-single-instance` 2.5.5. `tray-icon` has no `ksni` feature there (the Linux-only declaration does not apply) | ✅ |
+| `npm run tauri build`: `sotyware.exe` (4,341,248 bytes), NSIS `sotyware_0.1.0_x64-setup.exe` (1.41 MiB), MSI `sotyware_0.1.0_x64_en-US.msi` (2.04 MiB); no capability or permission error at build time | ✅ built |
+| `tests/desktop/windows.ps1` as committed at `e8834fd`, release binary | ❌ 4 of 4 runs failed: 78 passed / 2 failed three times, 71 / 9 once. Test defect, not a sotyware regression (below) |
+| Same unchanged script on a release build of `1f5853b` (`git archive` outside the checkout), which had passed 80/80 earlier that day | ❌ 71 / 9, then 78 / 2: the same failure, so not caused by the new commits |
+| `tests/desktop/windows.ps1` at `71442d3`, release binary | ✅ **80 passed, 0 failed**, 3 consecutive runs (plus 4 runs of the same change before committing it and 1 on the `1f5853b` build, all 80 / 0) |
+| Supplementary scratch script (not in the repository), release binary with stderr captured: 5 × "Hide dashboard" (hidden, then a second launch restores it with exit 0, no error or permission text in the page), 3 × ✕ (hidden, process alive; tray "Open Dashboard" restores the same window; one window, one process), tray "Quit" exits 0, no process left, stderr without any permission or ACL message | ✅ 29 / 29 |
+| NSIS `/S` install: exit 0; `%LOCALAPPDATA%\sotyware\` (`sotyware.exe`, `uninstall.exe`); HKCU uninstall entry "sotyware" 0.1.0; Start menu and desktop shortcuts pointing at the installed exe | ✅ |
+| Installed copy: `tests/desktop/windows.ps1` (`71442d3`) | ✅ 80 / 0, 2 runs |
+| Installed copy: supplementary script | ✅ 29 / 29 |
+| Installed copy: the Start menu shortcut starts it; after Hide, the desktop shortcut shows the dashboard with the same pid and one window; one tray icon; tray "Quit" leaves no process | ✅ 8 / 8 |
+| NSIS uninstaller `/S`: exit 0; install directory, uninstall entry and both shortcuts removed; no process left | ✅ |
+| `HKCU\Software\sotyware\sotyware` (default value = install directory) after uninstall | ⚠️ remains. It was already there before this install, left by the earlier install/uninstall, and this uninstall did not remove it ([limitations](limitations.md#windows-installers)) |
+| WebView2 data folder `%LOCALAPPDATA%\com.sotyware.desktop` | ⚠️ still present, as after the earlier uninstall |
+| MSI | — not run (per-machine, needs an elevated install) |
+
+**Runtime hide permission works on Windows.** The `core:window:allow-hide`
+permission granted in `setup` reaches the dashboard: every Hide check in the
+suite passed (UIA invoke and a real mouse click), as did the 5 supplementary
+hides on both the build output and the installed copy, with no error shown in the
+page. The only stderr line, at every quit, is WebView2's
+`ERROR:ui\gfx\win\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412`,
+which does not affect behaviour.
+
+**Why the committed test failed.** The failing check was always the tray menu
+right after the title-bar ✕ ("tray menu Open Dashboard again: invoked: context
+menu did not open"), and in two runs also the tray "Quit". An instrumented copy
+showed the cause: hiding the dashboard handed the foreground to another app's
+window (`Chrome_WidgetWin_1`, a browser open behind it). The "Show Hidden Icons"
+flyout lost focus and started closing, but UI Automation still reported it and
+the sotyware icon with a valid rectangle. The test therefore skipped reopening
+it and right-clicked the vanishing flyout. The earlier 80/80 runs had no such
+window behind the dashboard (the machine had since rebooted). `71442d3` counts
+the flyout as open only while it is the foreground window and waits out a
+closing one. No check was removed and no timeout raised.
+
+Not run on Windows: dashboard-only mode (it cannot occur there), Alt+F4, the
+interactive NSIS UI, the MSI, a person's visual check, and Windows 10.
+
 ### Headless tests, native Windows 11
 
 Category A at `1f5853b`. Run with `TEMP`/`TMP` pointed at a new empty directory,
@@ -166,7 +228,12 @@ defect was found.
 Re-run at `1f5853b` after the headless-test commits (which moved the lifecycle
 decisions into plain functions): **80 passed, 0 failed** on the release binary
 and **80 passed, 0 failed** on the NSIS-installed copy (2026-11-10), one run each.
-No regression against the earlier 80/80; the table below holds for both commits.
+No regression against the earlier 80/80.
+
+Re-run at `e8834fd` (dashboard-only mode, hide granted at runtime) with the test
+fix `71442d3`: **80 passed, 0 failed**, 3 runs on the release binary and 2 on the
+NSIS-installed copy ([details](#dashboard-only-mode-regression-run-native-windows-11)).
+The table below holds for all three commits.
 
 | Behaviour | Result | Source |
 | --- | --- | --- |
@@ -231,9 +298,9 @@ What the 24 new virtual-display checks cover: [testing.md](../development/testin
 (scenarios 12–16). The tray-mode checks of scenarios 1–9 and 11 are unchanged.
 Scenario 10 now uses a watcher that rejects the item instead of no watcher.
 
-Not run: native Windows (shared Rust code changed: operating mode, the
-`operating_mode` command, hide through a runtime capability; not compiled or run
-for Windows), `run.sh` on WSLg, a real GNOME or any real Linux desktop, an
+Native Windows was run afterwards, at `e8834fd`:
+[results](#dashboard-only-mode-regression-run-native-windows-11). Not run:
+`run.sh` on WSLg, a real GNOME or any real Linux desktop, an
 XEmbed-only panel, Wayland, and a person looking at the dashboard-only note.
 
 ### ksni tray backend (WSL2, Xvfb + openbox, stub tray host)

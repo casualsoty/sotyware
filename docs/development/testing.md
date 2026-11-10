@@ -262,8 +262,8 @@ What it does, and how:
   so the test opens it first. It treats the flyout as open only while it is the
   foreground window: when hiding the dashboard hands the foreground to another
   app, the flyout starts closing but UI Automation still lists it and its icons,
-  so the test waits for it to close and opens it again. It left-clicks the icon (expects the dashboard and no
-  menu) and right-clicks it for the menu.
+  so the test waits for it to close and opens it again. It left-clicks the icon
+  (expects the dashboard and no menu) and right-clicks it for the menu.
 - Reads the tray menu through the Win32 menu handle (`MN_GETHMENU`), because UI
   Automation exposes none of its items. It clicks items at their
   `GetMenuItemRect` position.
