@@ -185,7 +185,18 @@ a SKIP into a PASS by loosening a check; record it as unverified instead.
 
 The driver exits 1 if any check fails and 0 otherwise; SKIPs do not change the
 exit code, so always read the summary line too. It aborts at once if a
-`sotyware` process from the same binary is already running.
+`sotyware` process from the same binary is already running in this run's scope.
+
+Every process count (the abort check, "only the original process is running",
+"nothing left") includes only processes of this run: same binary
+(`/proc/<pid>/exe`), same `DISPLAY` and same `DBUS_SESSION_BUS_ADDRESS` in
+`/proc/<pid>/environ`. A launch without a bus address (scenario 16) counts if
+its `XDG_RUNTIME_DIR` lies in one of the driver's own temporary directories. So
+a sotyware from the same binary on another display or bus (a concurrent
+virtual-display run, a probe, your own instance) neither aborts the run nor
+fails a check; one this run started is still always counted. Checked
+2026-11-10 on WSL2: 92 passed, 0 failed, 0 skipped with a probe sotyware running
+the whole time on its own Xvfb display `:57` and private bus.
 
 Under WSLg two checks are always skipped: focusing an already visible dashboard
 (the WM ignores `_NET_ACTIVE_WINDOW`) and restoring a minimized dashboard (the WM

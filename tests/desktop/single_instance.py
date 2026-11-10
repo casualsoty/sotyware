@@ -222,14 +222,47 @@ def focused_on(w):
 
 
 # ---------- processes ----------
+RUN_DISPLAY = os.environ.get("DISPLAY")
+RUN_BUS = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
+assert RUN_DISPLAY and RUN_BUS, "run through run.sh: needs DISPLAY and a private DBUS_SESSION_BUS_ADDRESS"
+# Directories only this run uses; launches that strip the bus address (scenario 16)
+# point XDG_RUNTIME_DIR into one of them.
+RUN_DIRS = (LOGS, os.path.dirname(os.path.abspath(REG)))
+
+
+def _environ(pid):
+    with open(f"/proc/{pid}/environ", "rb") as f:
+        pairs = (v.split(b"=", 1) for v in f.read().split(b"\0") if b"=" in v)
+        return {k.decode(errors="replace"): v.decode(errors="replace") for k, v in pairs}
+
+
+def _started_by_this_run(env):
+    """Same display, and the same session bus (or no bus and a runtime dir of this run).
+
+    Another sotyware from the same binary (a concurrent run on another display, a
+    probe, the developer's own instance) must not count as this run's process.
+    """
+    if env.get("DISPLAY") != RUN_DISPLAY:
+        return False
+    bus_address = env.get("DBUS_SESSION_BUS_ADDRESS")
+    if bus_address is not None:
+        return bus_address == RUN_BUS
+    runtime = os.path.realpath(env.get("XDG_RUNTIME_DIR", "/"))
+    return any(runtime.startswith(os.path.realpath(d) + os.sep) for d in RUN_DIRS)
+
+
 def sotyware_pids():
-    """PIDs of every process running this exact binary (via /proc/<pid>/exe)."""
+    """PIDs of the processes this run started from this exact binary.
+
+    Matched by /proc/<pid>/exe, then scoped by /proc/<pid>/environ (see
+    _started_by_this_run), as virtual.sh's cleanup scopes by DISPLAY.
+    """
     pids = []
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
         try:
-            if os.path.realpath(f"/proc/{entry}/exe") == BIN:
+            if os.path.realpath(f"/proc/{entry}/exe") == BIN and _started_by_this_run(_environ(entry)):
                 pids.append(int(entry))
         except OSError:
             pass
