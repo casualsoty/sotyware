@@ -1,13 +1,14 @@
 # Testing guide
 
-sotyware has three layers of verification. Each catches different problems; none
+sotyware has four layers of verification. Each catches different problems; none
 replaces another.
 
 | Layer | What it covers | Where | Needs |
 | --- | --- | --- | --- |
 | Static checks | Types, Svelte diagnostics, formatting, Clippy lints | `npm run check`, `cargo fmt --check`, `cargo clippy` | nothing special |
 | Rust unit tests | Pure logic only (today: tray menu id → action mapping) | `#[cfg(test)] mod tests` inside the module, e.g. `src-tauri/src/tray.rs` | nothing special |
-| Simulated desktop test | Real release binary: window lifecycle, tray menu, single instance | `tests/desktop/` | Linux, X11 display, D-Bus tools |
+| Simulated desktop test | Real release binary: window lifecycle, tray menu, single instance | `tests/desktop/run.sh` | Linux, X11 display, D-Bus tools |
+| Windows desktop test | Real release binary on the real Windows desktop: also the "Hide dashboard" button, tray left click, title-bar close button | `tests/desktop/windows.ps1` | Windows, an unattended desktop session |
 | Manual check | Real tray host, real window manager, focus | checklist below | a real desktop |
 
 There are no frontend unit tests and no test framework for TypeScript.
@@ -43,8 +44,8 @@ Files:
   `ctypes` (no extra Python packages), sends `WM_DELETE_WINDOW` to simulate the
   close button, clicks tray menu items over `com.canonical.dbusmenu`, and launches
   further instances sequentially and concurrently. It does **not** click the
-  dashboard's "Hide dashboard" button; that path has no automated test in the
-  repository.
+  dashboard's "Hide dashboard" button; on Linux that path has no automated test
+  (the [Windows desktop test](#windows-desktop-test) covers it on Windows).
 
 Requirements: `python3`, `python3-dbus`, `python3-gi`, `libX11`,
 `dbus-run-session`, and an X11 display (`$DISPLAY`: WSLg, or Xvfb plus a window
@@ -66,6 +67,59 @@ ignores `XIconifyWindow`). The latest results are recorded in
 
 What this test is **not**: a real desktop. The tray host is a stub, nobody sees or
 clicks an icon, and the window manager is whatever serves `$DISPLAY`.
+
+## Windows desktop test
+
+Run on Windows, from a Windows checkout (not a WSL path), after a release build:
+
+```powershell
+npm run tauri build -- --no-bundle
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
+```
+
+`-Exe` defaults to `src-tauri\target\release\sotyware.exe`. To test an installed
+copy, pass its path, e.g. `-Exe $env:LOCALAPPDATA\sotyware\sotyware.exe` for the
+NSIS per-user install.
+
+It needs only Windows PowerShell 5.1 (UI Automation and `user32` via `Add-Type`), no
+extra modules. **It runs on your real desktop:** it moves the mouse and clicks the
+tray icon, the tray menu, the dashboard's button and its title-bar close button, and
+opens the notification area's "Show Hidden Icons" flyout. Do not touch the mouse or
+keyboard while it runs (about 30 seconds).
+
+What it does, and how:
+
+- Finds the dashboard with `EnumWindows` (class `Tauri Window`, owned by a
+  sotyware process). UI Automation is not enough: it does not list hidden windows.
+- Clicks "Hide dashboard" inside WebView2 twice: once through UI Automation
+  `Invoke` and once with a real mouse click at the button's position. Each time it
+  checks that the window becomes invisible, is not destroyed, and the process stays.
+- Finds the sotyware icon in the notification area by its UI Automation name
+  (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
+  so the test opens it first. It left-clicks the icon (expects the dashboard and no
+  menu) and right-clicks it for the menu.
+- Reads the tray menu through the Win32 menu handle (`MN_GETHMENU`), because the
+  items are owner-drawn and invisible to UI Automation. It clicks items at their
+  `GetMenuItemRect` position.
+- Clicks the real title-bar close button, located with `WM_NCHITTEST` = `HTCLOSE`
+  (the title bar is not in the UI Automation tree), and also sends a programmatic
+  close request (`WindowPattern.Close`). It does not send Alt+F4, which would close
+  another app if focus moved.
+- Launches second instances while the dashboard is hidden, visible and minimized,
+  5 sequentially and 4 concurrently, and checks exit code 0, one process (same
+  pid), one window, one tray icon.
+- Hides, quits from the tray, checks exit code 0, no process and no tray icon left,
+  then relaunches a fresh instance and quits it.
+
+Results: `PASS`/`FAIL` per check, `INFO` for observations Windows may legitimately
+vary (whether the dashboard ended up in the foreground), then a summary line. Exit
+code 0 if all passed, 1 if any failed, 2 if the binary is missing or a sotyware
+from the same path is already running. It does not catch an icon that is in the
+tray but invisible to a person; the [manual check](#manual-check-real-desktop-linux-or-windows)
+still covers looking at it.
+
+Verified that it detects a broken button: with `hideDashboard` changed to do
+nothing, all three hide checks failed (2026-11-10).
 
 ## Manual check (real desktop, Linux or Windows)
 

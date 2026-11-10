@@ -67,6 +67,16 @@ tests/desktop/run.sh                        # optional argument: path to another
 Needs an X11 display. Details, prerequisites and how to read the results:
 [testing.md](testing.md).
 
+## Desktop test (Windows, real desktop)
+
+```powershell
+npm run tauri build -- --no-bundle
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1
+```
+
+It moves the mouse and clicks on your desktop; leave it alone while it runs.
+Details: [testing.md](testing.md#windows-desktop-test).
+
 ## Generated and ignored paths
 
 - `dist/`: Vite output, consumed by Tauri as `frontendDist`. Ignored.

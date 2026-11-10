@@ -26,7 +26,7 @@ Only the desktop runtime; **no product features exist**.
 src/                 Svelte frontend (main.ts, App.svelte)
 src-tauri/src/       main.rs → lib.rs (builder, lifecycle, single instance) + tray.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
-tests/desktop/       Simulated-desktop test of the release binary (Linux/X11)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; windows.ps1: real Windows desktop)
 docs/                architecture/, development/, status/
 ```
 
