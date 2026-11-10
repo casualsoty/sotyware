@@ -211,13 +211,28 @@ with the registry `PATH`. Categories: [testing.md](../development/testing.md).
 | `windows.ps1` started on a private desktop (no input desktop, no taskbar) | guard | ✅ `ABORT`, exit 3, no sotyware process started (pre-commit copy of `44a131d`'s script) |
 | Isolated-desktop probe (scratch script, not in the repository): on a private desktop sotyware starts in tray mode, the WebView2 page is readable through UIA, Hide, second launch and `WM_CLOSE` behave as on the real desktop; no `Shell_TrayWnd`, so no tray icon | investigation | ✅ observed |
 | Session 0 (scheduled task "run whether the user is logged on or not") | investigation | — not run: registering the task was not permitted in the investigating session |
-| A GitHub-hosted Windows runner | CI | — not run (no CI exists) |
+| A GitHub-hosted Windows runner | CI | — not run yet: the manual workflow `desktop-windows-isolated.yml` exists since `5fe62b9` but has not been started ([CI](#ci-github-actions-2026-11-10)) |
 
 Conclusion: no Windows test of the real binary runs headlessly. The
 private-desktop suite runs unattended inside a logged-in session without using
 the screen or the input devices; the tray, real clicks and Quit need the
 interactive desktop. Details:
 [testing.md](../development/testing.md#headless-windows-desktop-testing).
+
+### CI: GitHub Actions (2026-11-10)
+
+Added in `5fe62b9`; details in [testing.md](../development/testing.md#ci). The
+repository is private on GitHub Free ($12 of hosted compute a month).
+
+| Workflow | Trigger | Result |
+| --- | --- | --- |
+| `ci.yml` headless (Linux, Windows) | automatic: pull request / push to `main` | — **not run on GitHub yet** (nothing pushed). Its command sequence passed locally on WSL2 Ubuntu 24.04 at `5fe62b9` (`npm ci`, check 0/0, build, `cargo fetch --locked`, fmt, clippy, 13 frontend + 31 Rust tests) |
+| `desktop-virtual.yml` | manual | — not run on GitHub. `npm run test:desktop:virtual` locally on WSL2 at `5fe62b9`: 92 passed, 0 failed, 0 skipped (matches `EXPECTED_CHECKS`) |
+| `desktop-windows-isolated.yml` | manual, experimental | — not run on GitHub; **GitHub-hosted support unknown** |
+| Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint` and not accepted by GitHub yet |
+
+Record the first GitHub results here, with the real job durations, and replace
+the cost estimate in [testing.md](../development/testing.md#github-free-budget).
 
 ### Real Linux desktop availability (2026-11-10)
 
@@ -537,8 +552,8 @@ tray icon was ever seen or clicked by a person.
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
-| Headless suite and virtual-display test in a CI service | — no CI exists (the headless suite ran natively on Windows 11 and WSL2, by hand) |
-| Windows private-desktop test in Session 0 or on a CI runner | — (runs only in a logged-in session so far) |
+| Headless suite and virtual-display test on GitHub Actions | — workflows exist (`5fe62b9`), not run on GitHub yet ([CI](#ci-github-actions-2026-11-10)) |
+| Windows private-desktop test in Session 0 or on a GitHub-hosted runner | — (runs only in a logged-in session so far; the manual workflow is untried) |
 | Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |

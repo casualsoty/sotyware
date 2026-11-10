@@ -214,10 +214,33 @@ affected.
   tested only by `windows.ps1` on the interactive, unlocked desktop, which moves
   the mouse. The private-desktop test also does not use real clicks or check
   focus. On quit it is ended with `Stop-Process`.
-- **Windows Session 0 and CI runners are untested.** Whether WebView2 and the
-  private-desktop test work in Session 0 (a service, a scheduled task without a
-  logged-on user) or on a GitHub-hosted runner is unknown
+- **Windows Session 0 and GitHub-hosted runners are untested.** Whether WebView2
+  and the private-desktop test work in Session 0 (a service, a scheduled task
+  without a logged-on user) or on a GitHub-hosted runner is unknown
   ([testing.md](../development/testing.md#headless-windows-desktop-testing)).
+  The manual workflow `desktop-windows-isolated.yml` exists for that trial but
+  has not run.
+
+## CI
+
+- **No workflow has run on GitHub yet** (nothing pushed); only the command
+  sequences were run locally ([status.md](status.md#ci-github-actions-2026-11-10)).
+- **CI time is a limited allowance.** The repository is private on GitHub Free:
+  $12 of hosted compute a month, after which Actions is blocked until the next
+  cycle (no payment method is set up). Hence only the headless jobs run
+  automatically, and the desktop tests only by hand
+  ([budget](../development/testing.md#github-free-budget)).
+- **Automatic CI never starts sotyware.** Window, tray, single-instance and close
+  behaviour are covered there only by unit tests with doubles; the desktop
+  workflows are manual and may lag behind `main`.
+- **Not in CI at all:** the real-desktop Windows test (needs an unlocked desktop
+  with Explorer and the mouse), the manual checklist, Windows 10, real Linux
+  desktops, installers.
+- **Docs-only changes skip CI** (`paths-ignore`), so a required status check
+  would never report on such a pull request; branch protection is not
+  configured.
+- **The desktop workflows hard-code the expected check counts** (92 and 56); a
+  change to a test driver must update `EXPECTED_CHECKS` in its workflow.
 - **No real Linux desktop is available in the development environment**
   (2026-11-10: WSL2 only, Windows 11 Home without a VM;
   [survey](status.md#real-linux-desktop-availability-2026-11-10)). Linux results

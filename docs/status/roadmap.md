@@ -33,11 +33,16 @@ Fixes found during validation come before anything below.
 
 ## Known follow-ups (not started, no design yet)
 
-- Add CI as described in
-  [testing.md](../development/testing.md#ci): headless jobs on Linux and
-  Windows, the virtual-display job on Linux, a trial of the Windows
-  private-desktop test on a hosted runner (exit 3 = no usable session), and the
-  real-desktop Windows test only on a self-hosted runner in a logged-on session.
+- First CI runs (the workflows exist since `5fe62b9`, see
+  [testing.md](../development/testing.md#ci)): after the first push, check that
+  `ci.yml` passes on both runners, record the real job durations, and replace
+  the cost estimate; start `desktop-virtual.yml` once; try
+  `desktop-windows-isolated.yml` once to learn whether hosted Windows runners can
+  run it (exit 3 = no usable session). Record results in
+  [status.md](status.md#ci-github-actions-2026-11-10).
+- Possibly, a separate decision: making the headless check required by branch
+  protection (needs `paths-ignore` reworked), or the real-desktop Windows test on
+  a self-hosted runner in a logged-on session (security review first).
 - Replace the placeholder icons.
 - Drop `libayatana-appindicator3-1` from the `.deb` dependencies: the binary
   never loads it since `12a6185` ([limitations.md](limitations.md#linux-tray)).

@@ -33,6 +33,7 @@ src/                 Svelte frontend (main.ts, App.svelte)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/App.test.ts      Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
+.github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop)
 docs/                architecture/, development/, status/
 ```
@@ -107,7 +108,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   logged-in session) and no tray, tray menu or Quit. A close-quits mutant fails
   9 checks.
 - Test categories (headless / virtual display / private desktop / real desktop):
-  [testing.md](development/testing.md). No JS linter, no CI.
+  [testing.md](development/testing.md). No JS linter.
+- CI (GitHub Actions, private repo on GitHub Free: $12 of hosted compute a
+  month, then blocked): `ci.yml` runs automatically on pull requests to and
+  pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
+  `test:headless`; docs-only changes skipped). Manual only:
+  `desktop-virtual.yml` (virtual display, not a real desktop) and
+  `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
+  is not in CI. **None has run on GitHub yet.**
+  [testing.md](development/testing.md#ci).
 
 ## Platform limitations (summary)
 
