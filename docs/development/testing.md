@@ -49,7 +49,10 @@ npm run test:headless        # = npm run test:frontend && npm run test:rust
 Runs the [Rust unit tests](#rust-unit-tests) and the
 [frontend tests](#frontend-tests). Neither starts sotyware, opens a window or
 talks to D-Bus, so no display, window manager, tray host or session bus is needed.
-Exits non-zero if any test fails.
+Exits non-zero if any test fails. The same command runs unchanged on native
+Windows (PowerShell or `cmd.exe`, MSVC Rust); it does not need, and does not run,
+the Linux-only desktop scripts. Results per platform:
+[validation matrix](../status/status.md#validation-matrix).
 
 ## Rust unit tests
 
@@ -80,6 +83,15 @@ call shows the error in a `role="alert"`, that a successful retry clears it, and
 that `main.ts` throws without `#app`. It does **not** show that the OS window hides:
 no webview, no Rust, no capability check runs. That is the
 [Windows desktop test](#windows-desktop-test)'s job.
+
+Expected stderr: the `main.ts` mount test prints Svelte's
+`lifecycle_double_unmount` warning. `vi.resetModules()` makes the dynamically
+imported `main.ts` load its own copy of Svelte, so the test's `unmount` does not
+recognise that component. The test still passes and the DOM is cleared after it;
+the warning appears on Linux and Windows alike. Vitest hides console output of
+passing tests when it detects that an AI agent started it (for example
+`CLAUDECODE=1` is set), so the warning may be missing from an agent's log; that
+is not a platform difference.
 
 ## Simulated desktop test
 

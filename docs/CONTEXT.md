@@ -68,13 +68,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   implicit exit blocked, tray failure → exit 1, second launch, tray dispatch,
   config labels). No display needed.
 - `npm run test:headless` (17 Rust + 8 frontend tests): passes with no display,
-  window manager, tray host or D-Bus session (2026-11-10, WSL2).
+  window manager, tray host or D-Bus session (2026-11-10, WSL2), and natively on
+  Windows 11 (2026-11-10, `1f5853b`).
 - `npm run test:desktop:virtual`: 65 passed, 0 failed, 0 skipped on Xvfb +
   openbox (2026-11-10, WSL2); real release binary, stub tray host.
 - `tests/desktop/run.sh`: 57 passed, 0 failed, 2 skipped on WSL2/WSLg
   (2026-11-10). The tray host is a stub; SKIP is never a pass.
 - `tests/desktop/windows.ps1`: 80 passed, 0 failed on native Windows 11 25H2
-  (2026-11-10), real desktop; it moves the mouse. Covers the Hide button.
+  (2026-11-10; again at `1f5853b`, release binary and NSIS-installed copy), real
+  desktop; it moves the mouse. Covers the Hide button.
 - Test categories (headless / virtual display / real desktop):
   [testing.md](development/testing.md). No JS linter, no CI.
 

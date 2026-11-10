@@ -12,9 +12,10 @@ single instance) work on Windows 10/11 and Linux desktops, before any product
 features are built.
 
 State: implemented. Validated natively on **Windows 11** (25H2, build 26200.9711)
-by an automated test on the real desktop, and in a simulated Linux environment
-(WSL2/WSLg). Open: Windows 10, a person's visual check on Windows, the MSI
-installer, and real Linux desktops.
+by an automated test on the real desktop and by the headless suite (last at
+`1f5853b`), and in simulated Linux environments (WSL2/WSLg; Xvfb + openbox).
+Open: Windows 10, a person's visual check on Windows, the MSI installer, and real
+Linux desktops.
 
 ## Implemented
 
@@ -81,7 +82,9 @@ touches the OS window system.
 | `cargo test`: 17 tests (close → hide, implicit exit blocked, tray failure → exit 1, reveal order and error tolerance, second launch, tray menu and click dispatch, config labels) | ✅ | 2026-11-10 |
 | `npm run test:frontend`: 8 tests (Hide button sends `plugin:window\|hide` for `main`, errors shown and cleared, `main.ts` mount) | ✅ | 2026-11-10 |
 | Not vacuous: 5 Rust and 4 `App.svelte` hand-made mutations each fail ≥ 1 test; `test:headless` exits non-zero for both halves | ✅ | 2026-11-10 |
-| Headless suite on Windows | — not run | |
+
+The same suite on native Windows is in
+[Headless tests, native Windows 11](#headless-tests-native-windows-11).
 
 ### Native Windows 11: environment
 
@@ -92,6 +95,16 @@ NTFS drive (not a WSL path), `core.autocrlf=true`. Commands were started from WS
 through Windows interop, but compiled and ran as native Windows processes in the
 interactive desktop session.
 
+**Regression run at `1f5853b` (2026-11-10).** The same checkout was fast-forwarded
+from `f8174da` to `1f5853b` (the headless-test commits, not yet pushed) with a
+`git bundle` made in the WSL repository, so the commit hashes are identical
+([how](../development/setup.md#testing-unpushed-commits-on-windows)). Every command
+ran in Windows PowerShell 5.1 with the machine and user `PATH` from the registry
+(the `PATH` inherited through WSL interop does not contain `~\.cargo\bin`), so
+`node.exe`, `cargo.exe` and `npm` were the Windows binaries listed below. No
+`DISPLAY`, `WAYLAND_DISPLAY` or D-Bus variables were set. Tools were the same
+versions as in the table; additionally rustup 1.29.3 and Git 2.47.1.windows.1.
+
 | Tool | Version |
 | --- | --- |
 | Rust / Cargo | 1.99.1 / 1.99.1, `stable-x86_64-pc-windows-msvc` (rustup) |
@@ -101,17 +114,40 @@ interactive desktop session.
 | WebView2 Runtime | 157.0.4341.42 |
 | Windows PowerShell (test) | 5.1 |
 
+### Headless tests, native Windows 11
+
+Category A at `1f5853b`. Run with `TEMP`/`TMP` pointed at a new empty directory,
+no sotyware process running and none installed.
+
+| Check | Result | When |
+| --- | --- | --- |
+| `npm run test:headless`: exit 0 (34 s, Rust test build partly cached) | ✅ | Native Windows 2026-11-10, `1f5853b` |
+| `npm run test:frontend` (Vitest 4.1.12, happy-dom): 8 tests | ✅ | Native Windows 2026-11-10, `1f5853b` |
+| `cargo test` (MSVC): 17 tests in `sotyware_lib`, 0 in the binary, 0 doc-tests | ✅ | Native Windows 2026-11-10, `1f5853b` |
+| Not vacuous: `App.svelte` without the `hide()` call → 5 of 8 frontend tests fail, exit 1; `close_action` returning `Allow` for `main` → `closing_the_dashboard_hides_it` fails, exit 101; `exit_allowed` always `true` → `implicit_exit_is_blocked` fails, exit 101. Each mutation was a temporary, uncommitted edit, restored right after | ✅ | Native Windows 2026-11-10, `1f5853b` |
+| Side effects: nothing left in the private `TEMP` except Node's `node-compile-cache` (enabled by Vite's CLI, also on Linux); no sotyware process started; the WebView2 data folder `%LOCALAPPDATA%\com.sotyware.desktop` unchanged (file list, sizes and times compared); `git status` clean | ✅ | Native Windows 2026-11-10, `1f5853b` |
+
+No Unix-only command is on this path: the npm scripts use only `&&`, which
+`cmd.exe` (npm's default script shell on Windows) supports. No test writes
+temporary files or reads runtime environment variables; the only paths are the
+two Rust config tests, which read `tauri.conf.json` and
+`capabilities/default.json` as `CARGO_MANIFEST_DIR` + `/` + name (Windows accepts
+the mixed separator) from the CRLF checkout. Svelte prints a
+`lifecycle_double_unmount` warning during the `main.ts` mount test; it appears on
+Linux too and does not fail the run ([testing.md](../development/testing.md#frontend-tests)).
+
 ### Static checks and builds, native Windows 11
 
 | Check | Result | When |
 | --- | --- | --- |
-| `npm ci` | ✅ | Native Windows 2026-11-10 |
-| `npm run check` (0 errors, 0 warnings) | ✅ | Native Windows 2026-11-10 |
-| `npm run build` | ✅ | Native Windows 2026-11-10 |
-| `cargo fmt --check` | ✅ | Native Windows 2026-11-10 |
-| `cargo clippy --all-targets -- -D warnings` | ✅ | Native Windows 2026-11-10 |
-| `cargo test` (1 test) | ✅ | Native Windows 2026-11-10 |
-| `npm run tauri build`: `sotyware.exe` (3.2 MB), `sotyware_0.1.0_x64-setup.exe` (NSIS, 1.13 MiB), `sotyware_0.1.0_x64_en-US.msi` (1.64 MiB) | ✅ built | Native Windows 2026-11-10 |
+| `npm ci` | ✅ | Native Windows 2026-11-10; re-run at `1f5853b` |
+| `npm run check` (0 errors, 0 warnings) | ✅ | Native Windows 2026-11-10; re-run at `1f5853b` |
+| `npm run build` | ✅ | Native Windows 2026-11-10; re-run at `1f5853b` |
+| `cargo fmt --check` | ✅ | Native Windows 2026-11-10; re-run at `1f5853b` |
+| `cargo clippy -- -D warnings` | ✅ | Native Windows 2026-11-10, `1f5853b` |
+| `cargo clippy --all-targets -- -D warnings` | ✅ | Native Windows 2026-11-10; re-run at `1f5853b` |
+| `cargo test` | ✅ 1 test at `f8174da`; 17 tests at `1f5853b` | Native Windows 2026-11-10 |
+| `npm run tauri build`: `sotyware.exe` (3.2 MB), `sotyware_0.1.0_x64-setup.exe` (NSIS, 1.13 MiB), `sotyware_0.1.0_x64_en-US.msi` (1.64 MiB) | ✅ built; same sizes at `1f5853b` (154 s) | Native Windows 2026-11-10; re-run at `1f5853b` |
 
 ### Runtime behaviour, native Windows 11 (real desktop)
 
@@ -119,6 +155,11 @@ interactive desktop session.
 three times in a row with the same result (2026-11-10). Earlier revisions of the
 same script (78 checks) also passed on four further consecutive runs. No sotyware
 defect was found.
+
+Re-run at `1f5853b` after the headless-test commits (which moved the lifecycle
+decisions into plain functions): **80 passed, 0 failed** on the release binary
+and **80 passed, 0 failed** on the NSIS-installed copy (2026-11-10), one run each.
+No regression against the earlier 80/80; the table below holds for both commits.
 
 | Behaviour | Result | Source |
 | --- | --- | --- |
@@ -152,6 +193,7 @@ not tested.
 | --- | --- | --- |
 | NSIS `sotyware_0.1.0_x64-setup.exe /S`: exit 0; per-user install to `%LOCALAPPDATA%\sotyware` (`sotyware.exe`, `uninstall.exe`); HKCU uninstall entry "sotyware" 0.1.0; Start menu and desktop shortcuts | ✅ | Native Windows 2026-11-10 |
 | Installed copy: `tests/desktop/windows.ps1 -Exe %LOCALAPPDATA%\sotyware\sotyware.exe` | ✅ 80 passed, 0 failed with the committed script; an earlier install also passed the 78-check revision | Native Windows 2026-11-10 |
+| At `1f5853b`: NSIS `/S` install (exit 0), installed copy 80 passed / 0 failed, uninstaller `/S` (exit 0; install dir and HKCU uninstall entry removed). The installed `sotyware.exe` has the same size as the build output but a different SHA-256; not investigated | ✅ | Native Windows 2026-11-10 |
 | NSIS uninstaller `/S` after the app had quit: exit 0; files, uninstall entry and shortcuts removed | ✅ | Native Windows 2026-11-10 |
 | Start menu shortcut launches the installed exe; a second shortcut launch keeps one process | ✅ | Native Windows 2026-11-10 |
 | NSIS uninstaller `/S` while sotyware was running: exit 0; process ended; install dir, uninstall entry and both shortcuts removed | ✅ | Native Windows 2026-11-10 |
@@ -220,7 +262,8 @@ tray icon was ever seen or clicked by a person.
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
-| Headless suite and virtual-display test in a CI service | — no CI exists |
+| Headless suite and virtual-display test in a CI service | — no CI exists (the headless suite ran natively on Windows 11 and WSL2, by hand) |
+| Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 
 To validate an environment, follow the manual checklist in
