@@ -13,11 +13,16 @@
 //! In both modes only one instance runs: launching the app again shows the existing
 //! dashboard (via `tauri-plugin-single-instance`) and the new process exits.
 //!
+//! Built-in features (`features`) are registered when the app is built, started in
+//! `setup` once the mode is known (in both modes), and stopped when the process
+//! exits.
+//!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
+mod features;
 mod tray;
 
 use tauri::{
@@ -218,7 +223,13 @@ pub fn run() {
     }
 
     let app = builder
-        .invoke_handler(tauri::generate_handler![operating_mode])
+        // The set of features is fixed here; `setup` starts them, exit stops them.
+        .manage(features::FeatureRegistry::with_features(features::builtin()))
+        .invoke_handler(tauri::generate_handler![
+            operating_mode,
+            features::list_features,
+            features::set_feature_enabled
+        ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
         .setup(|app| {
@@ -232,6 +243,11 @@ pub fn run() {
                         )?;
                     }
                     app.manage(mode);
+                    // After the mode, so a fatal tray error never starts a feature.
+                    // A failing feature is recorded in its state; the app runs on.
+                    if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
+                        registry.start_all(features::enabled_at_startup);
+                    }
                 }
                 Err(code) => app.handle().exit(code),
             }
@@ -266,12 +282,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build sotyware");
 
-    app.run(|_app, event| {
-        if let RunEvent::ExitRequested { code, api, .. } = event
-            && !exit_allowed(code)
-        {
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { code, api, .. } if !exit_allowed(code) => {
             api.prevent_exit();
         }
+        // The process is ending (only ever through an explicit exit code): give
+        // running features the chance to release their resources.
+        RunEvent::Exit => {
+            if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
+                registry.stop_all();
+            }
+        }
+        _ => {}
     });
 }
 
@@ -502,15 +524,19 @@ mod tests {
     }
 
     #[test]
-    fn capability_targets_the_dashboard_and_only_allows_reading_the_mode() {
+    fn capability_targets_the_dashboard_and_only_allows_the_app_commands() {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
-        // Widening the frontend's permissions is a design decision (ADR-006,
-        // ADR-012); update this test together with decisions.md. Hiding is granted
+        // Widening the frontend's permissions is a design decision (ADR-013,
+        // ADR-014); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
-            serde_json::json!(["allow-operating-mode"])
+            serde_json::json!([
+                "allow-operating-mode",
+                "allow-list-features",
+                "allow-set-feature-enabled"
+            ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");
     }

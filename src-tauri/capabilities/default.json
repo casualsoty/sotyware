@@ -1,7 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Dashboard window: may only read the operating mode. Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
+  "description": "Dashboard window: may read the operating mode, list built-in features and enable or disable them. Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
   "windows": ["main"],
-  "permissions": ["allow-operating-mode"]
+  "permissions": [
+    "allow-operating-mode",
+    "allow-list-features",
+    "allow-set-feature-enabled"
+  ]
 }
