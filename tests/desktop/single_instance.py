@@ -17,6 +17,7 @@ import ctypes
 import ctypes.util
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -228,6 +229,13 @@ assert RUN_DISPLAY and RUN_BUS, "run through run.sh: needs DISPLAY and a private
 # Directories only this run uses; launches that strip the bus address (scenario 16)
 # point XDG_RUNTIME_DIR into one of them.
 RUN_DIRS = (LOGS, os.path.dirname(os.path.abspath(REG)))
+# The feature preferences database (src-tauri/src/storage.rs) lives in Tauri's
+# app_local_data_dir, $XDG_DATA_HOME/<identifier> on Linux. run.sh points
+# XDG_DATA_HOME into its work directory; refuse to run against anyone's real data.
+DATA_HOME = os.path.realpath(os.environ.get("XDG_DATA_HOME", "/nonexistent"))
+assert DATA_HOME.startswith(os.path.realpath(RUN_DIRS[1]) + os.sep), \
+    f"run through run.sh: XDG_DATA_HOME must be private to this run, not {DATA_HOME}"
+PREFS_DB = os.path.join(DATA_HOME, "com.sotyware.desktop", "preferences.sqlite3")
 
 
 def _environ(pid):
@@ -833,6 +841,131 @@ if nh_win:
 code = wait_exit(nh)
 check("15 no host: close exits with code 0, nothing left",
       code == 0 and wait_for(lambda: not sotyware_pids(), 5), f"exit code={code}")
+stop_watcher()
+
+# 17-19: feature preferences across real restarts: every "restart" ends the
+# process (tray Quit, exit code 0, no process left) and starts a new one; the
+# page is never just reloaded. Tray mode, with the stub tray host.
+# They run before 16: under this AT-SPI setup, the first instance started after
+# the no-bus instance of 16 never appears on the accessibility desktop (the next
+# one does), so its page could not be read.
+start_watcher()
+
+
+def feature_is(pid, want_checked, state):
+    box, text = example_feature(pid)
+    return box is not None and checked(box) == want_checked and state in text and "Could not" not in text
+
+
+def stored_example():
+    """The example feature's row in the database, read after sotyware quit."""
+    if not os.path.exists(PREFS_DB):
+        return "no database"
+    with sqlite3.connect(f"file:{PREFS_DB}?mode=ro", uri=True) as db:
+        row = db.execute("SELECT enabled FROM feature_preferences WHERE feature_id = 'example'").fetchone()
+    return None if row is None else bool(row[0])
+
+
+def start_tray_instance(label, env=None):
+    """Launches in tray mode and waits for the page; returns (process, log, page ready)."""
+    open(REG, "w").close()
+    p, log = launch(label, env)
+    up = wait_for(lambda: len(dashboards(p.pid)) == 1 and viewable(dashboards(p.pid)[0]), 20)
+    registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
+    page = up and registered and wait_for(lambda: page_ready(p.pid), 20) and wait_for(
+        lambda: example_feature(p.pid)[0] is not None, 10)
+    return p, log, bool(page)
+
+
+def quit_completely(label, p, log):
+    """Tray Quit; checks the process really ended."""
+    if tray_registrations():
+        menu, labels = tray_menu()
+        tray_click(menu, labels, "Quit")
+    code = wait_exit(p)
+    ended = code == 0 and wait_for(lambda: not sotyware_pids(), 5)
+    check(f"{label}: tray Quit ends the process (exit 0, no process left)", ended,
+          f"exit code={code} pids={sotyware_pids()}")
+    if not ended:
+        print("--- instance output ---\n" + read_log(log).strip())
+    return ended
+
+
+def switch_example(pid, want_checked, state):
+    box = example_feature(pid)[0]
+    return box is not None and Atspi.Action.do_action(box, 0) and wait_for(
+        lambda: feature_is(pid, want_checked, state), 5)
+
+
+# 17. Disable, quit, relaunch: still disabled. Enable, quit, relaunch: enabled.
+# Scenario 12 left the example feature enabled (and saved).
+p, log, page = start_tray_instance("17 persistence")
+check("17 persistence: starts with the example feature running (saved as enabled by 12)",
+      page and feature_is(p.pid, True, "Running") and os.path.exists(PREFS_DB),
+      f"text={example_feature(p.pid)[1] if page else ''!r} db={os.path.exists(PREFS_DB)}")
+off = page and switch_example(p.pid, False, "Disabled")
+check("17 persistence: unchecking disables it, no error shown", off,
+      f"text={example_feature(p.pid)[1] if page else ''!r}")
+quit_completely("17 persistence after disabling", p, log)
+check("17 persistence: the database stores the example feature as disabled",
+      stored_example() is False, f"stored={stored_example()!r}")
+
+p, log, page = start_tray_instance("17 persistence relaunch 1")
+check("17 persistence relaunch 1: a new process, example still disabled, checkbox unchecked",
+      page and feature_is(p.pid, False, "Disabled"),
+      f"text={example_feature(p.pid)[1] if page else ''!r}")
+check("17 persistence relaunch 1: no storage warning in the log",
+      "feature preferences unavailable" not in read_log(log), read_log(log).strip())
+on = page and switch_example(p.pid, True, "Running")
+check("17 persistence relaunch 1: checking enables it, no error shown", on,
+      f"text={example_feature(p.pid)[1] if page else ''!r}")
+quit_completely("17 persistence after enabling", p, log)
+check("17 persistence: the database stores the example feature as enabled",
+      stored_example() is True, f"stored={stored_example()!r}")
+
+p, log, page = start_tray_instance("17 persistence relaunch 2")
+check("17 persistence relaunch 2: a new process, example running, checkbox checked",
+      page and feature_is(p.pid, True, "Running"),
+      f"text={example_feature(p.pid)[1] if page else ''!r}")
+quit_completely("17 persistence relaunch 2", p, log)
+
+# 18. A corrupt database: defaults, a visible warning, a visible save failure,
+# and the file left exactly as it was.
+GARBAGE = b"not an SQLite database\n" * 64
+with open(PREFS_DB, "wb") as f:
+    f.write(GARBAGE)
+p, log, page = start_tray_instance("18 corrupt database")
+text = example_feature(p.pid)[1] if page else ""
+check("18 corrupt database: starts, example running by default, page says the choices could not be loaded",
+      page and p.poll() is None and checked(example_feature(p.pid)[0]) and "Running" in text
+      and "Could not load the saved feature choices" in text and "not a database" in text, f"text={text!r}")
+check("18 corrupt database: logged", "sotyware: feature preferences unavailable, using defaults" in read_log(log),
+      read_log(log).strip())
+box = example_feature(p.pid)[0] if page else None
+switched = bool(box) and Atspi.Action.do_action(box, 0) and wait_for(
+    lambda: "Could not save the choice for Example" in example_feature(p.pid)[1], 5)
+text = example_feature(p.pid)[1] if page else ""
+check("18 corrupt database: disabling works for the session and says it was not saved",
+      switched and not checked(example_feature(p.pid)[0]) and "Disabled" in text
+      and "It stays disabled until sotyware quits" in text, f"text={text!r}")
+quit_completely("18 corrupt database", p, log)
+with open(PREFS_DB, "rb") as f:
+    check("18 corrupt database: file not repaired, replaced or deleted", f.read() == GARBAGE)
+os.remove(PREFS_DB)
+
+# 19. The database cannot be opened (a folder is in its place): defaults and a
+# visible warning; sotyware still runs and quits normally. (An unusable data
+# folder as a whole is not tested: Tauri needs the same folder for the webview
+# and fails its own setup before sotyware's code matters.)
+os.mkdir(PREFS_DB)
+p, log, page = start_tray_instance("19 database cannot be opened")
+text = example_feature(p.pid)[1] if page else ""
+check("19 database cannot be opened: starts, example running by default, page says the choices could not be loaded",
+      page and p.poll() is None and "Running" in text and "Could not load the saved feature choices" in text
+      and "cannot open" in text, f"text={text!r}")
+quit_completely("19 database cannot be opened", p, log)
+check("19 database cannot be opened: the folder in its place is left alone", os.path.isdir(PREFS_DB))
+os.rmdir(PREFS_DB)
 stop_watcher()
 
 # 16. No D-Bus session bus at all: no address in the environment and no socket in
