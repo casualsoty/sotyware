@@ -177,8 +177,6 @@ affected.
 Design and rationale: [features.md](../architecture/features.md),
 [ADR-014](../architecture/decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry).
 
-- **Nothing is persisted.** On every start each feature returns to its
-  `enabled_by_default`. A feature the user disabled runs again after a restart.
 - **Only one feature, and it does nothing.** `example` demonstrates the
   lifecycle. There are no product features.
 - **No events.** The page sees a state change only in the response to its own
@@ -198,6 +196,45 @@ Design and rationale: [features.md](../architecture/features.md),
   transitions are tested only at the registry level: the dashboard cannot send
   them, and no test sends them through the real IPC. Not checked on Windows 10,
   real Linux desktops or the installed copies.
+
+## Feature preferences
+
+Design and rationale: [features.md](../architecture/features.md#persistence),
+[ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait).
+
+- **A corrupt or unusable database needs manual recovery.** sotyware never
+  repairs, replaces or deletes `preferences.sqlite3`. While it cannot be used,
+  every feature runs with its default, the dashboard shows "Could not load the
+  saved feature choices", and no change is saved. To recover: quit sotyware and
+  move the file away (Linux `~/.local/share/com.sotyware.desktop/`, Windows
+  `%LOCALAPPDATA%\com.sotyware.desktop\`); the next start creates a new one.
+  The same applies to a database from a newer sotyware (no downgrade).
+- **No retry.** A database that could not be opened at startup is not tried
+  again until the next start, and a failed save is not retried.
+- **An unsaved switch is not undone.** If saving fails, the feature stays as
+  switched until sotyware quits; the next start uses the last saved choice or
+  the default. The dashboard says so.
+- **An unusable data folder stops sotyware.** If the app's local data folder
+  cannot be created (for example `$XDG_DATA_HOME` is a file), Tauri fails its
+  own setup for the webview data (`Failed to setup app`, abort, exit by
+  `SIGABRT` on Linux) before any window opens. This was so before persistence;
+  seen 2026-11-11 under the virtual display. sotyware logs the preferences error
+  first.
+- **A save in flight when the process is killed is lost.** SQLite rolls it back
+  on the next open; earlier saves are intact. On a normal exit, a save in
+  progress finishes first.
+- **The file outlives an uninstall.** Like the webview data next to it, the
+  database is in the app's local data folder; whether the NSIS/MSI uninstallers
+  remove that folder is not checked (see [Windows installers](#windows-installers)).
+- **Stale saves are excluded by design, not by a test.** Concurrent switches
+  store the final state because each save reads and writes under one lock; the
+  unit test checks the result under contention but cannot force the one
+  interleaving a naive implementation would get wrong.
+- **Validation:** unit tests on Linux and Windows; real restarts through the
+  Linux virtual-display test and the Windows real-desktop test (2026-11-11).
+  Corrupt and unopenable databases are tested on the real binary only on Linux
+  (Windows: unit tests). Not checked on Windows 10, real Linux desktops, the
+  installed copies, a roaming or redirected profile, or a network drive.
 
 ## General
 

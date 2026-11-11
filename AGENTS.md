@@ -34,6 +34,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | primary instance / second launch | the running process / a later start that hands over and exits |
 | feature | a built-in Rust module implementing `Feature`, listed in `features::builtin()` and run by the `FeatureRegistry`; not a third-party plugin |
 | enable / disable (a feature) | start it / stop it through the registry's lifecycle (`set_feature_enabled`) |
+| feature preference | the user's saved enable/disable choice for one feature, keyed by its ID, in `preferences.sqlite3`; absent until the user switches the feature |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -41,7 +42,7 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-10.
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11.
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
@@ -50,6 +51,8 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | tauri-plugin-single-instance (desktop targets only) | `2` | 2.5.5 |
 | Rust | edition 2024, `rust-version = "1.90"` | developed with 1.99.1 |
 | `serde` (feature `derive`; already in the tree through Tauri) | `1` | 1.0.229 |
+| `rusqlite` (feature `bundled`, no default features; feature preferences) | `0.41` | 0.41.1 |
+| `libsqlite3-sys` (through `rusqlite`; compiles the bundled SQLite) | through `rusqlite` | 0.39.1 (SQLite 3.54.1) |
 | `@tauri-apps/api` (only runtime JS dependency) | `^2.12.4` | 2.12.4 |
 | `@tauri-apps/cli` | `^2.12.4` | 2.12.4 |
 | Svelte | `^5.57.3` | 5.57.3 |
@@ -76,10 +79,12 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 - **Entry point:** `src-tauri/src/main.rs` → `sotyware_lib::run()` in
   `src-tauri/src/lib.rs`.
 - **Runtime:** `run()` builds the Tauri app: single-instance plugin (first, desktop
-  only) → `FeatureRegistry` from `features::builtin()` (managed state) → window
-  `main` from `tauri.conf.json` → `setup` creates the tray, picks the
-  `OperatingMode` (`select_mode`) and starts the enabled features → event loop.
-  `RunEvent::Exit` stops the running features.
+  only) → `FeatureRegistry` from `features::builtin()` (managed state) →
+  `build()` → feature preferences loaded from SQLite (managed state, before the
+  event loop) → `app.run()`: window `main` from `tauri.conf.json` → `setup`
+  creates the tray, picks the `OperatingMode` (`select_mode`) and starts the
+  features that are enabled (stored choice, else default) → event loop.
+  `RunEvent::Exit` stops the running features and closes the preferences.
 - **Operating modes:** tray mode when the tray is created. Dashboard-only mode
   when `tray::unavailable_reason()` recognises a missing Linux tray host (no
   session bus, no StatusNotifierWatcher, no StatusNotifierHost). Any other tray
@@ -94,9 +99,16 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `show_dashboard()`; the new process exits 0. Same in both modes.
 - **Built-in features:** `src-tauri/src/features/` (`Feature` trait, `builtin()`
   list, `FeatureRegistry` with states registered/disabled/initializing/running/
-  failed/stopping, per-feature error isolation, the `example` feature). Enabled
-  state is not persisted: each start uses `enabled_by_default`. Details and how
-  to add a feature: [features.md](docs/architecture/features.md).
+  failed/stopping, per-feature error isolation, the `example` feature). Details
+  and how to add a feature: [features.md](docs/architecture/features.md).
+- **Feature preferences:** each user switch is saved in `preferences.sqlite3`
+  in Tauri's `app_local_data_dir()`; startup uses the stored choice, else
+  `enabled_by_default`. Policy in `src-tauri/src/features/preferences.rs`
+  (`FeaturePreferences`, `PreferenceStore` trait), SQLite only in
+  `src-tauri/src/storage.rs` (schema version `PRAGMA user_version`,
+  append-only `MIGRATIONS`). Loaded in `run()` between `build()` and `run()`;
+  the registry never touches storage
+  ([ADR-015](docs/architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)).
 - **Frontend:** `src/App.svelte` with `src/Features.svelte`. Its only access to
   Rust is the commands `operating_mode`, `list_features` and
   `set_feature_enabled` (permissions `allow-operating-mode`,
@@ -108,7 +120,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
-persistence (also not of feature enabled/disabled choices), settings, autostart,
+persistence other than the feature enabled/disabled choices, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
 tray fallback, custom event, or custom command besides `operating_mode`,
 `list_features` and `set_feature_enabled`. Never describe these as existing.
@@ -216,7 +228,8 @@ Every coding agent must:
 
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
-   `TrayAction`, `Feature`/`FeatureRegistry`, the capability file) before
+   `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
+   `PreferenceStore`, the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

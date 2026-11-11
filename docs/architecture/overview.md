@@ -14,7 +14,8 @@ sotyware is one Tauri 2 process with:
 - a **registry of built-in features**: native Rust modules that start with
   the app, can be switched on and off from the dashboard, and stop at exit
   ([features.md](features.md)). The only one today is `example`, which does
-  nothing visible.
+  nothing visible. The user's choice per feature is stored in a local SQLite
+  database and survives restarts ([features.md](features.md#persistence)).
 
 In **tray mode** the process keeps running in the background. The window is
 hidden and shown, never destroyed, and only the tray "Quit" ends the process. On
@@ -28,8 +29,10 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
  (exits 0)      │                                        ▲                        │
                 │ tray (tray.rs) ── Open Dashboard ──────┘   Quit ──► exit(0)     │
                 │                                                                 │
+                │ before run(): storage.rs ─► FeaturePreferences::load (state)    │
+                │               (preferences.sqlite3, app local data folder)      │
                 │ setup: tray::create() → select_mode() → OperatingMode (state)   │
-                │        → FeatureRegistry::start_all() (features/, state)        │
+                │        → FeatureRegistry::start_all(stored choice or default)   │
                 │                                                                 │
                 │ window "main" ◄── CloseRequested → tray mode: hide()  (lib.rs)  │
                 │                                   dashboard-only: exit(0)       │
@@ -38,9 +41,10 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
                 │                                  (allowed in tray mode only)    │
                 │                                  invoke("list_features")        │
                 │                                  invoke("set_feature_enabled")  │
+                │                                   └► switch, then save choice   │
                 │                                                                 │
                 │ RunEvent::ExitRequested { code: None } → prevent_exit()         │
-                │ RunEvent::Exit → FeatureRegistry::stop_all()                    │
+                │ RunEvent::Exit → FeatureRegistry::stop_all(), prefs.close()     │
                 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +54,8 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | --- | --- | --- |
 | Binary entry point | `src-tauri/src/main.rs` | Calls `sotyware_lib::run()`. Nothing else. |
 | Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup` and picks the `OperatingMode`, turns window close into hide (tray mode) or exit (dashboard-only mode), adds the hide capability in tray mode only, serves the `operating_mode` command, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`select_mode`, `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
-| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), the `list_features` and `set_feature_enabled` commands, and the example feature. Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
+| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the example feature. Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
+| Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`), so each needs a permission. |
 | Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
@@ -78,10 +83,17 @@ Boundaries that hold today:
   `start_all` and `stop_all`, and the frontend uses the two feature commands.
   Nothing else reaches a feature, and a feature's error never affects the mode,
   the tray, the window or another feature.
+- **Storage stays out of the registry.** `features::preferences` decides what a
+  stored choice means; `storage.rs` is the only code that knows SQLite; the
+  registry knows neither ([ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)).
 - **No background work.** No threads, timers, polling, retries or async tasks
   of sotyware's own. Everything is driven by Tauri events. The example feature
-  starts nothing. `set_feature_enabled` runs on Tauri's own blocking thread pool.
-- **No persistence, no network, no settings.** Nothing is stored or fetched.
+  starts nothing. `set_feature_enabled` runs on Tauri's own blocking thread pool,
+  and so does the preference save it makes. The database is read once, before
+  the event loop starts.
+- **Local only: no network, no sync, no settings.** The only thing stored is
+  each feature's enabled choice, in `preferences.sqlite3` in the app's local
+  data folder. Nothing is fetched or sent.
 
 ## Security model
 

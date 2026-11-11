@@ -9,8 +9,9 @@ a system tray icon with "Open Dashboard" and "Quit", hide-on-close, and
 single-instance handling. On Linux without a tray host, sotyware runs as a plain
 window instead (dashboard-only mode: no hiding, closing quits). The foundation
 for built-in features (native Rust modules that can be enabled and disabled
-from the dashboard) exists with one example feature; no product features exist
-yet. It has been validated
+from the dashboard) exists with one example feature, and each enable/disable
+choice is saved locally (SQLite, in the app's data folder) and survives
+restarts; no product features exist yet. It has been validated
 natively on Windows 11 (automated desktop test) and in a simulated Linux
 environment (WSL2); Windows 10 and real Linux desktops are not yet validated.
 See [docs/status/status.md](docs/status/status.md).

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (built-in feature foundation, validated on native Windows 11). Update this file whenever
+Last updated: 2026-11-11 (persistent feature preferences, validated on WSL2 virtual display and native Windows 11). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -31,6 +31,10 @@ were split into headless, private-desktop and real-desktop categories
 feature foundation passed on native Windows 11 on 2026-11-11 (headless suite,
 release build, real-desktop test 90/0 three times;
 [details](#built-in-feature-foundation-native-windows-11-2026-11-11)).
+Feature preferences are stored in SQLite since `93f7667` and survive real
+restarts on both platforms: virtual display 115/0/0 three times, Windows 11
+real desktop 99/0 three times
+([details](#persistent-feature-preferences-2026-11-11)).
 
 ## Implemented
 
@@ -40,9 +44,10 @@ release build, real-desktop test 90/0 three times;
 | Svelte 5 dashboard (static page; "Hide dashboard" button in tray mode, a no-tray note in dashboard-only mode) | `src/App.svelte` |
 | Operating modes: tray mode, and dashboard-only mode on Linux without a tray host (close quits, no hide) | `select_mode`, `close_action` in `lib.rs`; `unavailable_reason` in `tray.rs` |
 | `operating_mode` command | `lib.rs`, app manifest in `build.rs` |
-| Built-in feature foundation: `Feature` trait, `builtin()` list, `FeatureRegistry` (duplicate/malformed IDs rejected, lifecycle registered → disabled / initializing → running / failed, stopping → disabled; per-feature error isolation; started in `setup`, stopped on exit), enabled state from each feature's default (not persisted) | `src-tauri/src/features/` ([features.md](../architecture/features.md)) |
+| Built-in feature foundation: `Feature` trait, `builtin()` list, `FeatureRegistry` (duplicate/malformed IDs rejected, lifecycle registered → disabled / initializing → running / failed, stopping → disabled; per-feature error isolation; started in `setup`, stopped on exit) | `src-tauri/src/features/` ([features.md](../architecture/features.md)) |
+| Persistent feature preferences: each user switch saved in `preferences.sqlite3` (app local data folder, SQLite via `rusqlite` bundled), loaded before the event loop, stored choice or `enabled_by_default` at startup; schema versioned with `PRAGMA user_version` and transactional migrations; unusable database left untouched and reported (`storageError`), failed saves reported (`saveError`) | `features/preferences.rs`, `storage.rs`, `run()` in `lib.rs` ([features.md](../architecture/features.md#persistence), [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)) |
 | Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
-| `list_features` and `set_feature_enabled` commands, and the dashboard's minimal Features section (state and enable checkbox per feature) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
+| `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
@@ -60,8 +65,8 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
 Nothing else exists: no product features (only the example feature), no
-settings, no persistence (feature choices reset to their defaults on every
-start), no custom Tauri events, no feature-management UI, no third-party
+settings, no persistence other than the feature choices, no sync, no custom
+Tauri events, no feature-management UI, no third-party
 plugins, and no custom command other than `operating_mode`, `list_features` and
 `set_feature_enabled`.
 
@@ -81,6 +86,45 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Persistent feature preferences (2026-11-11)
+
+Application code of `93f7667`, Linux desktop driver of `7696d44`, Windows
+desktop test of `a7bf8f3`.
+
+**Linux: WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0.**
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check` (0/0), `npm run build`, `npm run tauri build -- --no-bundle` | static | ✅ |
+| `npm run test:headless`: 38 frontend (29 existing + 9 new) and 88 Rust tests (58 existing − 1 replaced + 31 new: 1 registry, 1 JSON shape, 13 preferences policy, 16 SQLite store incl. 2 restart sequences with the built-in features) | headless | ✅ |
+| Release binary size: 7,454,840 bytes (6,339,920 before; bundled SQLite) | static | ✅ recorded |
+| `npm run test:desktop:virtual`: **115 passed, 0 failed, 0 skipped**, 3 consecutive runs (96 existing, unchanged, + 19 new in scenarios 17–19) | virtual display | ✅ |
+| Real restart persistence (scenario 17): disable → tray Quit (exit 0, no process) → database row 0 → new process shows Disabled; enable → Quit → row 1 → new process shows Running | virtual display | ✅ 3 runs |
+| Corrupt database (18): defaults, "Could not load the saved feature choices … not a database" on the page and in the log, switch works but says it was not saved, file byte-identical after Quit | virtual display | ✅ 3 runs |
+| Folder in place of the database (19): defaults, warning with `cannot open`, normal Quit | virtual display | ✅ 3 runs |
+| The developer's own `~/.local/share/com.sotyware.desktop/` has no `preferences.sqlite3` after the runs (the suite uses a private `XDG_DATA_HOME`) | virtual display | ✅ |
+| Not vacuous: a mutant of `save_current` that reads the state before taking the lock survives the concurrency unit test (the bad interleaving cannot be forced from outside); recorded as a design guarantee in ADR-015, not as tested | headless | ⚠️ known gap |
+| Observed: with `XDG_DATA_HOME` set to a file, Tauri fails its own setup (`Failed to setup app: Not a directory`, abort) because it creates the webview data folder there; pre-existing, not caused by the database | virtual display | recorded ([limitations](limitations.md#feature-preferences)) |
+| `tests/desktop/run.sh` (WSLg), manual checklist step 9, `desktop-virtual.yml` on GitHub (expects 115 since `b4918e1`) | — | — not run |
+
+**Windows: Windows 11 Home 25H2, OS build 26200.9711, x64**, same machine and
+tool setup as [below](#built-in-feature-foundation-native-windows-11-2026-11-11)
+(Rust 1.99.1 MSVC, Node.js 24.14.1, npm 11.12.1, PowerShell 5.1 from WSL with
+the registry `PATH`, not elevated). `C:\dev\sotyware` fast-forwarded from
+`7070932` to `7696d44` with `git bundle` (identical hashes, clean tree); the
+desktop test ran from the uncommitted script, committed unchanged as `a7bf8f3`.
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0/0), `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | static | ✅ |
+| `npm run test:headless`: 38 frontend and 80 Rust tests (the 8 `ksni`/`zbus` tests are Linux-only), including the read-only-file, corrupt-file, migration and concurrent-connection tests on NTFS | headless | ✅ |
+| Windows graph: `rusqlite` 0.41.1 → `libsqlite3-sys` 0.39.1; no `ksni`/`zbus` | static | ✅ |
+| `npm run tauri build -- --no-bundle` (MSVC compiles the bundled SQLite): `sotyware.exe`, 5,480,960 bytes (4,359,168 at `0a8a8f1`) | static | ✅ |
+| `windows.ps1` (99 checks: 90 existing with "Running again (not persisted)" replaced by "still Disabled (persisted)", + 9 new), release binary, no prior database | real desktop | ✅ **99 passed, 0 failed**, 3 consecutive runs |
+| Real restart persistence: disable → tray Quit (exit 0, no process) → new process shows Disabled and `preferences.sqlite3` exists → enable → Quit → second new process shows Running | real desktop | ✅ in each of the 3 runs |
+| Backup and restore: with a planted database (example stored disabled), the script moved it aside, the run started from defaults (99/0), and the file came back byte-identical (same SHA-256); the planted file was then deleted | real desktop | ✅ 1 run |
+| `windows-isolated.ps1`, NSIS/MSI installers, manual checklist step 9, Windows 10 | — | — not run |
 
 ### Built-in feature foundation (WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0, 2026-11-11)
 
@@ -661,6 +705,7 @@ tray icon was ever seen or clicked by a person.
 | Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
+| Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
 
 To validate an environment, follow the manual checklist in
 [testing.md](../development/testing.md#manual-check-real-desktop-linux-or-windows)

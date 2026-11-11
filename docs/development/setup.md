@@ -24,6 +24,10 @@ sudo apt install -y build-essential curl wget file pkg-config \
   libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev
 ```
 
+`build-essential` also provides the C compiler that builds the SQLite bundled
+into sotyware (`rusqlite` feature `bundled`, ADR-015); no system SQLite package
+is needed.
+
 For Fedora, Arch, openSUSE and others, use the package lists in the official
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux). They have
 not been tested for sotyware.
@@ -64,7 +68,8 @@ Exercised on Windows 11 only (25H2, build 26200.9711, 2026-11-10); Windows 10 ha
 not been tried. Requirements according to Tauri, all confirmed on that machine:
 
 - **Microsoft C++ Build Tools** (or Visual Studio) with the *Desktop development
-  with C++* workload.
+  with C++* workload. Its C compiler also builds the bundled SQLite (confirmed
+  2026-11-11).
 - **Rust** with the MSVC toolchain (`rustup default stable-msvc`).
 - **WebView2 runtime.** It ships with Windows 11 and is installed on up-to-date
   Windows 10 systems. The installers Tauri produces download it if missing

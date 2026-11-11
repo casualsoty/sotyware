@@ -31,15 +31,24 @@ features exist**.
   `setup`, and running ones stop on exit. A failing feature becomes `failed`
   without affecting the others. The dashboard lists them and has an enable
   checkbox per feature. The only feature is `example` (does nothing visible).
-  Enabled state is **not persisted**: every start uses each feature's default.
   [features.md](architecture/features.md).
+- Feature preferences (both modes): each user switch is saved in
+  `preferences.sqlite3` in Tauri's `app_local_data_dir()`
+  (`~/.local/share/com.sotyware.desktop/`, `%LOCALAPPDATA%\com.sotyware.desktop\`)
+  and survives restarts; without a stored choice a feature uses
+  `enabled_by_default`. Loaded once before the event loop; saved by
+  `set_feature_enabled` on Tauri's thread pool. One STRICT table, version in
+  `PRAGMA user_version`, migrations in one transaction. A corrupt, newer or
+  unopenable database is left untouched: defaults are used and the dashboard
+  shows the error; a failed save keeps the switch for the session and is shown.
+  [features.md](architecture/features.md#persistence), ADR-015.
 
 ## Repository at a glance
 
 ```
 src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts)
-src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs
-src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, example.rs
+src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
+src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
@@ -67,6 +76,10 @@ Full map: [repository-map.md](architecture/repository-map.md).
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line
   in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
   ([how to add one](architecture/features.md#adding-a-built-in-feature))
+- The registry never touches storage: `features::preferences` holds the policy
+  behind the `PreferenceStore` trait; only `storage.rs` uses SQLite. Schema
+  changes are appended to `storage::MIGRATIONS`, never edited. Feature IDs are
+  database keys: never change a released one.
 - The single-instance plugin must stay the first plugin registered.
 
 Details: [overview.md](architecture/overview.md),
@@ -94,13 +107,26 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- `cargo test`: 58 unit tests. 31 cover the lifecycle, mode and tray
+- `cargo test`: 88 unit tests. 31 cover the lifecycle, mode and tray
   decisions (mode selection from the real `ksni`/`zbus` error types, close →
   hide or quit per mode, hide granted only in tray mode, implicit exit blocked,
   unexpected tray failure → exit 1, second launch, tray dispatch, config
-  labels). 27 cover the feature registry (registration, duplicate IDs,
+  labels). 28 cover the feature registry (registration, duplicate IDs,
   lifecycle table, start/stop failures, isolation, shutdown order, concurrent
-  requests, JSON shape). No display needed.
+  requests, JSON shapes). 29 cover feature preferences: 13 the policy with an
+  in-memory store, 16 the SQLite store on real files (migrations, corrupt and
+  newer databases, read-only file, concurrent connections, restarts with the
+  built-in features). No display needed. Frontend: 38 Vitest tests.
+- Persistent feature preferences (2026-11-11, `93f7667`; drivers `7696d44`,
+  `a7bf8f3`): WSL2 headless 88 Rust + 38 frontend; `npm run
+  test:desktop:virtual` **115/0/0 in 3 runs** (19 new checks: disable → Quit →
+  relaunch → still disabled, enable → Quit → relaunch → running, database rows
+  checked; corrupt database and a folder in its place shown and left
+  untouched). Native Windows 11 25H2: headless 80 Rust + 38 frontend, fmt,
+  clippy, release build; `windows.ps1` **99/0 in 3 runs** (the same restart
+  sequence; the old "Running again (not persisted)" check now expects
+  Disabled), plus one run that moved a planted database aside and restored it
+  byte-identical. Counts below are from before this change.
 - Built-in features (2026-11-11, WSL2, `e30ac7b`/`a9fb338`): headless 58 Rust +
   29 frontend tests, and `npm run test:desktop:virtual` 96/0/0 in 3 runs (the
   4 new checks switch the example feature through AT-SPI).
@@ -175,16 +201,17 @@ XEmbed fallback). That has been seen only under the virtual display. Some
 tray-host failures (a watcher that leaves mid-call, other watcher errors) still
 exit 1. Left click needs the tray host to send `Activate`. Single instance
 silently turns off without a D-Bus session bus. Placeholder icons; no autostart.
-Full list: [limitations.md](status/limitations.md).
+A corrupt feature-preferences database is never repaired: defaults are used
+until the user moves the file away. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
 Milestone 0: prove the desktop runtime on Windows and Linux. Implemented;
-validated natively on Windows 11 (automated, last at `3a8a715`, including the built-in feature foundation) and in Linux
+validated natively on Windows 11 (automated, last at `a7bf8f3`, including the built-in features and their saved choices) and in Linux
 simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). SQLite (including persisting feature choices),
-a feature-management UI, third-party plugins, sync and autostart are undecided
-ideas, not tasks.
+[roadmap.md](status/roadmap.md). Further local persistence (settings, other
+data), a feature-management UI, third-party plugins, sync and autostart are
+undecided ideas, not tasks.

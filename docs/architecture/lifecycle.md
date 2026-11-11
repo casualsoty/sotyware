@@ -35,9 +35,19 @@ state. It never changes while the process runs:
 1. `main()` calls `sotyware_lib::run()`.
 2. `run()` registers the single-instance plugin first (desktop only). Its setup
    runs inside `Builder::build()`. A second instance exits here.
-3. `Builder::build()` creates window `main` from `tauri.conf.json`
-   (`visible: true`), then runs `setup`.
-4. `setup` calls `tray::create()` once and passes the result to `select_mode()`:
+3. `Builder::build()` returns the app; no window exists yet.
+4. Still before the event loop, `run()` opens the feature preferences database
+   (`preferences.sqlite3` in the app's local data folder, created if needed),
+   checks and migrates it, loads the stored choices and manages
+   `FeaturePreferences`. If the database cannot be used, the reason is logged
+   and kept for the dashboard, and the features use their defaults
+   ([features.md](features.md#persistence)). A second instance never gets here.
+5. `app.run(...)` starts the event loop. On its first event (`Ready`), Tauri
+   creates window `main` from `tauri.conf.json` (`visible: true`), with the
+   webview's data in the same local data folder (if Tauri cannot create that
+   folder, it panics with `Failed to setup app` and sotyware does not start),
+   and then runs `setup` once (Tauri 2.12.5, `app.rs`, `fn setup`).
+   `setup` calls `tray::create()` once and passes the result to `select_mode()`:
    - success: tray mode. `setup` adds the runtime capability `tray-mode`
      (`core:window:allow-hide` for window `main`) and manages the mode;
    - no tray host: dashboard-only mode. Two lines on stderr give the reason
@@ -45,12 +55,12 @@ state. It never changes while the process runs:
    - any other error: prints `sotyware: cannot create system tray icon: …` and
      calls `exit(1)`.
    In tray mode and dashboard-only mode alike, `setup` then starts the built-in
-   features (`FeatureRegistry::start_all`). A feature that fails to start is
+   features (`FeatureRegistry::start_all`), each according to its stored choice
+   or, without one, its default. A feature that fails to start is
    recorded as `failed` and does not affect startup. With the fatal tray error,
    no feature is started ([features.md](features.md#lifecycle)).
-5. `app.run(...)` enters the event loop. The page asks for the mode with the
-   `operating_mode` command and renders accordingly, and asks for the feature
-   list with `list_features`.
+6. The page asks for the mode with the `operating_mode` command and renders
+   accordingly, and asks for the feature list with `list_features`.
 
 ## Mode selection
 
@@ -103,7 +113,10 @@ for a tray host: one that appears later is used on the next start.
   every allowed exit, `FeatureRegistry::stop_all()` stops the running features
   in reverse registration order. Errors are logged. If the OS kills the
   process, or the session ends without Tauri's exit path, no feature is stopped
-  ([limitations](../status/limitations.md#built-in-features)).
+  ([limitations](../status/limitations.md#built-in-features)). Stopping at exit
+  changes no stored choice: a feature running at Quit starts again next time.
+  Then `FeaturePreferences::close()` waits for a save in progress and refuses
+  later ones; every completed save is already on disk.
 - **An unexpected tray failure is fatal.** `setup` exits with code 1 when
   `select_mode()` does not recognise the error as a missing tray host. (A
   watcher that accepts the item while no panel displays it is not detected; see

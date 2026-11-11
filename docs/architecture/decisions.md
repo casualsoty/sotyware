@@ -288,7 +288,9 @@ Status: Accepted. Supersedes ADR-006.
 
 ## ADR-014: Built-in features are Rust modules in a fixed registry
 
-Status: Accepted
+Status: Accepted. Its persistence parts (no stored choices, `enabled_at_startup`
+returning the default, no store trait) are superseded by
+[ADR-015](#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait).
 
 - **Context:** sotyware needs a way to add built-in features (native Rust
   modules) without changing the whole app for each one. Each feature has to be
@@ -344,3 +346,108 @@ Status: Accepted
   failure after it is `running`, and pages other than the one that switched it
   do not learn of changes. Both wait for a feature that needs them. Details:
   [features.md](features.md).
+
+## ADR-015: Feature preferences are stored in SQLite behind a narrow store trait
+
+Status: Accepted
+
+- **Context:** a feature the user disabled ran again after every restart,
+  because each start used `enabled_by_default` (ADR-014). The choice has to
+  survive restarts on Windows and Linux, offline, without making the registry
+  depend on storage, without a background service, and without blocking the
+  event loop. SQLite was the intended store.
+- **Decision:**
+  - **Engine:** SQLite through `rusqlite` 0.41 with the `bundled` feature and no
+    default features. The bundled SQLite (3.54.1 in `libsqlite3-sys` 0.39.1) is
+    compiled into the binary, so every platform gets the same version and no
+    system library is needed (Windows has none to rely on). Cost: a C compiler at
+    build time (already needed on both platforms by Tauri's toolchain), about
+    1.1 MB more in the Linux release binary (6.34 → 7.45 MB), and four new
+    crates in the lockfile (`rusqlite`, `libsqlite3-sys`, `fallible-iterator`,
+    `fallible-streaming-iterator`; `vcpkg` is listed as an unused build
+    dependency).
+  - **Layering:** `features::preferences` holds the policy and the two-method
+    trait `PreferenceStore { load, save }`; `storage.rs` implements it with
+    SQLite. The registry knows neither: startup passes it a closure
+    (`FeaturePreferences::enabled_at_startup`), and the only addition to it is a
+    read-only `info(id)`. Lifecycle code calls `FeaturePreferences::load`
+    (between `build()` and `run()`) and `close` (on exit). This supersedes
+    ADR-014's rejection of a store trait, which was rejected only because it had
+    no implementation then.
+  - **Location:** `preferences.sqlite3` in Tauri's `app_local_data_dir()`:
+    `$XDG_DATA_HOME/com.sotyware.desktop` (normally
+    `~/.local/share/com.sotyware.desktop`) on Linux,
+    `%LOCALAPPDATA%\com.sotyware.desktop` on Windows. Local, not roaming
+    (`app_data_dir()` is `%APPDATA%`, which a domain profile may copy between
+    machines; sotyware does no sync, and SQLite files should not roam). Tauri
+    already creates and needs this folder for the webview's data (`EBWebView` on
+    Windows), so storage adds no new folder and no new failure mode for it.
+  - **Schema:** one table,
+    `feature_preferences(feature_id TEXT PRIMARY KEY NOT NULL, enabled INTEGER
+    NOT NULL CHECK (enabled IN (0, 1))) STRICT`. Only explicit user changes are
+    stored: no row means `enabled_by_default`, so a later change of a default
+    still reaches users who never touched that feature.
+  - **Versioning and migration:** the schema version is `PRAGMA user_version`.
+    `storage::MIGRATIONS` lists the steps; step `n` goes from version `n` to
+    `n + 1` and released steps are never edited. On open, if the version is
+    behind, all pending steps and the new version run in one `BEGIN IMMEDIATE`
+    transaction (all or nothing, and two processes cannot both migrate). A
+    version newer than the binary knows is refused: no downgrade, no write.
+  - **Startup:** the database is opened, checked (`PRAGMA quick_check`),
+    migrated and read once, after `build()` and before `run()`. That runs on the
+    main thread before the event loop, and only in the primary instance (a second
+    launch exits inside `build()`). `setup` then starts features from the
+    in-memory result.
+  - **Saving:** `set_feature_enabled` (already `async`, on Tauri's blocking pool)
+    saves after a switch the registry accepted; a rejected switch saves nothing.
+    The save is one `INSERT … ON CONFLICT DO UPDATE` (its own transaction). It
+    runs under one lock that also reads the feature's current intent from the
+    registry, so whichever save runs last stores the state after the last
+    change; concurrent switches of one feature cannot leave a stale value. This
+    is by construction; a test cannot force the one interleaving that would
+    break a naive version. `busy_timeout` is 2 s, for the case of two processes
+    when single instance is off.
+  - **Failure policy:**
+    - No database: created at first launch, empty, so every feature uses its
+      default.
+    - Unknown feature ID in the database: ignored (logged) and kept, so a feature
+      that returns (for example after a downgrade) keeps its choice.
+    - A feature that fails to start: its `enabled` is true (ADR-014), so
+      "enabled" is saved and the next start retries. The user disables it to
+      stop that.
+    - The database cannot be opened, is not a database, is damaged, has a newer
+      schema, or a migration fails: sotyware never repairs, replaces or deletes
+      it. Features use their defaults, `list_features` returns `storageError`,
+      the dashboard says so, and every save fails with that reason until a
+      restart. Recovery is manual (move the file away); see
+      [limitations](../status/limitations.md#feature-preferences).
+    - A save fails (disk full, read-only file, quitting): the switch has already
+      happened and stays for this session. The stored value stays the old one
+      (the statement did not commit), so the next start uses the last saved
+      choice or the default. `set_feature_enabled` resolves with `saveError` and
+      the dashboard shows it. Undoing the switch was rejected: it calls the
+      feature again and can fail too, leaving a third state.
+    - Exit: `stop_all` stops features without saving (stopping at exit is not a
+      user choice), then `close()` waits for a save in progress and refuses
+      later ones. Every finished save is already durable; a process killed
+      mid-save leaves a journal that SQLite rolls back on the next open.
+  - **Frontend contract:** no new command or permission. `list_features` now
+    returns `{ features, storageError }` and `set_feature_enabled` returns
+    `{ feature, saveError }`.
+  - Rejected: `tauri-plugin-sql` (sqlx and an async runtime for two queries, and
+    it is designed to expose SQL to the frontend); `tauri-plugin-store` or a JSON
+    file (no transactions or schema versioning, and SQLite was the stated
+    direction); linking the system SQLite (not available on Windows, different
+    versions across Linux distributions); WAL mode (two extra files, no benefit
+    for one writer and a few writes); renaming a corrupt database aside and
+    starting fresh (silently drops the user's choices and hides recurring
+    corruption; manual recovery keeps the evidence); writing every feature's
+    current state at startup or exit (would freeze defaults and turn exit into a
+    user choice).
+- **Consequences:** choices survive restarts, also in dashboard-only mode. A
+  storage problem is visible in the dashboard and in the log, never a silent
+  reset. A corrupt database needs the user to move it away. An unusable data
+  folder as a whole was already fatal before this change, because Tauri cannot
+  create the webview data folder. The `bundled` build needs a C compiler. Adding
+  a column or table means appending a migration and a test for it. Details:
+  [features.md](features.md#persistence).

@@ -41,7 +41,10 @@ the tray rows, real mouse clicks and Quit; details in
 | Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
 | "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | ✅ real button via AT-SPI (tray mode, hides the window) | ✅ real button | ✅ |
 | Built-in features: registration, lifecycle table, start/stop failures, isolation, shutdown order, concurrent requests | ✅ unit tests (registry with recording and failing test features) | — | — | — |
-| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | ✅ real WebView2 page via UIA: example listed with version and description, checked and Running; UIA toggle and real mouse click each disable and re-enable it; Running again after Quit and relaunch (not persisted) | ✅ (step 9) |
+| Feature preferences: SQLite round trip, reopen, schema migration and rollback, newer/corrupt/damaged/unopenable/read-only databases, unknown IDs, defaults, save failures, concurrent saves and connections, exit | ✅ unit tests (real SQLite files in a temp folder; policy with an in-memory store) | — | — | — |
+| Feature choice survives a real restart (quit, new process) | ✅ unit test with the real store and built-in features (simulated restart) | ✅ real binary: disable → Quit → relaunch: disabled; enable → Quit → relaunch: running; database rows checked | ✅ real binary: the same, in `%LOCALAPPDATA%` | ✅ (step 9) |
+| Storage failure shown on the dashboard | ✅ mocked IPC | ✅ real binary: corrupt database and a folder in its place: warning shown, defaults used, "not saved" after a switch, file untouched | — | — |
+| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | ✅ real WebView2 page via UIA: example listed with version and description, checked and Running; UIA toggle and real mouse click each disable and re-enable it; still Disabled after Quit and relaunch (persisted), Running after enabling, Quit and a second relaunch | ✅ (step 9) |
 | Features stopped on exit | ✅ unit tests (`stop_all`) | — not observable from outside | — | — |
 | Hide permission granted in tray mode only (runtime capability) | ✅ unit test (the decision) | ✅ tray mode: Hide works; dashboard-only: no button | ✅ tray mode | — |
 | The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
@@ -100,9 +103,40 @@ two working ones), `stop_all` (reverse order, only running ones, continues
 after a failing stop) and concurrency (a starting feature is visible as
 `initializing`, a second request is rejected, other features stay usable).
 `features/mod.rs` checks that every built-in feature registers and starts and
-stops cleanly, and the JSON shape the frontend parses. The command functions
-themselves are one-line delegations to the tested registry methods; that the
+stops cleanly, and the JSON shapes the frontend parses (`FeatureInfo`,
+`FeatureList`, `FeatureChange`). The command functions themselves are one-line
+delegations to `feature_list` and `switch_feature`, which are tested; that the
 real webview may call them is checked by the virtual-display test.
+
+Feature preferences are tested in two layers
+([features.md](../architecture/features.md#persistence)):
+
+- `features/preferences.rs` tests the policy with an in-memory
+  `PreferenceStore` double (`MemoryStore`, which can fail loading or saving)
+  and small test features (`Flag`, one that fails to start): default without a
+  stored choice, a stored choice overriding the default both ways, a new
+  feature, unknown stored IDs ignored and kept, saving after a switch and not
+  after a rejected one, a failed start saved as enabled and retried at the next
+  start, a failed save (switch kept, error returned, old value stored, next
+  start uses it), an unreadable or unopenable store (defaults, no writes, every
+  save fails), exit (`stop_all` changes nothing stored, saves after `close`
+  fail), and 16 threads switching four features at once (every stored value
+  equals the final state). The one interleaving that would store a stale value
+  with a naive implementation cannot be forced from a test; the code excludes
+  it by reading and writing under one lock (ADR-015).
+- `storage.rs` tests `SqliteStore` on real database files in a fresh folder
+  under the system temp directory: first open creates folder, file and schema
+  version 1; save, overwrite and read back; reopening; unknown IDs kept; the
+  `CHECK` constraint; no migration on a current database; migration of a
+  version-1 database with rows to a test version 2; a failing migration rolled
+  back completely; a newer schema refused and the file unchanged; a text file
+  and a database with overwritten pages refused and unchanged; a folder that
+  cannot be created; a read-only file (loads, saving fails); four connections
+  saving concurrently (integrity check passes, last values stored). Two tests
+  run the startup and exit sequence of `run()` with the real store and
+  `builtin()`: the example feature stays disabled, then enabled, across
+  simulated restarts, and a corrupt file gives defaults, a save error, and an
+  unchanged file.
 
 ## Frontend tests
 
@@ -135,9 +169,15 @@ starting or stopping, or while a request is in flight; that unchecking and
 checking send `set_feature_enabled` with `{ id, enabled }` and show the new
 state; that a refused switch restores the checkbox and shows the error in a
 `role="alert"`; that a list error or a malformed answer is shown as an error;
-and that the dashboard's only button is still "Hide dashboard". `parseFeature`
-is tested against the shape Rust sends and against malformed values.
-`App.test.ts`'s mocked Rust side answers `list_features` with no features.
+and that the dashboard's only button is still "Hide dashboard". For stored
+choices it checks that a `storageError` is shown as an alert while the
+features are still listed and switchable, and stays after a switch; that a
+`saveError` after a disable or an enable shows the feature's new state and an
+alert saying the choice lasts until sotyware quits; that a later saved switch
+clears that alert; and that a malformed switch answer is an error.
+`parseFeature`, `parseFeatureList` and `parseFeatureChange` are tested against
+the shapes Rust sends and against malformed values. `App.test.ts`'s mocked Rust
+side answers `list_features` with no features and no storage error.
 
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)
@@ -152,10 +192,14 @@ tests/desktop/run.sh [binary]
 
 Files:
 
-- `tests/desktop/run.sh`: creates a temporary private `$XDG_RUNTIME_DIR` and a
-  private D-Bus session (`dbus-run-session`), then runs the Python driver with
-  `GDK_BACKEND=x11`. A sotyware already running on your desktop is not affected.
-  Exits 2 if the binary is missing.
+- `tests/desktop/run.sh`: creates a temporary private `$XDG_RUNTIME_DIR`, a
+  private `$XDG_DATA_HOME` and a private D-Bus session (`dbus-run-session`), then
+  runs the Python driver with `GDK_BACKEND=x11`. A sotyware already running on
+  your desktop is not affected, and your own feature preferences
+  (`~/.local/share/com.sotyware.desktop/preferences.sqlite3`) are never read or
+  written: each run starts with no database. The driver refuses to start if
+  `$XDG_DATA_HOME` is not inside the run's work folder. Exits 2 if the binary is
+  missing.
 - `tests/desktop/sni_watcher.py`: a minimal `org.kde.StatusNotifierWatcher`, so
   sotyware's tray (`ksni` backend) registers a tray item. It records each
   registration in a file that the driver counts. `--reject` answers every
@@ -197,6 +241,26 @@ Files:
   - 14: relaunch with the watcher back: tray mode again, close hides, Quit.
   - 15: watcher without a host (`--no-host`): dashboard-only mode, no item left
     served, close exits 0.
+  - 17: feature preferences across real restarts (tray mode). Each restart is a
+    tray Quit with exit code 0 and no process left, then a new process; the page
+    is never just reloaded. The example feature (left enabled and saved by 12)
+    is unchecked, sotyware quits, the database row (read with Python's
+    `sqlite3`, read-only) says disabled, and the relaunch shows it disabled with
+    no error and no storage warning in the log; it is checked again, sotyware
+    quits, the row says enabled, and a second relaunch shows it running.
+  - 18: a corrupt `preferences.sqlite3` (text): sotyware starts in tray mode
+    with the example feature running (its default); the page shows "Could not
+    load the saved feature choices: … not a database" and the log says so;
+    unchecking disables it and the page says the choice could not be saved and
+    lasts until sotyware quits; after Quit the file is byte-for-byte unchanged.
+  - 19: a folder in place of `preferences.sqlite3`: default, the "Could not load"
+    warning with `cannot open`, normal Quit, the folder left alone. An unusable
+    data folder as a whole is not tested: Tauri creates the same folder for the
+    webview's data and fails its own setup (`Failed to setup app`, abort) before
+    sotyware's code matters; seen with `$XDG_DATA_HOME` set to a file.
+  - 17–19 run between 15 and 16: under this AT-SPI setup, the first instance
+    started after 16's no-bus instance never appeared on the accessibility
+    desktop (the next one did), so its page could not be read.
   - 16: no session bus at all: dashboard-only mode, close exits 0. Each walk of
   the X11 window tree holds a server grab, so it cannot miss a window that the
   window manager is moving out of its frame (the dashboard right after a close).
@@ -348,10 +412,19 @@ What it does, and how:
   point). Each switch waits until the checkbox state, its enabled flag (it is
   disabled while a request is pending) and the state label match and no
   "Could not" text is on the page; then it checks that the process still
-  answers (`Process.Responding`). Before Quit it disables the example again, and
-  after the relaunch expects it Running and checked (enabled state is not
-  persisted). This proves the static capability lets WebView2 call
-  `list_features` and `set_feature_enabled`.
+  answers (`Process.Responding`). This proves the static capability lets
+  WebView2 call `list_features` and `set_feature_enabled`.
+- Checks that the choice survives real restarts: before Quit it disables the
+  example again; the relaunch (a new process) must show it Disabled and
+  unchecked, with `preferences.sqlite3` present; it enables it, quits (exit 0,
+  no process left), and a second relaunch (another new process) must show it
+  Running and checked. Windows does not let a test redirect `%LOCALAPPDATA%`,
+  so an existing `%LOCALAPPDATA%\com.sotyware.desktop\preferences.sqlite3`
+  (and its journal) is moved to `preferences.sqlite3.windows-test-backup` before
+  sotyware starts, so the run begins with the defaults, and put back at the end
+  (the run's own database is deleted). The script prints both steps. If a
+  backup from an interrupted run is still there, it aborts with exit 2 instead
+  of overwriting it; put it back by hand.
 - Finds the sotyware icon in the notification area by its UI Automation name
   (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
   so the test opens it first. It treats the flyout as open only while it is the
@@ -370,7 +443,8 @@ What it does, and how:
   5 sequentially and 4 concurrently, and checks exit code 0, one process (same
   pid), one window, one tray icon.
 - Hides, quits from the tray, checks exit code 0, no process and no tray icon left,
-  then relaunches a fresh instance and quits it.
+  then relaunches a fresh instance and quits it, and relaunches once more (the
+  persistence checks above).
 
 Before it starts sotyware it checks that it runs on the desktop that receives
 input (`OpenInputDesktop` names the same desktop as its own thread's) and that
@@ -393,8 +467,12 @@ missing feature permission: a build without `allow-set-feature-enabled` in the
 capability failed exactly the 5 switch checks, 85 passed / 5 failed (2026-11-11,
 `3a8a715`'s script).
 
-The count is 90 checks since `3a8a715` (80 before; the 10 feature checks are
-described above). The isolated-desktop test below has no feature checks.
+The count is 99 checks since `a7bf8f3` (90 since `3a8a715`, 80 before). Of the
+10 feature checks added at `3a8a715`, "Running again after relaunch (not
+persisted)" was replaced at `a7bf8f3` by "still Disabled (persisted)", and 9
+persistence checks were added. The isolated-desktop test below has no feature
+checks; it starts sotyware with whatever `preferences.sqlite3` exists and does
+not switch any feature, so it changes no stored choice.
 
 ## Windows isolated-desktop test
 
@@ -574,8 +652,9 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   gir1.2-atspi-2.0 at-spi2-core dbus-x11`). `virtual.sh` already fails on any
   FAIL or SKIP, a missing dependency (exit 2) and a display that does not start
   (exit 3). The workflow additionally requires the summary line
-  `92 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
-  in the same commit that adds or removes a check), names the exit code in the
+  `115 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
+  in the same commit that adds or removes a check; it stayed at 92 when
+  `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
   run summary, and fails on anything else. It is virtual-display testing, not
   real Linux desktop validation (see [what it does not validate](#virtual-display-test)).
 - **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).
@@ -692,8 +771,12 @@ AppIndicator extension is enabled).
    Right-click shows the menu.
 9. In the dashboard's Features section, "Example" is listed as Running with a
    checked box. Uncheck it: it shows Disabled and no red error. Check it again:
-   Running. Quit and start sotyware: it is Running again (nothing is persisted).
-   Repeat in dashboard-only mode.
+   Running. Uncheck it again, Quit, and start sotyware: it is still Disabled
+   (the choice is saved). Check it, Quit, start: Running. No "Could not load the
+   saved feature choices" warning appears. Repeat in dashboard-only mode
+   (closing the dashboard quits there). The choice is stored in
+   `preferences.sqlite3` in `~/.local/share/com.sotyware.desktop/` (Linux) or
+   `%LOCALAPPDATA%\com.sotyware.desktop\` (Windows).
 
 Dashboard-only mode (Linux desktops without a tray host, for example vanilla
 GNOME without the AppIndicator extension):

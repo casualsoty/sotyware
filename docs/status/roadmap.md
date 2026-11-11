@@ -59,12 +59,17 @@ Fixes found during validation come before anything below.
 - Make the D-Bus fallback warning visible (for example by installing a logging
   subscriber), if that is wanted.
 - Built-in features: the manual checklist's step 9 (a person, Windows and
-  Linux), and optionally feature checks in the Windows private-desktop test
-  (`windows-isolated.ps1`) and a run on the NSIS-installed copy. The Windows
-  build, headless suite and real-desktop Features checks passed on 2026-11-11.
-  The foundation itself is implemented
-  ([features.md](../architecture/features.md)). The items it deliberately leaves
-  out are under Ideas.
+  Linux, now including restarts), and optionally feature checks in the Windows
+  private-desktop test (`windows-isolated.ps1`) and a run on the NSIS-installed
+  copy. The Windows build, headless suite and real-desktop Features and
+  restart-persistence checks passed on 2026-11-11. The foundation and its saved
+  choices are implemented ([features.md](../architecture/features.md)). The
+  items they deliberately leave out are under Ideas.
+- Feature preferences: run `desktop-virtual.yml` once on GitHub with
+  `EXPECTED_CHECKS: 115`; check whether the NSIS/MSI uninstallers leave
+  `%LOCALAPPDATA%\com.sotyware.desktop` (and so `preferences.sqlite3`) behind,
+  together with the existing open question about the webview data
+  ([limitations.md](limitations.md#feature-preferences)).
 
 ## Ideas (not decided)
 
@@ -73,9 +78,13 @@ decision and no code for any of them. Do not implement them without an explicit
 request and a recorded decision.
 
 - Autostart on login.
-- Local persistence (SQLite has been mentioned). For features, the plug-in
-  point is designed ([features.md](../architecture/features.md#persistence-not-implemented)),
-  but nothing is stored.
+- More local persistence (settings, other data). Only the feature choices are
+  stored today ([features.md](../architecture/features.md#persistence)); a new
+  table would be a new migration in `storage::MIGRATIONS`.
+- Automatic recovery from a corrupt preferences database (for example renaming
+  it aside and starting fresh). Rejected for now in
+  [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)
+  in favour of manual recovery.
 - A feature-management UI beyond the minimal Features section, events from
   Rust to the page for feature state, a way for a running feature to report a
   failure, and dependencies between features.

@@ -43,17 +43,19 @@ Where things are. Generated and ignored paths are listed in
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl + tests (incl. restarts with the built-in features)
 │       └── features/         Built-in features
-│           ├── mod.rs        Feature trait, metadata, state, builtin() list, enabled_at_startup(), the two feature commands + tests
+│           ├── mod.rs        Feature trait, metadata, state, builtin() list, the two feature commands (FeatureList, FeatureChange) + tests
+│           ├── preferences.rs  FeaturePreferences, PreferenceStore trait: startup choice, save after a switch, failure policy + tests
 │           ├── registry.rs   FeatureRegistry: registration, lifecycle table, per-feature locking, start_all/stop_all + tests
 │           └── example.rs    The example feature + tests
 └── tests/
     └── desktop/              Desktop tests of the release binary
-        ├── run.sh            Linux/X11 simulated test: private D-Bus session + runtime dir
+        ├── run.sh            Linux/X11 simulated test: private D-Bus session, runtime dir and data dir (XDG_DATA_HOME)
         ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher); --reject, --no-host
-        ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, page via AT-SPI
+        ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, feature preferences across restarts, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
-        ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches
+        ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches, feature preferences across restarts
         └── windows-isolated.ps1  Unattended Windows test on a private desktop: window, hide button, close, launches (no tray)
 ```
 
@@ -65,6 +67,7 @@ Where things are. Generated and ignored paths are listed in
 | Where are Tauri plugins registered? | `run()` in `lib.rs`, on the builder; the single-instance plugin must stay first |
 | Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`) |
 | Where are built-in features? | `src-tauri/src/features/`: listed in `builtin()` in `mod.rs`, run by `FeatureRegistry` in `registry.rs`; how to add one: [features.md](features.md#adding-a-built-in-feature) |
+| Where are feature choices stored? | Policy: `features/preferences.rs`; SQLite, schema and migrations: `storage.rs`; loaded in `run()` in `lib.rs` before the event loop; the file is `preferences.sqlite3` in the app's local data folder ([features.md](features.md#persistence)) |
 | Where is the operating mode chosen? | `select_mode()` in `lib.rs`, from `tray::create()`'s result classified by `tray::unavailable_reason()` |
 | Where are events emitted or listened to? | No custom events exist. Window events: `on_window_event` in `run()`. Exit events: `app.run(...)` closure in `run()` |
 | Where is tray behaviour? | `src-tauri/src/tray.rs`, created from `setup` in `lib.rs` |
