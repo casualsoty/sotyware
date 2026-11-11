@@ -191,9 +191,13 @@ Design and rationale: [features.md](../architecture/features.md),
   `RunEvent::Exit`. A killed process, a crash, or an OS shutdown or logoff that
   ends the process without that path skips it. The Windows behaviour on
   logoff/shutdown is not checked.
-- **Validation:** the unit tests, and on Linux the virtual-display test, run
-  it (2026-11-11). The Windows desktop tests do not check the Features section
-  yet, and it has not been run on Windows at all.
+- **Validation:** the unit tests run on Linux and Windows; the real page is
+  checked by the Linux virtual-display test and the Windows real-desktop test
+  (`windows.ps1`, 2026-11-11). The Windows private-desktop test
+  (`windows-isolated.ps1`) has no feature checks. Invalid feature IDs and
+  transitions are tested only at the registry level: the dashboard cannot send
+  them, and no test sends them through the real IPC. Not checked on Windows 10,
+  real Linux desktops or the installed copies.
 
 ## General
 

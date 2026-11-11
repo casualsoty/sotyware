@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (built-in feature foundation). Update this file whenever
+Last updated: 2026-11-11 (built-in feature foundation, validated on native Windows 11). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -27,7 +27,10 @@ Dashboard-only mode cannot occur on Windows, where every tray error stays fatal.
 On 2026-11-10 (at `0131e09`) no real Linux desktop was available to test on
 ([survey](#real-linux-desktop-availability-2026-11-10)), and the Windows tests
 were split into headless, private-desktop and real-desktop categories
-([results](#windows-test-categories-native-windows-11-0131e09)).
+([results](#windows-test-categories-native-windows-11-0131e09)). The built-in
+feature foundation passed on native Windows 11 on 2026-11-11 (headless suite,
+release build, real-desktop test 90/0 three times;
+[details](#built-in-feature-foundation-native-windows-11-2026-11-11)).
 
 ## Implemented
 
@@ -82,7 +85,8 @@ script or procedure is not in the repository; it was not repeated.
 ### Built-in feature foundation (WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0, 2026-11-11)
 
 Application code of `e30ac7b` (registry `5e2e475`, frontend `e30ac7b`),
-desktop driver of `a9fb338`. Nothing of this has run on Windows.
+desktop driver of `a9fb338`. This section is Linux evidence only; Windows:
+[below](#built-in-feature-foundation-native-windows-11-2026-11-11).
 
 | Check | Category | Result |
 | --- | --- | --- |
@@ -92,7 +96,42 @@ desktop driver of `a9fb338`. Nothing of this has run on Windows.
 | Not vacuous: 3 hand-made mutants of `Features.svelte` (no checkbox restore, no in-flight lock, no state update) each fail ≥ 1 frontend test | headless | ✅ |
 | `npm run test:desktop:virtual`: 96 passed, 0 failed, 0 skipped (92 existing + 4 feature checks), 3 runs | virtual display | ✅ |
 | Not vacuous: with `allow-set-feature-enabled` removed from the capability, the run fails exactly the two switch checks (94/2/0; the page shows "Command set_feature_enabled not allowed by ACL") | virtual display | ✅ |
-| `tests/desktop/run.sh` (WSLg), Windows headless suite, `windows.ps1`, `windows-isolated.ps1`, manual checklist step 9 | — | — not run |
+| `tests/desktop/run.sh` (WSLg), manual checklist step 9 | — | — not run |
+
+### Built-in feature foundation, native Windows 11 (2026-11-11)
+
+Application code of `0a8a8f1` (unchanged since `e30ac7b`), Windows desktop test
+of `3a8a715`. `C:\dev\sotyware` was fast-forwarded from `44be84e` to `0a8a8f1`
+and then `3a8a715` with `git bundle` (identical hashes, clean tree before and
+after). Windows 11 Home 25H2, OS build 26200.9711, x64; Windows PowerShell
+5.1.26100.9711 started from WSL through interop with the registry `PATH`, so
+every tool was the native Windows binary: Rust/Cargo 1.99.1
+(`stable-x86_64-pc-windows-msvc`, rustup 1.29.3), Node.js 24.14.1, npm 11.12.1,
+Tauri CLI 2.12.4, Git 2.47.1.windows.1, WebView2 Runtime 157.0.4341.46. Not
+elevated.
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0 errors, 0 warnings), `npm run build` | static | ✅ |
+| `npm run test:headless`: 29 frontend tests (13 `App.test.ts` + 16 `Features.test.ts`) and 50 Rust tests, exit 0. The other 8 of the 58 Rust tests classify `ksni`/`zbus` errors and are Linux-only, so not compiled for Windows | headless | ✅ |
+| `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` | static | ✅ |
+| `cargo test --locked` (MSVC): 50 tests in `sotyware_lib` (all 27 feature tests among them, including unknown IDs, invalid transitions and the lifecycle table), 0 in the binary, 0 doc-tests | headless | ✅ |
+| Windows graph (`cargo tree --locked --target x86_64-pc-windows-msvc -e normal,build`): 223 crates, none matching `ksni`, `zbus`, `gtk`, `gdk`, `glib`, `appindicator`, `webkit` or `dbus`; `sotyware`'s direct dependencies are `serde`, `tauri` 2.12.5 and `tauri-plugin-single-instance` 2.5.5; `tray-icon` 0.25.1 has no `ksni` feature | static | ✅ |
+| `npm run tauri build -- --no-bundle`: `sotyware.exe`, 4,359,168 bytes; no capability or permission error at build time | static | ✅ |
+| `windows.ps1` at `3a8a715` (90 checks: 80 existing + 10 feature checks), release binary | real desktop | ✅ **90 passed, 0 failed**, 3 consecutive runs (`npm run test:desktop:windows`), plus 1 run of the same checks before committing |
+| Not vacuous: build outside the checkout (`git archive`) without `allow-set-feature-enabled` | real desktop | ✅ detected: 85 passed, 5 failed, exactly the switch checks; the page showed the error |
+| `npm run test:desktop:windows:isolated` (unchanged, no feature checks) | private desktop | ✅ **56 passed, 0 failed**, 3 consecutive runs, primary's stderr empty |
+| NSIS/MSI installers, manual checklist step 9, Windows 10 | — | — not run |
+
+What the real-desktop run shows on Windows: the static capability lets the
+WebView2 page call `list_features` (the example is listed with name, version
+0.1.0, its description, checked and Running) and `set_feature_enabled` (UIA
+toggle and real mouse click each disable and re-enable it; the label follows
+Rust's answer); the process keeps answering; after tray Quit and a relaunch the
+example runs again (not persisted). The 80 existing tray, Hide, close/restore,
+single-instance and Quit checks passed unchanged. Invalid feature IDs and
+lifecycle transitions are covered only by the Rust unit tests above: the page
+cannot send them.
 
 ### Static checks and builds (WSL2, Ubuntu 24.04, Rust 1.99.1, Node 24.22.0)
 

@@ -12,7 +12,9 @@ In priority order:
 1. **Finish Windows validation.** Windows 11 is built and passes the headless
    suite and the automated
    [Windows desktop test](../development/testing.md#windows-desktop-test),
-   including the NSIS-installed copy, at `e8834fd` (with the test fix `71442d3`).
+   including the NSIS-installed copy, at `e8834fd` (with the test fix `71442d3`);
+   the built-in feature foundation passed the headless suite and the extended
+   desktop test (90 checks) at `3a8a715`, from the build output only.
    Still to do: a person running the
    [manual checklist](../development/testing.md#manual-check-real-desktop-linux-or-windows)
    on Windows 11, the MSI installer (needs an elevated install), and everything on
@@ -56,9 +58,11 @@ Fixes found during validation come before anything below.
   ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 - Make the D-Bus fallback warning visible (for example by installing a logging
   subscriber), if that is wanted.
-- Built-in features: run the new feature checks on Windows (build, headless suite,
-  and a Features-section check in `tests/desktop/windows.ps1`), and the
-  manual checklist's step 9. The foundation itself is implemented
+- Built-in features: the manual checklist's step 9 (a person, Windows and
+  Linux), and optionally feature checks in the Windows private-desktop test
+  (`windows-isolated.ps1`) and a run on the NSIS-installed copy. The Windows
+  build, headless suite and real-desktop Features checks passed on 2026-11-11.
+  The foundation itself is implemented
   ([features.md](../architecture/features.md)). The items it deliberately leaves
   out are under Ideas.
 

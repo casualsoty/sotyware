@@ -103,8 +103,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   requests, JSON shape). No display needed.
 - Built-in features (2026-11-11, WSL2, `e30ac7b`/`a9fb338`): headless 58 Rust +
   29 frontend tests, and `npm run test:desktop:virtual` 96/0/0 in 3 runs (the
-  4 new checks switch the example feature through AT-SPI). **Not run on
-  Windows yet.** The counts below are from before this change.
+  4 new checks switch the example feature through AT-SPI).
+- Built-in features, native Windows 11 25H2 (2026-11-11, `0a8a8f1`/`3a8a715`):
+  `npm run test:headless` 50 Rust (the 8 `ksni`/`zbus` tests are Linux-only) +
+  29 frontend tests; fmt, clippy, release build pass; no Linux crate in the
+  Windows graph. `windows.ps1` now has 90 checks (10 new: Features section,
+  example metadata, initial state, disable/enable by UIA toggle and real
+  click, responsiveness, Running again after relaunch): 90/0 in 3 runs.
+  `windows-isolated.ps1` 56/0 in 3 runs (no feature checks).
+  The counts below are from before this change.
 - `npm run test:headless` (31 Rust + 13 frontend tests): passes on WSL2
   (2026-11-10, `8ca3bd7`) and natively on Windows 11 (2026-11-10, `e8834fd`;
   23 Rust tests there, the 8 `ksni`/`zbus` ones are Linux-only; again at
@@ -173,7 +180,7 @@ Full list: [limitations.md](status/limitations.md).
 ## Milestone and next steps
 
 Milestone 0: prove the desktop runtime on Windows and Linux. Implemented;
-validated natively on Windows 11 (automated, last at `195fa8a`) and in Linux
+validated natively on Windows 11 (automated, last at `3a8a715`, including the built-in feature foundation) and in Linux
 simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the

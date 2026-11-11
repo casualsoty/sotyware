@@ -41,7 +41,7 @@ the tray rows, real mouse clicks and Quit; details in
 | Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
 | "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | ✅ real button via AT-SPI (tray mode, hides the window) | ✅ real button | ✅ |
 | Built-in features: registration, lifecycle table, start/stop failures, isolation, shutdown order, concurrent requests | ✅ unit tests (registry with recording and failing test features) | — | — | — |
-| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | — not yet in the Windows test | ✅ (step 9) |
+| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | ✅ real WebView2 page via UIA: example listed with version and description, checked and Running; UIA toggle and real mouse click each disable and re-enable it; Running again after Quit and relaunch (not persisted) | ✅ (step 9) |
 | Features stopped on exit | ✅ unit tests (`stop_all`) | — not observable from outside | — | — |
 | Hide permission granted in tray mode only (runtime capability) | ✅ unit test (the decision) | ✅ tray mode: Hide works; dashboard-only: no button | ✅ tray mode | — |
 | The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
@@ -327,7 +327,8 @@ NSIS per-user install.
 
 It needs only Windows PowerShell 5.1 (UI Automation and `user32` via `Add-Type`), no
 extra modules. **It runs on your real desktop:** it moves the mouse and clicks the
-tray icon, the tray menu, the dashboard's button and its title-bar close button, and
+tray icon, the tray menu, the dashboard's button and feature checkbox and its
+title-bar close button, and
 opens the notification area's "Show Hidden Icons" flyout. Do not touch the mouse or
 keyboard while it runs (about 30 seconds).
 
@@ -338,6 +339,19 @@ What it does, and how:
 - Clicks "Hide dashboard" inside WebView2 twice: once through UI Automation
   `Invoke` and once with a real mouse click at the button's position. Each time it
   checks that the window becomes invisible, is not destroyed, and the process stays.
+- Reads the Features section through UI Automation: the heading
+  (`features-heading`), the example feature's `CheckBox` (named "Example") and its
+  `ListItem`, whose name is the item's text (version, state label, description).
+  It checks the example is listed checked and Running, then switches it off and
+  on twice: through `TogglePattern` and with a real mouse click on the checkbox
+  (only after `WindowFromPoint` confirms the dashboard is the window under the
+  point). Each switch waits until the checkbox state, its enabled flag (it is
+  disabled while a request is pending) and the state label match and no
+  "Could not" text is on the page; then it checks that the process still
+  answers (`Process.Responding`). Before Quit it disables the example again, and
+  after the relaunch expects it Running and checked (enabled state is not
+  persisted). This proves the static capability lets WebView2 call
+  `list_features` and `set_feature_enabled`.
 - Finds the sotyware icon in the notification area by its UI Automation name
   (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
   so the test opens it first. It treats the flyout as open only while it is the
@@ -374,7 +388,13 @@ tray but invisible to a person; the [manual check](#manual-check-real-desktop-li
 still covers looking at it.
 
 Verified that it detects a broken button: with `hideDashboard` changed to do
-nothing, all three hide checks failed (2026-11-10).
+nothing, all three hide checks failed (2026-11-10). Verified that it detects a
+missing feature permission: a build without `allow-set-feature-enabled` in the
+capability failed exactly the 5 switch checks, 85 passed / 5 failed (2026-11-11,
+`3a8a715`'s script).
+
+The count is 90 checks since `3a8a715` (80 before; the 10 feature checks are
+described above). The isolated-desktop test below has no feature checks.
 
 ## Windows isolated-desktop test
 
