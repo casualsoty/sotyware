@@ -20,6 +20,11 @@ tauri = { version = "2", features = ["tray-icon"] }
 # Already in the tree through tauri (with derive); declared to derive Serialize for
 # the feature types the frontend receives (ADR-014).
 serde = { version = "1", features = ["derive"] }
+# Stores feature preferences (ADR-015). `bundled` compiles SQLite into the binary,
+# so Windows and every Linux distribution get the same SQLite version, with no
+# system library to install. No default features: the statement cache and the
+# wasm backend are not needed.
+rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 
 [profile.release]
 codegen-units = 1

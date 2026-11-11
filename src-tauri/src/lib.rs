@@ -15,7 +15,9 @@
 //!
 //! Built-in features (`features`) are registered when the app is built, started in
 //! `setup` once the mode is known (in both modes), and stopped when the process
-//! exits.
+//! exits. Whether each one starts comes from the stored feature preferences
+//! (`storage`, SQLite), which are loaded between `build()` and `run()`, before
+//! the event loop runs.
 //!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
@@ -23,6 +25,7 @@
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
 mod features;
+mod storage;
 mod tray;
 
 use tauri::{
@@ -245,8 +248,13 @@ pub fn run() {
                     app.manage(mode);
                     // After the mode, so a fatal tray error never starts a feature.
                     // A failing feature is recorded in its state; the app runs on.
-                    if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
-                        registry.start_all(features::enabled_at_startup);
+                    // The preferences were loaded before the event loop started,
+                    // so this reads memory only.
+                    if let (Some(registry), Some(prefs)) = (
+                        app.try_state::<features::FeatureRegistry>(),
+                        app.try_state::<features::FeaturePreferences>(),
+                    ) {
+                        registry.start_all(|m| prefs.enabled_at_startup(m));
                     }
                 }
                 Err(code) => app.handle().exit(code),
@@ -282,15 +290,34 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build sotyware");
 
+    // Load the feature preferences now: after `build()` (a second launch has
+    // already handed over and exited inside it, so only the primary instance
+    // opens the database) and before `run()`, so the file I/O never runs on the
+    // event loop. Any storage failure is kept and shown by the dashboard; the
+    // features then use their defaults (ADR-015).
+    let feature_ids: Vec<&'static str> = app
+        .state::<features::FeatureRegistry>()
+        .list()
+        .iter()
+        .map(|f| f.id)
+        .collect();
+    let store = storage::open_feature_store(app.path().app_local_data_dir());
+    app.manage(features::FeaturePreferences::load(store, &feature_ids));
+
     app.run(|app, event| match event {
         RunEvent::ExitRequested { code, api, .. } if !exit_allowed(code) => {
             api.prevent_exit();
         }
         // The process is ending (only ever through an explicit exit code): give
-        // running features the chance to release their resources.
+        // running features the chance to release their resources. Stopping here
+        // is not a user choice, so no preference changes. Then wait for a save
+        // in progress and refuse new ones, so none is cut off halfway.
         RunEvent::Exit => {
             if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
                 registry.stop_all();
+            }
+            if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
+                prefs.close();
             }
         }
         _ => {}

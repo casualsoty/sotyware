@@ -5,6 +5,8 @@
   // Minimal view of the built-in features: enough to see their state and switch
   // them on or off. Not a feature-management UI. The list is read on mount and
   // updated from each switch's response; there are no events from Rust.
+  // Rust saves each switch; when it cannot, the page says so (storageError,
+  // saveError) instead of pretending the choice will be remembered.
 
   const STATE_LABELS: Record<FeatureState, string> = {
     registered: "Not started yet",
@@ -16,12 +18,15 @@
   };
 
   let features = $state<FeatureInfo[] | null>(null);
+  let storageError = $state<string | null>(null);
   let error = $state<string | null>(null);
   let pending = $state<string | null>(null);
 
   async function load(): Promise<void> {
     try {
-      features = await listFeatures();
+      const list = await listFeatures();
+      features = list.features;
+      storageError = list.storageError;
     } catch (e) {
       error = `Could not list features: ${String(e)}`;
     }
@@ -36,8 +41,15 @@
     error = null;
     pending = feature.id;
     try {
-      const updated = await setFeatureEnabled(feature.id, enabled);
+      const { feature: updated, saveError } = await setFeatureEnabled(feature.id, enabled);
       features = (features ?? []).map((f) => (f.id === updated.id ? updated : f));
+      if (saveError !== null) {
+        // The switch happened; only remembering it failed.
+        const now = updated.enabled ? "enabled" : "disabled";
+        error =
+          `Could not save the choice for ${feature.name}: ${saveError}. ` +
+          `It stays ${now} until sotyware quits; the next start uses the last saved choice or the default.`;
+      }
     } catch (e) {
       // Nothing changed on the Rust side: put the checkbox back.
       input.checked = feature.enabled;
@@ -78,6 +90,12 @@
         </li>
       {/each}
     </ul>
+  {/if}
+  {#if storageError}
+    <p class="error" role="alert">
+      Could not load the saved feature choices: {storageError}. Every feature uses its default, and
+      changes are not saved.
+    </p>
   {/if}
   {#if error}
     <p class="error" role="alert">{error}</p>

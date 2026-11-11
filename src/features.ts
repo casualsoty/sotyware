@@ -1,6 +1,8 @@
 // Typed access to the built-in features (src-tauri/src/features/). The page
 // reaches them only through these two commands; it never sees Rust state
 // directly. Responses are checked, so a Rust/TypeScript mismatch fails loudly.
+// Saving the user's choices happens on the Rust side; the page only learns
+// whether it worked (`storageError`, `saveError`).
 import { invoke } from "@tauri-apps/api/core";
 
 export const LIST_FEATURES = "list_features";
@@ -56,20 +58,57 @@ export function parseFeature(value: unknown): FeatureInfo {
   return { id, name, description, version, state, enabled, error };
 }
 
-/** Every built-in feature with its current state, in registration order. */
-export async function listFeatures(): Promise<FeatureInfo[]> {
-  const value = await invoke<unknown>(LIST_FEATURES);
-  if (!Array.isArray(value)) {
+// `FeatureList` in src-tauri/src/features/mod.rs.
+export interface FeatureList {
+  features: FeatureInfo[];
+  /** Why the saved choices could not be loaded: then every feature uses its
+   * default and no change is saved. `null` when they were loaded. */
+  storageError: string | null;
+}
+
+// `FeatureChange` in src-tauri/src/features/mod.rs.
+export interface FeatureChange {
+  /** The feature's new state; the switch happened even if saving failed. */
+  feature: FeatureInfo;
+  /** Why the choice could not be saved: it then lasts only until sotyware quits. */
+  saveError: string | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+export function parseFeatureList(value: unknown): FeatureList {
+  if (!isRecord(value) || !Array.isArray(value["features"]) || !isNullableString(value["storageError"])) {
     throw new Error(`invalid feature list: ${JSON.stringify(value)}`);
   }
-  return value.map(parseFeature);
+  return { features: value["features"].map(parseFeature), storageError: value["storageError"] };
+}
+
+export function parseFeatureChange(value: unknown): FeatureChange {
+  if (!isRecord(value) || !isNullableString(value["saveError"])) {
+    throw new Error(`invalid feature change: ${JSON.stringify(value)}`);
+  }
+  return { feature: parseFeature(value["feature"]), saveError: value["saveError"] };
+}
+
+/** Every built-in feature with its current state, in registration order, and
+ * whether the saved choices could be loaded. */
+export async function listFeatures(): Promise<FeatureList> {
+  return parseFeatureList(await invoke<unknown>(LIST_FEATURES));
 }
 
 /**
- * Starts or stops one feature and returns its new state. A feature that fails
- * to start resolves with state "failed"; the promise rejects only for an
- * unknown id or a transition its current state does not allow.
+ * Starts or stops one feature, saves the choice, and returns the feature's new
+ * state. A feature that fails to start resolves with state "failed"; a choice
+ * that could not be saved resolves with `saveError` set. The promise rejects
+ * only for an unknown id or a transition its current state does not allow,
+ * and then nothing changed.
  */
-export async function setFeatureEnabled(id: string, enabled: boolean): Promise<FeatureInfo> {
-  return parseFeature(await invoke<unknown>(SET_FEATURE_ENABLED, { id, enabled }));
+export async function setFeatureEnabled(id: string, enabled: boolean): Promise<FeatureChange> {
+  return parseFeatureChange(await invoke<unknown>(SET_FEATURE_ENABLED, { id, enabled }));
 }

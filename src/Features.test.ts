@@ -7,7 +7,14 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import App from "./App.svelte";
 import Features from "./Features.svelte";
-import { LIST_FEATURES, SET_FEATURE_ENABLED, type FeatureInfo, parseFeature } from "./features";
+import {
+  LIST_FEATURES,
+  SET_FEATURE_ENABLED,
+  type FeatureInfo,
+  parseFeature,
+  parseFeatureChange,
+  parseFeatureList,
+} from "./features";
 
 interface IpcCall {
   cmd: string;
@@ -29,13 +36,16 @@ function feature(overrides: Partial<FeatureInfo> = {}): FeatureInfo {
 
 let calls: IpcCall[];
 let features: FeatureInfo[];
+let storageError: string | null;
+let saveError: string | null;
 let respond: (cmd: string, payload: unknown) => unknown;
 let app: ReturnType<typeof mount> | undefined;
 
-/** Answers like the registry: a switch returns the new state of that feature. */
+/** Answers like the registry: a switch returns the new state of that feature,
+ * and `saveError` as the preference store's answer. */
 function backend(cmd: string, payload: unknown): unknown {
   if (cmd === LIST_FEATURES) {
-    return features;
+    return { features, storageError };
   }
   if (cmd === SET_FEATURE_ENABLED) {
     const { id, enabled } = payload as { id: string; enabled: boolean };
@@ -47,7 +57,7 @@ function backend(cmd: string, payload: unknown): unknown {
       ? feature({ ...current, state: "running", enabled: true, error: null })
       : feature({ ...current, state: "disabled", enabled: false, error: null });
     features = features.map((f) => (f.id === id ? next : f));
-    return next;
+    return { feature: next, saveError };
   }
   if (cmd === "operating_mode") {
     return "tray";
@@ -58,6 +68,8 @@ function backend(cmd: string, payload: unknown): unknown {
 beforeEach(() => {
   calls = [];
   features = [feature(), feature({ id: "other", name: "Other", state: "disabled", enabled: false })];
+  storageError = null;
+  saveError = null;
   respond = backend;
   mockWindows("main");
   mockIPC((cmd, payload) => {
@@ -180,7 +192,7 @@ describe("feature list", () => {
 
   it("treats a malformed answer as an error", async () => {
     respond = (cmd, payload): unknown =>
-      cmd === LIST_FEATURES ? [{ ...feature(), state: "sleeping" }] : backend(cmd, payload);
+      cmd === LIST_FEATURES ? { features: [{ ...feature(), state: "sleeping" }], storageError: null } : backend(cmd, payload);
     const root = await render();
     expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/^Could not list features: Error: invalid feature: /);
   });
@@ -208,7 +220,9 @@ describe("switching a feature", () => {
 
   it("shows a feature that fails to start as failed, without an alert", async () => {
     respond = (cmd, payload): unknown =>
-      cmd === SET_FEATURE_ENABLED ? feature({ id: "other", name: "Other", state: "failed", enabled: true, error: "boom" }) : backend(cmd, payload);
+      cmd === SET_FEATURE_ENABLED
+        ? { feature: feature({ id: "other", name: "Other", state: "failed", enabled: true, error: "boom" }), saveError: null }
+        : backend(cmd, payload);
     const root = await render();
     toggle(checkbox(root, "other"));
     await settle();
@@ -268,6 +282,85 @@ describe("switching a feature", () => {
   });
 });
 
+describe("saved choices", () => {
+  it("shows nothing about storage when the saved choices loaded", async () => {
+    const root = await render();
+    expect(root.textContent).not.toContain("saved feature choices");
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("says so when the saved choices could not be loaded, and still lists the features", async () => {
+    storageError = "/data/preferences.sqlite3: cannot read: file is not a database";
+    const root = await render();
+    expect(root.querySelector('[role="alert"]')?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Could not load the saved feature choices: /data/preferences.sqlite3: cannot read: file is not a database. " +
+        "Every feature uses its default, and changes are not saved.",
+    );
+    expect(stateText(root, "example")).toBe("Running");
+    expect(checkbox(root, "example").disabled).toBe(false);
+  });
+
+  it("keeps the storage warning after a switch", async () => {
+    storageError = "no app data folder";
+    saveError = "preferences are unavailable: no app data folder";
+    const root = await render();
+    toggle(checkbox(root, "example"));
+    await settle();
+    const alerts = [...root.querySelectorAll('[role="alert"]')].map((a) => a.textContent ?? "");
+    expect(alerts).toHaveLength(2);
+    expect(alerts[0]).toContain("Could not load the saved feature choices: no app data folder.");
+    expect(alerts[1]).toContain("Could not save the choice for Example");
+  });
+
+  it("shows the new state and an alert when a disable could not be saved", async () => {
+    saveError = "cannot save: disk I/O error";
+    const root = await render();
+    toggle(checkbox(root, "example"));
+    await settle();
+    // The switch happened: the page shows the real state, not the old one.
+    expect(stateText(root, "example")).toBe("Disabled");
+    expect(checkbox(root, "example").checked).toBe(false);
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe(
+      "Could not save the choice for Example: cannot save: disk I/O error. " +
+        "It stays disabled until sotyware quits; the next start uses the last saved choice or the default.",
+    );
+  });
+
+  it("shows the new state and an alert when an enable could not be saved", async () => {
+    saveError = "sotyware is quitting";
+    const root = await render();
+    toggle(checkbox(root, "other"));
+    await settle();
+    expect(stateText(root, "other")).toBe("Running");
+    expect(checkbox(root, "other").checked).toBe(true);
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain(
+      "Could not save the choice for Other: sotyware is quitting. It stays enabled until sotyware quits;",
+    );
+  });
+
+  it("clears the save alert after a switch that was saved", async () => {
+    saveError = "disk full";
+    const root = await render();
+    toggle(checkbox(root, "example"));
+    await settle();
+    expect(root.querySelector('[role="alert"]')).not.toBeNull();
+    saveError = null;
+    toggle(checkbox(root, "example"));
+    await settle();
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(stateText(root, "example")).toBe("Running");
+  });
+
+  it("treats a malformed switch answer as an error and puts the checkbox back", async () => {
+    respond = (cmd, payload): unknown => (cmd === SET_FEATURE_ENABLED ? feature({ state: "disabled", enabled: false }) : backend(cmd, payload));
+    const root = await render();
+    toggle(checkbox(root, "example"));
+    await settle();
+    expect(checkbox(root, "example").checked).toBe(true);
+    expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/^Could not disable Example: Error: invalid feature change: /);
+  });
+});
+
 describe("features on the dashboard", () => {
   it("lists features below the dashboard content", async () => {
     const root = await render(App);
@@ -275,6 +368,25 @@ describe("features on the dashboard", () => {
     expect(stateText(root, "example")).toBe("Running");
     // Checkboxes, not buttons: the page's only button stays "Hide dashboard".
     expect([...root.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Hide dashboard"]);
+  });
+});
+
+describe("parseFeatureList and parseFeatureChange", () => {
+  it("accept the shapes Rust sends", () => {
+    expect(parseFeatureList({ features: [feature()], storageError: null })).toEqual({ features: [feature()], storageError: null });
+    expect(parseFeatureList({ features: [], storageError: "x" })).toEqual({ features: [], storageError: "x" });
+    expect(parseFeatureChange({ feature: feature(), saveError: "disk full" })).toEqual({ feature: feature(), saveError: "disk full" });
+  });
+
+  it("reject anything else", () => {
+    for (const bad of [null, [], [feature()], { features: [feature()] }, { features: {}, storageError: null }, { features: [], storageError: 1 }]) {
+      expect(() => parseFeatureList(bad), JSON.stringify(bad)).toThrow(/^invalid feature list: /);
+    }
+    expect(() => parseFeatureList({ features: [{ id: 1 }], storageError: null })).toThrow(/^invalid feature: /);
+    for (const bad of [null, feature(), { feature: feature() }, { feature: feature(), saveError: false }]) {
+      expect(() => parseFeatureChange(bad), JSON.stringify(bad)).toThrow(/^invalid feature change: /);
+    }
+    expect(() => parseFeatureChange({ feature: null, saveError: null })).toThrow(/^invalid feature: /);
   });
 });
 

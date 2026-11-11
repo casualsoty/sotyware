@@ -27,7 +27,7 @@ let app: ReturnType<typeof mount> | undefined;
  * features (Features.test.ts covers them), everything else with null. */
 function backend(cmd: string): unknown {
   if (cmd === LIST_CMD) {
-    return [];
+    return { features: [], storageError: null };
   }
   return cmd === MODE_CMD ? mode : null;
 }

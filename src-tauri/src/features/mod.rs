@@ -5,10 +5,13 @@
 //! builds a [`FeatureRegistry`] from that list and manages it as Tauri state; the
 //! registry owns every feature, drives its lifecycle and isolates failures: an
 //! error from one feature is recorded in that feature's state and never stops
-//! another one. The frontend sees features only through the two commands below.
+//! another one. Whether a feature starts, and saving the user's choice, is the
+//! job of [`FeaturePreferences`]; the registry never sees storage. The frontend
+//! sees features only through the two commands below.
 //! How to add a feature: docs/architecture/features.md.
 
 mod example;
+mod preferences;
 mod registry;
 
 use std::fmt;
@@ -16,6 +19,7 @@ use std::fmt;
 use serde::Serialize;
 use tauri::State;
 
+pub use preferences::{FeaturePreferences, PreferenceStore, StoreError};
 pub use registry::FeatureRegistry;
 
 /// Every built-in feature, in registration order. Startup runs them in this
@@ -26,22 +30,12 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
     vec![Box::new(example::Example::default())]
 }
 
-/// Whether a feature starts when sotyware starts.
-///
-/// Nothing is persisted yet, so this is the feature's default: a feature the
-/// user disabled is enabled again after a restart if its default says so. When
-/// preferences are stored, the stored choice is looked up here (falling back to
-/// the default); the registry itself never reads or writes storage.
-pub fn enabled_at_startup(metadata: &FeatureMetadata) -> bool {
-    metadata.enabled_by_default
-}
-
 /// What a feature is. Fixed at compile time; the registry copies it once, at
 /// registration, so it cannot change while the app runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeatureMetadata {
     /// Stable, unique, lowercase kebab-case (`example`, `clipboard-history`).
-    /// Never change it once released: stored preferences will be keyed by it.
+    /// Never change it once released: stored preferences are keyed by it.
     pub id: &'static str,
     /// Human-readable name shown in the dashboard.
     pub name: &'static str,
@@ -49,8 +43,8 @@ pub struct FeatureMetadata {
     pub description: &'static str,
     /// The feature's own version, independent of the app version.
     pub version: &'static str,
-    /// Whether the feature starts when there is no stored preference (today:
-    /// always, see [`enabled_at_startup`]).
+    /// Whether the feature starts when no preference is stored for it (see
+    /// [`FeaturePreferences::enabled_at_startup`]).
     pub enabled_by_default: bool,
 }
 
@@ -131,28 +125,83 @@ pub struct FeatureInfo {
     pub error: Option<String>,
 }
 
-/// Lists every registered feature, in registration order.
-/// Allowed for the dashboard by the `allow-list-features` permission.
-#[tauri::command]
-pub fn list_features(registry: State<'_, FeatureRegistry>) -> Vec<FeatureInfo> {
-    registry.list()
+/// What `list_features` returns: every feature, and why stored preferences
+/// could not be loaded, if they could not (the features then run with their
+/// defaults and changes are not saved).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureList {
+    pub features: Vec<FeatureInfo>,
+    pub storage_error: Option<String>,
 }
 
-/// Enables (starts) or disables (stops) one feature and returns its new state.
-/// A failing start is not an error here: it is reported as state `failed`. The
+/// What `set_feature_enabled` returns: the feature's new state, and why the
+/// choice could not be saved, if it could not. The switch itself has happened
+/// either way; an unsaved choice lasts until sotyware quits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureChange {
+    pub feature: FeatureInfo,
+    pub save_error: Option<String>,
+}
+
+/// `list_features` without Tauri, for tests.
+pub(crate) fn feature_list(registry: &FeatureRegistry, prefs: &FeaturePreferences) -> FeatureList {
+    FeatureList {
+        features: registry.list(),
+        storage_error: prefs.load_error().map(ToString::to_string),
+    }
+}
+
+/// `set_feature_enabled` without Tauri, for tests: switch, then save the result.
+/// Only a switch the registry accepted is saved; a failed save is reported in
+/// the result, not as an error, because the switch cannot be undone safely.
+pub(crate) fn switch_feature(
+    registry: &FeatureRegistry,
+    prefs: &FeaturePreferences,
+    id: &str,
+    enabled: bool,
+) -> Result<FeatureChange, String> {
+    let feature = registry
+        .set_enabled(id, enabled)
+        .map_err(|e| e.to_string())?;
+    let save_error = prefs.save_current(registry, id).err().map(|e| {
+        eprintln!("sotyware: failed to save the preference for feature '{id}': {e}");
+        e.to_string()
+    });
+    Ok(FeatureChange {
+        feature,
+        save_error,
+    })
+}
+
+/// Lists every registered feature, in registration order, and whether stored
+/// preferences were available. Allowed for the dashboard by the
+/// `allow-list-features` permission.
+#[tauri::command]
+pub fn list_features(
+    registry: State<'_, FeatureRegistry>,
+    prefs: State<'_, FeaturePreferences>,
+) -> FeatureList {
+    feature_list(&registry, &prefs)
+}
+
+/// Enables (starts) or disables (stops) one feature, saves the choice, and
+/// returns the feature's new state with any save error. A failing start is not
+/// an error here: it is reported as state `failed` (and saved as enabled). The
 /// command fails only for an unknown id or a transition the current state does
-/// not allow. Runs on Tauri's thread pool (`async`), so a feature's `start` or
-/// `stop` never blocks the event loop.
-/// Allowed for the dashboard by the `allow-set-feature-enabled` permission.
+/// not allow; then nothing is saved. Runs on Tauri's thread pool (`async`), so
+/// neither a feature's `start`/`stop` nor the database write blocks the event
+/// loop. Allowed for the dashboard by the `allow-set-feature-enabled`
+/// permission.
 #[tauri::command(async)]
 pub fn set_feature_enabled(
     registry: State<'_, FeatureRegistry>,
+    prefs: State<'_, FeaturePreferences>,
     id: String,
     enabled: bool,
-) -> Result<FeatureInfo, String> {
-    registry
-        .set_enabled(&id, enabled)
-        .map_err(|e| e.to_string())
+) -> Result<FeatureChange, String> {
+    switch_feature(&registry, &prefs, &id, enabled)
 }
 
 #[cfg(test)]
@@ -191,15 +240,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn startup_uses_the_default_while_nothing_is_persisted() {
-        let mut metadata = builtin()[0].metadata();
-        metadata.enabled_by_default = true;
-        assert!(enabled_at_startup(&metadata));
-        metadata.enabled_by_default = false;
-        assert!(!enabled_at_startup(&metadata));
-    }
-
     /// The frontend (`src/features.ts`) parses exactly this shape.
     #[test]
     fn frontend_receives_feature_info_in_this_shape() {
@@ -223,6 +263,40 @@ mod tests {
                 "enabled": true,
                 "error": "boom",
             })
+        );
+    }
+
+    /// `src/features.ts` parses exactly these shapes too.
+    #[test]
+    fn frontend_receives_the_list_and_the_change_in_this_shape() {
+        let info = FeatureInfo {
+            id: "example",
+            name: "Example",
+            description: "Does nothing.",
+            version: "0.1.0",
+            state: FeatureState::Disabled,
+            enabled: false,
+            error: None,
+        };
+        let list = FeatureList {
+            features: vec![info.clone()],
+            storage_error: Some("file is not a database".into()),
+        };
+        let change = FeatureChange {
+            feature: info,
+            save_error: None,
+        };
+        let info_json = serde_json::to_value(&change.feature).unwrap();
+        assert_eq!(
+            serde_json::to_value(&list).unwrap(),
+            serde_json::json!({
+                "features": [info_json.clone()],
+                "storageError": "file is not a database",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&change).unwrap(),
+            serde_json::json!({ "feature": info_json, "saveError": null })
         );
     }
 

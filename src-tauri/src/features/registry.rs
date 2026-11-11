@@ -200,6 +200,14 @@ impl FeatureRegistry {
         self.entries.iter().map(Entry::info).collect()
     }
 
+    /// The feature `id` with its current state, if it is registered.
+    pub fn info(&self, id: &str) -> Option<FeatureInfo> {
+        self.entries
+            .iter()
+            .find(|e| e.metadata.id == id)
+            .map(Entry::info)
+    }
+
     /// Startup: starts each still-`Registered` feature for which `enabled`
     /// says so, in registration order, and marks the others `Disabled`. A
     /// failing feature ends up `Failed`; the next one is started anyway.
@@ -441,6 +449,19 @@ mod tests {
             calls(&log).is_empty(),
             "registering must not start anything"
         );
+    }
+
+    #[test]
+    fn info_returns_one_feature_as_listed_or_none_for_an_unknown_id() {
+        let log = new_log();
+        let registry = registry_with(vec![
+            TestFeature::new("alpha", &log).boxed(),
+            TestFeature::new("beta", &log).boxed(),
+        ]);
+        registry.set_enabled("beta", true).unwrap();
+        assert_eq!(registry.info("beta"), Some(state_of(&registry, "beta")));
+        assert_eq!(registry.info("beta").unwrap().state, Running);
+        assert_eq!(registry.info("gamma"), None);
     }
 
     #[test]
