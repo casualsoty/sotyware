@@ -147,7 +147,8 @@ pub const BACKBLAZE_B2: ProviderProfile = ProviderProfile {
     known_regions: &[
         KnownRegion {
             id: "eu-central-003",
-            location: "Amsterdam, NL (assumed id; check the bucket endpoint)",
+            // Accepted by Backblaze 2026-11-11 (opt-in integration test).
+            location: "Amsterdam, NL",
         },
         KnownRegion {
             id: "us-west-004",

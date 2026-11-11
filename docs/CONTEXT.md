@@ -126,7 +126,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   test process (round trips with SHA-256, multipart, bad keys, network
   failure, timeout, corruption, two accounts at once, separate transfer
   queues). 2 more are opt-in, `#[ignore]`d, against real Backblaze/Hetzner
-  accounts; **never run** (no account). The other 89: 31 cover the lifecycle, mode and tray
+  accounts: the Backblaze one **passed against a real B2 bucket**
+  (`eu-central-003`, 2026-11-11, 3 runs each on WSL2 and native Windows 11;
+  [status.md](status/status.md#backblaze-b2-against-the-real-provider-2026-11-11)),
+  the Hetzner one was never run (no account). The other 89: 31 cover the lifecycle, mode and tray
   decisions (mode selection from the real `ksni`/`zbus` error types, close →
   hide or quit per mode, hide granted only in tray mode, implicit exit blocked,
   unexpected tray failure → exit 1, second launch, tray dispatch, config

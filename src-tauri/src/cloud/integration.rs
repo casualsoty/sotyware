@@ -17,8 +17,13 @@
 //!   never deletes by prefix and never touches anything listed but not
 //!   uploaded by the run.
 //! - The test files are generated; no personal file is read.
+//! - Before and after, the run prefix is checked for object *versions* and
+//!   delete markers too, not only for current objects: on an always-versioned
+//!   provider (B2) a prefix can look empty while hidden versions stay billed.
 
 use std::fs;
+
+use aws_sdk_s3::error::DisplayErrorContext;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::account::AccountConfig;
@@ -47,6 +52,48 @@ fn target(name: &str, account_id: &'static str, provider: &'static str) -> Targe
         bucket: var("BUCKET"),
         region: var("REGION"),
     }
+}
+
+/// One entry of a version listing: key, version id, whether it is a delete
+/// marker (B2 calls it a hide marker).
+type VersionEntry = (String, String, bool);
+
+/// Every version and delete marker under `prefix`, following the markers.
+async fn versions(store: &S3Store, bucket: &str, prefix: &str) -> Vec<VersionEntry> {
+    let mut all = Vec::new();
+    let (mut key_marker, mut version_marker) = (None::<String>, None::<String>);
+    loop {
+        let out = store
+            .sdk_client()
+            .list_object_versions()
+            .bucket(bucket)
+            .prefix(prefix)
+            .set_key_marker(key_marker.take())
+            .set_version_id_marker(version_marker.take())
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("list object versions: {}", DisplayErrorContext(&e)));
+        for v in out.versions() {
+            all.push((
+                v.key().unwrap_or_default().to_owned(),
+                v.version_id().unwrap_or_default().to_owned(),
+                false,
+            ));
+        }
+        for m in out.delete_markers() {
+            all.push((
+                m.key().unwrap_or_default().to_owned(),
+                m.version_id().unwrap_or_default().to_owned(),
+                true,
+            ));
+        }
+        if out.is_truncated() != Some(true) {
+            break;
+        }
+        key_marker = out.next_key_marker().map(str::to_owned);
+        version_marker = out.next_version_id_marker().map(str::to_owned);
+    }
+    all
 }
 
 /// Deletes exactly what the run created, newest first; reports, never panics,
@@ -101,6 +148,10 @@ async fn round_trip(t: Target) {
             .is_empty(),
         "the run prefix must be new"
     );
+    assert!(
+        versions(&store, &t.bucket, &prefix).await.is_empty(),
+        "the run prefix must have no versions"
+    );
 
     let dir = TempDir::new("it");
     let small = dir.file("small.bin", 200_000, 1);
@@ -139,6 +190,56 @@ async fn round_trip(t: Target) {
         }
         let listed = store.list_objects(&t.bucket, &prefix).await?;
         assert_eq!(listed.len(), 2, "{listed:?}");
+        for (key, version) in &created {
+            assert!(
+                version.is_some(),
+                "{key}: no version id, so cleanup could only hide it"
+            );
+        }
+
+        // A plain delete (no version id) on an always-versioned bucket only
+        // hides the object: it disappears from listings and reads, a delete
+        // marker appears, and the uploaded version is still stored.
+        let small_key = format!("{prefix}small.bin");
+        let small_version = created[0].1.clone().expect("checked above");
+        store.delete_object(&t.bucket, &small_key, None).await?;
+        let after = versions(&store, &t.bucket, &prefix).await;
+        let markers: Vec<_> = after
+            .iter()
+            .filter(|(k, _, marker)| *marker && *k == small_key)
+            .collect();
+        // Cleanup must remove the marker too; record it before asserting.
+        for (k, id, _) in &markers {
+            created.push((k.clone(), Some(id.clone())));
+        }
+        println!(
+            "plain delete: {} delete marker(s), versions now {after:?}",
+            markers.len()
+        );
+        assert_eq!(markers.len(), 1, "{after:?}");
+        assert!(
+            after
+                .iter()
+                .any(|(k, id, marker)| !*marker && *k == small_key && *id == small_version),
+            "the uploaded version must still be stored after a plain delete: {after:?}"
+        );
+        assert!(store.head_object(&t.bucket, &small_key).await?.is_none());
+        let listed = store.list_objects(&t.bucket, &prefix).await?;
+        assert_eq!(
+            listed.len(),
+            1,
+            "a hidden object must not be listed: {listed:?}"
+        );
+        let dest = dir.path("hidden.back");
+        let e = store
+            .download_file(&t.bucket, &small_key, &dest)
+            .await
+            .unwrap_err();
+        println!("download hidden: {e}");
+        assert!(matches!(e, StorageError::NotFound(_)), "{e:?}");
+        assert!(!dest.exists(), "a failed download must leave no file");
+        let missing = format!("{prefix}never-uploaded.bin");
+        assert!(store.head_object(&t.bucket, &missing).await?.is_none());
 
         let wrong = S3Store::new(
             resolved.clone(),
@@ -157,10 +258,15 @@ async fn round_trip(t: Target) {
 
     let cleaned = cleanup(&store, &t.bucket, &created).await;
     let left = store.list_objects(&t.bucket, &prefix).await;
-    println!("after cleanup: {left:?}");
+    let left_versions = versions(&store, &t.bucket, &prefix).await;
+    println!("after cleanup: objects {left:?}, versions {left_versions:?}");
     outcome.expect("round trip");
     assert!(cleaned, "cleanup failed; see CLEANUP FAILED lines");
     assert!(left.unwrap().is_empty(), "objects left under {prefix}");
+    assert!(
+        left_versions.is_empty(),
+        "versions or delete markers left under {prefix}: {left_versions:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

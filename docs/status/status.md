@@ -90,6 +90,51 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Backblaze B2 against the real provider (2026-11-11)
+
+Working tree on `18f6457` plus the uncommitted test extension that adds this
+entry (not committed; the Windows checkout had the same patch applied). These
+are **real requests to Backblaze**, not the local test server.
+
+Target: a dedicated private test bucket (Object Lock off) in the user's
+Backblaze account in EU Central, reached at
+`https://s3.eu-central-003.backblazeb2.com`, path style. Key: an application
+key restricted to that bucket, read and write, file name prefix
+`sotyware-it/`, without "list all bucket names". Each run used its own prefix
+`sotyware-it/<nanoseconds>-<pid>/`.
+
+What `backblaze_b2_round_trip` checked against Backblaze, in every run:
+
+| Check | Verified behaviour |
+| --- | --- |
+| Endpoint and region | `s3.eu-central-003.backblazeb2.com` accepted SigV4 requests signed for region `eu-central-003`; no profile change needed |
+| `ListBuckets` | refused for this key: `AccessDenied`, message "not entitled" (expected for a bucket-restricted key; reported, not failed) |
+| Run prefix new | no objects and no versions under it before the run |
+| Single PUT (200,000 bytes) | 1 part; Backblaze returned a version id; `HeadObject` returned the stored SHA-256 metadata |
+| Multipart (12,582,919 bytes, 5 MiB parts) | 3 parts; version id returned; SHA-256 metadata stored |
+| Download | both files `Sha256Matched` and byte-identical |
+| `ListObjectsV2` | both objects listed |
+| Plain delete (no version id) | the object disappears from `HeadObject`, listings and `GetObject` (`NotFound`, "Key not found", no partial file left); `ListObjectVersions` shows one new delete marker and the uploaded version still stored |
+| Object never uploaded | `HeadObject` → `None` |
+| Wrong secret | `InvalidCredentials`, "Signature validation failed" |
+| Cleanup | deletes exactly the uploaded versions and the delete marker by version id; afterwards `ListObjectsV2` **and `ListObjectVersions`** under the run prefix are empty |
+
+| Platform | Runs | Result | Timings (upload small / large, download small / large) |
+| --- | --- | --- | --- |
+| WSL2, Ubuntu 24.04.1, Rust 1.99.1 | 1 with the test as committed in `18f6457`, then 3 with the extension | ✅ 4/4 | e.g. 0.35 s / 3.65 s, 0.37 s / 0.91 s; whole test 7.8–10.6 s (first run 30.5 s) |
+| Native Windows 11 25H2, MSVC Rust 1.99.1, checkout `C:\dev\sotyware` | 3 with the extension | ✅ 3/3 | e.g. 0.46 s / 2.74 s, 0.37 s / 0.48 s; whole test 5.2–15.5 s |
+
+The first WSL2 run (before the extension) cleaned up by version id and left no
+current object, but its prefix was not checked with `ListObjectVersions`.
+Offline suites after the change: `cargo fmt --check`, `cargo clippy
+--all-targets -- -D warnings` and `cargo test` (140 passed, 3 ignored on WSL2;
+132 passed, 3 ignored on Windows). Frontend tests were not rerun (no frontend
+change). Commands: [testing.md](../development/testing.md#cloud-storage-integration-tests).
+
+Not verified at Backblaze: an unknown key id, the SDK's checksum headers
+(`WhenRequired` stays), objects above 12 MiB, throttling, interrupted
+transfers, Object Lock, lifecycle rules, a key without prefix restriction.
+
 ### Cloud storage proof of concept (2026-11-11)
 
 Tested as the working tree of the commit that adds this entry (parent `b0c4300`). No provider account was used:

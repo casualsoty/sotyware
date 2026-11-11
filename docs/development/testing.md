@@ -175,30 +175,63 @@ layers, the first two in every `cargo test`:
 `cloud/integration.rs` holds one test per provider, `#[ignore]`d, so neither
 `cargo test` nor CI ever contacts a provider. Each one, against a bucket you
 name: lists buckets (a bucket-restricted key may be refused; that is
-reported, not failed), checks that its run prefix `sotyware-it/<run id>/` is
-empty, uploads a 200 kB file (one PUT) and a 12 MiB file (3 parts of 5 MiB),
+reported, not failed), checks that its run prefix `sotyware-it/<run id>/` has
+no objects and no versions, uploads a 200 kB file (one PUT) and a 12 MiB file (3 parts of 5 MiB),
 checks the stored SHA-256, downloads and compares both, lists them, checks
-that a wrong secret gives `InvalidCredentials`, then deletes **exactly the
-versions it created** (never by prefix) and checks that the prefix is empty
-again. It prints timings and the endpoint. Test data is generated; no personal
+that each upload returned a version id, deletes the small file without a
+version id and checks that this only hides it (one delete marker, the version
+still stored, `NotFound` on download, no partial file), checks that a wrong
+secret gives `InvalidCredentials`, then deletes **exactly the versions and the
+delete marker it created** (never by prefix) and checks that the prefix has no
+objects and no versions again. The version listing goes straight through the
+SDK client (`S3Store::sdk_client`, test builds only); the adapter itself offers
+no version listing. It prints timings and the endpoint. Test data is generated; no personal
 file is read. Use a dedicated test bucket anyway.
 
 **Backblaze B2:**
 
 1. In the Backblaze web console: create a private bucket for tests only (for
-   example `sotyware-it-<something unique>`). Note the endpoint shown with it
+   example `sotyware-it-<something unique>`), **Object Lock disabled** (locked
+   versions could not be cleaned up). Note the endpoint shown with it
    (`s3.<region>.backblazeb2.com`); the part between `s3.` and
-   `.backblazeb2.com` is the region.
+   `.backblazeb2.com` is the region (`eu-central-003` for EU Central,
+   confirmed 2026-11-11).
 2. Application Keys → Add a New Application Key: access to that bucket only,
-   read and write. Note the keyID and the applicationKey (shown once).
-3. Run, in `src-tauri/`:
+   read and write, file name prefix `sotyware-it/` (every test key is under
+   it), "list all bucket names" off; an expiry is a good idea. Note the keyID
+   and the applicationKey (shown once).
+3. Run, in `src-tauri/`, typing the values at the prompts so they stay out of
+   the shell history and the command line:
 
    ```bash
-   export SOTYWARE_IT_B2_BUCKET=<bucket> SOTYWARE_IT_B2_REGION=<region>
-   export SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID=<keyID>
+   export SOTYWARE_IT_B2_REGION=eu-central-003
+   read -r SOTYWARE_IT_B2_BUCKET && export SOTYWARE_IT_B2_BUCKET
+   read -rs SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID && export SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID
    read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY
    cargo test --lib cloud::integration::backblaze_b2_round_trip -- --ignored --nocapture
    ```
+
+   How the 2026-11-11 runs were done, so an agent (whose shell does not keep
+   variables between commands) could run them without seeing the values:
+
+   - WSL2: the four `NAME=value` lines in `~/.config/sotyware-it/b2.env`
+     (directory mode 700, file 600, written in an editor, outside the
+     repository); a script outside the repository did `set -a; .
+     ~/.config/sotyware-it/b2.env; set +a`, ran the `cargo test` command above
+     and replaced the key id, secret and bucket name in the output with
+     `<keyID>`, `<secret>`, `<bucket>`.
+   - Windows: `Get-Credential | Export-Clixml
+     $env:USERPROFILE\.sotyware-it\b2.xml` (keyID as user name, applicationKey
+     as password; encrypted with DPAPI for that Windows user) and the bucket
+     name in `b2-bucket.txt` next to it. A script outside the repository
+     reloaded the Windows `PATH`, set `$env:SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID
+     = $c.UserName` and `..._SECRET_ACCESS_KEY =
+     $c.GetNetworkCredential().Password` from `$c = Import-Clixml …`, ran the
+     same `cargo test` in `C:\dev\sotyware\src-tauri` and redacted the
+     output the same way.
+
+   Delete these files (and the key in the console) when the bucket is no
+   longer used for tests.
 
 B2 buckets are always versioned; the test deletes its versions by id, so
 nothing stays billed. A failed run prints `CLEANUP FAILED` lines naming what to

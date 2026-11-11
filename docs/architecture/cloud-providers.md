@@ -50,7 +50,7 @@ provider account was used.
 | Object Lock | yes (governance, compliance, legal hold, 1–3,000 days), no extra cost | yes (governance, compliance, legal hold); must be enabled when the bucket is created; deleted anyway when the contract ends |
 | S3 API | SigV4 only, HTTPS only, path and virtual-hosted style; no object tagging, ACLs limited to private/public-read | SigV4 only; "basic compatibility"; no tagging, replication, website, inventory, etc.; SSE-C only; examples use virtual-hosted style only |
 | Endpoint | `https://s3.<region>.backblazeb2.com` | `https://<location>.your-objectstorage.com` |
-| EU regions | EU Central (Amsterdam). **One region per account, chosen at sign-up, cannot be changed.** Region id `eu-central-003` is not confirmed by an official page; read it from the bucket's endpoint in the console | Falkenstein (fsn1), Nuremberg (nbg1), Helsinki (hel1); one data centre per bucket, no replication |
+| EU regions | EU Central (Amsterdam). **One region per account, chosen at sign-up, cannot be changed.** Region id `eu-central-003` is not on an official page, but a real bucket's endpoint was `s3.eu-central-003.backblazeb2.com` and requests to it succeeded (2026-11-11); read it from the bucket's endpoint in the console | Falkenstein (fsn1), Nuremberg (nbg1), Helsinki (hel1); one data centre per bucket, no replication |
 | Multipart | parts 5 MB–5 GB, at least 2 parts, part numbers up to 10,000; large files up to 10 TB | parts up to 5 GB, up to 10,000 parts; minimum part size not documented |
 | Single PUT | 5 GB (documented for the native API) | 5 GB |
 | Max object | 10 TB | 5 TB |
@@ -140,10 +140,13 @@ Conditions and risks to check before relying on it:
 3. Find out whether Backblaze charges French VAT (the account's billing
    settings or invoice) and the card's currency-conversion fee. Neither is on
    an official page.
-4. Run the opt-in integration test against a dedicated test bucket
-   ([testing.md](../development/testing.md#cloud-storage-integration-tests)):
-   the S3 behaviour (error codes, checksum headers, path style) is only known
-   from documentation and the local test server.
+4. ~~Run the opt-in integration test against a dedicated test bucket~~
+   Done 2026-11-11 on WSL2 and native Windows 11
+   ([status.md](../status/status.md#backblaze-b2-against-the-real-provider-2026-11-11)):
+   endpoint and region, path style, single and multipart upload, SHA-256
+   round trip, hide-on-delete and delete by version, and the wrong-secret
+   error were verified. The SDK's own checksum headers stay off and were not
+   tried.
 
 Hetzner becomes the better choice only near 1 TB with moderate downloads, if
 EU-only ownership of the company matters, or as a **second, independent

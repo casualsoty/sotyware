@@ -95,7 +95,10 @@ uploads and differ between providers.
 mapping from S3 error codes is a pure function (`classify_response`). Which
 codes Backblaze and Hetzner really return for a bad key is checked only by the
 opt-in integration tests (the test server returns `NotSignedUp` and
-`SignatureDoesNotMatch`). No error message contains a secret.
+`SignatureDoesNotMatch`). Backblaze, 2026-11-11: a wrong secret →
+`InvalidCredentials` ("Signature validation failed"), `ListBuckets` with a
+bucket-restricted key → `AccessDenied` ("not entitled"), reading a hidden
+object → `NotFound` ("Key not found"); an unknown key id was not tried. No error message contains a secret.
 
 ## Accounts, credentials and queues
 

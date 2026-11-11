@@ -248,12 +248,16 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 
 - **Not part of the app.** No feature, command or dashboard element uses the
   `cloud` module; a user cannot configure an account or transfer a file.
-- **Never run against a real provider.** No Backblaze or Hetzner account was
-  available. Everything provider-specific comes from documentation and is
-  unverified: the error codes for a bad key, whether the SDK's checksum headers
-  would be accepted (they are turned off), path-style addressing on Hetzner
-  (the profile uses virtual-hosted style), the Backblaze EU region id
-  `eu-central-003`, and the minimum part size at Hetzner (5 MiB assumed).
+- **Backblaze verified only for what the opt-in test does; Hetzner never
+  run.** Against a real B2 bucket in `eu-central-003` (2026-11-11, WSL2 and
+  native Windows 11): endpoint, region, path style, a 200 kB PUT, a 3-part
+  multipart upload, SHA-256 round trip, hide-on-delete, delete by version and
+  the wrong-secret error ([status.md](status.md#backblaze-b2-against-the-real-provider-2026-11-11)).
+  Still unverified at Backblaze: an unknown key id, the SDK's checksum headers
+  (turned off), files larger than 12 MiB or the 5 GB single-PUT limit, many
+  parts, throttling (429/503), interrupted transfers, Object Lock and
+  lifecycle rules, and keys without a prefix restriction. Hetzner: nothing
+  (path-style addressing, the minimum part size, its error codes).
 - **Credentials only from environment variables.** No OS keyring yet;
   environment variables are visible to other processes of the same user and
   are meant for development and the opt-in tests only.

@@ -40,11 +40,11 @@ the provider recommendation (Backblaze B2, EU Central) is in
 [cloud-providers.md](../architecture/cloud-providers.md#recommendation). In
 order:
 
-1. **Run the opt-in integration tests with real accounts**: a Backblaze B2
-   test bucket and key first, then Hetzner
-   ([how](../development/testing.md#cloud-storage-integration-tests)), on Linux
-   and on Windows. Record the error codes and timings; fix the profiles where
-   the documentation was wrong. Needs the user's accounts.
+1. **Run the opt-in integration tests with real accounts.** Backblaze B2:
+   done 2026-11-11 on WSL2 and native Windows 11, no profile correction needed
+   ([status.md](status.md#backblaze-b2-against-the-real-provider-2026-11-11)).
+   Hetzner: not run, needs the user's account
+   ([how](../development/testing.md#cloud-storage-integration-tests)).
 2. Confirm VAT and currency charges on the first Backblaze invoice, and set the
    bucket's lifecycle rule (keep only the last version).
 3. Credentials in the OS keyring (Windows Credential Manager, Secret Service)

@@ -462,6 +462,14 @@ impl S3Store {
             .map_err(|e| StorageError::Io(format!("transfer queue closed: {e}")))
     }
 
+    /// The SDK client, so the opt-in integration tests can check what the
+    /// provider really stored (object versions, delete markers) without the
+    /// adapter offering those calls to the app.
+    #[cfg(test)]
+    pub(super) fn sdk_client(&self) -> &Client {
+        &self.client
+    }
+
     /// Every bucket the credentials can see. A key restricted to one bucket
     /// may be refused this (`AccessDenied`); use the configured buckets then.
     pub async fn list_buckets(&self) -> Result<Vec<String>, StorageError> {
