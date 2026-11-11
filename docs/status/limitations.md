@@ -241,6 +241,43 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
   (Windows: unit tests). Not checked on Windows 10, real Linux desktops, the
   installed copies, a roaming or redirected profile, or a network drive.
 
+## Cloud storage (proof of concept)
+
+Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
+[cloud-providers.md](../architecture/cloud-providers.md).
+
+- **Not part of the app.** No feature, command or dashboard element uses the
+  `cloud` module; a user cannot configure an account or transfer a file.
+- **Never run against a real provider.** No Backblaze or Hetzner account was
+  available. Everything provider-specific comes from documentation and is
+  unverified: the error codes for a bad key, whether the SDK's checksum headers
+  would be accepted (they are turned off), path-style addressing on Hetzner
+  (the profile uses virtual-hosted style), the Backblaze EU region id
+  `eu-central-003`, and the minimum part size at Hetzner (5 MiB assumed).
+- **Credentials only from environment variables.** No OS keyring yet;
+  environment variables are visible to other processes of the same user and
+  are meant for development and the opt-in tests only.
+- **Uploads:** the file is read twice (hash, then send); the parts of one file
+  are sent one after another, not in parallel; an interrupted upload starts
+  again from the beginning (no resume); a file that changes during upload is
+  detected only by size and modification time.
+- **Deletes on versioned buckets:** `delete_object` without a version id only
+  hides the object on Backblaze (always versioned) and on a Hetzner bucket with
+  versioning; the data stays billed. Only the exact version returned by the
+  upload is removed for good.
+- **No retrying queue.** Transient errors are retried only by the SDK (3
+  attempts per request); a failed transfer is not queued again.
+- **Pricing is not in the code.** The cost figures in cloud-providers.md are
+  estimates from list prices of 2026-11-11, with VAT for French consumers and
+  card currency fees unconfirmed.
+- **Test server limits:** `s3s-fs` lists nothing below a second folder level
+  (seen with restic's `data/xx/` packs, so `restic check` against it reports
+  missing packs), stores no versions, and does not check SigV4 checksums of
+  streamed bodies the way a provider might. Its errors are not the providers'
+  errors.
+- **Dependencies:** `aws-sdk-s3` is held at 1.102.0 by `rust-version = 1.90`;
+  `s3s` 0.12 needs the dev-only `digest` release-candidate pin.
+
 ## General
 
 - **Placeholder icons.** `src-tauri/icons/` contains Tauri's default icons.

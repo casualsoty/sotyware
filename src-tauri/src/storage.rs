@@ -1,4 +1,5 @@
-//! SQLite storage for feature preferences (ADR-015).
+//! SQLite storage for feature preferences (ADR-015) and, for the cloud
+//! storage proof of concept, account configurations (ADR-016).
 //!
 //! One database file, `preferences.sqlite3`, in the app's local data
 //! directory (`run()` resolves it). The schema version is SQLite's
@@ -16,6 +17,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, TransactionBehavior, params};
 
+use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
 
 /// The database file inside the app's local data directory.
@@ -64,17 +66,23 @@ impl SqliteStore {
     }
 
     fn open_with(path: &Path, migrations: &[&str]) -> Result<Self, StoreError> {
-        let shown = path.display().to_string();
-        let opened = (|| {
-            let mut conn = Connection::open(path).map_err(sql_error("cannot open"))?;
-            conn.busy_timeout(BUSY_TIMEOUT)
-                .map_err(sql_error("cannot configure"))?;
-            check_integrity(&conn)?;
-            migrate(&mut conn, migrations)?;
-            Ok(Self { conn })
-        })();
-        opened.map_err(|e: StoreError| StoreError::new(format!("{shown}: {e}")))
+        open_database(path, migrations).map(|conn| Self { conn })
     }
+}
+
+/// Opens (creating it if needed) the database at `path`, checks it and brings
+/// its schema to `migrations.len()`. Shared by every store in this module.
+fn open_database(path: &Path, migrations: &[&str]) -> Result<Connection, StoreError> {
+    let shown = path.display().to_string();
+    let opened = (|| {
+        let mut conn = Connection::open(path).map_err(sql_error("cannot open"))?;
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(sql_error("cannot configure"))?;
+        check_integrity(&conn)?;
+        migrate(&mut conn, migrations)?;
+        Ok(conn)
+    })();
+    opened.map_err(|e: StoreError| StoreError::new(format!("{shown}: {e}")))
 }
 
 /// Fails for a file that is not an SQLite database or whose pages are damaged.
@@ -163,6 +171,139 @@ pub fn open_feature_store(
 ) -> Result<Box<dyn PreferenceStore>, StoreError> {
     let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
     Ok(Box::new(SqliteStore::open_in(&dir)?))
+}
+
+/// The cloud storage account database, separate from the preferences: the
+/// proof of concept is not wired into the app, so it must not change the
+/// released preferences schema (ADR-016).
+pub const ACCOUNTS_FILE_NAME: &str = "cloud-accounts.sqlite3";
+
+/// Schema of [`ACCOUNTS_FILE_NAME`]; append only, like [`MIGRATIONS`]. There
+/// is deliberately no column for a secret: credentials are looked up by
+/// account id elsewhere.
+pub const ACCOUNT_MIGRATIONS: &[&str] = &[
+    // 1: one row per account, its buckets in a second table.
+    "CREATE TABLE storage_accounts (
+        account_id TEXT PRIMARY KEY NOT NULL,
+        label TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        region TEXT NOT NULL,
+        endpoint TEXT,
+        path_style INTEGER CHECK (path_style IN (0, 1)),
+        max_concurrent_transfers INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE storage_account_buckets (
+        account_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        bucket TEXT NOT NULL,
+        PRIMARY KEY (account_id, position)
+    ) STRICT;",
+];
+
+/// Cloud storage account configurations in a SQLite database.
+pub struct SqliteAccountStore {
+    conn: Connection,
+}
+
+impl SqliteAccountStore {
+    /// Opens (creating it if needed) the database at `path`.
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, ACCOUNT_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+impl AccountStore for SqliteAccountStore {
+    fn load(&mut self) -> Result<Vec<AccountConfig>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<AccountConfig>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT account_id, label, provider, region, endpoint, path_style,
+                        max_concurrent_transfers
+                 FROM storage_accounts ORDER BY account_id",
+            )?;
+            let mut accounts = stmt
+                .query_map([], |row| {
+                    let transfers: i64 = row.get(6)?;
+                    Ok(AccountConfig {
+                        id: row.get(0)?,
+                        label: row.get(1)?,
+                        provider: row.get(2)?,
+                        region: row.get(3)?,
+                        endpoint: row.get(4)?,
+                        path_style: row.get(5)?,
+                        buckets: Vec::new(),
+                        // Out-of-range values become 0, which `resolve` refuses.
+                        max_concurrent_transfers: u8::try_from(transfers).unwrap_or(0),
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut buckets = self.conn.prepare(
+                "SELECT bucket FROM storage_account_buckets
+                 WHERE account_id = ?1 ORDER BY position",
+            )?;
+            for account in &mut accounts {
+                account.buckets = buckets
+                    .query_map([&account.id], |row| row.get(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+            }
+            Ok(accounts)
+        };
+        read().map_err(sql_error("cannot read the storage accounts"))
+    }
+
+    /// One transaction: the account row and its buckets change together.
+    fn save(&mut self, config: &AccountConfig) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            tx.execute(
+                "INSERT INTO storage_accounts (account_id, label, provider, region, endpoint,
+                     path_style, max_concurrent_transfers)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (account_id) DO UPDATE SET label = excluded.label,
+                     provider = excluded.provider, region = excluded.region,
+                     endpoint = excluded.endpoint, path_style = excluded.path_style,
+                     max_concurrent_transfers = excluded.max_concurrent_transfers",
+                params![
+                    config.id,
+                    config.label,
+                    config.provider,
+                    config.region,
+                    config.endpoint,
+                    config.path_style,
+                    config.max_concurrent_transfers
+                ],
+            )?;
+            tx.execute(
+                "DELETE FROM storage_account_buckets WHERE account_id = ?1",
+                [&config.id],
+            )?;
+            for (position, bucket) in config.buckets.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO storage_account_buckets (account_id, position, bucket)
+                     VALUES (?1, ?2, ?3)",
+                    params![
+                        config.id,
+                        i64::try_from(position).unwrap_or(i64::MAX),
+                        bucket
+                    ],
+                )?;
+            }
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot save the storage account"))
+    }
+
+    fn remove(&mut self, id: &str) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            tx.execute(
+                "DELETE FROM storage_account_buckets WHERE account_id = ?1",
+                [id],
+            )?;
+            tx.execute("DELETE FROM storage_accounts WHERE account_id = ?1", [id])?;
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot remove the storage account"))
+    }
 }
 
 #[cfg(test)]
@@ -596,5 +737,135 @@ mod tests {
             fs::read(dir.db()).unwrap(),
             b"garbage garbage garbage garbage garbage garbage"
         );
+    }
+
+    fn b2_account() -> AccountConfig {
+        let mut c = AccountConfig::new("b2-photos", "Photos", "backblaze-b2", "eu-central-003");
+        c.buckets = vec!["soty-photos".into(), "soty.archive".into()];
+        c.path_style = Some(true);
+        c
+    }
+
+    fn custom_account() -> AccountConfig {
+        let mut c = AccountConfig::new("nas", "NAS", "s3-compatible", "us-east-1");
+        c.endpoint = Some("https://nas.example.org:9000".into());
+        c.max_concurrent_transfers = 2;
+        c
+    }
+
+    #[test]
+    fn storage_accounts_survive_a_restart_with_every_field() {
+        let dir = TestDir::new("accounts");
+        let path = dir.0.join(ACCOUNTS_FILE_NAME);
+        {
+            let mut store = SqliteAccountStore::open(&path).unwrap();
+            assert!(store.load().unwrap().is_empty());
+            store.save(&custom_account()).unwrap();
+            store.save(&b2_account()).unwrap();
+        }
+        let mut store = SqliteAccountStore::open(&path).unwrap();
+        assert_eq!(store.load().unwrap(), [b2_account(), custom_account()]);
+    }
+
+    #[test]
+    fn saving_an_account_again_replaces_it_and_its_buckets() {
+        let dir = TestDir::new("accounts-update");
+        let mut store = SqliteAccountStore::open(&dir.0.join(ACCOUNTS_FILE_NAME)).unwrap();
+        store.save(&b2_account()).unwrap();
+        let mut changed = b2_account();
+        changed.label = "Family photos".into();
+        changed.buckets = vec!["soty-new".into()];
+        changed.path_style = None;
+        store.save(&changed).unwrap();
+        assert_eq!(store.load().unwrap(), [changed]);
+        store.remove("b2-photos").unwrap();
+        store.remove("never-existed").unwrap();
+        assert!(store.load().unwrap().is_empty());
+        let orphans: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM storage_account_buckets", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn the_accounts_database_holds_no_secret() {
+        use crate::cloud::account::Accounts;
+        use crate::cloud::credentials::{Credentials, Secret, StaticCredentials};
+        use crate::cloud::s3::ClientOptions;
+
+        let dir = TestDir::new("accounts-secret");
+        let path = dir.0.join(ACCOUNTS_FILE_NAME);
+        let store = SqliteAccountStore::open(&path).unwrap();
+        let accounts = Accounts::load(Box::new(store), ClientOptions::default()).unwrap();
+        accounts.add(b2_account()).unwrap();
+        let creds = StaticCredentials(vec![(
+            "b2-photos",
+            Credentials {
+                access_key_id: "0031234567890ab0000000001".into(),
+                secret_access_key: Secret::new("K003-super-secret-application-key"),
+            },
+        )]);
+        accounts.connect("b2-photos", &creds).unwrap();
+        drop(accounts);
+        let bytes = fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("soty-photos"), "the account must be stored");
+        assert!(!text.contains("super-secret"));
+        assert!(!text.contains("0031234567890ab"));
+        let conn = Connection::open(&path).unwrap();
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('storage_accounts')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(
+            !columns
+                .iter()
+                .any(|c| c.contains("secret") || c.contains("key")),
+            "{columns:?}"
+        );
+    }
+
+    #[test]
+    fn a_corrupt_accounts_database_is_refused_and_left_alone() {
+        let dir = TestDir::new("accounts-corrupt");
+        let path = dir.0.join(ACCOUNTS_FILE_NAME);
+        fs::write(&path, b"not a database, not a database, not a database").unwrap();
+        assert!(SqliteAccountStore::open(&path).is_err());
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"not a database, not a database, not a database"
+        );
+    }
+
+    #[test]
+    fn an_invalid_stored_concurrency_is_loaded_and_refused_when_used() {
+        let dir = TestDir::new("accounts-range");
+        let path = dir.0.join(ACCOUNTS_FILE_NAME);
+        let mut store = SqliteAccountStore::open(&path).unwrap();
+        store.save(&custom_account()).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE storage_accounts SET max_concurrent_transfers = 999",
+                [],
+            )
+            .unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded[0].max_concurrent_transfers, 0);
+        assert!(loaded[0].resolve().is_err());
+    }
+
+    #[test]
+    fn the_preferences_database_is_not_changed_by_the_accounts_store() {
+        // The proof of concept keeps its own file; the released preferences
+        // schema stays at its version.
+        assert_eq!(MIGRATIONS.len(), 1);
+        assert_ne!(ACCOUNTS_FILE_NAME, FILE_NAME);
     }
 }

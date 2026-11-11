@@ -33,6 +33,33 @@ In priority order:
 
 Fixes found during validation come before anything below.
 
+## Cloud storage (after the proof of concept)
+
+The proof of concept is in [cloud-storage.md](../architecture/cloud-storage.md);
+the provider recommendation (Backblaze B2, EU Central) is in
+[cloud-providers.md](../architecture/cloud-providers.md#recommendation). In
+order:
+
+1. **Run the opt-in integration tests with real accounts**: a Backblaze B2
+   test bucket and key first, then Hetzner
+   ([how](../development/testing.md#cloud-storage-integration-tests)), on Linux
+   and on Windows. Record the error codes and timings; fix the profiles where
+   the documentation was wrong. Needs the user's accounts.
+2. Confirm VAT and currency charges on the first Backblaze invoice, and set the
+   bucket's lifecycle rule (keep only the last version).
+3. Credentials in the OS keyring (Windows Credential Manager, Secret Service)
+   as a second `CredentialSource`, with a decision for Linux without a Secret
+   Service.
+4. Wire the module in as a built-in feature with its commands, permissions and
+   a minimal account UI (its own ADR; decide then whether the accounts table
+   moves into `preferences.sqlite3`).
+5. restic orchestration (child process, `--json`, exit codes), tried first
+   against the B2 test bucket.
+6. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+
+Synchronisation, folder watching, scheduled backups, retention, sharing and a
+virtual filesystem stay ideas until then.
+
 ## Known follow-ups (not started, no design yet)
 
 - CI follow-ups (the workflows exist since `5fe62b9`, see

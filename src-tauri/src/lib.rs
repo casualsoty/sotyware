@@ -24,6 +24,7 @@
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
+pub mod cloud;
 mod features;
 mod storage;
 mod tray;

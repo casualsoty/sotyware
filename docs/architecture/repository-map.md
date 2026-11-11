@@ -15,7 +15,7 @@ Where things are. Generated and ignored paths are listed in
 │       └── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
-│   ├── architecture/         How it works and why (this file, overview, lifecycle, features, single instance, decisions)
+│   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions)
 │   ├── development/          Setup, commands, testing, cross-platform rules
 │   └── status/               What is implemented and validated, limitations, roadmap
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
@@ -43,7 +43,16 @@ Where things are. Generated and ignored paths are listed in
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl + tests (incl. restarts with the built-in features)
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS + tests (incl. restarts with the built-in features)
+│       ├── cloud/            Cloud storage proof of concept (not wired into the app)
+│       │   ├── mod.rs        Module overview, re-exports SqliteAccountStore
+│       │   ├── provider.rs   ProviderProfile data: backblaze-b2, hetzner, s3-compatible + tests
+│       │   ├── account.rs    AccountConfig + resolve(), Accounts, AccountStore trait + tests
+│       │   ├── credentials.rs  Secret, Credentials, CredentialSource, EnvCredentials + tests
+│       │   ├── s3.rs         S3Store (aws-sdk-s3): list, upload (single/multipart), download, delete, SHA-256, errors + tests
+│       │   ├── tests.rs      Storage operations against the in-process S3 server
+│       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs) and temp-file helpers, tests only
+│       │   └── integration.rs  Opt-in (#[ignore]) tests against real Backblaze B2 / Hetzner accounts
 │       └── features/         Built-in features
 │           ├── mod.rs        Feature trait, metadata, state, builtin() list, the two feature commands (FeatureList, FeatureChange) + tests
 │           ├── preferences.rs  FeaturePreferences, PreferenceStore trait: startup choice, save after a switch, failure policy + tests
@@ -68,6 +77,7 @@ Where things are. Generated and ignored paths are listed in
 | Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`) |
 | Where are built-in features? | `src-tauri/src/features/`: listed in `builtin()` in `mod.rs`, run by `FeatureRegistry` in `registry.rs`; how to add one: [features.md](features.md#adding-a-built-in-feature) |
 | Where are feature choices stored? | Policy: `features/preferences.rs`; SQLite, schema and migrations: `storage.rs`; loaded in `run()` in `lib.rs` before the event loop; the file is `preferences.sqlite3` in the app's local data folder ([features.md](features.md#persistence)) |
+| Where is cloud storage? | `src-tauri/src/cloud/` (not used by the app yet); accounts database in `storage.rs`; design: [cloud-storage.md](cloud-storage.md), providers: [cloud-providers.md](cloud-providers.md) |
 | Where is the operating mode chosen? | `select_mode()` in `lib.rs`, from `tray::create()`'s result classified by `tray::unavailable_reason()` |
 | Where are events emitted or listened to? | No custom events exist. Window events: `on_window_event` in `run()`. Exit events: `app.run(...)` closure in `run()` |
 | Where is tray behaviour? | `src-tauri/src/tray.rs`, created from `setup` in `lib.rs` |
@@ -76,5 +86,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` (static); the runtime capability `tray-mode` in `setup` in `lib.rs` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules; frontend tests in `src/*.test.ts` (`App.test.ts`, `Features.test.ts`); desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules (cloud storage: also `cloud/tests.rs`, opt-in `cloud/integration.rs`); frontend tests in `src/*.test.ts` (`App.test.ts`, `Features.test.ts`); desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

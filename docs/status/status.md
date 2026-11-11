@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (persistent feature preferences, validated on WSL2 virtual display and native Windows 11). Update this file whenever
+Last updated: 2026-11-11 (cloud storage proof of concept: headless on WSL2 and native Windows 11, desktop regression runs on both). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -48,6 +48,7 @@ real desktop 99/0 three times
 | Persistent feature preferences: each user switch saved in `preferences.sqlite3` (app local data folder, SQLite via `rusqlite` bundled), loaded before the event loop, stored choice or `enabled_by_default` at startup; schema versioned with `PRAGMA user_version` and transactional migrations; unusable database left untouched and reported (`storageError`), failed saves reported (`saveError`) | `features/preferences.rs`, `storage.rs`, `run()` in `lib.rs` ([features.md](../architecture/features.md#persistence), [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)) |
 | Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
+| Cloud storage proof of concept, **not wired into the app**: provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id from environment variables, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
@@ -65,7 +66,9 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
 Nothing else exists: no product features (only the example feature), no
-settings, no persistence other than the feature choices, no sync, no custom
+settings, no persistence other than the feature choices (the cloud account
+store exists as code but the app never opens it), no cloud storage UI or
+command, no backups, no sync, no custom
 Tauri events, no feature-management UI, no third-party
 plugins, and no custom command other than `operating_mode`, `list_features` and
 `set_feature_enabled`.
@@ -86,6 +89,43 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud storage proof of concept (2026-11-11)
+
+Tested as the working tree of the commit that adds this entry (parent `b0c4300`). No provider account was used:
+**no request reached Backblaze or Hetzner**; the opt-in integration tests
+were not run.
+
+**Linux: WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0.**
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check` (0/0), `npm run build`, `npm run tauri build -- --no-bundle` | static | ✅ |
+| `npm run test:headless`: 38 frontend and 140 Rust tests (89 existing + 51 new: 3 provider, 14 account, 6 credentials, 8 S3 planning/error mapping, 14 against the in-process S3 server, 6 SQLite account store) plus 3 ignored (2 opt-in provider tests, 1 measurement) | headless | ✅ |
+| Cloud tests repeated 5 times in a row | headless | ✅ 5/5 |
+| No `aws-lc-sys` in the dependency graph (`cargo tree -i aws-lc-sys`) | static | ✅ |
+| Release binary 7,454,840 → 7,469,688 bytes (+14.8 KB; the module is not called) | static | ✅ |
+| `npm run test:desktop:virtual` on the new release binary (regression: the app's behaviour is unchanged) | virtual display | ✅ 115/0/0, 3 runs |
+| Local throughput (`local_throughput`, release, in-process server on the same machine): 268 MB upload in 16 parts 4.51 s (≈ 60 MB/s including hashing), download with verification 3.21 s (≈ 84 MB/s) | measurement | recorded |
+| restic 0.19.1 (official binary, `SHA256SUMS` checked) against a local S3 server (`s3s-fs` 0.17, auth on, 127.0.0.1): `init`; backup of 25 MB (2 random "photos", 50 text files); second backup after adding a 20 MB copy and changing one file added 24,463 bytes (deduplication); `snapshots --json` lists both; `restore latest` byte-identical to the source (`diff -r`); restoring the first snapshot gives the old state; no plaintext marker in the stored objects (encryption); wrong password exit 12, missing repository exit 10, wrong S3 secret exit 1 ("Access Denied") | experiment | ✅ |
+| `restic check --read-data` against `s3s-fs` | experiment | ❌ "pack … does not exist": `s3s-fs` lists no objects below `data/xx/`, so restic sees no packs (`list packs` → 0, 5 on disk). The same backup in a local-folder repository: `check --read-data` "no errors were found", restore identical. A test-server limitation, not a restic or provider result |
+
+**Windows: native Windows 11 25H2, Rust 1.99.1 MSVC, Node 24.14.1**, copy of
+the working tree in a new folder `C:\dev\sotyware-cloud-poc` (not the usual
+checkout), not elevated.
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0/0), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run tauri build -- --no-bundle` (`sotyware.exe` 5,494,272 bytes; 5,480,960 before) | static | ✅ |
+| No `aws-lc-sys` in the dependency graph | static | ✅ |
+| `npm run test:headless`: 38 frontend and 132 Rust tests (the 8 `ksni`/`zbus` tests are Linux-only), 3 ignored | headless | ✅ (after the fix below) |
+| First run: `an_unreachable_endpoint_is_a_transient_network_error` failed. Windows reports a refused local connection only after about 2 s of retries, so the test's 2 s connect and read timeouts reported `Timeout` instead of `Network` (still transient). Fixed in the test (10 s timeouts for that test only), not in the adapter | headless | ❌ → ✅ |
+| Cloud tests repeated 3 times after the fix | headless | ✅ 3/3 |
+| `npm run test:desktop:windows:isolated` on the new release binary (regression) | private desktop | ✅ 56/0, 3 runs |
+
+Not run: the real-desktop Windows test (`windows.ps1`, moves the mouse), any
+real provider, restic against a real provider or on Windows, Windows 10, real
+Linux desktops.
 
 ### Persistent feature preferences (2026-11-11)
 

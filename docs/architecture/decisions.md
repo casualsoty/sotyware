@@ -451,3 +451,64 @@ Status: Accepted
   create the webview data folder. The `bundled` build needs a C compiler. Adding
   a column or table means appending a migration and a test for it. Details:
   [features.md](features.md#persistence).
+
+## ADR-016: Cloud storage goes through one generic S3 adapter
+
+Status: Accepted (proof of concept; not wired into the app)
+
+- **Context:** sotyware is to store personal files and backups at cloud
+  providers, starting with Backblaze B2 or Hetzner Object Storage
+  ([evaluation](cloud-providers.md)), with several accounts at once, possibly
+  several at the same provider, each with its own credentials, buckets and
+  transfers. Nothing may depend on one provider, no secret may be stored in
+  plain configuration, and ordinary tests and CI must never contact a provider.
+- **Decision:**
+  - **One adapter, providers as data.** Both providers speak S3 with SigV4, so
+    `cloud::s3::S3Store` (on the official `aws-sdk-s3`) serves every provider;
+    `cloud::provider::ProviderProfile` holds the differences as data (endpoint
+    rule, addressing style, SDK checksum policy, limits, capabilities). No
+    `ObjectStore` trait until a provider without an S3 API is needed: it would
+    have one implementation.
+  - **Dependencies:** `aws-sdk-s3` 1.102.0 without default features
+    (`rt-tokio`, `http-1x`) and `aws-smithy-http-client` 1.1.9 with
+    `rustls-ring`. Not the default `aws-lc-rs` backend, which needs CMake/NASM
+    on Windows; ring builds with the C compiler already needed. No
+    `aws-config` (credentials come from the account, never from `~/.aws`).
+    1.102.0 is the newest `aws-sdk-s3` that supports the crate's
+    `rust-version = "1.90"` (newer ones need 1.94.1); Cargo's MSRV-aware
+    resolver picked it. `tokio` (fs, io-util, sync) and `sha2` 0.10 are now
+    direct dependencies; both were already in the tree through Tauri. Cost: 65
+    more crates in the normal dependency graph (300 → 365); the release
+    binaries grew by 14.8 KB (Linux) and 13 KB (Windows) because nothing calls
+    the module yet. Wiring it in will add the SDK's real size; measure then.
+  - **Integrity end to end, not by provider features:** SHA-256 of the file in
+    `x-amz-meta-sotyware-sha256`, verified on every download before the file is
+    moved into place. The SDK's own CRC32 headers are `WhenRequired`, because
+    neither provider documents support for them.
+  - **Accounts:** `AccountConfig` without secrets, validated by `resolve()`;
+    `Accounts` caches one `S3Store` per account, each with its own connection
+    pool and transfer semaphore. Credentials are looked up by account id
+    through `CredentialSource`; the proof of concept implements only
+    environment variables. Account configurations are stored behind
+    `AccountStore`, implemented in `storage.rs` with SQLite in a **separate
+    file**, `cloud-accounts.sqlite3`, so the unwired module cannot change the
+    released preferences schema. It uses the same open/check/migrate code.
+  - **Tests:** an S3 server inside the test process (`s3s` 0.12 + `s3s-fs`,
+    dev-dependencies only, on 127.0.0.1) runs real HTTP, SigV4 and multipart
+    uploads under `cargo test` on both platforms, with no network or account.
+    Real providers only in `#[ignore]` tests that need explicit variables.
+    `s3s` 0.12 is the newest that supports Rust 1.90; it needs a dev-only pin
+    `digest = "=0.11.0-rc.4"` to build.
+  - Rejected: `rust-s3`, `object_store`, OpenDAL (not the official SDK, and
+    each brings its own abstraction over what is one protocol here);
+    provider-specific modules (they would duplicate the same S3 calls); storing
+    secrets in SQLite, even obfuscated; adding the accounts table to
+    `preferences.sqlite3` now (it would bump the schema for every user with
+    nothing using it); a mock HTTP client instead of a real S3 server (it would
+    not exercise signing, streaming or multipart).
+- **Consequences:** a new S3-compatible provider is a new profile, without
+  frontend or core changes. Provider behaviour beyond the documentation (error
+  codes, checksum headers, path style on Hetzner) stays unverified until the
+  opt-in integration tests run with real accounts. Wiring the module into the
+  app needs its own decision (a feature, commands and permissions, keyring
+  credentials). Details: [cloud-storage.md](cloud-storage.md).

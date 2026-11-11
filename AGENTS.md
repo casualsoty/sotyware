@@ -35,6 +35,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | feature | a built-in Rust module implementing `Feature`, listed in `features::builtin()` and run by the `FeatureRegistry`; not a third-party plugin |
 | enable / disable (a feature) | start it / stop it through the registry's lifecycle (`set_feature_enabled`) |
 | feature preference | the user's saved enable/disable choice for one feature, keyed by its ID, in `preferences.sqlite3`; absent until the user switches the feature |
+| storage account | one set of credentials at one cloud storage provider (`AccountConfig`, kebab-case ID); two keys at the same provider are two accounts |
+| provider profile | what sotyware knows about one S3-compatible provider, as data (`ProviderProfile`); not code |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -42,7 +44,7 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11.
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11 (cloud storage proof of concept).
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
@@ -67,6 +69,11 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `tray-icon` (through Tauri; Linux-only direct dependency adds feature `ksni`) | `0.25` | 0.25.1 |
 | `ksni` (Linux tray backend, pure Rust over `zbus` 5.19.0) | through `tray-icon`; also a Linux-only direct dependency `0.3` (no features, to name its error types) | 0.3.7 |
 | `zbus` (Linux only) | through `ksni` and the single-instance plugin; also a Linux-only direct dependency `5` (no features, to name its error types) | 5.19.0 |
+| `aws-sdk-s3` (no default features; `rt-tokio`, `http-1x`; cloud storage proof of concept) | `1` | 1.102.0 (newest supporting Rust 1.90) |
+| `aws-smithy-http-client` (feature `rustls-ring`: rustls on ring, not aws-lc-rs) | `1` | 1.1.9 |
+| `tokio` (`fs`, `io-util`, `sync`; already in the tree through Tauri) | `1` | 1.54.1 |
+| `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
+| `s3s` + `s3s-fs` (dev only: in-process S3 test server), `hyper-util` (dev only), `digest` (dev only, pinned `=0.11.0-rc.4` for `s3s`) | `0.12` | 0.12.0 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
 
@@ -109,6 +116,16 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   append-only `MIGRATIONS`). Loaded in `run()` between `build()` and `run()`;
   the registry never touches storage
   ([ADR-015](docs/architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)).
+- **Cloud storage (proof of concept, not wired into the app):**
+  `src-tauri/src/cloud/`: provider profiles as data (`backblaze-b2`,
+  `hetzner`, `s3-compatible`), accounts without secrets (`AccountConfig`,
+  `Accounts`, `AccountStore`; SQLite `cloud-accounts.sqlite3` in
+  `storage.rs`), credentials by account id (`CredentialSource`, environment
+  variables only), and one S3 adapter (`S3Store`, `aws-sdk-s3`) with
+  end-to-end SHA-256 and a transfer queue per account. No feature, command or
+  UI uses it
+  ([cloud-storage.md](docs/architecture/cloud-storage.md),
+  [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter)).
 - **Frontend:** `src/App.svelte` with `src/Features.svelte`. Its only access to
   Rust is the commands `operating_mode`, `list_features` and
   `set_feature_enabled` (permissions `allow-operating-mode`,
@@ -122,7 +139,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, custom event, or custom command besides `operating_mode`,
+tray fallback, cloud storage UI or command, keyring credential storage, backups
+or restic integration, custom event, or custom command besides `operating_mode`,
 `list_features` and `set_feature_enabled`. Never describe these as existing.
 
 ## Coding conventions
@@ -229,7 +247,7 @@ Every coding agent must:
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
-   `PreferenceStore`, the capability file) before
+   `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`, the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

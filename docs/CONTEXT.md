@@ -43,12 +43,23 @@ features exist**.
   shows the error; a failed save keeps the switch for the session and is shown.
   [features.md](architecture/features.md#persistence), ADR-015.
 
+- Cloud storage proof of concept (**not wired into the app**; nothing calls
+  it): `src-tauri/src/cloud/`, provider profiles as data (Backblaze B2,
+  Hetzner, any S3-compatible), storage accounts without secrets (SQLite
+  `cloud-accounts.sqlite3`, separate from the preferences), credentials by
+  account id from environment variables, one S3 adapter on `aws-sdk-s3` with
+  end-to-end SHA-256, multipart uploads and a transfer queue per account.
+  Recommended first provider: Backblaze B2, EU Central.
+  [cloud-storage.md](architecture/cloud-storage.md),
+  [cloud-providers.md](architecture/cloud-providers.md), ADR-016.
+
 ## Repository at a glance
 
 ```
 src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
+src-tauri/src/cloud/     cloud storage PoC: provider.rs, account.rs, credentials.rs, s3.rs; tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
@@ -107,7 +118,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- `cargo test`: 89 unit tests. 31 cover the lifecycle, mode and tray
+- `cargo test`: 140 unit tests (2026-11-11, cloud storage proof of concept:
+  passes on WSL2 and on native Windows 11, 132 there; virtual display 115/0/0
+  and Windows private desktop 56/0, 3 runs each, unchanged). 51 cover cloud
+  storage: profiles, account validation and persistence, credentials,
+  upload planning, error mapping, and 14 run against an S3 server inside the
+  test process (round trips with SHA-256, multipart, bad keys, network
+  failure, timeout, corruption, two accounts at once, separate transfer
+  queues). 2 more are opt-in, `#[ignore]`d, against real Backblaze/Hetzner
+  accounts; **never run** (no account). The other 89: 31 cover the lifecycle, mode and tray
   decisions (mode selection from the real `ksni`/`zbus` error types, close →
   hide or quit per mode, hide granted only in tray mode, implicit exit blocked,
   unexpected tray failure → exit 1, second launch, tray dispatch, config
@@ -213,6 +232,8 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Further local persistence (settings, other
+[roadmap.md](status/roadmap.md). Cloud storage next steps (real-account
+integration tests first): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

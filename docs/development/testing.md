@@ -138,6 +138,96 @@ Feature preferences are tested in two layers
   simulated restarts, and a corrupt file gives defaults, a save error, and an
   unchanged file.
 
+Cloud storage (`src-tauri/src/cloud/`,
+[cloud-storage.md](../architecture/cloud-storage.md)) is tested in three
+layers, the first two in every `cargo test`:
+
+- **Pure logic, no server:** provider profiles (unique IDs, consistent
+  limits, https endpoints), `AccountConfig::resolve` (endpoints, addressing,
+  plain HTTP only on this machine, IDs, regions, bucket names, dotted buckets,
+  concurrency bounds), `Accounts` with an in-memory `AccountStore` (add,
+  update, remove, restart, duplicates, failed saves, two accounts of one
+  provider, missing credentials, a stored account that no longer validates),
+  `EnvCredentials` (variable names, per-account lookup, missing or padded
+  values, no secret in `Debug`/`Display`), `plan_upload` (single PUT,
+  multipart, never one part, provider minimum, very large files, too large) and
+  the S3 error mapping. `storage.rs` tests `SqliteAccountStore` on real files:
+  every field across a restart, replacing an account and its buckets, removal
+  without orphans, no secret in the file or schema, a corrupt file left alone,
+  an out-of-range stored value.
+- **Against an S3 server in the test process** (`cloud/test_server.rs`:
+  `s3s` + `s3s-fs` on 127.0.0.1, a fresh temporary folder per server; no
+  network, no account, works on Windows too). `cloud/tests.rs`: single-PUT and
+  multipart round trips with SHA-256 verification and byte-for-byte
+  comparison, listing buckets and prefixes, wrong secret and unknown key
+  (`InvalidCredentials`), unreachable endpoint (`Network`), a server that never
+  answers (timeout), an object corrupted at rest (`Integrity`, destination
+  never created), an object without stored checksum (`SizeOnly`), no
+  overwriting of an existing file, missing objects and buckets, buckets outside
+  the account (refused, no request), a missing local file, two accounts with
+  different keys uploading and downloading at the same time, and one account's
+  full transfer queue not delaying another. A measurement, not a check:
+  `cargo test --release --lib cloud::tests::local_throughput -- --ignored --nocapture`.
+- **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
+
+## Cloud storage integration tests
+
+`cloud/integration.rs` holds one test per provider, `#[ignore]`d, so neither
+`cargo test` nor CI ever contacts a provider. Each one, against a bucket you
+name: lists buckets (a bucket-restricted key may be refused; that is
+reported, not failed), checks that its run prefix `sotyware-it/<run id>/` is
+empty, uploads a 200 kB file (one PUT) and a 12 MiB file (3 parts of 5 MiB),
+checks the stored SHA-256, downloads and compares both, lists them, checks
+that a wrong secret gives `InvalidCredentials`, then deletes **exactly the
+versions it created** (never by prefix) and checks that the prefix is empty
+again. It prints timings and the endpoint. Test data is generated; no personal
+file is read. Use a dedicated test bucket anyway.
+
+**Backblaze B2:**
+
+1. In the Backblaze web console: create a private bucket for tests only (for
+   example `sotyware-it-<something unique>`). Note the endpoint shown with it
+   (`s3.<region>.backblazeb2.com`); the part between `s3.` and
+   `.backblazeb2.com` is the region.
+2. Application Keys → Add a New Application Key: access to that bucket only,
+   read and write. Note the keyID and the applicationKey (shown once).
+3. Run, in `src-tauri/`:
+
+   ```bash
+   export SOTYWARE_IT_B2_BUCKET=<bucket> SOTYWARE_IT_B2_REGION=<region>
+   export SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID=<keyID>
+   read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY
+   cargo test --lib cloud::integration::backblaze_b2_round_trip -- --ignored --nocapture
+   ```
+
+B2 buckets are always versioned; the test deletes its versions by id, so
+nothing stays billed. A failed run prints `CLEANUP FAILED` lines naming what to
+delete by hand.
+
+**Hetzner Object Storage:**
+
+1. In the Hetzner Console, in a project: Object Storage → create a bucket in
+   fsn1, nbg1 or hel1 (private). Then Security → S3 credentials → generate;
+   note the access key and the secret key (shown once). The key reaches every
+   bucket of the project, so prefer a project used only for tests.
+2. Run, in `src-tauri/`:
+
+   ```bash
+   export SOTYWARE_IT_HETZNER_BUCKET=<bucket> SOTYWARE_IT_HETZNER_REGION=fsn1
+   export SOTYWARE_CLOUD_IT_HETZNER_ACCESS_KEY_ID=<access key>
+   read -rs SOTYWARE_CLOUD_IT_HETZNER_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_HETZNER_SECRET_ACCESS_KEY
+   cargo test --lib cloud::integration::hetzner_round_trip -- --ignored --nocapture
+   ```
+
+   Hetzner bills its base fee hourly (€0.0104/h, at most €6.49 a month,
+   excl. VAT) for every hour in which at least one bucket exists; delete the
+   test bucket afterwards if it is not kept.
+
+On Windows (PowerShell), set the same variables with `$env:NAME = '…'`; for
+the secret, `$env:NAME = Read-Host` keeps it out of the shell history. Record
+results in [status.md](../status/status.md) with the date, platform and
+provider; a test that was not run is not a pass.
+
 ## Frontend tests
 
 ```bash

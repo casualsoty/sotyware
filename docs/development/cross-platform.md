@@ -37,6 +37,8 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 | Operating modes in practice | tray mode only | tray mode with a StatusNotifierItem host (KDE, GNOME with the AppIndicator extension, XFCE plugin, …); dashboard-only mode on vanilla GNOME and XEmbed-only panels (expected, not yet checked on a real desktop) |
 | Tray icon click events | emitted; left click opens the dashboard | left click (`Activate`) and middle click (`SecondaryActivate`) emitted if the tray host sends them; left click opens the dashboard |
 | Tray icon image | in memory | sent over D-Bus as a pixmap; nothing written to disk |
+| Refused TCP connection (closed local port) | reported after about 2 s (Windows retries the connection); a shorter connect or read timeout reports a timeout instead | reported at once |
+| Cloud storage TLS | rustls on ring, OS root certificates (Windows certificate store) | rustls on ring, OS root certificates (system CA bundle) |
 | Tray backend selection | `tray-icon` Windows backend | Linux-only `tray-icon` dependency with feature `ksni` in `Cargo.toml` ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)) |
 | Single-instance IPC | named mutex `<identifier>-sim` + hidden message window, `WM_COPYDATA` | D-Bus session bus name `<identifier>.SingleInstance` |
 | Focus on second launch | subject to foreground-lock rules; plugin calls `AllowSetForegroundWindow` | up to the window manager / compositor |

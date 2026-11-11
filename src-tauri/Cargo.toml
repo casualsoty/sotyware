@@ -25,6 +25,17 @@ serde = { version = "1", features = ["derive"] }
 # system library to install. No default features: the statement cache and the
 # wasm backend are not needed.
 rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
+# Cloud storage proof of concept (ADR-016): one generic S3 adapter for every
+# S3-compatible provider. No default features: they would pull in aws-lc-rs (a
+# CMake/NASM build on Windows) and SigV4a, which no supported provider needs.
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "http-1x"] }
+# The HTTPS client for aws-sdk-s3, with rustls on ring instead of aws-lc-rs:
+# ring builds with the C compiler Tauri already needs on both platforms.
+aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring"] }
+# Already in the tree through Tauri: file I/O and the per-account transfer limit.
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "sync", "rt"] }
+# Already in the tree through Tauri: end-to-end SHA-256 of uploaded objects.
+sha2 = "0.10"
 
 [profile.release]
 codegen-units = 1
@@ -40,6 +51,17 @@ tauri-plugin-single-instance = "2"
 # Already in the dependency tree through tauri; used by tests that check
 # tauri.conf.json and the capability file against the Rust constants.
 serde_json = "1"
+# In-process S3 server for the offline cloud storage tests (no network, no
+# credentials): s3s implements the S3 protocol, s3s-fs stores objects in a
+# temporary folder.
+s3s = "0.12"
+s3s-fs = "0.12"
+# s3s 0.12 pins release candidates of the RustCrypto hashes, which build only
+# against this release candidate of `digest`; without the pin Cargo picks a
+# newer `digest` and the test build fails. Test-only.
+digest = "=0.11.0-rc.4"
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Not used directly: enables tray-icon's pure-Rust StatusNotifierItem backend

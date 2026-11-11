@@ -56,6 +56,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup` and picks the `OperatingMode`, turns window close into hide (tray mode) or exit (dashboard-only mode), adds the hide capability in tray mode only, serves the `operating_mode` command, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`select_mode`, `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
 | Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the example feature. Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
+| Cloud storage (proof of concept) | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id, and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. **Not called by the app**: no feature, command or UI uses it yet ([cloud-storage.md](cloud-storage.md), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter)). |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`), so each needs a permission. |
 | Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
@@ -93,7 +94,8 @@ Boundaries that hold today:
   the event loop starts.
 - **Local only: no network, no sync, no settings.** The only thing stored is
   each feature's enabled choice, in `preferences.sqlite3` in the app's local
-  data folder. Nothing is fetched or sent.
+  data folder. Nothing is fetched or sent. The cloud storage module can talk to
+  S3 providers, but nothing in the running app calls it.
 
 ## Security model
 
@@ -113,6 +115,8 @@ Boundaries that hold today:
 ## Further reading
 
 - [lifecycle.md](lifecycle.md): window, tray and exit behaviour.
+- [cloud-storage.md](cloud-storage.md) and [cloud-providers.md](cloud-providers.md):
+  the cloud storage proof of concept and the provider evaluation.
 - [features.md](features.md): built-in features, their lifecycle, and how to add one.
 - [single-instance.md](single-instance.md): how the second launch is handled.
 - [decisions.md](decisions.md): why things are the way they are.
