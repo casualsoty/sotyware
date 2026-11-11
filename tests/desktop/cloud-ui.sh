@@ -1,0 +1,141 @@
+#!/bin/bash
+# Cloud Storage end-to-end test (Linux, opt-in; not part of CI): drives the
+# Cloud Storage page of the real release binary on a private Xvfb display with
+# openbox, on a private D-Bus session with a real GNOME Keyring holding a
+# throwaway login keyring. Never touches your display, session bus or
+# keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
+#
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang b2 (default: local hang)
+#   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
+#   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
+#                            (dpkg -x), if gnome-keyring-daemon is not installed
+#
+# local: made-up keys, an endpoint nobody listens on; contacts no provider.
+# hang:  a Secret Service that never answers; the window must stay usable.
+# b2:    the real Backblaze B2 test bucket and key from the opt-in integration
+#        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
+#        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
+#        read from the environment only; never printed. Before and after, the
+#        opt-in Rust test backblaze_b2_fingerprint hashes every object version
+#        under sotyware-it/; the phase fails if they differ.
+#
+# Exit code: 0 every check passed, 1 a check failed, 2 a dependency or
+# variable is missing, 3 Xvfb, openbox or the Secret Service did not start.
+set -uo pipefail
+H=$(dirname "$(readlink -f "$0")")
+REPO=$(readlink -f "$H/../..")
+PHASES=("$@")
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang)
+
+if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
+  BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/release/sotyware}")
+  [ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run tauri build -- --no-bundle)" >&2; exit 2; }
+  for cmd in Xvfb openbox python3 dbus-run-session dbus-send; do
+    command -v "$cmd" >/dev/null || { echo "missing: $cmd" >&2; exit 2; }
+  done
+  python3 -c 'import dbus, gi; gi.require_version("Atspi", "2.0"); from gi.repository import GLib' 2>/dev/null \
+    || { echo "missing: python3-dbus/python3-gi/gir1.2-atspi-2.0" >&2; exit 2; }
+  if [ -n "${SOTYWARE_GNOME_KEYRING_ROOT:-}" ]; then
+    GK_BIN=$SOTYWARE_GNOME_KEYRING_ROOT/usr/bin/gnome-keyring-daemon
+  else
+    GK_BIN=$(command -v gnome-keyring-daemon || true)
+  fi
+  [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
+  for phase in "${PHASES[@]}"; do
+    case $phase in
+      local|hang) ;;
+      b2)
+        for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
+          [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
+        done ;;
+      *) echo "unknown phase: $phase" >&2; exit 2 ;;
+    esac
+  done
+  export SOTYWARE_CLOUD_UI_BIN=$BIN SOTYWARE_CLOUD_UI_GK=$GK_BIN SOTYWARE_CLOUD_UI_INNER=1
+  exec dbus-run-session -- "$0" "${PHASES[@]}"
+fi
+
+# ---- inside the private session bus ----
+BIN=$SOTYWARE_CLOUD_UI_BIN GK_BIN=$SOTYWARE_CLOUD_UI_GK
+ORIG_HOME=$HOME
+# Short: Unix socket paths must stay under 108 bytes.
+WORK=$(mktemp -d /tmp/sotyware-cloud-ui.XXXXXX) || exit 3
+XVFB_PID="" WM_PID="" SS_PID="" rc=0
+cleanup() {
+  for p in $SS_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
+  pkill -f -- "^$GK_BIN " 2>/dev/null
+  # Only the folder this run created (throwaway HOME and keyring).
+  case $WORK in /tmp/sotyware-cloud-ui.??????) rm -rf -- "$WORK" ;; esac
+}
+trap cleanup EXIT
+
+has_owner() {
+  dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus.NameHasOwner string:org.freedesktop.secrets 2>/dev/null | grep -q true
+}
+wait_owner() { # <want: 0 owned, 1 not owned>
+  for _ in $(seq 100); do
+    if has_owner; then [ "$1" = 0 ] && return 0; else [ "$1" = 1 ] && return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+fingerprint() { # prints the fingerprint line of the opt-in Rust test, or nothing
+  (cd "$REPO/src-tauri" && HOME=$ORIG_HOME cargo test --quiet --lib cloud::integration::backblaze_b2_fingerprint \
+    -- --ignored --nocapture 2>/dev/null) | grep -E '^sotyware-it fingerprint [0-9a-f]{64} versions [0-9]+$'
+}
+
+for n in $(seq 88 -1 60); do
+  grep -q " @/tmp/.X11-unix/X$n\$" /proc/net/unix 2>/dev/null || [ -e "/tmp/.X11-unix/X$n" ] || { DISP=$n; break; }
+done
+Xvfb ":$DISP" -screen 0 1280x900x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 & XVFB_PID=$!
+for _ in $(seq 50); do [ -e "/tmp/.X11-unix/X$DISP" ] && break; sleep 0.1; done
+DISPLAY=":$DISP" openbox --sm-disable >"$WORK/openbox.log" 2>&1 & WM_PID=$!
+sleep 1
+kill -0 "$XVFB_PID" 2>/dev/null && kill -0 "$WM_PID" 2>/dev/null || { cat "$WORK"/*.log; exit 3; }
+export DISPLAY=":$DISP" GDK_BACKEND=x11 GSETTINGS_BACKEND=memory
+unset WAYLAND_DISPLAY
+export HOME=$WORK/home XDG_DATA_HOME=$WORK/home/data XDG_RUNTIME_DIR=$WORK/run
+mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+GK_LIBS=""
+[ -n "${SOTYWARE_GNOME_KEYRING_ROOT:-}" ] && GK_LIBS=$SOTYWARE_GNOME_KEYRING_ROOT/usr/lib/x86_64-linux-gnu
+
+start_keyring() {
+  # --unlock creates and unlocks a "login" collection in the throwaway HOME.
+  ( printf 'test-only-keyring-password' | LD_LIBRARY_PATH=$GK_LIBS "$GK_BIN" --foreground --unlock \
+      --components=secrets >>"$WORK/gnome-keyring.log" 2>&1 ) &
+  wait_owner 0 || { echo "gnome-keyring did not start:"; cat "$WORK/gnome-keyring.log"; exit 3; }
+}
+stop_keyring() { pkill -f -- "^$GK_BIN " 2>/dev/null; wait_owner 1; }
+
+for phase in "${PHASES[@]}"; do
+  echo "== phase $phase"
+  case $phase in
+    local)
+      start_keyring
+      python3 "$H/cloud_ui.py" local "$BIN" || rc=1
+      stop_keyring ;;
+    hang)
+      python3 "$H/fake_secret_service.py" & SS_PID=$!
+      wait_owner 0 || { echo "fake Secret Service did not start"; exit 3; }
+      python3 "$H/cloud_ui.py" hang "$BIN" || rc=1
+      kill "$SS_PID"; SS_PID=""; wait_owner 1 ;;
+    b2)
+      before=$(fingerprint)
+      [ -n "$before" ] || { echo "[FAIL] b2: could not fingerprint the bucket before the run"; rc=1; continue; }
+      echo "  before: ${before#sotyware-it fingerprint }"
+      start_keyring
+      python3 "$H/cloud_ui.py" b2 "$BIN" || rc=1
+      stop_keyring
+      after=$(fingerprint)
+      echo "  after:  ${after#sotyware-it fingerprint }"
+      if [ -n "$after" ] && [ "$before" = "$after" ]; then
+        echo "[PASS] b2: every object version under sotyware-it/ is unchanged"
+      else
+        echo "[FAIL] b2: the bucket changed or could not be read after the run"; rc=1
+      fi ;;
+  esac
+done
+echo "keyring files left in the throwaway HOME (removed now): $(ls "$XDG_DATA_HOME/keyrings" 2>/dev/null | tr '\n' ' ')"
+exit $rc

@@ -55,14 +55,17 @@ order:
 4. Account management in the dashboard: done 2026-11-11 (ADR-018, not a
    feature; `cloud-accounts.sqlite3` stays separate;
    [status.md](status.md#cloud-storage-dashboard-2026-11-11)). Open:
-   - run the opt-in Backblaze test again, now that it calls the connection
-     check (`HeadBucket` with the bucket-restricted key), and Hetzner's for
-     the first time;
+   - the Backblaze connection check: done once on WSL2 2026-11-11
+     (`backblaze_b2_connection_check`,
+     [status.md](status.md#cloud-storage-ui-end-to-end-and-backblaze-connection-check-2026-11-11));
+     and the UI tests against Backblaze (`tests/desktop/cloud-ui.sh b2`
+     19/19 and `windows-cloud-ui.ps1 -Mode b2` 23/23, once each,
+     [how](../development/testing.md#cloud-storage-ui-end-to-end-test));
+     still to run: repeats of those (one run each so far), the
+     round trip again (it calls the check too), and Hetzner's for the first
+     time;
    - a person's run on a real Linux desktop (GNOME Keyring or KWallet with an
-     unlock prompt) and on Windows 10;
-   - adding an account and checking it through the Windows UI (the automated
-     Windows test stops at the empty state, so it never writes to the
-     Credential Manager).
+     unlock prompt) and on Windows 10.
 5. **Next toward the file browser:** a read-only object listing of one
    account's bucket, one folder level at a time: `S3Store::list_objects`
    with a delimiter and pagination (it lists everything today), one new

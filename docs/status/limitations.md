@@ -250,14 +250,20 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   connection; it cannot list, upload, download or delete objects, and has no
   transfer queue, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#dashboard)).
-- **The connection check is not yet verified against a real provider.**
-  `HeadBucket` (with a one-key `ListObjectsV2` only after a refused HEAD) is
-  tested against the in-process S3 server with simulated permission
-  refusals, not against Backblaze or Hetzner: whether Backblaze answers
-  `HeadBucket` for a bucket-restricted key, and which codes it returns for
-  it, is unconfirmed until the opt-in integration test (which now calls
-  `check_bucket`) runs again. A key that may neither `HeadBucket` nor list
-  the bucket (for example write-only) reports **access denied**, although it
+- **The connection check is verified at Backblaze by one opt-in run and one
+  UI run each on Linux (GNOME Keyring) and Windows (Credential Manager), and
+  never at Hetzner.** On 2026-11-11 (WSL2) Backblaze
+  answered `HeadBucket` with 200 for the bucket-restricted test key
+  (connected, one request), 403 for a wrong secret or unknown key id (then
+  the one-key listing, also 403: invalid credentials) and 404 for a bucket
+  the key cannot use (**bucket unavailable**, also when the bucket exists
+  but belongs to someone else: the page then says the bucket does not exist)
+  ([status.md](status.md#cloud-storage-ui-end-to-end-and-backblaze-connection-check-2026-11-11)).
+  The `ListObjectsV2` fallback has no prefix and was never reached at
+  Backblaze with a valid key; a key restricted to a file name prefix might be
+  refused it, so such a key could report **access denied** if Backblaze ever
+  refused it the HEAD. A key that may neither `HeadBucket` nor list the
+  bucket (for example write-only) reports **access denied**, although it
   could upload.
 - **One bucket per account in the dashboard.** The backend allows several
   (or none, meaning any); the form edits exactly one, and saving an edited

@@ -96,6 +96,114 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Cloud Storage UI end-to-end and Backblaze connection check (2026-11-11)
+
+Tested as an uncommitted working tree on top of `6af454d` (not committed).
+New: the opt-in tests `backblaze_b2_connection_check` and
+`backblaze_b2_fingerprint`, the always-run
+`connection_check_cases_against_the_test_server`, a test-only SDK
+interceptor hook (`S3Store::with_interceptor`), and the opt-in UI tests
+`tests/desktop/cloud-ui.sh` (+ `cloud_ui.py`, `fake_secret_service.py`, the
+earlier out-of-repository script brought in) and
+`tests/desktop/windows-cloud-ui.ps1`
+([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test)).
+No app code changed, no dependency added.
+
+**Real Backblaze B2, connection check: ✅ run once by the user on WSL2
+(2026-11-11)**, `backblaze_b2_connection_check` against the dedicated test
+bucket in `eu-central-003` with the bucket-restricted, prefix-restricted test
+key. The agent session itself could not reach the key (its tool sandbox
+refused to read `~/.config/sotyware-it/b2.env`); the user loaded it into
+their own shell and pasted the output, in which the key and bucket are
+redacted. Requests as recorded by the SDK interceptor:
+
+| Case | Requests sent | Status |
+| --- | --- | --- |
+| the key and its bucket | `HEAD /<bucket>/ -> 200` | **connected**: Backblaze answers `HeadBucket` for a bucket-restricted key; no listing needed |
+| wrong secret | `HEAD -> 403`, `GET ?list-type=2&max-keys=1 -> 403` ("Signature validation failed") | invalid credentials |
+| unknown key id (`003` + zeros) | `HEAD -> 403`, `GET ?list-type=2&max-keys=1 -> 403` ("The key … is not valid") | invalid credentials |
+| a bucket name new for the run | `HEAD -> 404` | **bucket unavailable** (B2 says not found, not access denied, for a bucket the key cannot use) |
+| `http://127.0.0.1:9` | `HEAD`, connection refused | network |
+
+No `ListBuckets`, only `HEAD` and one-key `GET`s; 0 object versions under
+`sotyware-it/` before and after, fingerprint identical (the prefix was empty,
+so this shows nothing was created, not that existing objects survived).
+Whole test 1.39 s. Not run on Windows; one run, not three.
+
+**Real Backblaze B2 through the UI on Linux: ✅ `tests/desktop/cloud-ui.sh
+b2`, run once by the user on WSL2 (2026-11-11)**, release binary on Xvfb +
+openbox, real GNOME Keyring 46.1 (unpacked packages, throwaway keyring),
+same bucket and key, output pasted with key and bucket redacted. **19/19**:
+add a Backblaze B2 account through the form (name, bucket, region
+`eu-central-003`, key) → the keyring item `cloud-account/sotyware-e2e-<run>`
+holds exactly the typed key, the database has the account with the default
+endpoint and no key, the page shows provider, bucket and region but not the
+key → Check connection **Connected** (the bucket-restricted key) → rename
+without a key → still Connected → replace the key with a wrong secret (one
+entry, that key) → **Invalid credentials** → the real key back →
+**Connected** → bucket changed to a name the key cannot use → **Bucket
+unavailable** (not invalid credentials) → bucket set back → Connected →
+Remove (the confirmation names the bucket and says it is not deleted or
+changed) → gone from page, database and keyring; no key id or secret in
+sotyware's output. Then `backblaze_b2_fingerprint` after the run equal to
+before: 0 versions under `sotyware-it/` (so: nothing created; the prefix was
+empty). The throwaway keyring was removed. One run, not three.
+
+**Real Backblaze B2 through the Windows UI: ✅ `windows-cloud-ui.ps1 -Mode
+b2`, run once by the user on native Windows 11 Home 25H2 (build 26200.9711,
+2026-11-11)** in `C:\dev\sotyware-cloud-b2` (the copy and release binary
+above), key from the DPAPI-encrypted `b2.xml`, output pasted (the summary
+line was not in the paste; all 23 check lines PASS, none FAIL). The **real
+Windows Credential Manager and real Backblaze together**: bucket
+fingerprinted → add a Backblaze B2 account through the UI →
+`com.sotyware.desktop/cloud-account/sotyware-e2e-<run>` holds exactly the
+typed key (`CredRead`, compared in the script), `cmdkey` lists one entry,
+page and database hold no key → Check connection **Connected** → rename →
+still Connected → replace the key with a wrong secret (entry updated, still
+one) → **Invalid credentials** → the real key back → **Connected** → Remove
+(confirmation names the bucket and says it is not deleted or changed) → gone
+from the page, `CredRead` and `cmdkey`; process responding; `cmdkey /list`
+`com.sotyware.desktop` lines 0 before and after; fingerprint after equal to
+before (0 versions under `sotyware-it/`). The Windows script has no
+other-bucket step (the Linux one does). One run, not three.
+
+**Local and mock testing, WSL2 (Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0):**
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm run check` (0/0), `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, release build | static | ✅ |
+| `npm run test:headless`: frontend 63; `cargo test` **189 passed, 6 ignored** (188 and 4 before: +1 `connection_check_cases_against_the_test_server`, +2 ignored B2 tests) | headless | ✅ |
+| The five connection-check cases against the in-process server with `ListBuckets` refused, requests recorded by the new interceptor: valid key → connected, `HEAD /<bucket>/ -> 200` only; wrong secret and unknown key id → invalid credentials via `HEAD 403` then one `GET ?list-type=2&max-keys=1 -> 403`; a bucket that does not exist → bucket unavailable (`HEAD 404`); `127.0.0.1:9` → network. No `ListBuckets`, only `HEAD`/`GET` | headless | ✅ |
+| `cloud-ui.sh` (default phases), release binary, Xvfb + openbox, private D-Bus session, **real GNOME Keyring 46.1** (unpacked packages, throwaway keyring): `local` 14/14 (the earlier one-off script's checks) and `hang` 8/8; the throwaway folder and keyring removed afterwards, no daemon left | real Secret Service, virtual display | ✅ 3/3 runs |
+| `npm run test:desktop:virtual` (regression; `EXPECTED_CHECKS` stays 119) | virtual display | ✅ 119/0/0, 3 runs |
+| `cloud-ui.sh b2` against Backblaze (run by the user, above) | real provider, real Secret Service, virtual display | ✅ 19/19 + bucket unchanged, 1 run |
+
+**Native Windows UI validation, Windows 11 Home 25H2 (build 26200.9711),
+Rust 1.99.1 MSVC, Node 24.14.1**, a new copy of the tree
+(`C:\dev\sotyware-cloud-b2`, not a git checkout; `C:\dev\sotyware` not
+touched), not elevated:
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0/0), `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, release build | static | ✅ |
+| `npm run test:headless`: frontend 63; `cargo test` 180 passed, 6 ignored | headless | ✅ |
+| `windows-cloud-ui.ps1` (local mode), **through the app's UI with the real Windows Credential Manager**: Cloud Storage → add a Backblaze B2 account (name, bucket, region, key, an endpoint nobody listens on) → `CredRead` of `com.sotyware.desktop/cloud-account/sotyware-e2e-<run>` equals exactly the typed key (compared in the script, never shown), `cmdkey /list:<target>` lists one entry, page and database hold no key id or secret → Check connection → **Network error** → rename (entry unchanged) → Replace access key (one entry, now the new key) → Remove (confirmation names the bucket and says it is not deleted or changed) → gone from page, `CredRead` and `cmdkey`; same `com.sotyware.desktop` lines in `cmdkey /list` before and after (0 and 0) | real desktop session, real OS backend | ✅ **17/17, 3 runs** |
+| Found while writing it and fixed before those runs (script bugs, not sotyware's): the Region input has a datalist, so UI Automation exposes it as a ComboBox; PowerShell names ignore case (`$Value`/`$value`, `$S`/`$s`); `cmdkey /list:<target>` names the target in its header even when nothing is stored | — | ❌ → ✅ |
+| `windows-isolated.ps1` (regression) | private desktop | ✅ 56/0, 3 runs |
+| `windows.ps1` (regression, moves the mouse; your databases moved aside and put back) | real desktop | ✅ 103/0, 3 runs |
+| Afterwards: `%LOCALAPPDATA%\com.sotyware.desktop` holds only what it held before (`preferences.sqlite3`, `EBWebView`); the empty `cloud-accounts.sqlite3` the isolated runs left (0 accounts, checked) was removed; no `com.sotyware.desktop` entry in `cmdkey /list` | — | ✅ |
+| `windows-cloud-ui.ps1 -Mode b2` (Connected, wrong-key replacement → Invalid credentials, real key back → Connected, bucket fingerprint unchanged) | — | — not run (no key) |
+
+**Connection-check edge cases at Backblaze:** correct key and bucket,
+wrong secret, unknown key id, a bucket the key cannot use, unreachable
+endpoint, no `ListBuckets`, nothing created: verified once on WSL2 (table
+above). "A valid key without permission on an existing bucket" cannot be
+produced with one key and one bucket, and the `ListObjectsV2` fallback was
+never reached at Backblaze (every refused HEAD was settled by it only for bad
+keys); whether B2 would refuse that prefix-less listing to a valid
+prefix-restricted key is therefore still unknown. A network failure at the
+provider itself (DNS, TLS, an outage) is not simulated. Hetzner: nothing.
+
 ### Cloud Storage dashboard (2026-11-11)
 
 Tested as an uncommitted working tree on top of `c022b4e` (not committed).
@@ -133,9 +241,11 @@ not a git checkout; later edits not copied: doc comments in `lib.rs` and
 | Credential Manager after all runs: no `com.sotyware.desktop` entry (`cmdkey /list`); the empty `cloud-accounts.sqlite3` the isolated runs created (0 accounts, checked) was removed afterwards | real desktop | ✅ |
 | Adding, checking, editing or removing an account through the Windows UI (Credential Manager through the dashboard); Windows 10; the NSIS/MSI installers | — | — not run |
 
-**Not run anywhere:** the connection check against **Backblaze B2** or
-**Hetzner** (the opt-in round trip now calls `check_bucket`, but no
-credentials were available in this session; whether Backblaze answers
+**Not run anywhere in this section:** the connection check against
+**Backblaze B2** or **Hetzner** (the opt-in round trip now calls
+`check_bucket`, but no credentials were available in this session; the
+Backblaze check ran later,
+[above](#cloud-storage-ui-end-to-end-and-backblaze-connection-check-2026-11-11)); whether Backblaze answers
 `HeadBucket` for a bucket-restricted key is therefore unconfirmed),
 `desktop-virtual.yml` on GitHub (now expects 119), and a person's visual
 check of the new section in either theme.

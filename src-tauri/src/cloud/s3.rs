@@ -470,6 +470,24 @@ impl S3Store {
         &self.client
     }
 
+    /// The same store with `interceptor` added to its client, so a test can
+    /// record the HTTP requests really sent (method, path, status), also to
+    /// a real provider, where the server side cannot be observed.
+    #[cfg(test)]
+    pub(super) fn with_interceptor(
+        mut self,
+        interceptor: impl aws_sdk_s3::config::Intercept + 'static,
+    ) -> Self {
+        let config = self
+            .client
+            .config()
+            .to_builder()
+            .interceptor(interceptor)
+            .build();
+        self.client = Client::from_conf(config);
+        self
+    }
+
     /// Every bucket the credentials can see. A key restricted to one bucket
     /// may be refused this (`AccessDenied`); use the configured buckets then.
     pub async fn list_buckets(&self) -> Result<Vec<String>, StorageError> {

@@ -292,6 +292,36 @@ SDK client (`S3Store::sdk_client`, test builds only); the adapter itself offers
 no version listing. It prints timings and the endpoint. Test data is generated; no personal
 file is read. Use a dedicated test bucket anyway.
 
+`backblaze_b2_connection_check` (B2 only, also `#[ignore]`d) **writes
+nothing**. It runs the dashboard's connection check (`S3Store::check_bucket`)
+in the five cases one valid key allows, and records every HTTP request the
+SDK really sends (method, path and query, status; headers, and so the
+signature, are never read) through an SDK interceptor added in test builds
+only (`S3Store::with_interceptor`):
+
+| Case | Must be |
+| --- | --- |
+| the key and its bucket | `connected` |
+| the key id with a wrong secret | `invalid-credentials` |
+| a well-formed key id no account has (`003` + zeros) with the secret | `invalid-credentials` |
+| the key with a bucket name new for the run (`sotyware-it-missing-<run>`) | `access-denied` or `bucket-unavailable`, never `invalid-credentials` or `connected` |
+| `http://127.0.0.1:9` (nothing listens) | `network` |
+
+For every request: only `HEAD` or `GET`, never `GET /` (`ListBuckets`), every
+`GET` a `ListObjectsV2` with `max-keys=1`; each case starts with `HEAD` and
+sends at most two requests (one attempt each). Before and after, it hashes
+every object version and delete marker under `sotyware-it/` (the prefix the
+test key is restricted to) and fails if anything changed. It prints each
+case's status and requests with the bucket name replaced by `<bucket>`.
+`connection_check_cases_against_the_test_server` runs the same cases and
+assertions against the in-process server in every `cargo test`, so the
+recording itself is tested. `backblaze_b2_fingerprint` only prints that hash
+(`sotyware-it fingerprint <sha256> versions <n>`), for the UI tests below.
+
+```bash
+cargo test --lib cloud::integration::backblaze_b2_connection_check -- --ignored --nocapture
+```
+
 **Backblaze B2:**
 
 1. In the Backblaze web console: create a private bucket for tests only (for
@@ -364,6 +394,80 @@ On Windows (PowerShell), set the same variables with `$env:NAME = '…'`; for
 the secret, `$env:NAME = Read-Host` keeps it out of the shell history. Record
 results in [status.md](../status/status.md) with the date, platform and
 provider; a test that was not run is not a pass.
+
+## Cloud Storage UI end-to-end test
+
+Opt-in, never in CI: the release binary's Cloud Storage page driven like a
+user would, with the credential store checked from outside the app. Two
+scripts, one per platform; each has a mode that contacts no provider and a
+`b2` mode against the Backblaze test bucket of the
+[integration tests](#cloud-storage-integration-tests).
+
+**What both check:** open Cloud Storage → add a Backblaze B2 account (name,
+bucket, region, key) → the OS credential store holds exactly the typed key
+under `com.sotyware.desktop` / `cloud-account/<id>` (compared, never shown),
+the account database holds no key id or secret (file bytes), the page shows
+neither → Check connection → rename without a key (store entry unchanged) →
+Replace access key (still one entry, now the new key) → Remove (the
+confirmation says the bucket and its files are not deleted or changed) →
+gone from page, database and credential store; no key id or secret in
+sotyware's output. Account ids and labels are new for every run
+(`sotyware-e2e-<timestamp>`), so a run never meets a real account.
+
+| Mode | Check connection expects | Also |
+| --- | --- | --- |
+| Linux `local` | **Network error** (endpoint `http://127.0.0.1:9`, made-up keys) | a second account with the login collection locked over D-Bus: **Credential store locked**, and Remove keeps the account while its key cannot be deleted |
+| Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Overview link and the example feature's switch still work, the process keeps running |
+| Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
+| Windows `-Mode local` | **Network error** | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
+
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [b2]`, default `local
+hang`): Xvfb + openbox and a private `dbus-run-session`, a real
+`gnome-keyring-daemon --unlock` with a throwaway login keyring in a
+throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
+keyring included; never your own keyrings or display). It needs what
+`virtual.sh` needs plus GNOME Keyring: installed (`sudo apt install
+gnome-keyring`), or unpacked without root as in
+[the OS credential store test](#os-credential-store-test) with
+`SOTYWARE_GNOME_KEYRING_ROOT` pointing at that folder. Controls are found
+and pressed through AT-SPI; text is typed with XTest key events, because this
+WebKitGTK exposes no AT-SPI `EditableText`.
+
+```bash
+npm run tauri build -- --no-bundle
+tests/desktop/cloud-ui.sh
+```
+
+For `b2`, the same four variables as the integration test, entered at
+prompts (or loaded from your own 0600 file, as described there) so they
+are neither in the shell history nor on a command line; the script reads them
+from the environment, strips them from sotyware's environment and never
+prints them (the bucket name is shown as `<bucket>`):
+
+```bash
+export SOTYWARE_IT_B2_REGION=eu-central-003
+read -r SOTYWARE_IT_B2_BUCKET && export SOTYWARE_IT_B2_BUCKET
+read -rs SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID && export SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID
+read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY
+tests/desktop/cloud-ui.sh b2
+```
+
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2]`):
+UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
+keystrokes, but a logged-in session. The existing `cloud-accounts.sqlite3`
+is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
+from `%USERPROFILE%\.sotyware-it\b2.xml` (`Get-Credential | Export-Clixml`:
+keyID as user name, applicationKey as password, DPAPI-encrypted for your
+Windows user) and the bucket from `b2-bucket.txt` next to it; it sets the
+integration-test variables only around the `cargo test` fingerprint calls.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
+```
+
+Not covered by either: an unlock prompt answered by a person, KWallet,
+Windows 10, the connection check against Hetzner.
 
 ## Frontend tests
 

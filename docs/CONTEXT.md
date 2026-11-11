@@ -78,7 +78,7 @@ src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs,
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
 
@@ -135,6 +135,25 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Cloud Storage UI end-to-end and Backblaze connection check (2026-11-11,
+  uncommitted tree on `6af454d`): new opt-in tests.
+  `backblaze_b2_connection_check` (records the real HTTP requests, fingerprints
+  the bucket) **passed once against Backblaze** (run by the user, WSL2):
+  restricted key → `HeadBucket` 200, connected; wrong secret / unknown key →
+  invalid credentials; another bucket → 404, bucket unavailable; no
+  `ListBuckets`, nothing created. `cloud-ui.sh b2` **passed 19/19 against
+  Backblaze through the Linux UI** (user, once: add, Connected, rename,
+  wrong key → Invalid credentials, real key → Connected, other bucket →
+  Bucket unavailable, remove; bucket unchanged), and `windows-cloud-ui.ps1
+  -Mode b2` **23/23 with the real Credential Manager and Backblaze** (user,
+  once).
+  Without Backblaze: `tests/desktop/cloud-ui.sh` (Linux, real GNOME Keyring; `local`
+  14/14 and `hang` 8/8, 3 runs) and `tests/desktop/windows-cloud-ui.ps1`
+  (native Windows 11, **real Credential Manager through the UI**: add, check →
+  Network error, rename, replace key, remove; 17/17, 3 runs). WSL2 `cargo test`
+  189 passed, 6 ignored; Windows 180; virtual display 119/0/0, Windows private
+  desktop 56/0 and real desktop 103/0, 3 runs each.
+  [status.md](status/status.md#cloud-storage-ui-end-to-end-and-backblaze-connection-check-2026-11-11).
 - Cloud Storage dashboard (2026-11-11, uncommitted tree on `c022b4e`): WSL2
   `cargo test` 188 passed, 4 ignored (28 new: commands, error kinds, no
   secrets, connection checks against the in-process S3 server with simulated
@@ -268,8 +287,8 @@ silently turns off without a D-Bus session bus. Placeholder icons; no autostart.
 A corrupt feature-preferences database is never repaired: defaults are used
 until the user moves the file away. Cloud account credentials need the OS
 credential store: Linux without a Secret Service (WSL2, minimal window
-managers) cannot store any, by design. The connection check is unverified
-against real providers; while one credential-store call waits (an unlock
+managers) cannot store any, by design. The connection check is verified at Backblaze by one
+opt-in run and one UI run each on Linux and Windows, never at Hetzner; while one credential-store call waits (an unlock
 prompt), the other account calls wait behind it. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
@@ -280,8 +299,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next steps (re-run the Backblaze
-test with the connection check, then a read-only object listing as the first
+[roadmap.md](status/roadmap.md). Cloud storage next steps (a read-only object listing as the first
 step of the file browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are

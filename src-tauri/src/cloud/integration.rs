@@ -20,16 +20,27 @@
 //! - Before and after, the run prefix is checked for object *versions* and
 //!   delete markers too, not only for current objects: on an always-versioned
 //!   provider (B2) a prefix can look empty while hidden versions stay billed.
+//!
+//! `backblaze_b2_connection_check` writes nothing: it records every HTTP
+//! request the SDK sends (method, path, status; never a header) and
+//! fingerprints every object version under `sotyware-it/` before and after.
 
 use std::fs;
+use std::sync::{Arc, Mutex};
 
-use aws_sdk_s3::error::DisplayErrorContext;
+use aws_sdk_s3::config::interceptors::{
+    BeforeDeserializationInterceptorContextRef, BeforeTransmitInterceptorContextRef,
+};
+use aws_sdk_s3::config::{ConfigBag, Intercept, RuntimeComponents};
+use aws_sdk_s3::error::{BoxError, DisplayErrorContext};
+use sha2::{Digest, Sha256};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use super::account::AccountConfig;
+use super::account::{AccountConfig, ResolvedAccount};
 use super::credentials::{Credentials, EnvCredentials, Secret};
+use super::dashboard::{CheckStatus, check_status};
 use super::s3::{ClientOptions, S3Store, StorageError, Verification};
-use super::test_server::TempDir;
+use super::test_server::{TempDir, TestServer};
 
 const MIB: usize = 1024 * 1024;
 
@@ -290,4 +301,280 @@ async fn backblaze_b2_round_trip() {
 #[ignore = "opt-in: needs a Hetzner Object Storage test bucket and key"]
 async fn hetzner_round_trip() {
     round_trip(target("HETZNER", "it-hetzner", "hetzner")).await;
+}
+
+/// Every HTTP request a client sent, as `METHOD /path?query -> status`.
+/// Headers (the signature) are never read.
+#[derive(Clone, Debug, Default)]
+struct Requests(Arc<Mutex<Vec<String>>>);
+
+impl Requests {
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+impl Intercept for Requests {
+    fn name(&self) -> &'static str {
+        "sotyware-it-requests"
+    }
+
+    fn read_before_transmit(
+        &self,
+        context: &BeforeTransmitInterceptorContextRef<'_>,
+        _: &RuntimeComponents,
+        _: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        let request = context.request();
+        let uri = request.uri();
+        let after_scheme = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+        let path = after_scheme
+            .find('/')
+            .map_or("/", |i| &after_scheme[i..])
+            .to_owned();
+        self.0
+            .lock()
+            .unwrap()
+            .push(format!("{} {path}", request.method()));
+        Ok(())
+    }
+
+    fn read_after_transmit(
+        &self,
+        context: &BeforeDeserializationInterceptorContextRef<'_>,
+        _: &RuntimeComponents,
+        _: &mut ConfigBag,
+    ) -> Result<(), BoxError> {
+        if let Some(last) = self.0.lock().unwrap().last_mut() {
+            last.push_str(&format!(" -> {}", context.response().status().as_u16()));
+        }
+        Ok(())
+    }
+}
+
+/// One connection check, as the dashboard runs it, with its requests.
+struct Checked {
+    status: CheckStatus,
+    error: Option<String>,
+    requests: Vec<String>,
+}
+
+async fn check(
+    account: &ResolvedAccount,
+    creds: Credentials,
+    bucket: &str,
+    options: &ClientOptions,
+) -> Checked {
+    let requests = Requests::default();
+    let mut account = account.clone();
+    account.buckets = vec![bucket.to_owned()];
+    let store = S3Store::new(account, creds, options.clone()).with_interceptor(requests.clone());
+    let result = store.check_bucket(bucket).await;
+    Checked {
+        status: result
+            .as_ref()
+            .map_or_else(check_status, |()| CheckStatus::Connected),
+        error: result.err().map(|e| e.to_string()),
+        requests: requests.take(),
+    }
+}
+
+/// The dashboard's connection check in every case that can be produced with
+/// one valid key and without writing anything. Returns each case's name and
+/// result; asserts what must hold at any provider.
+async fn connection_check_cases(
+    account: &ResolvedAccount,
+    creds: &Credentials,
+    bucket: &str,
+    run: &str,
+) -> Vec<(&'static str, Checked)> {
+    assert!(
+        account.path_style,
+        "the ListBuckets detection below expects path-style requests"
+    );
+    let options = ClientOptions {
+        max_attempts: 1,
+        ..ClientOptions::default()
+    };
+    let wrong_secret = Credentials {
+        access_key_id: creds.access_key_id.clone(),
+        secret_access_key: Secret::new("not-the-secret-0123456789abcdefghijk"),
+    };
+    // Well-formed for B2 (25 hex digits) but no account's key.
+    let unknown_key = Credentials {
+        access_key_id: "0030000000000000000000000".into(),
+        secret_access_key: creds.secret_access_key.clone(),
+    };
+    // Bucket names are global at B2; this one is new for every run, so it
+    // exists nowhere or belongs to someone else, and the key cannot use it.
+    let missing = format!("sotyware-it-missing-{run}");
+    let mut unreachable = account.clone();
+    unreachable.endpoint_url = "http://127.0.0.1:9".into();
+
+    let cases = vec![
+        (
+            "valid key, its bucket",
+            check(account, creds.clone(), bucket, &options).await,
+        ),
+        (
+            "wrong secret",
+            check(account, wrong_secret, bucket, &options).await,
+        ),
+        (
+            "unknown key id",
+            check(account, unknown_key, bucket, &options).await,
+        ),
+        (
+            "valid key, a bucket it may not use",
+            check(account, creds.clone(), &missing, &options).await,
+        ),
+        (
+            "unreachable endpoint",
+            check(&unreachable, creds.clone(), bucket, &options).await,
+        ),
+    ];
+    for (name, c) in &cases {
+        let shown: Vec<String> = c
+            .requests
+            .iter()
+            .map(|r| r.replace(bucket, "<bucket>"))
+            .collect();
+        let error = c
+            .error
+            .as_deref()
+            .map(|e| e.replace(bucket, "<bucket>"))
+            .unwrap_or_default();
+        println!("{name}: {:?} {shown:?} {error}", c.status);
+    }
+
+    let status = |i: usize| cases[i].1.status;
+    assert_eq!(status(0), CheckStatus::Connected, "{:?}", cases[0].1.error);
+    assert_eq!(status(1), CheckStatus::InvalidCredentials);
+    assert_eq!(status(2), CheckStatus::InvalidCredentials);
+    assert!(
+        matches!(
+            status(3),
+            CheckStatus::AccessDenied | CheckStatus::BucketUnavailable
+        ),
+        "a valid key must not be reported as invalid or connected for another bucket: {:?}",
+        status(3)
+    );
+    assert_eq!(status(4), CheckStatus::Network);
+
+    let all: Vec<&String> = cases.iter().flat_map(|(_, c)| &c.requests).collect();
+    for r in &all {
+        let (method, path) = r.split_once(' ').unwrap();
+        let path = path.split(" -> ").next().unwrap();
+        assert!(
+            method == "HEAD" || method == "GET",
+            "a check may only read: {r}"
+        );
+        assert!(
+            path != "/" && !path.starts_with("/?"),
+            "ListBuckets must never be sent: {r}"
+        );
+        if method == "GET" {
+            assert!(
+                path.contains("list-type=2") && path.contains("max-keys=1"),
+                "the only GET is a one-key ListObjectsV2: {r}"
+            );
+        }
+    }
+    for (name, c) in &cases[..4] {
+        assert!(
+            c.requests.first().is_some_and(|r| r.starts_with("HEAD ")),
+            "{name}: the check starts with HeadBucket: {:?}",
+            c.requests
+        );
+        assert!(c.requests.len() <= 2, "{name}: {:?}", c.requests);
+    }
+    cases
+}
+
+/// SHA-256 over every object version and delete marker under `prefix`
+/// (key, version id, marker), and how many there are.
+async fn fingerprint(store: &S3Store, bucket: &str, prefix: &str) -> (String, usize) {
+    let mut all = versions(store, bucket, prefix).await;
+    all.sort();
+    let mut hash = Sha256::new();
+    for (key, version, marker) in &all {
+        hash.update(format!("{key}\0{version}\0{marker}\n"));
+    }
+    let hex: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    (hex, all.len())
+}
+
+/// What the B2 test key may see: it is restricted to this file name prefix
+/// (docs/development/testing.md#cloud-storage-integration-tests).
+const B2_KEY_PREFIX: &str = "sotyware-it/";
+
+fn b2_store() -> (Target, ResolvedAccount, Credentials, S3Store) {
+    let t = target("B2", "it-b2", "backblaze-b2");
+    let mut config = AccountConfig::new(t.account_id, t.account_id, t.provider, &t.region);
+    config.buckets = vec![t.bucket.clone()];
+    let resolved = config.resolve().expect("account configuration");
+    let creds = EnvCredentials::from_process()
+        .credentials(t.account_id)
+        .expect("credentials");
+    let store = S3Store::new(resolved.clone(), creds.clone(), ClientOptions::default());
+    (t, resolved, creds, store)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "opt-in: needs a Backblaze B2 test bucket and key"]
+async fn backblaze_b2_connection_check() {
+    let (t, resolved, creds, store) = b2_store();
+    println!("backblaze-b2: endpoint {}", resolved.endpoint_url);
+    let before = fingerprint(&store, &t.bucket, B2_KEY_PREFIX).await;
+    let run = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+        .to_string();
+    connection_check_cases(&resolved, &creds, &t.bucket, &run).await;
+    let after = fingerprint(&store, &t.bucket, B2_KEY_PREFIX).await;
+    println!(
+        "versions under {B2_KEY_PREFIX}: {} before, {} after; fingerprint {} before, {} after",
+        before.1, after.1, before.0, after.0
+    );
+    assert_eq!(before, after, "the checks must not change the bucket");
+}
+
+/// Prints the fingerprint of everything the B2 test key can see, so a run
+/// outside Rust (the Cloud Storage UI test) can show it left the bucket alone.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "opt-in: needs a Backblaze B2 test bucket and key"]
+async fn backblaze_b2_fingerprint() {
+    let (t, _, _, store) = b2_store();
+    let (hash, n) = fingerprint(&store, &t.bucket, B2_KEY_PREFIX).await;
+    println!("sotyware-it fingerprint {hash} versions {n}");
+}
+
+/// The same cases against the in-process server, with `ListBuckets` refused
+/// as B2 refuses it a bucket-restricted key: shows that the request
+/// recording and the assertions work before they are pointed at a provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn connection_check_cases_against_the_test_server() {
+    let server =
+        TestServer::start_denying("test-key", "test-secret", &["it-bucket"], &["ListBuckets"])
+            .await;
+    let mut config = AccountConfig::new("it-local", "it-local", "s3-compatible", "us-east-1");
+    config.endpoint = Some(server.endpoint.clone());
+    let resolved = config.resolve().unwrap();
+    let creds = Credentials {
+        access_key_id: server.access_key_id.clone(),
+        secret_access_key: Secret::new(&server.secret),
+    };
+    let cases = connection_check_cases(&resolved, &creds, "it-bucket", "local").await;
+    assert_eq!(cases[0].1.requests, ["HEAD /it-bucket/ -> 200"]);
+    assert!(
+        !server
+            .operations
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|op| op != "HeadBucket" && op != "ListObjectsV2"),
+        "{:?}",
+        server.operations
+    );
 }
