@@ -393,6 +393,20 @@ def page_buttons(pid):
     return [(n, node) for r, n, _, node in _page_nodes(pid) if r == Atspi.Role.PUSH_BUTTON]
 
 
+def page_checkboxes(pid):
+    return {n: node for r, n, _, node in _page_nodes(pid) if r == Atspi.Role.CHECK_BOX}
+
+
+def checked(node):
+    return node.get_state_set().contains(Atspi.StateType.CHECKED)
+
+
+def example_feature(pid):
+    """The example feature's checkbox and the page text, once the list has loaded."""
+    box = page_checkboxes(pid).get(EXAMPLE_FEATURE)
+    return box, page_text(pid)
+
+
 def click_button(pid, name):
     """Activates the named button the way a screen reader or keyboard user would."""
     for n, node in page_buttons(pid):
@@ -436,6 +450,9 @@ def wait_exit(p, timeout=10):
 
 DASHBOARD_ONLY_LOG = "sotyware: running in dashboard-only mode"
 DASHBOARD_ONLY_TEXT = "No compatible system tray is available"
+# The built-in example feature (src-tauri/src/features/example.rs), enabled by
+# default; its checkbox is labelled with its name.
+EXAMPLE_FEATURE = "Example"
 
 
 def tray_menu():
@@ -671,6 +688,28 @@ check("12 tray mode: page shows the tray hint and a Hide button, no dashboard-on
       page and "reopen it any time from the system tray" in text and DASHBOARD_ONLY_TEXT not in text
       and [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"],
       f"text={text!r} buttons={[n for n, _ in page_buttons(tm.pid)]}")
+# Built-in features through the real capability and webview: list_features and
+# set_feature_enabled are allowed, and the example feature runs from startup.
+listed = page and wait_for(lambda: example_feature(tm.pid)[0] is not None, 10)
+box, text = example_feature(tm.pid) if listed else (None, "")
+check("12 tray mode: page lists the example feature as running, checkbox checked",
+      listed and checked(box) and "Running" in text and "Could not" not in text,
+      f"checkboxes={list(page_checkboxes(tm.pid)) if page else None} text={text!r}")
+
+
+def switched_to(want_checked, state):
+    box, text = example_feature(tm.pid)
+    return box is not None and checked(box) == want_checked and state in text and "Could not" not in text
+
+
+off = listed and Atspi.Action.do_action(example_feature(tm.pid)[0], 0) and wait_for(
+    lambda: switched_to(False, "Disabled"), 5)
+check("12 tray mode: unchecking the example feature disables it", off,
+      f"text={example_feature(tm.pid)[1] if page else ''!r}")
+on = off and Atspi.Action.do_action(example_feature(tm.pid)[0], 0) and wait_for(
+    lambda: switched_to(True, "Running"), 5)
+check("12 tray mode: checking it again starts it", on,
+      f"text={example_feature(tm.pid)[1] if page else ''!r}")
 can_click_hide = bool(tm_win) and page and click_button(tm.pid, "Hide dashboard")
 hidden = can_click_hide and wait_for(lambda: not viewable(tm_win))
 check("12 tray mode: Hide button hides the dashboard, process keeps running",
@@ -708,6 +747,10 @@ text = page_text(do.pid) if page else ""
 check("13 dashboard-only: page shows the no-tray note, not the tray hint",
       page and DASHBOARD_ONLY_TEXT in text and "Closing it quits sotyware" in text
       and "from the system tray" not in text, f"text={text!r}")
+listed = page and wait_for(lambda: example_feature(do.pid)[0] is not None, 10)
+box, text = example_feature(do.pid) if listed else (None, "")
+check("13 dashboard-only: features run too: example listed as running",
+      listed and checked(box) and "Running" in text, f"text={text!r}")
 buttons = [n for n, _ in page_buttons(do.pid)] if page else None
 if can_click_hide:
     check("13 dashboard-only: page offers no Hide button, dashboard stays visible",
