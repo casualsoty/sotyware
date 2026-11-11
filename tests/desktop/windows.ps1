@@ -1,6 +1,7 @@
 # Native Windows desktop test of the sotyware release binary: window lifecycle,
 # "Hide dashboard" button, built-in features section (list and switch the example
-# feature), tray icon and menu, single instance, Quit and relaunch.
+# feature), tray icon and menu, single instance, Quit and relaunch, and the
+# example feature's saved choice across real restarts.
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
@@ -11,6 +12,11 @@
 # opens the notification-area "Show Hidden Icons" flyout. Do not use the mouse or
 # keyboard while it runs. It needs no extra modules: Windows PowerShell 5.1, UI
 # Automation and user32 only.
+#
+# Feature preferences are stored in %LOCALAPPDATA%\com.sotyware.desktop\
+# preferences.sqlite3, which Windows does not let a test redirect. So that the run
+# starts from the defaults, an existing database is moved aside first and put back
+# at the end; the path of the moved copy is printed in case the run is interrupted.
 #
 # Each check prints PASS or FAIL; INFO lines record observations that Windows
 # focus rules may legitimately change (which window is in the foreground).
@@ -250,6 +256,13 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 "binary: $Exe"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
 
+# Tauri's app_local_data_dir (FOLDERID_LocalAppData\<identifier>), as in src-tauri/src/storage.rs.
+$PrefsDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\preferences.sqlite3"
+$PrefsBackup = "$PrefsDb.windows-test-backup"
+if (Test-Path $PrefsBackup) { "ABORT: $PrefsBackup exists (left by an interrupted run?); restore or remove it first"; exit 2 }
+foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsDb), $PrefsBackup) } }
+if (Test-Path $PrefsBackup) { "preferences: existing database moved to $PrefsBackup for this run" }
+
 # --- startup -------------------------------------------------------------
 $primary = Start-Process $Exe -PassThru
 Check "startup: dashboard window visible" (WaitFor { Visible } 15)
@@ -365,8 +378,8 @@ Check "concurrent x4: one window" ((DashHwnds).Count -eq 1)
 $n = TrayIconCount; Check "after all launches: exactly one tray icon" ($n -eq 1) "count=$n"
 
 # --- quit and relaunch ------------------------------------------------------------
-# Quit with the example feature disabled; the relaunch must start it again, since
-# enabled state is not persisted.
+# Quit with the example feature disabled; the relaunch (a new process) must keep it
+# disabled, since the choice is saved. Then enable it, quit, relaunch: running.
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
 Check "quit: example feature disabled before quitting" $ok (FeatureDetail)
 $btn = (Dash).FindFirst($S::Descendants, (PC $A::NameProperty "Hide dashboard"))
@@ -385,15 +398,35 @@ $fresh = Start-Process $Exe -PassThru
 Check "relaunch: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch: fresh process is the running primary" (-not $fresh.HasExited -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $fresh.Id)
 Check "relaunch: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
-Check "relaunch: example feature Running again, checkbox checked (not persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
+Check "relaunch: preferences database exists" (Test-Path $PrefsDb) $PrefsDb
+Check "relaunch: example feature still Disabled, checkbox unchecked (persisted)" (WaitFor { SwitchedTo $false "Disabled" } 10) (FeatureDetail)
+$ok = (ToggleFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
+Check "relaunch: checking (UIA toggle) enables it, no error shown" $ok (FeatureDetail)
 $ok = TrayMenu "Quit"; Check "relaunch: tray Quit invoked" $ok $script:why
 Check "relaunch: quit exits 0" ($fresh.WaitForExit(10000) -and $fresh.ExitCode -eq 0)
+Check "relaunch: no sotyware process left" ((Procs).Count -eq 0)
+[W]::Esc()
+
+# --- second relaunch: the enabled choice was saved too ---------------------------------
+$again = Start-Process $Exe -PassThru
+Check "relaunch 2: fresh dashboard visible" (WaitFor { Visible } 15)
+Check "relaunch 2: a new process is the running primary" (-not $again.HasExited -and $again.Id -ne $fresh.Id -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $again.Id)
+Check "relaunch 2: example feature Running, checkbox checked (persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
+Check "relaunch 2: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
+$ok = TrayMenu "Quit"; Check "relaunch 2: tray Quit invoked" $ok $script:why
+Check "relaunch 2: quit exits 0" ($again.WaitForExit(10000) -and $again.ExitCode -eq 0)
 [W]::Esc()
 
 # Anything still running means a quit path failed; report it and clean up.
 $left = Procs
 Check "cleanup: no sotyware process left" ($left.Count -eq 0) "pids=$($left.Id -join ',')"
 $left | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
+
+# Put the user's own preferences back (or remove the run's, if there were none).
+$null = WaitFor { (Procs).Count -eq 0 } 5
+foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
+foreach ($f in @($PrefsBackup, "$PrefsBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsBackup), $PrefsDb) } }
+if (Test-Path $PrefsDb) { "preferences: your database was put back" }
 
 ""
 "summary: $script:pass passed, $script:fail failed"
