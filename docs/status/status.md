@@ -92,9 +92,10 @@ script or procedure is not in the repository; it was not repeated.
 
 ### Backblaze B2 against the real provider (2026-11-11)
 
-Working tree on `18f6457` plus the uncommitted test extension that adds this
-entry (not committed; the Windows checkout had the same patch applied). These
-are **real requests to Backblaze**, not the local test server.
+Tested as the working tree of `3c992d2` (parent `18f6457`), before it was
+committed; on Windows the same test change was applied as a patch on
+`18f6457` (the comment-only `provider.rs` edit and the docs were not copied).
+These are **real requests to Backblaze**, not the local test server.
 
 Target: a dedicated private test bucket (Object Lock off) in the user's
 Backblaze account in EU Central, reached at
