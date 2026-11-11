@@ -309,6 +309,35 @@ def lock_login():
     return secret_service().Lock([dbus.ObjectPath("/org/freedesktop/secrets/collection/login")])
 
 
+# Where GNOME Keyring's system prompter is installed (gnome-keyring from the
+# distribution: org.gnome.keyring.SystemPrompter.service), the private session
+# bus starts gcr-prompter for a locked collection and its unlock dialog waits
+# for a person. An unpacked gnome-keyring has no prompter and refuses at once.
+# Either way the user did not unlock; the test answers the dialog the way a
+# person who declines would.
+prompts_dismissed = 0
+
+
+def dismiss_prompts():
+    """Presses Cancel in every open gcr-prompter dialog; how many it pressed."""
+    global prompts_dismissed
+    found = subprocess.run(["pgrep", "-x", "gcr-prompter"], capture_output=True, text=True).stdout.split()
+    pressed = 0
+    for prompter in found:
+        for n, node in by_role(int(prompter), Atspi.Role.PUSH_BUTTON):
+            if n == "Cancel" and Atspi.Action.do_action(node, 0):
+                pressed += 1
+    prompts_dismissed += pressed
+    return pressed
+
+
+def declining_prompts(pred):
+    """`pred`, dismissing any unlock prompt while it is not yet true."""
+    def wrapped():
+        dismiss_prompts()
+        return pred()
+    return wrapped
+
 
 # ---- the app, with its own data folder and none of the test variables ----
 data = tempfile.mkdtemp(prefix=f"data-{PHASE}-", dir=os.environ["HOME"])
@@ -350,13 +379,16 @@ LABELS = ["Connected", "Invalid credentials", "Access denied", "Bucket unavailab
           "Configuration problem", "Check failed"]
 
 
-def run_check(timeout=60):
+def run_check(timeout=60, decline_prompts=False):
     """Presses Check connection on the only account; the status label shown
-    afterwards, or None."""
+    afterwards, or None. With `decline_prompts`, an unlock prompt that opens
+    meanwhile is cancelled."""
     if not button(pid, "Check connection"):
         return None
 
     def done():
+        if decline_prompts:
+            dismiss_prompts()
         t = text(pid)
         if "Checking connection…" in t:
             return None
@@ -426,14 +458,16 @@ try:
         # A locked keyring: the check reports it as its own status.
         ok = add("Second", "soty-second", KEY1, SECRET1, endpoint) and wait_for(lambda: "Added Second" in text(pid))
         lock_login()
-        status = run_check(40)
+        status = run_check(40, decline_prompts=True)
+        print(f"  locked keyring, check: {status}; unlock prompts declined: {prompts_dismissed}", flush=True)
         check("locked keyring: check says Credential store locked", ok and status == "Credential store locked",
               f"{status}: {text(pid)}")
         rem = button(pid, "Remove") and wait_for(lambda: "Remove account" in buttons(pid)) \
             and button(pid, "Remove account")
-        outcome = wait_for(lambda: ("Removed Second" in text(pid) and "removed")
-                           or ("still listed" in text(pid) and "kept"), 30)
-        print(f"  locked keyring, remove: {outcome}; db: {rows()}", flush=True)
+        outcome = wait_for(declining_prompts(lambda: ("Removed Second" in text(pid) and "removed")
+                                             or ("still listed" in text(pid) and "kept")), 30)
+        print(f"  locked keyring, remove: {outcome}; db: {rows()}; "
+              f"unlock prompts declined in total: {prompts_dismissed}", flush=True)
         check("locked keyring: removal never claims success while the key stays",
               rem and (outcome == "kept" and rows() != []
                        or outcome == "removed" and keyring_items("second")[:2] == ([], [])), str(outcome))

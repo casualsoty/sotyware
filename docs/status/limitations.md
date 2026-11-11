@@ -404,11 +404,12 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
   2026-11-10). That is evidence, not proof.
 - **No test covers screen-reader access** on either platform.
-- **The locked-keyring checks of `cloud-ui.sh local` fail on the development
-  machine since 2026-11-11** (2 of 16; with the unchanged `ad014e7` binary and
-  script too): `gnome-keyring` was installed system-wide there that day, and
-  the checks expect the unlock prompt to be refused at once. Not yet
-  investigated or adapted ([status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)).
+- **The locked-keyring checks of `cloud-ui.sh local` decline the unlock
+  prompt; none accepts it.** With a system-installed gnome-keyring the driver
+  cancels `gcr-prompter`'s dialog through AT-SPI; unlocking through the prompt
+  (typing the password) is not tested. Since this was adapted, the
+  no-prompter path (an unpacked gnome-keyring) has not been run again
+  ([status.md](status.md#cloud-storage-ui-test-locked-keyring-with-a-system-prompter-2026-11-11)).
 - **No Windows test of the real binary is headless.** Starting sotyware needs a
   logged-in session (window station and desktop); there is no Windows
   counterpart of Xvfb. `npm run test:headless` is the only Windows suite that

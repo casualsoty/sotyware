@@ -157,9 +157,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   is empty; bucket unchanged. Not seen at a real provider: non-empty folders,
   pagination. Regression: virtual display 119/0/0 (3), Windows private
   desktop 56/0 (3), real desktop 103/0 (1), `cloud-ui.sh hang` 8/8 (3),
-  Windows `local` 19/19 (3); Linux `cloud-ui.sh local` 14/2, 3 runs: its two
-  locked-keyring checks fail also on `ad014e7` since gnome-keyring was
-  installed system-wide on the machine (test problem).
+  Windows `local` 19/19 (3); Linux `cloud-ui.sh local` 16/16 (3) after the
+  driver learned to decline the unlock prompt that a system-installed
+  gnome-keyring now opens (before: 14/2, the two locked-keyring checks, also on
+  `ad014e7`).
   [status.md](status/status.md#cloud-storage-bucket-browsing-2026-11-11).
 - Cloud Storage UI end-to-end and Backblaze connection check (2026-11-11,
   uncommitted tree on `6af454d`): new opt-in tests.

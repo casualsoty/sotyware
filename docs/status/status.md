@@ -103,6 +103,23 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Cloud Storage UI test: locked keyring with a system prompter (2026-11-11)
+
+Tested as an uncommitted working tree on top of `ad014e7`, together with the
+bucket browsing change below; test-only (`tests/desktop/cloud_ui.py`), no app
+code changed. The two locked-keyring checks of `cloud-ui.sh local` failed on
+WSL2 (below) because the apt-installed gnome-keyring ships
+`org.gnome.keyring.SystemPrompter.service`: the private session bus started
+`/usr/libexec/gcr-prompter` (seen in the process list during the check), and
+its unlock dialog waited for a person, so "Check connection" never finished.
+The driver now cancels that dialog through AT-SPI and still requires
+**Credential store locked** and a removal that keeps the account.
+
+| Check (WSL2, Ubuntu 24.04.1, gnome-keyring 46.1-2ubuntu0.2) | Result |
+| --- | --- |
+| `tests/desktop/cloud-ui.sh` (local, hang, browse) | ✅ exit 0, 3 runs: local 16/16 (1 prompt declined during the check, 1 more during the removal; the account was kept), hang 8/8, browse 17/17 and the server check |
+| the same with an unpacked gnome-keyring (no prompter) | — not run again since the change |
+
 ### Cloud Storage bucket browsing (2026-11-11)
 
 Tested as an uncommitted working tree on top of `ad014e7` (not committed; the
@@ -127,7 +144,7 @@ No dependency added.
 | `npm run test:desktop:virtual` | ✅ 119/0/0, 3 runs (unchanged suite: regression only) |
 | `cloud-ui.sh browse` (release binary, real GNOME Keyring, local listing server) | ✅ 17/17 and the server check (only `ListObjectsV2`, 12 requests), 4 runs: open bucket, folder with spaces and Unicode, bucket breadcrumb, `photos/` without its marker or nested file, `photos/2024/`, Up, marker-only folder empty, 1,005 entries → 1,000 + Load more → 1,005, Refresh → 1,000, Back to accounts |
 | `cloud-ui.sh hang` | ✅ 8/8, 3 runs |
-| `cloud-ui.sh local` | ❌ 14 passed, 2 failed, 3 runs: the new Open bucket checks (network error, Try again, back) pass; the two **locked-keyring** checks fail. They fail the same way with the unchanged `ad014e7` binary and script (12 passed, 2 failed), so not because of this change. Likely cause: `gnome-keyring` was installed system-wide on this machine at 18:39 today (`/var/log/dpkg.log`); the check expects the unlock prompt to be refused at once, and it no longer is. Not investigated further |
+| `cloud-ui.sh local` | ❌ (fixed in the test since: [above](#cloud-storage-ui-test-locked-keyring-with-a-system-prompter-2026-11-11)) 14 passed, 2 failed, 3 runs: the new Open bucket checks (network error, Try again, back) pass; the two **locked-keyring** checks fail. They fail the same way with the unchanged `ad014e7` binary and script (12 passed, 2 failed), so not because of this change. Likely cause: `gnome-keyring` was installed system-wide on this machine at 18:39 today (`/var/log/dpkg.log`); the check expects the unlock prompt to be refused at once, and it no longer is. Not investigated further |
 | `backblaze_b2_folder_listing` (**real Backblaze B2**, read-only) | ✅ once, see below |
 | `cloud-ui.sh b2` (**real Backblaze B2** through the UI) | ✅ 21/21 and the fingerprint check, once; Open bucket at the root → Access denied |
 

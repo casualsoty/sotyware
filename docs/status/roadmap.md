@@ -75,10 +75,7 @@ order:
      again; Hetzner for the first time;
    - keys restricted to a file name prefix cannot reach their prefix in the
      UI ([limitations.md](limitations.md#cloud-storage)): decide whether the
-     browser should start at a configured folder;
-   - the locked-keyring checks of `cloud-ui.sh local` on the development
-     machine since gnome-keyring was installed system-wide (test problem,
-     [limitations.md](limitations.md#tests)).
+     browser should start at a configured folder.
 6. **Next: downloads from the browser**, one file at a time into a folder the
    user picks, through the existing verified `S3Store::download_file` and the
    per-account transfer queue, with progress reporting (the first custom
