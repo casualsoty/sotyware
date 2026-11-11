@@ -13,9 +13,9 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 
 ## What works today
 
-The desktop runtime, the foundation for built-in features and cloud storage
-account management; **no file transfers, backups or other product features
-exist**.
+The desktop runtime, the foundation for built-in features, cloud storage
+account management and read-only bucket browsing; **no file transfers,
+backups or other product features exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -61,7 +61,17 @@ exist**.
   that); statuses connected / invalid credentials / access denied / bucket
   unavailable / network / credential store unavailable or locked / credentials
   missing / configuration / other. Credential-store and SQLite calls run in
-  `spawn_blocking`. Backend underneath: provider profiles as data, one S3
+  `spawn_blocking`. **Open bucket** (read-only browser, `CloudBrowser.svelte`,
+  [ADR-019](architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)):
+  the account's configured bucket one folder level and one page (1,000
+  entries) at a time through `list_cloud_folder` (`ListObjectsV2`, delimiter
+  `/`; never recursive, never `ListBuckets`): folders, files, sizes, dates,
+  breadcrumbs, Up, Refresh, Load more (no total), back to the accounts.
+  Folder prefixes are passed back exactly as returned (never joined from
+  names), marker objects hidden; the continuation token stays in Rust behind
+  a cursor tied to account, bucket and prefix; stale answers are dropped;
+  structured errors (missing key → Edit account). A key limited to a file
+  name prefix is refused the root at Backblaze, so it cannot browse. Backend underneath: provider profiles as data, one S3
   adapter on `aws-sdk-s3` with end-to-end SHA-256, multipart and a transfer
   queue per account; uploads and downloads are **not reachable from the
   app**. Recommended first provider: Backblaze B2, EU Central.
@@ -71,14 +81,14 @@ exist**.
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, cloud.ts, cloudMessages.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte, cloud.ts, cloudMessages.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands); tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands), browser.rs (list_cloud_folder); tests.rs, browser/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end: cloud-ui.sh, windows-cloud-ui.ps1)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
 
@@ -96,8 +106,9 @@ Full map: [repository-map.md](architecture/repository-map.md).
   dashboard-only mode; every other error stays fatal. No retries or polling.
 - The frontend may call the commands `operating_mode`, `list_features`,
   `set_feature_enabled`, `list_cloud_providers`, `list_cloud_accounts`,
-  `add_cloud_account`, `update_cloud_account`, `remove_cloud_account` and
-  `check_cloud_account` (one `allow-<command>` permission each) and, in tray
+  `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`,
+  `check_cloud_account` and `list_cloud_folder` (one `allow-<command>`
+  permission each) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
   runtime). No other custom command, no custom events. No command returns a
   stored credential.
@@ -135,6 +146,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Cloud Storage bucket browsing (2026-11-11, uncommitted tree on `ad014e7`):
+  WSL2 `cargo test` 208 passed, 8 ignored (19 new), frontend 81 (18 new);
+  Windows 11 199 + 81. Against the local listing server through the release
+  binary's UI: Linux `cloud-ui.sh browse` 17/17 (4 runs), Windows
+  `windows-cloud-ui.ps1 -Mode browse` 29/29 (3 runs). **Real Backblaze,
+  read-only** (`backblaze_b2_folder_listing`, WSL2 and Windows, once each;
+  `cloud-ui.sh b2` 21/21 and `-Mode b2` 25/25, once each): the
+  prefix-restricted test key is refused the root (Access denied), its prefix
+  is empty; bucket unchanged. Not seen at a real provider: non-empty folders,
+  pagination. Regression: virtual display 119/0/0 (3), Windows private
+  desktop 56/0 (3), real desktop 103/0 (1), `cloud-ui.sh hang` 8/8 (3),
+  Windows `local` 19/19 (3); Linux `cloud-ui.sh local` 14/2, 3 runs: its two
+  locked-keyring checks fail also on `ad014e7` since gnome-keyring was
+  installed system-wide on the machine (test problem).
+  [status.md](status/status.md#cloud-storage-bucket-browsing-2026-11-11).
 - Cloud Storage UI end-to-end and Backblaze connection check (2026-11-11,
   uncommitted tree on `6af454d`): new opt-in tests.
   `backblaze_b2_connection_check` (records the real HTTP requests, fingerprints
@@ -289,7 +315,10 @@ until the user moves the file away. Cloud account credentials need the OS
 credential store: Linux without a Secret Service (WSL2, minimal window
 managers) cannot store any, by design. The connection check is verified at Backblaze by one
 opt-in run and one UI run each on Linux and Windows, never at Hetzner; while one credential-store call waits (an unlock
-prompt), the other account calls wait behind it. Full list: [limitations.md](status/limitations.md).
+prompt), the other account calls wait behind it. The bucket browser is verified
+at a real provider only for a refused root and an empty folder; a key limited
+to a file name prefix cannot browse (Backblaze refuses the root); no total
+count, no cache, no file operations. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
@@ -299,8 +328,8 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next steps (a read-only object listing as the first
-step of the file browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next steps (browsing a real bucket with content, then
+downloads from the browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

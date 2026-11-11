@@ -666,3 +666,65 @@ ADR-017 into the app; file browsing, transfers and backups stay unreachable.
   stays responsive but shows "Loading…" or "Saving…" until the prompt is
   answered. Release binaries now link the S3 adapter (size not measured).
   Details: [cloud-storage.md](cloud-storage.md#dashboard).
+
+## ADR-019: Read-only bucket browsing is one command with cursors kept in Rust
+
+Status: Accepted (2026-11-11). Extends ADR-018 with browsing; uploads,
+downloads and every other change to objects stay unreachable.
+
+- **Context:** users want to see what is in each account's bucket. S3 has no
+  folders, only keys; a "folder" is a prefix ending in `/`, and keys may
+  contain anything (`a//b`, a trailing `/`, spaces, `..`, any Unicode). A
+  bucket can hold millions of keys, so listing everything is not an option,
+  and keys may be restricted to one bucket (and, at Backblaze, to a file name
+  prefix), so `ListBuckets` is not either. Listings are paged with an opaque
+  continuation token that is only valid for the same bucket, prefix and
+  credentials.
+- **Decision:**
+  - **One command**, `list_cloud_folder(id, prefix, page)`, with its own
+    permission (`allow-list-cloud-folder`). It lists the account's
+    *configured* bucket (the page cannot name a bucket), one level
+    (`ListObjectsV2`, delimiter `/`) and one page (`LIST_PAGE_SIZE` = 1000,
+    S3's maximum, to keep billed requests down) per call. Never
+    recursive, never `ListBuckets`, nothing that writes. Implemented in
+    `cloud/browser.rs` on `S3Store::list_folder`; credentials and SQLite are
+    read on the blocking pool as for the other account commands.
+  - **Prefixes are taken, never built.** The root is `""`; every other
+    folder prefix is one the provider returned, and the page sends it back
+    unchanged; it never joins names. Breadcrumbs come from Rust, one per
+    `/`. Keys are never interpreted as paths (`..` is a name). A folder's own
+    marker object is hidden; anything outside the prefix is dropped; deeper
+    keys from a provider that ignores the delimiter are folded into their
+    immediate folder.
+  - **Cursors instead of tokens.** The provider's continuation token stays
+    in `CloudAccounts`; the page gets an opaque cursor id, valid for the
+    same account at the same revision, the same bucket and the same prefix,
+    and only until it has been used successfully (at most 256 are kept). A
+    cursor that does not fit, was used, or belongs to an account that
+    changed or went, and a token the provider refuses (HTTP 400), are
+    `outdated-page`: the page refreshes. A provider that returns the token
+    it was sent, or claims more without a token, ends the listing.
+  - **Structured errors** extend `ErrorKind` with `credentials-missing`,
+    `invalid-credentials`, `access-denied`, `bucket-unavailable` (Backblaze
+    answers 404 also for a bucket the key may not see, so the text does not
+    claim it does not exist), `network`, `timeout`, `invalid-configuration`,
+    `provider` (status and code only) and `outdated-page`. The message is
+    sotyware's own sentence; the provider's error text is logged, not shown.
+  - **No cache.** Every navigation, refresh and "Load more" is one request;
+    the page drops answers for anything but the latest navigation (request
+    counter) and is recreated per account (`{#key}`), so one account's
+    results never show under another. No total count is shown: S3 does not
+    give one.
+  - Rejected: a recursive or "list everything" call (unbounded time, memory
+    and cost); returning the provider's token to the page (it would have to
+    be trusted to send it back with the right account and prefix); building
+    prefixes in TypeScript (`a//b` and trailing spaces break); a cache of
+    pages (stale results, invalidation on every change, little gain at one
+    request per folder); a start-folder setting for prefix-restricted keys
+    (not needed yet; see limitations).
+- **Consequences:** the frontend's permissions grow to ten commands
+  (`lib.rs` test). Opening, refreshing and paging cost one `ListObjectsV2`
+  each (a billed class C transaction at Backblaze). A key restricted to a file
+  name prefix cannot list the bucket's root: Backblaze refuses it
+  (`AccessDenied`, seen 2026-11-11), so the browser shows Access denied
+  there. Details: [cloud-storage.md](cloud-storage.md#browsing-a-bucket).

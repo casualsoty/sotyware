@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import CloudAccountForm from "./CloudAccountForm.svelte";
+  import CloudBrowser from "./CloudBrowser.svelte";
   import {
     checkAccount,
     CloudCommandError,
@@ -12,9 +13,10 @@
   } from "./cloud";
   import { CHECK_HINTS, CHECK_LABELS, describeError } from "./cloudMessages";
 
-  // Cloud storage accounts: list, add, edit, check and remove. Not a file
-  // browser: nothing here lists, uploads or downloads objects. Every operation
-  // is a Rust command; the page never sees a stored key.
+  // Cloud storage accounts: list, add, edit, check and remove, and a
+  // read-only browser of each account's bucket (CloudBrowser.svelte). Nothing
+  // here uploads, downloads or changes objects. Every operation is a Rust
+  // command; the page never sees a stored key.
 
   type FormState = { mode: "add" } | { mode: "edit"; id: string };
 
@@ -28,6 +30,30 @@
   let checking = $state<Record<string, boolean>>({});
   let confirmingRemove = $state<string | null>(null);
   let removing = $state<string | null>(null);
+  /** The account whose bucket is open in the browser, if any. */
+  let browsing = $state<string | null>(null);
+  const browsed = $derived(browsing === null ? null : (accounts?.find((a) => a.id === browsing) ?? null));
+
+  function openBrowser(account: AccountInfo): void {
+    actionError = null;
+    notice = null;
+    confirmingRemove = null;
+    form = null;
+    browsing = account.id;
+  }
+
+  function closeBrowser(message: string | null): void {
+    browsing = null;
+    if (message !== null) {
+      actionError = message;
+      void load();
+    }
+  }
+
+  function editFromBrowser(id: string): void {
+    browsing = null;
+    openForm({ mode: "edit", id });
+  }
 
   async function load(): Promise<void> {
     try {
@@ -121,7 +147,11 @@
     </p>
   {/if}
 
-  {#if providers && accounts && !storageError}
+  {#if browsed}
+    {#key browsed.id}
+      <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} />
+    {/key}
+  {:else if providers && accounts && !storageError}
     {#if form?.mode === "add"}
       <CloudAccountForm
         {providers}
@@ -223,6 +253,13 @@
               </div>
             {:else}
               <div class="actions">
+                <button
+                  type="button"
+                  disabled={account.bucket === null || account.configError !== null}
+                  onclick={() => openBrowser(account)}
+                >
+                  Open bucket
+                </button>
                 <button type="button" disabled={checking[account.id] === true} onclick={() => check(account)}>
                   Check connection
                 </button>

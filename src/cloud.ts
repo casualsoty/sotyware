@@ -6,6 +6,11 @@
 //
 // Credentials only ever travel from the page to Rust (`addAccount`,
 // `updateAccount`); no command returns them, and nothing here keeps them.
+//
+// `listFolder` is read-only browsing (src-tauri/src/cloud/browser.rs): one
+// page of one folder of the account's configured bucket. Folder prefixes and
+// object keys are passed through exactly as Rust returns them; the page never
+// builds a prefix from names.
 import { invoke } from "@tauri-apps/api/core";
 
 export const LIST_CLOUD_PROVIDERS = "list_cloud_providers";
@@ -14,6 +19,7 @@ export const ADD_CLOUD_ACCOUNT = "add_cloud_account";
 export const UPDATE_CLOUD_ACCOUNT = "update_cloud_account";
 export const REMOVE_CLOUD_ACCOUNT = "remove_cloud_account";
 export const CHECK_CLOUD_ACCOUNT = "check_cloud_account";
+export const LIST_CLOUD_FOLDER = "list_cloud_folder";
 
 // `CheckStatus` in dashboard.rs, serialized in kebab-case.
 export const CHECK_STATUSES = [
@@ -40,6 +46,15 @@ export const ERROR_KINDS = [
   "credential-store-locked",
   "credential-store",
   "partial",
+  "credentials-missing",
+  "invalid-credentials",
+  "access-denied",
+  "bucket-unavailable",
+  "network",
+  "timeout",
+  "invalid-configuration",
+  "provider",
+  "outdated-page",
   "other",
 ] as const;
 
@@ -87,6 +102,43 @@ export interface AccountInfo {
 export interface AccountList {
   accounts: AccountInfo[];
   storageError: string | null;
+}
+
+// `Breadcrumb`, `FolderEntry`, `FileEntry` and `FolderListing` in browser.rs.
+export interface Breadcrumb {
+  /** May be empty: S3 allows a key such as `a//b`. */
+  name: string;
+  prefix: string;
+}
+
+export interface FolderEntry {
+  /** Without the trailing `/`; may be empty. */
+  name: string;
+  /** The full prefix, ending in `/`, exactly as the provider returned it. */
+  prefix: string;
+}
+
+export interface FileEntry {
+  name: string;
+  /** The full object key, unchanged. */
+  key: string;
+  size: number;
+  /** RFC 3339, if the provider gave one. */
+  lastModified: string | null;
+}
+
+export interface FolderListing {
+  accountId: string;
+  bucket: string;
+  /** Empty for the bucket's root, else ending in `/`. */
+  prefix: string;
+  parent: string | null;
+  /** From the first folder below the root to this one; empty at the root. */
+  breadcrumbs: Breadcrumb[];
+  folders: FolderEntry[];
+  files: FileEntry[];
+  /** Pass to `listFolder` for the next page of the same folder. */
+  nextPage: string | null;
 }
 
 // `AccountInput` in dashboard.rs: the non-secret part of the form.
@@ -215,6 +267,52 @@ export function parseAccountList(value: unknown): AccountList {
   return { accounts: value["accounts"].map(parseAccount), storageError: value["storageError"] };
 }
 
+function parseNamed(what: string, value: unknown): { name: string; prefix: string } {
+  if (!isRecord(value) || typeof value["name"] !== "string" || typeof value["prefix"] !== "string") {
+    throw invalid(what, value);
+  }
+  return { name: value["name"], prefix: value["prefix"] };
+}
+
+function parseFile(value: unknown): FileEntry {
+  if (
+    !isRecord(value) ||
+    typeof value["name"] !== "string" ||
+    typeof value["key"] !== "string" ||
+    typeof value["size"] !== "number" ||
+    !isNullableString(value["lastModified"])
+  ) {
+    throw invalid("file", value);
+  }
+  return { name: value["name"], key: value["key"], size: value["size"], lastModified: value["lastModified"] };
+}
+
+export function parseFolderListing(value: unknown): FolderListing {
+  if (
+    !isRecord(value) ||
+    typeof value["accountId"] !== "string" ||
+    typeof value["bucket"] !== "string" ||
+    typeof value["prefix"] !== "string" ||
+    !isNullableString(value["parent"]) ||
+    !Array.isArray(value["breadcrumbs"]) ||
+    !Array.isArray(value["folders"]) ||
+    !Array.isArray(value["files"]) ||
+    !isNullableString(value["nextPage"])
+  ) {
+    throw invalid("folder listing", value);
+  }
+  return {
+    accountId: value["accountId"],
+    bucket: value["bucket"],
+    prefix: value["prefix"],
+    parent: value["parent"],
+    breadcrumbs: value["breadcrumbs"].map((b: unknown) => parseNamed("breadcrumb", b)),
+    folders: value["folders"].map((f: unknown) => parseNamed("folder", f)),
+    files: value["files"].map(parseFile),
+    nextPage: value["nextPage"],
+  };
+}
+
 /** Turns a command's rejection into a `CloudCommandError` when it has the
  * structured shape; anything else (an IPC or permission failure) becomes an
  * `Error` with its text. */
@@ -271,4 +369,11 @@ export async function removeAccount(id: string): Promise<void> {
  * and the result, also when the check failed. */
 export async function checkAccount(id: string): Promise<AccountInfo> {
   return parseAccount(await call(CHECK_CLOUD_ACCOUNT, { id }));
+}
+
+/** One page of one folder of the account's bucket (read-only). `prefix` is
+ * `""` for the root or a prefix Rust returned; `page` is the previous page's
+ * `nextPage`, or `null` for the first page. */
+export async function listFolder(id: string, prefix: string, page: string | null): Promise<FolderListing> {
+  return parseFolderListing(await call(LIST_CLOUD_FOLDER, { id, prefix, page }));
 }

@@ -273,6 +273,22 @@ pub struct ObjectInfo {
     pub last_modified: Option<String>,
 }
 
+/// What separates "folders" in object keys. S3 has no folders: a folder is
+/// a key prefix ending in this character.
+pub const FOLDER_DELIMITER: &str = "/";
+
+/// One page of a folder listing, as the provider returned it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderPage {
+    /// The full prefixes of immediate subfolders (each ends in `/`).
+    pub prefixes: Vec<String>,
+    /// Objects directly in the folder, with their full keys. May include the
+    /// folder's own marker object (key equal to the prefix).
+    pub objects: Vec<ObjectInfo>,
+    /// The provider's token for the next page, if there is one.
+    pub next_token: Option<String>,
+}
+
 /// An object's details from a HEAD request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectDetails {
@@ -577,6 +593,71 @@ impl S3Store {
             }
         }
         Ok(objects)
+    }
+
+    /// One page of one folder level: the objects directly under `prefix` and
+    /// the prefixes of its immediate subfolders (`ListObjectsV2` with the
+    /// delimiter `/`), at most `max_keys` entries. Never recursive: nested
+    /// objects appear only as their top folder's prefix.
+    ///
+    /// `continuation` is the token of the previous page, exactly as the
+    /// provider returned it. The returned `next_token` is `None` when the
+    /// provider says the listing is complete, and also when it claims more
+    /// but gives no token, or gives back the token it was sent (which would
+    /// repeat the same page forever).
+    pub async fn list_folder(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        continuation: Option<&str>,
+        max_keys: i32,
+    ) -> Result<FolderPage, StorageError> {
+        self.check_target(bucket, None)?;
+        if prefix.len() > MAX_KEY_BYTES {
+            return Err(StorageError::Refused(format!(
+                "prefixes must be at most {MAX_KEY_BYTES} bytes"
+            )));
+        }
+        let out = self
+            .client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .delimiter(FOLDER_DELIMITER)
+            .max_keys(max_keys)
+            .set_continuation_token(continuation.map(str::to_owned))
+            .send()
+            .await
+            .map_err(|e| classify("list folder", e))?;
+        let objects = out
+            .contents()
+            .iter()
+            .filter_map(|o| {
+                Some(ObjectInfo {
+                    key: o.key()?.to_owned(),
+                    size: o.size().and_then(|s| u64::try_from(s).ok()).unwrap_or(0),
+                    last_modified: o
+                        .last_modified()
+                        .and_then(|t| t.fmt(aws_sdk_s3::primitives::DateTimeFormat::DateTime).ok()),
+                })
+            })
+            .collect();
+        let prefixes = out
+            .common_prefixes()
+            .iter()
+            .filter_map(|p| p.prefix().map(str::to_owned))
+            .collect();
+        let next_token = match out.next_continuation_token() {
+            Some(next) if out.is_truncated() == Some(true) && Some(next) != continuation => {
+                Some(next.to_owned())
+            }
+            _ => None,
+        };
+        Ok(FolderPage {
+            prefixes,
+            objects,
+            next_token,
+        })
     }
 
     /// The object's size and stored checksum, or `None` if it does not exist.

@@ -43,8 +43,27 @@ const ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "credential-store-locked": "The credential store refused access. Unlock it (or accept its prompt) and try again. Details:",
   "credential-store": "The credential store failed:",
   partial: "Only part of the change was made:",
+  "credentials-missing": "No key is stored for this account on this computer. Edit the account and enter its key again. Details:",
+  "invalid-credentials":
+    "The provider does not accept this account's key ID or secret. Edit the account and enter the key again. Details:",
+  "access-denied":
+    "The key is valid, but the provider refused this request. A key limited to a file name prefix can only list inside that prefix; check the key's bucket, prefix and permissions at your provider. Details:",
+  "bucket-unavailable":
+    "The bucket could not be found with this account's settings, or this key may not see it. Check the bucket name and region. Details:",
+  network: "The provider could not be reached. Check your internet connection and the endpoint, then try again. Details:",
+  timeout: "The provider did not answer in time. Try again. Details:",
+  "invalid-configuration": "The account's settings cannot be used. Edit the account to fix them. Details:",
+  provider: "The provider could not complete the request:",
+  "outdated-page": "This list is out of date. Refresh to load it again. Details:",
   other: "Something went wrong:",
 };
+
+/** Errors the user fixes by editing the account (re-entering its key). */
+export const FIXED_BY_EDITING: ReadonlySet<ErrorKind> = new Set<ErrorKind>([
+  "credentials-missing",
+  "invalid-credentials",
+  "invalid-configuration",
+]);
 
 /** A sentence for any error a cloud command rejected with. */
 export function describeError(e: unknown): string {

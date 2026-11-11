@@ -23,7 +23,7 @@
 //!
 //! [`S3Store::check_bucket`]: super::s3::S3Store::check_bucket
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -233,6 +233,27 @@ pub enum ErrorKind {
     CredentialStore,
     /// Part of the change happened; the message says which part.
     Partial,
+    /// Nothing is stored in the OS credential store for this account
+    /// (browsing; the connection check reports it as a status).
+    CredentialsMissing,
+    /// The provider does not know the key id, or the secret is wrong.
+    InvalidCredentials,
+    /// The provider accepted the key but refused the request.
+    AccessDenied,
+    /// The bucket was not found at this endpoint (or the key may not see it).
+    BucketUnavailable,
+    /// The provider could not be reached, or the connection broke.
+    Network,
+    /// The provider did not answer in time.
+    Timeout,
+    /// The account's stored settings cannot be used, or it has no bucket.
+    InvalidConfiguration,
+    /// The provider refused for another reason (status and code in the
+    /// message, never the provider's own text).
+    Provider,
+    /// A "load more" page that no longer fits: the account changed, the page
+    /// was already loaded, or it was for another account or folder.
+    OutdatedPage,
     /// Anything else.
     Other,
 }
@@ -247,7 +268,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+    pub(super) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -353,15 +374,53 @@ enum Prepared {
 #[derive(Default)]
 struct Checks {
     results: HashMap<String, ConnectionCheck>,
-    /// Bumped whenever an account changes or goes, so a check that was
-    /// running meanwhile does not record a result for the old settings.
+    /// Bumped whenever an account changes or goes, so a check or listing
+    /// that was running meanwhile does not record a result for the old
+    /// settings.
     revisions: HashMap<String, u64>,
+    /// The "load more" cursors handed to the page, by id (see [`Cursor`]).
+    cursors: HashMap<String, Cursor>,
+    /// Cursor ids in the order they were created, for evicting the oldest.
+    cursor_order: VecDeque<String>,
+    next_cursor: u64,
+}
+
+/// The next page of one folder listing. The page only ever sees the id; the
+/// provider's continuation token stays here, tied to the account (and its
+/// revision), the bucket and the prefix it was issued for, so it can never
+/// be sent with another account's credentials or for another folder.
+#[derive(Clone, Debug)]
+struct Cursor {
+    account: String,
+    revision: u64,
+    bucket: String,
+    prefix: String,
+    token: String,
+}
+
+/// At most this many unused cursors are kept; older ones are forgotten (the
+/// page then reports an outdated page and refreshes).
+const MAX_CURSORS: usize = 256;
+
+/// Entries per listing request: S3's maximum, so a large folder costs as
+/// few (billed) requests as possible.
+pub const LIST_PAGE_SIZE: i32 = 1000;
+
+/// What a listing needs once the blocking part is done.
+pub(super) struct PreparedListing {
+    pub store: Arc<super::s3::S3Store>,
+    pub bucket: String,
+    pub revision: u64,
+    /// The provider token of the requested page, `None` for the first page.
+    pub token: Option<String>,
+    pub page_size: i32,
 }
 
 /// The accounts behind the Cloud Storage page, managed as Tauri state.
 pub struct CloudAccounts {
     accounts: Result<Accounts, StoreError>,
     checks: Mutex<Checks>,
+    page_size: i32,
 }
 
 impl CloudAccounts {
@@ -380,7 +439,16 @@ impl CloudAccounts {
         Self {
             accounts,
             checks: Mutex::default(),
+            page_size: LIST_PAGE_SIZE,
         }
+    }
+
+    /// The same accounts with smaller listing pages, so tests reach
+    /// pagination with a handful of objects.
+    #[cfg(test)]
+    pub fn with_page_size(mut self, page_size: i32) -> Self {
+        self.page_size = page_size;
+        self
     }
 
     fn accounts(&self) -> Result<&Accounts, CommandError> {
@@ -404,11 +472,19 @@ impl CloudAccounts {
             .ok_or_else(|| CommandError::unknown(id))
     }
 
-    /// Forgets the account's last check and invalidates a running one.
+    /// Forgets the account's last check and its listing cursors, and
+    /// invalidates a running check or listing.
     fn changed(&self, id: &str) {
         let mut checks = self.checks();
         checks.results.remove(id);
         *checks.revisions.entry(id.to_owned()).or_default() += 1;
+        checks.cursors.retain(|_, c| c.account != id);
+        let Checks {
+            cursors,
+            cursor_order,
+            ..
+        } = &mut *checks;
+        cursor_order.retain(|c| cursors.contains_key(c));
     }
 
     fn info(&self, config: AccountConfig) -> AccountInfo {
@@ -601,6 +677,138 @@ impl CloudAccounts {
         }
         Ok(self.info(self.find(id)?))
     }
+
+    /// The blocking half of a folder listing: finds the account's bucket,
+    /// resolves the page cursor, and loads the credentials (OS credential
+    /// store). Sends no request. A cursor must have been issued for this
+    /// account, at its current revision, for the same bucket and prefix.
+    pub(super) fn prepare_listing(
+        &self,
+        id: &str,
+        prefix: &str,
+        page: Option<&str>,
+    ) -> Result<PreparedListing, CommandError> {
+        let accounts = self.accounts()?;
+        let config = self.find(id)?;
+        let Some(bucket) = config.buckets.first().cloned() else {
+            return Err(CommandError::new(
+                ErrorKind::InvalidConfiguration,
+                "no bucket is configured for this account",
+            ));
+        };
+        let (revision, token) = {
+            let checks = self.checks();
+            let revision = checks.revisions.get(id).copied().unwrap_or(0);
+            let token = match page {
+                None => None,
+                Some(page) => match checks.cursors.get(page) {
+                    Some(c)
+                        if c.account == id
+                            && c.revision == revision
+                            && c.bucket == bucket
+                            && c.prefix == prefix =>
+                    {
+                        Some(c.token.clone())
+                    }
+                    _ => {
+                        return Err(CommandError::new(
+                            ErrorKind::OutdatedPage,
+                            "this page of the folder is no longer available",
+                        ));
+                    }
+                },
+            };
+            (revision, token)
+        };
+        let store = accounts.connect(id).map_err(|e| {
+            let kind = match &e {
+                AccountError::Unknown(_) => ErrorKind::UnknownAccount,
+                AccountError::Config(_) => ErrorKind::InvalidConfiguration,
+                AccountError::Credentials(CredentialError::NotFound { .. }) => {
+                    ErrorKind::CredentialsMissing
+                }
+                AccountError::Credentials(CredentialError::Unavailable { .. }) => {
+                    ErrorKind::CredentialStoreUnavailable
+                }
+                AccountError::Credentials(CredentialError::AccessDenied { .. }) => {
+                    ErrorKind::CredentialStoreLocked
+                }
+                AccountError::Credentials(_) => ErrorKind::CredentialStore,
+                _ => ErrorKind::Other,
+            };
+            CommandError::new(kind, e.to_string())
+        })?;
+        Ok(PreparedListing {
+            store,
+            bucket,
+            revision,
+            token,
+            page_size: self.page_size,
+        })
+    }
+
+    /// The blocking half after a listing: refuses a result for an account
+    /// that changed or went while the request ran, retires the cursor that
+    /// was used and issues one for the next page. Returns the new cursor id.
+    pub(super) fn finish_listing(
+        &self,
+        id: &str,
+        revision: u64,
+        bucket: &str,
+        prefix: &str,
+        used: Option<&str>,
+        next_token: Option<String>,
+    ) -> Result<Option<String>, CommandError> {
+        self.find(id)?;
+        let mut checks = self.checks();
+        if checks.revisions.get(id).copied().unwrap_or(0) != revision {
+            return Err(CommandError::new(
+                ErrorKind::OutdatedPage,
+                "the account changed while the folder was loading",
+            ));
+        }
+        if let Some(used) = used {
+            checks.cursors.remove(used);
+            checks.cursor_order.retain(|c| c != used);
+        }
+        let Some(token) = next_token else {
+            return Ok(None);
+        };
+        checks.next_cursor += 1;
+        let cursor_id = format!("p{}", checks.next_cursor);
+        checks.cursors.insert(
+            cursor_id.clone(),
+            Cursor {
+                account: id.to_owned(),
+                revision,
+                bucket: bucket.to_owned(),
+                prefix: prefix.to_owned(),
+                token,
+            },
+        );
+        checks.cursor_order.push_back(cursor_id.clone());
+        while checks.cursor_order.len() > MAX_CURSORS {
+            if let Some(oldest) = checks.cursor_order.pop_front() {
+                checks.cursors.remove(&oldest);
+            }
+        }
+        Ok(Some(cursor_id))
+    }
+
+    /// How many listing cursors are kept, for tests.
+    #[cfg(test)]
+    pub(super) fn cursor_count(&self) -> usize {
+        self.checks().cursors.len()
+    }
+
+    /// Replaces the provider token behind a cursor, so a test can send a
+    /// token the provider refuses.
+    #[cfg(test)]
+    pub(super) fn replace_cursor_token(&self, cursor: &str, token: &str) {
+        if let Some(c) = self.checks().cursors.get_mut(cursor) {
+            c.token = token.to_owned();
+        }
+    }
 }
 
 /// How a storage error is shown as a check result.
@@ -617,7 +825,7 @@ pub fn check_status(error: &StorageError) -> CheckStatus {
 
 /// Runs `f` on the blocking thread pool and waits for it without blocking
 /// the caller's thread: credential store and SQLite calls go through here.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {
     tokio::task::spawn_blocking(f).await.unwrap_or_else(|e| {

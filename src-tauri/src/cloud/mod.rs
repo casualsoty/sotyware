@@ -12,12 +12,15 @@
 //! - [`s3`]: the one adapter, on the official AWS SDK, with end-to-end SHA-256
 //!   verification and a transfer queue per account.
 //! - [`dashboard`]: the Tauri commands of the Cloud Storage page (ADR-018):
-//!   list, add, edit and remove accounts and check their connection. No file
-//!   browsing, transfers or backups are reachable from the app yet.
+//!   list, add, edit and remove accounts and check their connection.
+//! - [`browser`]: read-only browsing of an account's bucket, one folder level
+//!   and one page at a time (ADR-019). No transfers or backups are reachable
+//!   from the app yet.
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
 pub mod account;
+pub mod browser;
 pub mod credentials;
 pub mod dashboard;
 pub mod keyring;

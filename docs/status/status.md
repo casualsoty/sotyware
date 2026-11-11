@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (Cloud Storage dashboard: account management in the app; headless and desktop suites on WSL2 and native Windows 11, an end-to-end UI run against a real GNOME Keyring under WSL2). Update this file whenever
+Last updated: 2026-11-11 (Cloud Storage bucket browsing: read-only folder listing in the app; headless, desktop and Cloud Storage UI suites on WSL2 and native Windows 11, read-only listing against real Backblaze B2). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -40,6 +40,11 @@ The Cloud Storage section (account management, connection check) passed on
 private desktop 56/0, three runs each; the connection check has not been run
 against a real provider
 ([details](#cloud-storage-dashboard-2026-11-11)).
+Read-only bucket browsing passed on 2026-11-11 against the local listing
+server through the UI on both platforms (Linux 17/17, Windows 29/29, several
+runs) and read-only against Backblaze B2, where the prefix-restricted test key
+is refused the root and its own prefix is empty
+([details](#cloud-storage-bucket-browsing-2026-11-11)).
 
 ## Implemented
 
@@ -54,14 +59,15 @@ against a real provider
 | Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
 | Cloud Storage section in the dashboard (navigation link; account list with empty state, add/edit form with provider presets, connection check, removal with confirmation; keys in two password inputs, sent only to Rust and never returned) and its six commands `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` (safe DTOs, structured errors, `spawn_blocking` for SQLite and the credential store); connection check `S3Store::check_bucket` (`HeadBucket`, one-key `ListObjectsV2` only after a refused HEAD, never `ListBuckets`) | `src/App.svelte`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/dashboard.rs`, `check_bucket` in `cloud/s3.rs`, `run()` in `lib.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#dashboard), [ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)) |
-| Cloud storage backend (uploads, downloads and listings not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
+| Read-only bucket browser in the Cloud Storage section ("Open bucket" per account: folders, files, sizes, dates, breadcrumbs, Up, Refresh, Load more, back to the accounts) and the command `list_cloud_folder` (one `ListObjectsV2` page of one folder level of the account's configured bucket, delimiter `/`; folder prefixes kept exactly, marker objects hidden; continuation tokens kept in Rust behind cursors tied to account, bucket and prefix; structured errors) | `src/CloudBrowser.svelte`, `src/CloudStorage.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/browser.rs`, cursors in `cloud/dashboard.rs`, `list_folder` in `cloud/s3.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket), [ADR-019](../architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)) |
+| Cloud storage backend (uploads, downloads and changes to objects not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, and one `allow-…` permission per cloud account command; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, and `allow-list-cloud-folder`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -73,11 +79,12 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 
 Nothing else exists: no product features (only the example feature and
 cloud account management), no settings, no persistence other than the feature
-choices and the cloud storage accounts, no cloud file browser, upload,
-download or transfer UI, no backups, no sync, no custom
-Tauri events, no feature-management UI, no third-party
+choices and the cloud storage accounts, no file operations in the bucket
+browser (it only lists), no upload, download or transfer UI, no backups, no
+sync, no custom Tauri events, no feature-management UI, no third-party
 plugins, and no custom command other than `operating_mode`, `list_features`,
-`set_feature_enabled` and the six cloud account commands.
+`set_feature_enabled`, the six cloud account commands and
+`list_cloud_folder`.
 
 ## Validation matrix
 
@@ -95,6 +102,78 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud Storage bucket browsing (2026-11-11)
+
+Tested as an uncommitted working tree on top of `ad014e7` (not committed; the
+tree was clean before this change). New: `list_cloud_folder`
+(`src-tauri/src/cloud/browser.rs`, `S3Store::list_folder`, listing cursors in
+`CloudAccounts`), the page `src/CloudBrowser.svelte` with **Open bucket** per
+account, an in-memory listing backend for the in-process S3 test server, the
+opt-in `backblaze_b2_folder_listing`, and a `browse` phase / `-Mode browse`
+in the Cloud Storage UI tests
+([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket),
+[ADR-019](../architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
+No dependency added.
+
+**WSL2** (Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0):
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check`, `npm run build`, release build | ✅ |
+| `cargo test` | ✅ 208 passed, 8 ignored (19 new: 18 in `cloud/browser/tests.rs`, `folder_listing_cases_against_the_test_server`; 2 new ignored: `backblaze_b2_folder_listing`, the UI tests' server helper `serve_listing_for_ui`) |
+| Frontend (Vitest) | ✅ 81 (18 new in `CloudBrowser.test.ts`, 1 changed in `CloudStorage.test.ts` for the new button) |
+| Mutants (each reverted) | caught: folder marker shown as a file (3 tests fail), no delimiter sent (1), cursor not retired after use (2), stale answer not dropped (1 frontend), no de-duplication on Load more (3 frontend) |
+| `npm run test:desktop:virtual` | ✅ 119/0/0, 3 runs (unchanged suite: regression only) |
+| `cloud-ui.sh browse` (release binary, real GNOME Keyring, local listing server) | ✅ 17/17 and the server check (only `ListObjectsV2`, 12 requests), 4 runs: open bucket, folder with spaces and Unicode, bucket breadcrumb, `photos/` without its marker or nested file, `photos/2024/`, Up, marker-only folder empty, 1,005 entries → 1,000 + Load more → 1,005, Refresh → 1,000, Back to accounts |
+| `cloud-ui.sh hang` | ✅ 8/8, 3 runs |
+| `cloud-ui.sh local` | ❌ 14 passed, 2 failed, 3 runs: the new Open bucket checks (network error, Try again, back) pass; the two **locked-keyring** checks fail. They fail the same way with the unchanged `ad014e7` binary and script (12 passed, 2 failed), so not because of this change. Likely cause: `gnome-keyring` was installed system-wide on this machine at 18:39 today (`/var/log/dpkg.log`); the check expects the unlock prompt to be refused at once, and it no longer is. Not investigated further |
+| `backblaze_b2_folder_listing` (**real Backblaze B2**, read-only) | ✅ once, see below |
+| `cloud-ui.sh b2` (**real Backblaze B2** through the UI) | ✅ 21/21 and the fingerprint check, once; Open bucket at the root → Access denied |
+
+**Native Windows 11** (Home 25H2, build 26200.9711; a plain copy of the tree
+in `C:\dev\sotyware-browse`):
+
+| Check | Result |
+| --- | --- |
+| fmt, clippy, `npm run check`, `npm run build`, release build | ✅ |
+| `npm run test:headless` | ✅ 199 Rust passed, 8 ignored (the Linux-only tests are not built there) + 81 frontend |
+| `windows-cloud-ui.ps1` (local: real Credential Manager, endpoint nobody listens on) | ✅ 19/19, 3 runs (Open bucket → network error with Try again, back) |
+| `windows-cloud-ui.ps1 -Mode browse` (local listing server, UI Automation) | ✅ 29/29, 3 runs (the same browsing steps as on Linux; Check connection: Connected); one earlier run 28/1 failed on a bug in the script (exit code of the server process not read), fixed before the 3 runs |
+| `windows-cloud-ui.ps1 -Mode b2` (**real Backblaze B2**, real Credential Manager) | ✅ 25/25, once; Open bucket at the root → Access denied; fingerprint unchanged |
+| `backblaze_b2_folder_listing` (**real Backblaze B2**) | ✅ once, same results as on WSL2 |
+| `windows-isolated.ps1` | ✅ 56/0, 3 runs (it left an empty `cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop`, where none had been; removed after checking it held 0 accounts) |
+| `windows.ps1` (real desktop, moves the mouse) | ✅ 103/0, once |
+
+**Real Backblaze B2, read-only** (the dedicated test bucket in
+`eu-central-003`; the key is restricted to that bucket and to the file name
+prefix `sotyware-it/`), WSL2 and Windows, same results:
+
+| Case | Result |
+| --- | --- |
+| root (`prefix=""`, delimiter `/`) | `403 AccessDenied` ("not entitled"): a prefix-restricted key cannot list the root; the browser shows Access denied |
+| `sotyware-it/` | `200`, 0 folders, 0 objects (the test prefix is empty) |
+| `sotyware-it/` in pages of one entry | 1 page, 0 entries |
+| a continuation token Backblaze never issued | `200`, accepted, 0 entries (not an error, at least on an empty prefix) |
+| the same through `list_folder` (account, in-memory credential store, cursor) | `sotyware-it/` listed (empty), root → `access-denied` |
+| requests | 5, all `GET ?list-type=2&delimiter=%2F…`; no `ListBuckets`, nothing written |
+| object versions under `sotyware-it/` before / after | 0 / 0, fingerprint identical |
+
+Both real-provider runs were started by the agent this time: the key came
+from the user's files outside the repository (`~/.config/sotyware-it/b2.env`,
+mode 600, on WSL2; the DPAPI-encrypted `%USERPROFILE%\.sotyware-it\b2.xml` on
+Windows) through scripts that removed key id, secret and bucket name from the
+output.
+
+So against the real provider only the refusal, an empty folder and the
+request shape were seen. **Not verified at any real provider:** a folder with
+objects, subfolders, marker objects, special characters in real keys,
+pagination (more than 1,000 entries, or any continuation token Backblaze
+issued), last-modified dates as Backblaze formats them, a key without a name
+prefix (root listing), and Hetzner. Writing test objects to the bucket was
+out of scope for this change (the listing test must not write).
+
+Not run: Windows 10, real Linux desktops, KWallet, screen readers.
 
 ### Cloud Storage UI end-to-end and Backblaze connection check (2026-11-11)
 
@@ -1019,6 +1098,7 @@ tray icon was ever seen or clicked by a person.
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 | Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
+| Bucket browsing at a real provider with objects: non-empty folders, subfolders, markers, odd keys, pagination, a key without a name prefix; Hetzner | — (Backblaze seen only refusing the root and listing an empty prefix, 2026-11-11; [details](#cloud-storage-bucket-browsing-2026-11-11)) |
 
 To validate an environment, follow the manual checklist in
 [testing.md](../development/testing.md#manual-check-real-desktop-linux-or-windows)

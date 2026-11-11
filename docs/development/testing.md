@@ -210,6 +210,34 @@ layers, the first two in every `cargo test`:
   single-threaded runtime with a credential store that blocks until released
   (as during an unlock prompt), that an add and a check leave the async
   thread free.
+- **Bucket browsing** (`cloud/browser/tests.rs`), against the in-process
+  server's in-memory listing backend (`TestServer::start_listing`: keys
+  exactly as given, including `a//b`, keys ending in `/`, spaces and any
+  Unicode, with real `ListObjectsV2` prefix, delimiter, `max-keys` and
+  continuation-token handling; s3s-fs can hold none of these keys and returns
+  no token). Pure rules: breadcrumbs and parents for `""`, `a/`, `a//b/`,
+  `/`, `../`; only `""` or prefixes ending in `/` accepted; the marker
+  hidden, entries outside the prefix dropped, deeper entries folded into
+  their folder; every error kind with sotyware's own text (no provider
+  text), a 404 not claiming the bucket does not exist. Through
+  `list_folder` with an account and the in-memory credential store: the root
+  (immediate folders and files only, size, RFC 3339 date, one
+  `ListObjectsV2`, no `ListBuckets`); nested folders one level at a time; an
+  empty bucket, a marker-only folder and a missing prefix as empty; spaces,
+  Unicode, `+&?#%`, `a//b/`, a leading `/`, `../` and `\` kept exactly;
+  pages of 3 over 10 entries with no duplicate or gap and one cursor left;
+  a cursor refused for another folder, after use, when unknown, for another
+  account at the same provider and after an edit (`outdated-page`), Refresh
+  starting again; a token the provider refuses → `outdated-page` (and the
+  adapter's own 400); two accounts at the same provider against two servers
+  listing only their own objects, and one account's key refused by the
+  other's server; missing, unavailable, locked and failing credential
+  stores with no request sent; wrong secret, refused listing, missing
+  bucket, nothing listening, and a server that never answers (`timeout`),
+  without provider text or secret in the errors; a listing refused when the
+  account changed or went while it ran, an account without a bucket, a
+  prefix that is not a folder; the JSON shape without key or token; and that
+  browsing sends nothing but `ListObjectsV2`.
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
 - **The real OS credential store**, opt-in only:
   [below](#os-credential-store-test).
@@ -315,7 +343,26 @@ test key is restricted to) and fails if anything changed. It prints each
 case's status and requests with the bucket name replaced by `<bucket>`.
 `connection_check_cases_against_the_test_server` runs the same cases and
 assertions against the in-process server in every `cargo test`, so the
-recording itself is tested. `backblaze_b2_fingerprint` only prints that hash
+recording itself is tested.
+
+`backblaze_b2_folder_listing` (B2 only, `#[ignore]`d) **writes nothing**
+either: it lists like the bucket browser (`S3Store::list_folder`) with the
+requests recorded. The root, which a key restricted to a file name prefix may
+be refused (only a listing or `AccessDenied` passes); every folder under
+`sotyware-it/`, one level per request (at most 25 folders), checking that
+each page holds only immediate children inside its prefix and no more than
+`max-keys`; the same prefix in pages of one entry against one page of 1,000
+(same entries, none twice); a continuation token Backblaze never issued
+(printed, not judged); and the dashboard's `list_folder` with an in-memory
+credential store for `sotyware-it/` and the root. Every request must be a
+`GET` with `list-type=2` and `delimiter=%2F`; the version fingerprint under
+`sotyware-it/` must be unchanged. It prints counts, never names.
+`folder_listing_cases_against_the_test_server` runs it against the in-process
+listing server in every `cargo test`.
+
+```bash
+cargo test --lib cloud::integration::backblaze_b2_folder_listing -- --ignored --nocapture
+``` `backblaze_b2_fingerprint` only prints that hash
 (`sotyware-it fingerprint <sha256> versions <n>`), for the UI tests below.
 
 ```bash
@@ -416,13 +463,19 @@ sotyware's output. Account ids and labels are new for every run
 
 | Mode | Check connection expects | Also |
 | --- | --- | --- |
-| Linux `local` | **Network error** (endpoint `http://127.0.0.1:9`, made-up keys) | a second account with the login collection locked over D-Bus: **Credential store locked**, and Remove keeps the account while its key cannot be deleted |
+| Linux `local` | **Network error** (endpoint `http://127.0.0.1:9`, made-up keys) | a second account with the login collection locked over D-Bus: **Credential store locked**, and Remove keeps the account while its key cannot be deleted. |
 | Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Overview link and the example feature's switch still work, the process keeps running |
+| Linux `browse`, Windows `-Mode browse` | — (Windows: **Connected**) | the bucket browser against the in-process listing server (`cargo test … serve_listing_for_ui -- --ignored`, started by the script in this checkout's `src-tauri`, made-up key): Open bucket → the root's folders and files with size; a folder with spaces and Unicode; the bucket breadcrumb; `photos/` without its marker or nested file; `photos/2024/` with a MiB size; Up one folder; a marker-only folder → "This folder is empty."; a folder of 1,005 entries → "1000 items shown; more are available", Load more → 1,005, no Load more; Refresh → 1,000 again; ← Back to accounts; remove. The server fails the phase if anything but `ListObjectsV2` (or `HeadBucket`) reached it |
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
-| Windows `-Mode local` | **Network error** | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
+| Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
-**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [b2]`, default `local
-hang`): Xvfb + openbox and a private `dbus-run-session`, a real
+In `local` (both platforms) Open bucket must show "Could not load this
+folder." with the network error and Try again; in `b2` it is pressed at the
+root once and must show a listing or Access denied (the test key is limited
+to `sotyware-it/`), then ← Back to accounts.
+
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [b2]`, default `local
+hang browse`): Xvfb + openbox and a private `dbus-run-session`, a real
 `gnome-keyring-daemon --unlock` with a throwaway login keyring in a
 throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
 keyring included; never your own keyrings or display). It needs what
@@ -452,7 +505,7 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|b2]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session. The existing `cloud-accounts.sqlite3`
 is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
@@ -463,11 +516,16 @@ integration-test variables only around the `cargo test` fingerprint calls.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode browse
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
 ```
 
+`browse` (and `cloud-ui.sh browse`) compiles and runs the test build the
+first time, so it needs the Rust toolchain, like `b2`.
+
 Not covered by either: an unlock prompt answered by a person, KWallet,
-Windows 10, the connection check against Hetzner.
+Windows 10, the connection check against Hetzner, browsing a non-empty
+bucket at a real provider.
 
 ## Frontend tests
 
@@ -537,7 +595,30 @@ disabled button while pending (the other account unaffected), then the
 result; every status with its own label and, for failures, the hint and
 detail; access denied not shown as invalid credentials; a vanished account
 reloads the list. `cloud.ts`'s parsers and `toCommandError` are tested
-against the Rust shapes and malformed values.
+against the Rust shapes and malformed values. Each account's actions now
+start with Open bucket.
+
+`src/CloudBrowser.test.ts` opens the browser from `CloudStorage.svelte` as a
+user would, with a mocked `list_cloud_folder` that serves pages per account
+and prefix. It checks Open bucket per account (disabled for settings that do
+not validate, no request before it is pressed); the root with folders first,
+sizes (bytes, KiB, MiB; exact bytes as the title), dates, "5 items shown.",
+no Load more, the account list and Add account gone; "Loading folder…" while
+pending; the empty states of a bucket and a folder; opening folders by the
+exact prefix Rust returned, breadcrumbs (the current one not a button), Up
+and the bucket breadcrumb; a folder with an empty name ("(no name)") under
+`a//`, Unicode, and a name with markup shown as text; Back to accounts with
+no request; a slow folder's late answer dropped after another navigation;
+Load more sending the cursor with the same prefix, appending without
+duplicates and without a total, and disappearing on the last page; Refresh
+and opening a folder starting again with `page: null`; "Loading more…" and a
+late page dropped after leaving the folder; a failed page retried with the
+same cursor (what was loaded stays) and an outdated page refreshed; Try
+again after a failed folder; every error kind's own text and Edit account
+only where editing fixes it; Edit account opening that account's form; a
+removed account closing the browser with a message and a reload; and that a
+slow answer for one account never shows in another's browser.
+`parseFolderListing` is tested against the Rust shape and malformed values.
 
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)

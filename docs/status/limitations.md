@@ -246,10 +246,36 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
 Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 [cloud-providers.md](../architecture/cloud-providers.md).
 
-- **Accounts only.** The dashboard manages accounts and checks their
-  connection; it cannot list, upload, download or delete objects, and has no
-  transfer queue, backups or sync
-  ([cloud-storage.md](../architecture/cloud-storage.md#dashboard)).
+- **Accounts and read-only browsing only.** The dashboard manages accounts,
+  checks their connection and lists their buckets one folder at a time; it
+  cannot upload, download, rename, move, delete or create anything, and has
+  no transfer queue, backups or sync
+  ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket)).
+- **A key restricted to a file name prefix cannot browse the bucket's root.**
+  Backblaze refuses the root listing for such a key (`AccessDenied`, "not
+  entitled", 2026-11-11), and the browser always starts at the root, so it
+  shows Access denied and the key's own prefix cannot be reached through the
+  UI. There is no start-folder setting.
+- **Browsing is verified at a real provider only for a refusal and an empty
+  folder.** Against Backblaze (2026-11-11, WSL2 and Windows) the test key was
+  refused the root and listed its empty prefix; a made-up continuation token
+  was accepted there without an error. Non-empty folders, subfolders, marker
+  objects, real odd keys, pagination over 1,000 entries, Backblaze's dates
+  and a key without a prefix restriction were seen only against the local
+  test server; Hetzner never
+  ([status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)).
+- **Browser limits:** no total item count (S3 gives none); folders first,
+  then files, each in the provider's order (binary key order), no sorting or
+  filtering; no cache, so every folder opened, refresh and "Load more" is one
+  billed `ListObjectsV2` (a Backblaze class C transaction); at most 256 unused
+  "Load more" cursors are kept (an older one gives "out of date", and the page
+  refreshes); each loaded page stays in the page's memory until the folder is
+  left, so "Load more" through a very large folder grows the table without
+  limit (1,005 rows tested); a slow listing can take up to the client's
+  timeouts (10 s connect, 60 s read, 3 attempts) and cannot be cancelled,
+  only left; object versions, hidden files and delete markers are not shown;
+  keys that are not valid XML text cannot be listed (the SDK does not request
+  `encoding-type=url`).
 - **The connection check is verified at Backblaze by one opt-in run and one
   UI run each on Linux (GNOME Keyring) and Windows (Credential Manager), and
   never at Hetzner.** On 2026-11-11 (WSL2) Backblaze
@@ -332,7 +358,9 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 - **Pricing is not in the code.** The cost figures in cloud-providers.md are
   estimates from list prices of 2026-11-11, with VAT for French consumers and
   card currency fees unconfirmed.
-- **Test server limits:** `s3s-fs` lists nothing below a second folder level
+- **Test server limits:** the in-memory listing backend (browser tests) has
+  only `ListObjectsV2` and `HeadBucket`, and its continuation tokens are the
+  hex of the last entry, not opaque like a provider's. `s3s-fs` lists nothing below a second folder level
   (seen with restic's `data/xx/` packs, so `restic check` against it reports
   missing packs), stores no versions, and does not check SigV4 checksums of
   streamed bodies the way a provider might. Its errors are not the providers'
@@ -376,6 +404,11 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
   2026-11-10). That is evidence, not proof.
 - **No test covers screen-reader access** on either platform.
+- **The locked-keyring checks of `cloud-ui.sh local` fail on the development
+  machine since 2026-11-11** (2 of 16; with the unchanged `ad014e7` binary and
+  script too): `gnome-keyring` was installed system-wide there that day, and
+  the checks expect the unlock prompt to be refused at once. Not yet
+  investigated or adapted ([status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)).
 - **No Windows test of the real binary is headless.** Starting sotyware needs a
   logged-in session (window station and desktop); there is no Windows
   counterpart of Xvfb. `npm run test:headless` is the only Windows suite that

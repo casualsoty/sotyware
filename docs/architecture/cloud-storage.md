@@ -3,17 +3,21 @@
 How sotyware talks to S3-compatible cloud storage. Status: the backend is a
 tested library module; the dashboard's **Cloud Storage** section uses its
 account part (list, add, edit, check, remove; [Dashboard](#dashboard),
-[ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
-Uploads, downloads, listings of objects and the transfer queue are not
+[ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands))
+and lists each account's bucket one folder and one page at a time, read-only
+([Browsing a bucket](#browsing-a-bucket),
+[ADR-019](decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
+Uploads, downloads, any change to objects and the transfer queue are not
 reachable from the app: no command exposes them. Decision and rationale of
 the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs`, `dashboard.rs`) and `SqliteAccountStore` in
+`keyring.rs`, `s3.rs`, `dashboard.rs`, `browser.rs`) and `SqliteAccountStore` in
 `src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
-`src/CloudAccountForm.svelte`, `src/cloud.ts` and `src/cloudMessages.ts`.
+`src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` and
+`src/cloudMessages.ts`.
 Credentials: [ADR-017](decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
 
 ## Pieces
@@ -36,8 +40,9 @@ AccountConfig (no secret) ──resolve()──▶ ResolvedAccount ──┐
 | `AccountStore` trait / `SqliteAccountStore` | `load`, `save`, `remove`. SQLite in `cloud-accounts.sqlite3` (tables `storage_accounts`, `storage_account_buckets`; `ACCOUNT_MIGRATIONS`, `PRAGMA user_version`), using the same open/check/migrate code as the preferences database. Schema has no column for a secret. |
 | `CredentialStore` trait (`credentials.rs`) | `store`, `load`, `delete`, `exists` for an account's key pair, **by account id**. `Secret` never prints its value in `Debug`/`Display`. `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`) exists only in test builds, for the opt-in provider tests. |
 | `OsCredentialStore` (`keyring.rs`) | The one real `CredentialStore`: Windows Credential Manager or the Linux Secret Service through `keyring-core`. No fallback. |
-| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
-| `CloudAccounts` (`dashboard.rs`) | What the dashboard's commands work on: `Accounts` (or why its database could not be opened) plus the last connection check per account, in memory. Safe shapes (`AccountInfo`, `ProviderInfo`), structured `CommandError`, account ids from labels. [Dashboard](#dashboard). |
+| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_folder` (one page of one folder level, for the browser), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
+| `CloudAccounts` (`dashboard.rs`) | What the dashboard's commands work on: `Accounts` (or why its database could not be opened) plus the last connection check and the listing cursors per account, in memory. Safe shapes (`AccountInfo`, `ProviderInfo`), structured `CommandError`, account ids from labels. [Dashboard](#dashboard). |
+| `cloud::browser` (`browser.rs`) | `list_cloud_folder`: `FolderListing` (folders, files, breadcrumbs, next-page cursor), the prefix and key rules, listing errors. [Browsing a bucket](#browsing-a-bucket). |
 
 ### Why one adapter and no `ObjectStore` trait
 
@@ -271,7 +276,8 @@ backup format of its own. Findings (restic 0.19.1, docs and the experiment in
 
 The **Cloud Storage** section of the dashboard (decision:
 [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
-It manages accounts only; it is not a file browser.
+It manages accounts and opens each one's bucket in a read-only browser
+([below](#browsing-a-bucket)).
 
 ```
 CloudStorage.svelte ── cloud.ts ──invoke──▶ cloud::dashboard (commands)
@@ -290,6 +296,7 @@ CloudStorage.svelte ── cloud.ts ──invoke──▶ cloud::dashboard (comm
 | `update_cloud_account` | `id`, `account`, `credentials` or `null` | the changed `AccountInfo` |
 | `remove_cloud_account` | `id` | nothing |
 | `check_cloud_account` | `id` | the `AccountInfo` with `lastCheck` |
+| `list_cloud_folder` | `id`, `prefix`, `page` or `null` | one `FolderListing` ([Browsing a bucket](#browsing-a-bucket)) |
 
 `account` is `{ label, provider, region, endpoint, bucket }` (`endpoint` `null`
 for the provider's regional one); `credentials` is
@@ -358,9 +365,90 @@ opt-in Backblaze and Hetzner integration tests call `check_bucket` too, but
 were not run after it was added: whether Backblaze answers `HeadBucket` for a
 bucket-restricted key is not yet confirmed against the real provider.
 
+## Browsing a bucket
+
+Decision: [ADR-019](decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust).
+Each account in the list has **Open bucket** (disabled without a bucket or
+with settings that do not validate). The browser takes the account list's
+place and shows the account's name, its bucket, the current folder, a
+breadcrumb trail (bucket → folders), **Up one folder**, **Refresh** and
+**← Back to accounts**; then a table of folders (first) and files with size
+(binary units, exact bytes on hover) and last-modified date where the
+provider gives one. Read-only: it opens folders and nothing else.
+
+```
+CloudBrowser.svelte ── listFolder(id, prefix, page) ──▶ browser::list_folder
+                                                        │ spawn_blocking: account, cursor, credentials
+                                                        ▼
+                                                     S3Store::list_folder ── ListObjectsV2
+                                                        │   the account's bucket, prefix, delimiter "/",
+                                                        │   max-keys 1000, continuation token
+                                                        ▼
+                                                     entries(): folders, files
+                                                        │ spawn_blocking: cursor for the next page
+```
+
+`FolderListing` is `{ accountId, bucket, prefix, parent, breadcrumbs:
+[{ name, prefix }], folders: [{ name, prefix }], files: [{ name, key, size,
+lastModified }], nextPage }`. It never holds a credential or the provider's
+token.
+
+**Folders and keys** (`browser.rs`):
+
+- The root is `""`; a folder is a prefix ending in `/`. Other prefixes are
+  refused (`invalid-input`), as is one over 1,024 bytes.
+- The page opens a folder by sending back the `prefix` Rust gave it; it never
+  joins names, so `a//b/`, `a/ /` or `../` keep every character. `..`, `.`,
+  `\` and a leading `/` are ordinary characters, never navigation. The bucket
+  is always the account's configured one.
+- File names are the part of the key after the folder's prefix; folder names
+  the part between it and the next `/`. Either may be empty (shown as
+  "(no name)"). Names are shown as text, never as markup.
+- An object whose key equals the folder's prefix is its **marker** (what
+  consoles create for an empty folder): not shown. A folder that is only a
+  marker appears in its parent and opens empty ("This folder is empty.").
+- Entries outside the prefix are dropped; should a provider ignore the
+  delimiter, deeper keys and prefixes are folded into their immediate child
+  folder, so nested content still appears only after opening it.
+
+**Pages:** one request returns at most 1,000 entries (folders and files
+together). If the provider has more, the listing carries a cursor and the
+page shows **Load more**; "N items shown; more are available" is all it says
+(S3 gives no total). Cursors live in `CloudAccounts`: tied to the account and
+its revision, the bucket and the prefix; retired once used; at most 256 kept;
+dropped when the account is edited or removed. Opening another folder and
+Refresh start again from the first page; the page also ignores the answer of
+any navigation but the latest, and de-duplicates by key and prefix when
+appending. A cursor that does not fit, or a token the provider rejects with
+HTTP 400, is `outdated-page` (the page offers Refresh); a provider that hands
+back the same token, or claims more without one, ends the listing. There is
+no cache: going back to a folder lists it again.
+
+**Errors** (`ErrorKind`, text in `cloudMessages.ts`): `credentials-missing`
+(with **Edit account**), `credential-store-unavailable`,
+`credential-store-locked`, `credential-store`, `invalid-credentials` (with
+Edit account), `access-denied` (the text adds that a key limited to a file
+name prefix lists only inside it), `bucket-unavailable` (not found *or not
+visible to this key*: Backblaze answers 404 for both), `network`, `timeout`,
+`invalid-configuration` (with Edit account), `provider` (HTTP status and
+code), `outdated-page`, `unknown-account` (the account was removed: the
+browser closes, says so and reloads the list). Every failure has **Try
+again**; a failed "Load more" keeps what was loaded. Messages are sotyware's
+own; the provider's error text goes only to the log.
+
+**Verified against:** the in-process listing server (keys exactly as given,
+real continuation tokens, refused operations), through Rust tests and the
+release binary's UI on Linux and Windows; and Backblaze B2, read-only
+(2026-11-11): the test key, limited to `sotyware-it/`, is refused the root
+(`AccessDenied`, "not entitled"), lists `sotyware-it/` (empty in the test
+bucket), and a made-up continuation token was accepted there (an empty
+answer). Pagination and non-empty folders have **not** been seen at a real
+provider ([status.md](../status/status.md#cloud-storage-bucket-browsing-2026-11-11)).
+
 ## Not built (deliberately)
 
-No object browser, upload or download UI, transfer queue UI, event or
+No upload or download UI, file operations in the browser (rename, delete,
+create folder, move), transfer queue UI, event or
 feature; no synchronisation, folder watching,
 scheduled backups, retention, restic integration, client-side encryption,
 sharing or public links, virtual filesystem, retrying queue, parallel parts

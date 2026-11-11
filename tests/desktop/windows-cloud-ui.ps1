@@ -5,11 +5,15 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2] [-Exe <path>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse] [-Exe <path>]
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
 #   adds, under a new id per run, and removes it through the app.
+# -Mode browse: the bucket browser against the in-process listing server of
+#   the Rust tests (cargo test ... serve_listing_for_ui -- --ignored, in this
+#   checkout's src-tauri; made-up key), which fails if anything but a listing
+#   or the connection check reached it. Contacts no provider.
 # -Mode b2: the real Backblaze B2 test bucket. The key comes from
 #   $env:USERPROFILE\.sotyware-it\b2.xml (Get-Credential | Export-Clixml: keyID
 #   as user name, applicationKey as password, DPAPI-encrypted for this Windows
@@ -25,7 +29,7 @@
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing.
 param(
-  [ValidateSet("local", "b2")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003"
 )
@@ -104,6 +108,18 @@ function Named($name, $type) {
 function PageText { $d = Dash; if (-not $d) { return "" }; try { @($d.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join " | " } catch { "" } }
 # WaitFor runs its block in a child scope, so results go through $script: variables.
 function Press($name) { $script:found = $null; WaitFor { $script:found = Named $name $CT::Button; $null -ne $script:found } 10 | Out-Null; if (-not $script:found) { return $false }; try { $script:found.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false } }
+# A button by its name without surrounding spaces or the folder icon (folder
+# rows hold a hidden icon next to the name).
+function PressFolder($name) {
+  $script:found = $null
+  WaitFor {
+    $d = Dash; if (-not $d) { return $false }
+    $script:found = @($d.FindAll($S::Descendants, (PCT $CT::Button)) | Where-Object { $_.Current.Name.Replace([string][char]::ConvertFromUtf32(0x1F4C1), "").Trim() -eq $name })[0]
+    $null -ne $script:found
+  } 10 | Out-Null
+  if (-not $script:found) { Write-Host "  no button '$name'"; return $false }
+  try { $script:found.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false }
+}
 function Link($name) { $l = Named $name $CT::Hyperlink; if (-not $l) { return $false }; try { $l.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false } }
 # Sets a field through the Value pattern (WebView2 fires the input event the
 # form listens to); checks the length afterwards (password fields are masked).
@@ -154,6 +170,21 @@ if ($Mode -eq "b2") {
   $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
   $Key2 = $Key1; $Secret2 = "sotywareE2eWrongSecret0123456789abcdef"
   $Endpoint = ""
+} elseif ($Mode -eq "browse") {
+  # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
+  $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"
+  $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
+  $Bucket = "browse-bucket"
+  $SrvFile = Join-Path $env:TEMP "sotyware-browse-endpoint-$run.txt"
+  $SrvOut = Join-Path $env:TEMP "sotyware-browse-server-$run.log"
+  $env:SOTYWARE_UI_SERVER_FILE = $SrvFile
+  $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::serve_listing_for_ui", "--", "--ignored", "--nocapture" `
+    -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
+  $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
+  Remove-Item Env:SOTYWARE_UI_SERVER_FILE
+  if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
+  $Endpoint = (Get-Content $SrvFile -Raw).Trim()
+  "listing server: $Endpoint"
 } else {
   $Key1 = "e2eKeyIdOne000000000001"; $Secret1 = "e2e-Secret-One-0123456789abcdef"
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
@@ -212,9 +243,49 @@ try {
   $rawText = [System.Text.Encoding]::UTF8.GetString($raw)
   Check "account database has no key id or secret" (($rawText -notlike "*$Secret1*") -and ($rawText -notlike "*$Key1*"))
 
-  $expect = if ($Mode -eq "b2") { "Connected" } else { "Network error" }
+  $expect = if ($Mode -eq "local") { "Network error" } else { "Connected" }
   $st = RunCheck
   Check "Check connection: $expect" ($st -eq $expect) "$st | $(PageText)"
+
+  # Open the bucket (read-only). local: nobody listens, so the browser shows
+  # the network error; b2: the test key may list only under sotyware-it/, so
+  # Backblaze may refuse the root.
+  $ok = (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Could not load this folder.*") -or (($t -like "*Root of the bucket*") -and ($t -notlike "*Loading folder*")) } 60)
+  $t = PageText
+  if ($Mode -eq "local") {
+    Check "Open bucket: the network error with Try again" ($ok -and ($t -like "*The provider could not be reached*") -and $null -ne (Named "Try again" $CT::Button)) $t
+  } elseif ($Mode -eq "b2") {
+    $outcome = if ($t -like "*the provider refused this request*") { "access denied" } elseif ($t -like "*Could not load this folder.*") { "error" } else { "listed" }
+    "  Open bucket at the root: $outcome"
+    Check "Open bucket at the root: a listing, or Access denied for the prefix-restricted key" ($ok -and ($outcome -eq "listed" -or $outcome -eq "access denied") -and ($t -notlike "*$Secret1*")) $t
+  } else {
+    Check "Open bucket lists the root: folders, files, size, bucket, account" ($ok -and ($t -like "*Root of the bucket*") -and ($t -like "*readme.txt*") -and ($t -like "*12 B*") -and ($t -like "*Ferien 2024 *") -and ($t -like "*$label*") -and ($t -notlike "*cat.jpg*") -and ($t -notlike "*item-0000*") -and $null -eq (Named "Add account" $CT::Button)) $t
+    $ok = (PressFolder "Ferien 2024 $([char]0xFC)") -and (WaitFor { (PageText) -like "*Strand Bild (1).jpg*" } 20)
+    $t = PageText
+    Check "open a folder with spaces and Unicode: its files, exact names" ($ok -and ($t -like "*a+b=c&d.txt*") -and ($t -notlike "*readme.txt*")) $t
+    $ok = (PressFolder $Bucket) -and (WaitFor { ((PageText) -like "*readme.txt*") -and ((PageText) -like "*Root of the bucket*") } 20)
+    Check "the bucket breadcrumb goes back to the root" $ok (PageText)
+    $ok = (PressFolder "photos") -and (WaitFor { (PageText) -like "*cat.jpg*" } 20)
+    $t = PageText
+    Check "open photos/: subfolder and file, not the nested file, not the marker" ($ok -and ($t -like "*2024*") -and ($t -notlike "*beach.jpg*") -and ($t -like "*2.0 KiB*")) $t
+    $ok = (PressFolder "2024") -and (WaitFor { (PageText) -like "*beach.jpg*" } 20)
+    Check "open photos/2024/: the nested file with its size" ($ok -and ((PageText) -like "*3.0 MiB*")) (PageText)
+    $ok = (Press "Up one folder") -and (WaitFor { ((PageText) -like "*cat.jpg*") -and ((PageText) -notlike "*beach.jpg*") } 20)
+    Check "Up one folder goes to photos/" $ok (PageText)
+    $ok = (PressFolder $Bucket) -and (WaitFor { (PageText) -like "*readme.txt*" } 20)
+    $ok = $ok -and (PressFolder "empty") -and (WaitFor { (PageText) -like "*This folder is empty.*" } 20)
+    Check "a folder that is only a marker opens as empty" $ok (PageText)
+    $ok = (PressFolder $Bucket) -and (WaitFor { (PageText) -like "*readme.txt*" } 20)
+    $ok = $ok -and (PressFolder "many") -and (WaitFor { (PageText) -like "*1000 items shown; more are available*" } 120)
+    $t = PageText
+    Check "a folder of 1,005 entries loads one page of 1,000 with Load more" ($ok -and ($t -like "*item-0999.txt*") -and ($t -notlike "*item-1000.txt*") -and $null -ne (Named "Load more" $CT::Button)) ""
+    $ok = (Press "Load more") -and (WaitFor { (PageText) -like "*1005 items shown.*" } 120)
+    Check "Load more appends the rest, no Load more after the last page" ($ok -and ((PageText) -like "*item-1004.txt*") -and $null -eq (Named "Load more" $CT::Button)) ""
+    $ok = (Press "Refresh") -and (WaitFor { (PageText) -like "*1000 items shown; more are available*" } 120)
+    Check "Refresh starts again from the first page" $ok ""
+  }
+  $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Check connection" $CT::Button) } 15)
+  Check "Back to accounts shows the account list again" $ok (PageText)
 
   $ok = (Press "Edit") -and (WaitFor { $null -ne (Named "Save changes" $CT::Button) } 10) -and (Fill "Name" $renamed) -and (Press "Save changes")
   Check "rename without re-entering the key" ($ok -and (WaitFor { (PageText) -like "*Saved $renamed*" } 30) -and [CloudUiW]::Matches((Target $id), (Stored $Key1 $Secret1)) -eq 1) (PageText)
@@ -253,6 +324,16 @@ try {
   foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
   foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
   if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
+  if ($Mode -eq "browse") {
+    Remove-Item $SrvFile -EA SilentlyContinue
+    if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
+  }
+}
+if ($Mode -eq "browse") {
+  $srvLog = (Get-Content $SrvOut -Raw -EA SilentlyContinue)
+  $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
+  Check "browse: the listing server saw only listings and the check ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
+  Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
 $after = CmdkeyLines
 Check "Credential Manager: same com.sotyware.desktop lines as before the run" (($after -join "|") -eq ($before -join "|")) "before=$($before.Count) after=$($after.Count)"

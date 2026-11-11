@@ -66,16 +66,27 @@ order:
      time;
    - a person's run on a real Linux desktop (GNOME Keyring or KWallet with an
      unlock prompt) and on Windows 10.
-5. **Next toward the file browser:** a read-only object listing of one
-   account's bucket, one folder level at a time: `S3Store::list_objects`
-   with a delimiter and pagination (it lists everything today), one new
-   command returning names, sizes and dates for a prefix, and a list view
-   under the account. No uploads, downloads or deletes in that step; they
-   follow with progress reporting (the first custom event, its own ADR) and
-   the per-account transfer queue.
-6. restic orchestration (child process, `--json`, exit codes), tried first
+5. Read-only bucket browsing: done 2026-11-11 (ADR-019, `list_cloud_folder`,
+   [status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)). Open:
+   - seeing it at a real provider with content: a test prefix with a few
+     folders, a marker, odd names and more than 1,000 objects, written once
+     by a separate, explicitly approved setup step (the listing test itself
+     must not write), then `backblaze_b2_folder_listing` and `cloud-ui.sh b2`
+     again; Hetzner for the first time;
+   - keys restricted to a file name prefix cannot reach their prefix in the
+     UI ([limitations.md](limitations.md#cloud-storage)): decide whether the
+     browser should start at a configured folder;
+   - the locked-keyring checks of `cloud-ui.sh local` on the development
+     machine since gnome-keyring was installed system-wide (test problem,
+     [limitations.md](limitations.md#tests)).
+6. **Next: downloads from the browser**, one file at a time into a folder the
+   user picks, through the existing verified `S3Store::download_file` and the
+   per-account transfer queue, with progress reporting (the first custom
+   event: its own ADR) and cancel. Uploads, deletes and folder creation come
+   after, each with its own confirmation design.
+7. restic orchestration (child process, `--json`, exit codes), tried first
    against the B2 test bucket.
-7. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+8. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
 
 Synchronisation, folder watching, scheduled backups, retention, sharing and a
 virtual filesystem stay ideas until then.

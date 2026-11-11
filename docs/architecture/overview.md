@@ -68,22 +68,24 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | Cloud storage | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id in the OS credential store (`OsCredentialStore`, ADR-017), and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. `dashboard.rs`: `CloudAccounts` (managed state) and the six account commands; the app uses only the account part and `check_bucket`, no transfers ([cloud-storage.md](cloud-storage.md#dashboard), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)). |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
-| Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled` and the six cloud account commands), so each needs a permission. |
+| Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`, the six cloud account commands and `list_cloud_folder`), so each needs a permission. |
 | Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
-| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled` and `allow-list-cloud-providers`, `allow-list-cloud-accounts`, `allow-add-cloud-account`, `allow-update-cloud-account`, `allow-remove-cloud-account`, `allow-check-cloud-account`. `core:window:allow-hide` is added at runtime, in tray mode only. |
-| Frontend | `index.html`, `src/main.ts`, `src/App.svelte`, `src/Features.svelte`, `src/features.ts`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts` | Dashboard with two sections, chosen by navigation links (local state, no router). **Overview:** tray mode a "Hide dashboard" button, dashboard-only mode a note instead; both a minimal Features section (one checkbox per feature, with its state) through the typed wrappers in `features.ts`. **Cloud Storage:** the account list, add/edit form, connection check and removal through the typed wrappers in `cloud.ts`. |
+| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled` and `allow-list-cloud-providers`, `allow-list-cloud-accounts`, `allow-add-cloud-account`, `allow-update-cloud-account`, `allow-remove-cloud-account`, `allow-check-cloud-account`, `allow-list-cloud-folder`. `core:window:allow-hide` is added at runtime, in tray mode only. |
+| Frontend | `index.html`, `src/main.ts`, `src/App.svelte`, `src/Features.svelte`, `src/features.ts`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts`, `src/cloudMessages.ts` | Dashboard with two sections, chosen by navigation links (local state, no router). **Overview:** tray mode a "Hide dashboard" button, dashboard-only mode a note instead; both a minimal Features section (one checkbox per feature, with its state) through the typed wrappers in `features.ts`. **Cloud Storage:** the account list, add/edit form, connection check and removal, and a read-only browser of each account's bucket (folders, files, sizes, dates; one page at a time), through the typed wrappers in `cloud.ts`. |
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through nine custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through ten custom commands
   and one built-in call. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
   rules) and the cloud account commands `list_cloud_providers`,
   `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`,
   `remove_cloud_account`, `check_cloud_account`
-  ([cloud-storage.md](cloud-storage.md#dashboard)); none returns a stored
-  credential. The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
+  ([cloud-storage.md](cloud-storage.md#dashboard)), and `list_cloud_folder`
+  (read-only, one page of one folder of an account's bucket;
+  [cloud-storage.md](cloud-storage.md#browsing-a-bucket)); none returns a
+  stored credential. The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
   tray mode only). There is no other custom command, and there are **no custom
   events** (`emit`/`listen`). Adding either is an architectural change: record
   it in [decisions.md](decisions.md).
@@ -105,7 +107,7 @@ Boundaries that hold today:
   sotyware's own. Everything is driven by Tauri events and user actions. The
   example feature starts nothing. `set_feature_enabled` (an `async` command)
   runs on Tauri's async runtime, off the event loop, and so does the
-  preference save it makes. The cloud account commands run their SQLite and
+  preference save it makes. The cloud account and folder commands run their SQLite and
   credential-store work on the runtime's blocking pool
   (`spawn_blocking`); nothing runs after a command returns. The databases are
   read once, before the event loop starts.
@@ -114,8 +116,9 @@ Boundaries that hold today:
   configurations (`cloud-accounts.sqlite3`), both in the app's local data
   folder, and the accounts' keys in the OS credential store. The only network
   requests are the ones "Check connection" sends (`HeadBucket`, at most one
-  `ListObjectsV2` of one key, to the account's bucket); nothing is uploaded,
-  downloaded or synchronised.
+  `ListObjectsV2` of one key, to the account's bucket) and one
+  `ListObjectsV2` per folder opened, refreshed or "Load more" in the bucket
+  browser; nothing is uploaded, downloaded, changed or synchronised.
 
 ## Security model
 
@@ -123,10 +126,12 @@ Boundaries that hold today:
   needed by Svelte).
 - Capability `default` applies to window `main` only and grants
   `allow-operating-mode`, `allow-list-features`,
-  `allow-set-feature-enabled` and the six `allow-…-cloud-…` permissions (the
-  app's nine commands) and nothing else, not even `core:default`
+  `allow-set-feature-enabled`, the six `allow-…-cloud-…` account permissions
+  and `allow-list-cloud-folder` (the app's ten commands) and nothing else, not
+  even `core:default`
   ([ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry),
-  [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
+  [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands),
+  [ADR-019](decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
 - Cloud account keys travel only from the page to Rust (`add_cloud_account`,
   `update_cloud_account`) and from Rust to the OS credential store and the
   request signer; no response, log line or error message contains one. In tray mode, `setup` adds the runtime capability `tray-mode`,

@@ -319,7 +319,7 @@ describe("account list", () => {
     expect(work.querySelector("[data-status]")?.textContent?.trim()).toBe("Connected");
     // Each account has its own actions.
     for (const li of [photos, work]) {
-      expect(buttons(li).map((b) => b.textContent?.trim())).toEqual(["Check connection", "Edit", "Remove"]);
+      expect(buttons(li).map((b) => b.textContent?.trim())).toEqual(["Open bucket", "Check connection", "Edit", "Remove"]);
     }
   });
 

@@ -12,6 +12,7 @@ fn main() {
             "update_cloud_account",
             "remove_cloud_account",
             "check_cloud_account",
+            "list_cloud_folder",
         ]),
     ))
     .expect("failed to run tauri-build");

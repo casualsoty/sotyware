@@ -135,18 +135,25 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   credential read at startup): list, add, edit, remove accounts and a
   connection check (`S3Store::check_bucket`: `HeadBucket`, at most one
   `ListObjectsV2` of one key; never `ListBuckets`). Credential-store and
-  SQLite work runs in `spawn_blocking`. No command uploads, downloads, lists
+  SQLite work runs in `spawn_blocking`. Read-only browsing of an account's
+  configured bucket goes through `cloud/browser.rs` (`list_cloud_folder`:
+  one `ListObjectsV2` page of one folder level, delimiter `/`; the
+  provider's continuation token stays in Rust behind a cursor tied to the
+  account, bucket and prefix). No command uploads, downloads, changes
   objects or returns a credential
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
-  [ADR-018](docs/architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
+  [ADR-018](docs/architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands),
+  [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
-  (+ `src/CloudAccountForm.svelte`). Its only access to Rust is the commands
+  (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`). Its only
+  access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
-  `update_cloud_account`, `remove_cloud_account` and `check_cloud_account`
+  `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` and
+  `list_cloud_folder`
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
   and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
@@ -158,10 +165,11 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 persistence other than the feature enabled/disabled choices and the cloud
 storage accounts, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, cloud file browser, upload/download or transfer UI, credential
+tray fallback, file operations in the cloud browser (it only lists: no
+upload, download, rename, delete or folder creation), transfer UI, credential
 import or any credential fallback outside the OS store, backups
 or restic integration, cost estimator, custom event, or custom command besides
-the nine listed above. Never describe these as existing.
+the ten listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -268,7 +276,7 @@ Every coding agent must:
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
-   `CloudAccounts`, the capability file) before
+   `CloudAccounts`, `cloud::browser`, the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

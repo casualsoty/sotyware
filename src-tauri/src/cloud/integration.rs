@@ -21,9 +21,10 @@
 //!   delete markers too, not only for current objects: on an always-versioned
 //!   provider (B2) a prefix can look empty while hidden versions stay billed.
 //!
-//! `backblaze_b2_connection_check` writes nothing: it records every HTTP
-//! request the SDK sends (method, path, status; never a header) and
-//! fingerprints every object version under `sotyware-it/` before and after.
+//! `backblaze_b2_connection_check` and `backblaze_b2_folder_listing` write
+//! nothing: they record every HTTP request the SDK sends (method, path,
+//! status; never a header) and fingerprint every object version under
+//! `sotyware-it/` before and after.
 
 use std::fs;
 use std::sync::{Arc, Mutex};
@@ -36,10 +37,13 @@ use aws_sdk_s3::error::{BoxError, DisplayErrorContext};
 use sha2::{Digest, Sha256};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use super::account::{AccountConfig, ResolvedAccount};
-use super::credentials::{Credentials, EnvCredentials, Secret};
-use super::dashboard::{CheckStatus, check_status};
-use super::s3::{ClientOptions, S3Store, StorageError, Verification};
+use super::account::{AccountConfig, MemoryAccountStore, ResolvedAccount};
+use super::browser::{self, listing_error};
+use super::credentials::{
+    CredentialStore, Credentials, EnvCredentials, MemoryCredentialStore, Secret,
+};
+use super::dashboard::{AccountInput, CheckStatus, CloudAccounts, CredentialInput, check_status};
+use super::s3::{ClientOptions, FolderPage, S3Store, StorageError, Verification};
 use super::test_server::{TempDir, TestServer};
 
 const MIB: usize = 1024 * 1024;
@@ -576,5 +580,258 @@ async fn connection_check_cases_against_the_test_server() {
             .any(|op| op != "HeadBucket" && op != "ListObjectsV2"),
         "{:?}",
         server.operations
+    );
+}
+
+/// Checks what must hold for any page of `prefix`: only immediate children,
+/// keys and prefixes inside the folder, prefixes ending in `/`.
+fn assert_one_level(prefix: &str, page: &FolderPage) {
+    for p in &page.prefixes {
+        let rest = p
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("prefix outside the folder"));
+        assert!(
+            rest.ends_with('/') && rest.find('/') == Some(rest.len() - 1),
+            "not an immediate subfolder"
+        );
+    }
+    for o in &page.objects {
+        let rest = o
+            .key
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("key outside the folder"));
+        assert!(
+            !rest.contains('/'),
+            "a nested key in a delimited listing: {prefix:?} {rest:?}"
+        );
+    }
+}
+
+/// Every entry of `prefix` in pages of `max_keys`: subfolder prefixes as
+/// `(prefix, true)`, object keys (the folder's marker included) as
+/// `(key, false)`; and the number of pages, at most `max_pages`.
+async fn walk_pages(
+    store: &S3Store,
+    bucket: &str,
+    prefix: &str,
+    max_keys: i32,
+    max_pages: usize,
+) -> (Vec<(String, bool)>, usize) {
+    let mut entries = Vec::new();
+    let mut token: Option<String> = None;
+    for pages in 1..=max_pages {
+        let page = store
+            .list_folder(bucket, prefix, token.as_deref(), max_keys)
+            .await
+            .unwrap_or_else(|e| panic!("listing a folder: {e}"));
+        assert_one_level(prefix, &page);
+        assert!(
+            page.prefixes.len() + page.objects.len() <= usize::try_from(max_keys).unwrap(),
+            "more entries than max-keys"
+        );
+        entries.extend(page.prefixes.iter().map(|p| (p.clone(), true)));
+        entries.extend(page.objects.iter().map(|o| (o.key.clone(), false)));
+        match page.next_token {
+            Some(next) => token = Some(next),
+            None => return (entries, pages),
+        }
+    }
+    (entries, max_pages)
+}
+
+/// The browser's listing in every case that can be produced with one valid
+/// key and without writing anything: the root, a walk of the folders under
+/// `start` (one level per request), pages of one entry against one page of
+/// 1000, and a continuation token the provider never issued. Prints counts
+/// only, never names. Returns the requests sent.
+async fn folder_listing_cases(
+    account: &ResolvedAccount,
+    creds: &Credentials,
+    bucket: &str,
+    start: &str,
+) -> Vec<String> {
+    let requests = Requests::default();
+    let mut account = account.clone();
+    account.buckets = vec![bucket.to_owned()];
+    let options = ClientOptions {
+        max_attempts: 1,
+        ..ClientOptions::default()
+    };
+    let store = S3Store::new(account.clone(), creds.clone(), options.clone())
+        .with_interceptor(requests.clone());
+
+    // The root: a key restricted to a file name prefix may be refused it.
+    let root = store.list_folder(bucket, "", None, 1000).await;
+    match &root {
+        Ok(page) => {
+            assert_one_level("", page);
+            println!(
+                "root: {} folders, {} objects, more: {}",
+                page.prefixes.len(),
+                page.objects.len(),
+                page.next_token.is_some()
+            );
+        }
+        Err(e) => println!("root: {:?} ({:?})", listing_error(e).kind, e),
+    }
+    assert!(
+        matches!(root, Ok(_) | Err(StorageError::AccessDenied(_))),
+        "the root is listed or refused, nothing else: {root:?}"
+    );
+
+    // Folder by folder below `start`, one level per request.
+    let mut queue = vec![start.to_owned()];
+    let (mut folders, mut objects) = (0, 0);
+    let mut visited = 0;
+    while let Some(prefix) = queue.pop() {
+        visited += 1;
+        let (entries, _) = walk_pages(&store, bucket, &prefix, 1000, 20).await;
+        for (e, is_folder) in entries {
+            if is_folder {
+                folders += 1;
+                if visited + queue.len() < 25 {
+                    queue.push(e);
+                }
+            } else {
+                objects += 1;
+            }
+        }
+    }
+    println!(
+        "under the start prefix: {visited} folders opened, {folders} subfolders, {objects} objects"
+    );
+
+    // Pages of one entry give exactly what one page of 1000 gives (a page
+    // lists its folders before its files, so only the set is compared).
+    let (mut whole, _) = walk_pages(&store, bucket, start, 1000, 1).await;
+    let (mut paged, pages) = walk_pages(&store, bucket, start, 1, 200).await;
+    if whole.len() < 200 {
+        whole.sort();
+        paged.sort();
+        let mut unique = paged.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), paged.len(), "an entry on two pages");
+        assert_eq!(paged, whole, "paged listing differs");
+    }
+    println!(
+        "pages of 1: {pages} pages for {} entries (one page of 1000: {})",
+        paged.len(),
+        whole.len()
+    );
+
+    // A token the provider never issued.
+    let bad = store
+        .list_folder(bucket, start, Some("bm90LWEtdG9rZW4="), 1000)
+        .await;
+    match &bad {
+        Ok(page) => println!(
+            "made-up token: accepted, {} entries",
+            page.prefixes.len() + page.objects.len()
+        ),
+        Err(e) => println!("made-up token: {:?} ({:?})", listing_error(e).kind, e),
+    }
+
+    // The whole path, as the dashboard runs it: account, credential store
+    // (in memory here), cursor, folder rules.
+    let keys = Arc::new(MemoryCredentialStore::default());
+    let state = Arc::new(CloudAccounts::load(
+        Ok(Box::new(MemoryAccountStore::default())),
+        Arc::clone(&keys) as Arc<dyn CredentialStore>,
+        options,
+    ));
+    let id = state
+        .add(
+            &AccountInput {
+                label: "Listing".into(),
+                provider: account.profile.id.into(),
+                region: account.region.clone(),
+                endpoint: Some(account.endpoint_url.clone()),
+                bucket: bucket.into(),
+            },
+            CredentialInput::new(&creds.access_key_id, creds.secret_access_key.expose()),
+        )
+        .unwrap()
+        .id;
+    let listing = browser::list_folder(Arc::clone(&state), id.clone(), start.into(), None)
+        .await
+        .unwrap_or_else(|e| panic!("list_folder: {e:?}"));
+    println!(
+        "dashboard listing of the start prefix: {} folders, {} files, more: {}",
+        listing.folders.len(),
+        listing.files.len(),
+        listing.next_page.is_some()
+    );
+    let root = browser::list_folder(state, id, String::new(), None).await;
+    println!(
+        "dashboard listing of the root: {}",
+        match &root {
+            Ok(l) => format!("{} folders, {} files", l.folders.len(), l.files.len()),
+            Err(e) => format!("{:?}", e.kind),
+        }
+    );
+
+    let sent = requests.take();
+    for r in &sent {
+        let (method, path) = r.split_once(' ').unwrap();
+        assert_eq!(method, "GET", "browsing only reads: {r}");
+        assert!(
+            path.contains("list-type=2") && path.contains("delimiter=%2F"),
+            "only ListObjectsV2 with the delimiter: {r}"
+        );
+    }
+    sent
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "opt-in: needs a Backblaze B2 test bucket and key"]
+async fn backblaze_b2_folder_listing() {
+    let (t, resolved, creds, store) = b2_store();
+    let before = fingerprint(&store, &t.bucket, B2_KEY_PREFIX).await;
+    let sent = folder_listing_cases(&resolved, &creds, &t.bucket, B2_KEY_PREFIX).await;
+    let statuses: Vec<&str> = sent
+        .iter()
+        .map(|r| r.rsplit(" -> ").next().unwrap_or("?"))
+        .collect();
+    println!("{} requests, statuses {statuses:?}", sent.len());
+    let after = fingerprint(&store, &t.bucket, B2_KEY_PREFIX).await;
+    println!(
+        "versions under {B2_KEY_PREFIX}: {} before, {} after; fingerprint {} before, {} after",
+        before.1, after.1, before.0, after.0
+    );
+    assert_eq!(before, after, "listing must not change the bucket");
+}
+
+/// The same cases against the in-process listing server, so the harness and
+/// its assertions are known to work before they meet a provider.
+#[tokio::test(flavor = "multi_thread")]
+async fn folder_listing_cases_against_the_test_server() {
+    let objects: &[(&str, &str, u64)] = &[
+        ("it-bucket", "sotyware-it/", 0),
+        ("it-bucket", "sotyware-it/a.txt", 1),
+        ("it-bucket", "sotyware-it/b c/d.txt", 1),
+        ("it-bucket", "sotyware-it/b c/e/f.txt", 1),
+        ("it-bucket", "sotyware-it/x//y.txt", 1),
+        ("it-bucket", "outside.txt", 1),
+    ];
+    let server =
+        TestServer::start_listing("test-key", "test-secret", &["it-bucket"], objects, &[]).await;
+    let mut config = AccountConfig::new("it-local", "it-local", "s3-compatible", "us-east-1");
+    config.endpoint = Some(server.endpoint.clone());
+    let resolved = config.resolve().unwrap();
+    let sent = folder_listing_cases(
+        &resolved,
+        &server.credentials(),
+        "it-bucket",
+        "sotyware-it/",
+    )
+    .await;
+    assert!(sent.len() > 8, "{sent:?}");
+    assert!(
+        server
+            .operations
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|op| op == "ListObjectsV2")
     );
 }

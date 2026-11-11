@@ -2,13 +2,16 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2 <binary>   (run by cloud-ui.sh, which sets up
+usage: cloud_ui.py local|hang|b2|browse <binary>   (run by cloud-ui.sh, which sets up
 Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
   local  a real GNOME Keyring; made-up keys and an endpoint nobody listens on;
          contacts no provider
   hang   a Secret Service that never answers; the window must stay usable
+  browse a real GNOME Keyring and the in-process listing server of the Rust
+         tests (endpoint in SOTYWARE_UI_ENDPOINT, started by cloud-ui.sh):
+         open the bucket, folders, breadcrumbs, Up, Load more, Refresh, Back
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -133,6 +136,12 @@ if PHASE == "b2":
     REGION = need("SOTYWARE_IT_B2_REGION")
     # A wrong secret for the same key id: shows that a replaced key is the one used.
     KEY2, SECRET2 = KEY1, "sotywareE2eWrongSecret0123456789abcdef"
+elif PHASE == "browse":
+    # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
+    KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "browse-bucket", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
 else:
     SECRET1, KEY1 = "e2e-Secret-One-0123456789abcdef", "e2eKeyIdOne000000000001"
     SECRET2, KEY2 = "e2e-Secret-Two-fedcba9876543210", "e2eKeyIdTwo000000000002"
@@ -258,6 +267,16 @@ def fill(pid, name, value):
     return False
 
 
+def press(pid, name):
+    """Presses the button whose accessible name, without surrounding
+    whitespace, is `name` (folder buttons also hold a hidden icon)."""
+    for n, node in by_role(pid, Atspi.Role.PUSH_BUTTON):
+        if n.strip() == name or n.replace("📁", "").strip() == name:
+            return Atspi.Action.do_action(node, 0)
+    print(f"  no button {name!r}; buttons: {[b.strip() for b in buttons(pid)][:40]}", flush=True)
+    return False
+
+
 def checkbox(pid, name):
     return act(pid, (Atspi.Role.CHECK_BOX,), name)
 
@@ -290,6 +309,7 @@ def lock_login():
     return secret_service().Lock([dbus.ObjectPath("/org/freedesktop/secrets/collection/login")])
 
 
+
 # ---- the app, with its own data folder and none of the test variables ----
 data = tempfile.mkdtemp(prefix=f"data-{PHASE}-", dir=os.environ["HOME"])
 DB = os.path.join(data, "com.sotyware.desktop", "cloud-accounts.sqlite3")
@@ -309,11 +329,11 @@ def rows():
 
 def db_has_no_key():
     raw = open(DB, "rb").read()
-    return all(s.encode() not in raw for s in (SECRET1, SECRET2, KEY1, KEY2))
+    return all(s.encode() not in raw for s in (SECRET1, SECRET2, KEY1, KEY2) if s)
 
 
 def page_has_no_key(t):
-    return all(s not in t for s in (SECRET1, SECRET2, KEY1, KEY2))
+    return all(s not in t for s in (SECRET1, SECRET2, KEY1, KEY2) if s)
 
 
 def add(label, bucket, key_id, secret, endpoint, region=REGION):
@@ -383,6 +403,13 @@ try:
         status = run_check(40)
         check("Check connection shows a network error for an endpoint nobody listens on",
               status == "Network error", f"{status}: {text(pid)}")
+        ok = press(pid, "Open bucket") and wait_for(lambda: "Could not load this folder." in text(pid), 60)
+        t = text(pid)
+        check("Open bucket: the browser shows the network error with Try again",
+              bool(ok) and "The provider could not be reached" in t and "Try again" in buttons(pid)
+              and page_has_no_key(t), t)
+        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
+        check("Back to accounts from the error", bool(ok), str(buttons(pid)))
         ok = edit(pid) and fill(pid, "Name", "Family photos") and button(pid, "Save changes")
         check("rename without re-entering the key",
               bool(ok and wait_for(lambda: "Saved Family photos" in text(pid)))
@@ -411,6 +438,51 @@ try:
               rem and (outcome == "kept" and rows() != []
                        or outcome == "removed" and keyring_items("second")[:2] == ([], [])), str(outcome))
 
+    elif PHASE == "browse":
+        ok = add("Browse", BUCKET, KEY1, SECRET1, ENDPOINT)
+        check("add an account for the local listing server",
+              bool(ok and wait_for(lambda: "Added Browse" in text(pid))), text(pid))
+        ok = press(pid, "Open bucket") and wait_for(lambda: "readme.txt" in text(pid), 30)
+        t = text(pid)
+        check("Open bucket lists the root: folders, files, size, the bucket and the account",
+              bool(ok) and all(s in t for s in ("Root of the bucket", "photos", "Ferien 2024 ü", "empty", "many",
+                                                "readme.txt", "12 B", "Browse", BUCKET))
+              and "cat.jpg" not in t and "item-0000" not in t, t)
+        check("the account list is replaced by the browser", "Add account" not in buttons(pid), str(buttons(pid)))
+        ok = press(pid, "Ferien 2024 ü") and wait_for(lambda: "Strand Bild (1).jpg" in text(pid), 20)
+        t = text(pid)
+        check("open a folder with spaces and Unicode: its files, exact names",
+              bool(ok) and "a+b=c&d.txt" in t and "Ferien 2024 ü/" in t and "readme.txt" not in t, t)
+        ok = press(pid, BUCKET) and wait_for(lambda: "readme.txt" in text(pid) and "Root of the bucket" in text(pid), 20)
+        check("the bucket breadcrumb goes back to the root", bool(ok), text(pid))
+        ok = press(pid, "photos") and wait_for(lambda: "cat.jpg" in text(pid), 20)
+        t = text(pid)
+        check("open photos/: subfolder and file, not the nested file, not the marker",
+              bool(ok) and "2024" in t and "beach.jpg" not in t and "2.0 KiB" in t, t)
+        ok = press(pid, "2024") and wait_for(lambda: "beach.jpg" in text(pid), 20)
+        check("open photos/2024/: the nested file with its size", bool(ok) and "3.0 MiB" in text(pid), text(pid))
+        ok = press(pid, "Up one folder") and wait_for(lambda: "cat.jpg" in text(pid) and "beach.jpg" not in text(pid), 20)
+        check("Up one folder goes to photos/", bool(ok), text(pid))
+        ok = press(pid, BUCKET) and wait_for(lambda: "readme.txt" in text(pid), 20)
+        ok = ok and press(pid, "empty") and wait_for(lambda: "This folder is empty." in text(pid), 20)
+        check("a folder that is only a marker opens as empty", bool(ok), text(pid))
+        ok = press(pid, BUCKET) and wait_for(lambda: "readme.txt" in text(pid), 20)
+        ok = ok and press(pid, "many") and wait_for(lambda: "1000 items shown; more are available" in text(pid), 60)
+        t = text(pid)
+        check("a folder of 1,005 entries loads one page of 1,000 with Load more",
+              bool(ok) and "Load more" in buttons(pid) and "item-0999.txt" in t and "item-1000.txt" not in t,
+              t[-300:])
+        ok = press(pid, "Load more") and wait_for(lambda: "1005 items shown." in text(pid), 60)
+        t = text(pid)
+        check("Load more appends the rest, no Load more after the last page",
+              bool(ok) and "item-1004.txt" in t and "Load more" not in buttons(pid), t[-300:])
+        ok = press(pid, "Refresh") and wait_for(lambda: "1000 items shown; more are available" in text(pid), 60)
+        check("Refresh starts again from the first page", bool(ok), text(pid)[-300:])
+        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        check("Back to accounts shows the account list again", bool(ok), str(buttons(pid)))
+        ok, confirm, removed = remove("Browse")
+        check("remove the account afterwards", removed and rows() == [], str(rows()))
+
     elif PHASE == "b2":
         label = f"sotyware e2e {RUN}"
         account = f"sotyware-e2e-{RUN}"
@@ -429,6 +501,19 @@ try:
         status = run_check()
         check("Check connection: the bucket-restricted key is Connected", status == "Connected",
               f"{status}: {text(pid)}")
+        # Browsing the root, read-only. The test key may list only under its
+        # file name prefix (sotyware-it/), so Backblaze may refuse the root.
+        ok = press(pid, "Open bucket") and wait_for(
+            lambda: "Could not load this folder." in text(pid) or "Root of the bucket" in text(pid)
+            and "Loading folder…" not in text(pid), 60)
+        t = text(pid)
+        outcome = ("access denied" if "the provider refused this request" in t
+                   else "error" if "Could not load this folder." in t else "listed")
+        print(f"  Open bucket at the root: {outcome}", flush=True)
+        check("Open bucket at the root: a listing, or Access denied for the prefix-restricted key",
+              bool(ok) and outcome in ("listed", "access denied") and page_has_no_key(t), t)
+        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
+        check("Back to accounts from the bucket", bool(ok), str(buttons(pid)))
 
         renamed = f"{label} renamed"
         ok = edit(pid) and fill(pid, "Name", renamed) and button(pid, "Save changes")
@@ -485,7 +570,7 @@ try:
 
     logtext = open(log, errors="replace").read()
     check("no key id or secret in sotyware's output",
-          all(s not in logtext for s in (SECRET1, SECRET2, KEY1, KEY2)), "(output withheld)")
+          all(s not in logtext for s in (SECRET1, SECRET2, KEY1, KEY2) if s), "(output withheld)")
     print("  sotyware output:", redact(logtext.strip()).replace("\n", " | ")[:600], flush=True)
 finally:
     p.kill()

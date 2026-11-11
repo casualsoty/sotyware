@@ -244,7 +244,8 @@ pub fn run() {
             cloud::dashboard::add_cloud_account,
             cloud::dashboard::update_cloud_account,
             cloud::dashboard::remove_cloud_account,
-            cloud::dashboard::check_cloud_account
+            cloud::dashboard::check_cloud_account,
+            cloud::browser::list_cloud_folder
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -578,7 +579,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -591,7 +592,8 @@ mod tests {
                 "allow-add-cloud-account",
                 "allow-update-cloud-account",
                 "allow-remove-cloud-account",
-                "allow-check-cloud-account"
+                "allow-check-cloud-account",
+                "allow-list-cloud-folder"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

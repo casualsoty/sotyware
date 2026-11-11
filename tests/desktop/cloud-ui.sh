@@ -5,13 +5,16 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang b2 (default: local hang)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse b2 (default: local hang browse)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
 #                            (dpkg -x), if gnome-keyring-daemon is not installed
 #
 # local: made-up keys, an endpoint nobody listens on; contacts no provider.
 # hang:  a Secret Service that never answers; the window must stay usable.
+# browse: the bucket browser against the in-process listing server of the Rust
+#        tests (cargo test ... serve_listing_for_ui -- --ignored), which fails
+#        if anything but a listing reached it; contacts no provider.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -25,7 +28,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/release/sotyware}")
@@ -43,7 +46,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang) ;;
+      local|hang|browse) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -60,9 +63,10 @@ BIN=$SOTYWARE_CLOUD_UI_BIN GK_BIN=$SOTYWARE_CLOUD_UI_GK
 ORIG_HOME=$HOME
 # Short: Unix socket paths must stay under 108 bytes.
 WORK=$(mktemp -d /tmp/sotyware-cloud-ui.XXXXXX) || exit 3
-XVFB_PID="" WM_PID="" SS_PID="" rc=0
+XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" rc=0
 cleanup() {
-  for p in $SS_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
+  rm -f -- "$WORK/browse-endpoint"
+  for p in $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
   pkill -f -- "^$GK_BIN " 2>/dev/null
   # Only the folder this run created (throwaway HOME and keyring).
   case $WORK in /tmp/sotyware-cloud-ui.??????) rm -rf -- "$WORK" ;; esac
@@ -121,6 +125,23 @@ for phase in "${PHASES[@]}"; do
       wait_owner 0 || { echo "fake Secret Service did not start"; exit 3; }
       python3 "$H/cloud_ui.py" hang "$BIN" || rc=1
       kill "$SS_PID"; SS_PID=""; wait_owner 1 ;;
+    browse)
+      SRV_FILE=$WORK/browse-endpoint
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+        cloud::test_server::serve_listing_for_ui -- --ignored --nocapture >"$WORK/browse-server.log" 2>&1) &
+      SRV_PID=$!
+      for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
+      [ -s "$SRV_FILE" ] || { echo "listing server did not start:"; cat "$WORK/browse-server.log"; exit 3; }
+      start_keyring
+      SOTYWARE_UI_ENDPOINT=$(cat "$SRV_FILE") python3 "$H/cloud_ui.py" browse "$BIN" || rc=1
+      stop_keyring
+      rm -f -- "$SRV_FILE"
+      if wait "$SRV_PID"; then
+        echo "[PASS] browse: the server saw only listings ($(grep -o 'operations: .*' "$WORK/browse-server.log"))"
+      else
+        echo "[FAIL] browse: the listing server failed:"; tail -20 "$WORK/browse-server.log"; rc=1
+      fi
+      SRV_PID="" ;;
     b2)
       before=$(fingerprint)
       [ -n "$before" ] || { echo "[FAIL] b2: could not fingerprint the bucket before the run"; rc=1; continue; }
