@@ -107,15 +107,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- `cargo test`: 88 unit tests. 31 cover the lifecycle, mode and tray
+- `cargo test`: 89 unit tests. 31 cover the lifecycle, mode and tray
   decisions (mode selection from the real `ksni`/`zbus` error types, close →
   hide or quit per mode, hide granted only in tray mode, implicit exit blocked,
   unexpected tray failure → exit 1, second launch, tray dispatch, config
   labels). 28 cover the feature registry (registration, duplicate IDs,
   lifecycle table, start/stop failures, isolation, shutdown order, concurrent
-  requests, JSON shapes). 29 cover feature preferences: 13 the policy with an
-  in-memory store, 16 the SQLite store on real files (migrations, corrupt and
-  newer databases, read-only file, concurrent connections, restarts with the
+  requests, JSON shapes). 30 cover feature preferences: 13 the policy with an
+  in-memory store, 17 the SQLite store on real files (migrations, corrupt and
+  newer databases, read-only file, concurrent connections, a save blocked past
+  the busy timeout, restarts with the
   built-in features). No display needed. Frontend: 38 Vitest tests.
 - Persistent feature preferences (2026-11-11, `93f7667`; drivers `7696d44`,
   `a7bf8f3`): WSL2 headless 88 Rust + 38 frontend; `npm run

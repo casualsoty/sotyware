@@ -126,6 +126,31 @@ desktop test ran from the uncommitted script, committed unchanged as `a7bf8f3`.
 | Backup and restore: with a planted database (example stored disabled), the script moved it aside, the run started from defaults (99/0), and the file came back byte-identical (same SHA-256); the planted file was then deleted | real desktop | ✅ 1 run |
 | `windows-isolated.ps1`, NSIS/MSI installers, manual checklist step 9, Windows 10 | — | — not run |
 
+### Concurrent-save test on a GitHub-hosted Windows runner (2026-11-11)
+
+`ci.yml`, job `headless (windows-latest)` (run id and commit not in the pasted
+log; `main` was at `a1a3b07`): 38 frontend tests passed, Rust **79 passed, 1
+failed**. `storage::tests::concurrent_connections_never_corrupt_the_database`
+(4 connections, 200 saves each, back to back) panicked: three threads got
+`cannot save: database is locked` after the 2 s busy timeout. The same test
+had passed on the native Windows 11 machine and on WSL2. Cause: SQLite's file
+locking is not fair, and on the runner's disk a connection was starved past
+the timeout. The code was behaving as designed: the save failed cleanly
+instead of hanging. The test, however, assumed every save succeeds.
+
+Fix: the test now accepts a clean "database is locked" failure and checks the
+stored values against the saves that actually succeeded. A new test holds the
+write lock from another connection and checks that a save fails after at least
+2 s, changes nothing, and works again once the lock is released. Documented in
+[features.md](../architecture/features.md#behaviour) and
+[limitations](limitations.md#feature-preferences).
+
+| Check | Category | Result |
+| --- | --- | --- |
+| WSL2: `cargo fmt --check`, clippy `-D warnings`, `npm run test:headless` (38 frontend, 89 Rust) | headless | ✅ |
+| Not vacuous: with the busy timeout set to 0 (not committed), 777 of 800 saves failed and the rewritten test still passed, checking every stored value | headless | ✅ 5 runs |
+| `ci.yml` on GitHub (Linux, Windows) and native Windows 11 with the fix | — | — not run |
+
 ### Built-in feature foundation (WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0, 2026-11-11)
 
 Application code of `e30ac7b` (registry `5e2e475`, frontend `e30ac7b`),

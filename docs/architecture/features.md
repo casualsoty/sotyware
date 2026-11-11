@@ -235,7 +235,7 @@ the preferences and manages `FeaturePreferences` as Tauri state.
 | Save fails (disk full, read-only file, …) | The switch stays for this session; the stored value is the old one; `saveError` shown; logged (`failed to save the preference for feature 'x': …`). After a restart: the last saved choice or the default |
 | Exit (tray Quit, close in dashboard-only mode, exit 1) | Features stop; no choice changes; a save in progress finishes first, later ones fail with "sotyware is quitting" |
 | Process killed mid-save | SQLite rolls the unfinished write back on the next open; earlier saves are intact |
-| Two processes (single instance off without a D-Bus session bus) | SQLite's file locking serializes them (2 s busy timeout); no corruption, last write wins |
+| Two processes (single instance off without a D-Bus session bus) | SQLite's file locking serializes them; no corruption, last write wins. A save that cannot get the lock within the 2 s busy timeout fails with "database is locked" and changes nothing, handled like any failed save above |
 
 ## Adding a built-in feature
 

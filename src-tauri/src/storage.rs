@@ -167,7 +167,6 @@ pub fn open_feature_store(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
@@ -432,36 +431,99 @@ mod tests {
     // --- concurrency --------------------------------------------------------
 
     #[test]
+    fn a_save_blocked_past_the_busy_timeout_fails_and_changes_nothing() {
+        let dir = TestDir::new("locked");
+        let mut store = SqliteStore::open(&dir.db()).unwrap();
+        store.save("a", false).unwrap();
+        // Another process holding the write lock for longer than the timeout.
+        let mut other = Connection::open(dir.db()).unwrap();
+        let tx = other
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let started = std::time::Instant::now();
+        let result = store.save("a", true);
+        let waited = started.elapsed();
+        tx.rollback().unwrap();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "cannot save: database is locked"
+        );
+        assert!(waited >= BUSY_TIMEOUT, "gave up after {waited:?}");
+        assert_eq!(store.load().unwrap(), [("a".to_owned(), false)]);
+        // Once the lock is released, saving works again.
+        store.save("a", true).unwrap();
+        assert_eq!(store.load().unwrap(), [("a".to_owned(), true)]);
+    }
+
+    #[test]
     fn concurrent_connections_never_corrupt_the_database() {
         // As if single instance were off and two sotyware processes saved at
-        // once: separate connections to one file, each from its own thread.
+        // once: separate connections to one file, each from its own thread,
+        // saving back to back. SQLite's locking is not fair, so under this
+        // load a connection can wait longer than `BUSY_TIMEOUT` (seen on a
+        // GitHub-hosted Windows runner). Such a save must fail cleanly with
+        // "database is locked" and change nothing; every other save must be
+        // committed. Which saves fail depends on timing, so the test checks
+        // the stored values against the saves that actually succeeded.
         let dir = TestDir::new("concurrent");
-        SqliteStore::open(&dir.db()).unwrap();
-        let path = Arc::new(dir.db());
-        let handles: Vec<_> = (0..4)
-            .map(|t| {
-                let path = Arc::clone(&path);
+        let path = dir.db();
+        // Opened up front, so only the saves compete.
+        let stores: Vec<_> = (0..4).map(|_| SqliteStore::open(&path).unwrap()).collect();
+        let handles: Vec<_> = stores
+            .into_iter()
+            .enumerate()
+            .map(|(t, mut store)| {
                 thread::spawn(move || {
-                    let mut store = SqliteStore::open(&path).unwrap();
+                    let check = |result: Result<(), StoreError>| match result {
+                        Ok(()) => true,
+                        Err(e) => {
+                            assert_eq!(e.to_string(), "cannot save: database is locked");
+                            false
+                        }
+                    };
+                    let mut last_own = None;
+                    let mut saved_shared = false;
                     for i in 0..100 {
-                        store.save(&format!("own-{t}"), i % 2 == 0).unwrap();
-                        store.save("shared", t % 2 == 0).unwrap();
+                        if check(store.save(&format!("own-{t}"), i % 2 == 0)) {
+                            last_own = Some(i % 2 == 0);
+                        }
+                        saved_shared |= check(store.save("shared", t % 2 == 0));
                     }
+                    (last_own, saved_shared)
                 })
             })
             .collect();
-        for h in handles {
-            h.join().unwrap();
-        }
-        let conn = Connection::open(&*path).unwrap();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let conn = Connection::open(&path).unwrap();
         check_integrity(&conn).unwrap();
         let mut store = SqliteStore::open(&path).unwrap();
         let rows = store.load().unwrap();
-        assert_eq!(rows.len(), 5);
-        for t in 0..4 {
-            // The last save of each thread's own row was i = 99: false.
-            assert!(rows.contains(&(format!("own-{t}"), false)), "{rows:?}");
+        let mut expected = Vec::new();
+        for (t, &(last_own, _)) in results.iter().enumerate() {
+            if let Some(value) = last_own {
+                expected.push((format!("own-{t}"), value));
+            }
         }
+        let shared = rows.iter().find(|(id, _)| id == "shared");
+        let others: Vec<_> = rows
+            .iter()
+            .filter(|(id, _)| id != "shared")
+            .cloned()
+            .collect();
+        // Each thread's own row holds its last successful save, or is absent
+        // if none succeeded; nothing else was written.
+        assert_eq!(others, expected, "{results:?}");
+        // The shared row holds a value some thread saved successfully.
+        let shared_savers: Vec<bool> = (0..4)
+            .filter(|&t| results[t].1)
+            .map(|t| t % 2 == 0)
+            .collect();
+        match shared {
+            Some((_, value)) => assert!(shared_savers.contains(value), "{results:?}"),
+            None => assert!(shared_savers.is_empty(), "{results:?}"),
+        }
+        // Whoever holds the lock always commits, so some saves succeed.
+        assert!(!expected.is_empty() || !shared_savers.is_empty());
     }
 
     // --- with the real registry and built-in features -----------------------

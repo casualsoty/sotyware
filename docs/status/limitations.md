@@ -223,6 +223,11 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
 - **A save in flight when the process is killed is lost.** SQLite rolls it back
   on the next open; earlier saves are intact. On a normal exit, a save in
   progress finishes first.
+- **A save can lose to a second process.** With single instance off (no D-Bus
+  session bus), a save waits at most 2 s for the other process's lock, then
+  fails and is shown like any failed save. SQLite's locking is not fair, so a
+  connection can be starved; seen only in a stress test of 4 connections saving
+  back to back, on a GitHub-hosted Windows runner (2026-11-11), not in use.
 - **The file outlives an uninstall.** Like the webview data next to it, the
   database is in the app's local data folder; whether the NSIS/MSI uninstallers
   remove that folder is not checked (see [Windows installers](#windows-installers)).
