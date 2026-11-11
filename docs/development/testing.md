@@ -147,9 +147,22 @@ layers, the first two in every `cargo test`:
   plain HTTP only on this machine, IDs, regions, bucket names, dotted buckets,
   concurrency bounds), `Accounts` with an in-memory `AccountStore` (add,
   update, remove, restart, duplicates, failed saves, two accounts of one
-  provider, missing credentials, a stored account that no longer validates),
+  provider, a stored account that no longer validates) and an injectable
+  `MemoryCredentialStore` that can fail each operation: credentials stored,
+  rotated and deleted with their account; two accounts of one provider kept
+  apart; missing credentials (`NotFound`); an unavailable backend on every
+  path; a failed configuration save rolling the credentials back, and a failed
+  rollback reported; a failed rotation keeping the old key and connection; a
+  failed credential delete keeping the account; a failed account removal after
+  the credentials reported; no secret in any error. `credentials.rs`: the
+  stored format (round trip, other formats refused), input validation, and
   `EnvCredentials` (variable names, per-account lookup, missing or padded
-  values, no secret in `Debug`/`Display`), `plan_upload` (single PUT,
+  values, no secret in `Debug`/`Display`). `keyring.rs`: entry names derived
+  from the account id (and `SERVICE` equal to `tauri.conf.json`'s
+  identifier), invalid ids and values refused before the backend is opened,
+  the `keyring-core` error mapping (stored bytes never shown) and, on Linux
+  only, the `secret-service`/`zbus` error types sorted into unavailable,
+  access denied and backend failure. `plan_upload` (single PUT,
   multipart, never one part, provider minimum, very large files, too large) and
   the S3 error mapping. `storage.rs` tests `SqliteAccountStore` on real files:
   every field across a restart, replacing an account and its buckets, removal
@@ -166,9 +179,73 @@ layers, the first two in every `cargo test`:
   overwriting of an existing file, missing objects and buckets, buckets outside
   the account (refused, no request), a missing local file, two accounts with
   different keys uploading and downloading at the same time, and one account's
-  full transfer queue not delaying another. A measurement, not a check:
+  full transfer queue not delaying another, a rotated key used by the next
+  connection, and removing an account deleting its credentials but not its
+  objects. A measurement, not a check:
   `cargo test --release --lib cloud::tests::local_throughput -- --ignored --nocapture`.
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
+- **The real OS credential store**, opt-in only:
+  [below](#os-credential-store-test).
+
+## OS credential store test
+
+`cloud::keyring::os_backend::round_trip` is `#[ignore]`d: ordinary `cargo test`
+and CI never touch a keyring. It uses two new account ids per run,
+`it-keyring-<nanoseconds>-a` and `-b` (never a real account), checks that both
+start empty (`NotFound`), stores `a`, reads it back, stores `b`, replaces `a`
+and checks `b` is unchanged, deletes `a` (twice; the second is not an error)
+while `b` stays, deletes `b`, and checks with a fresh store that both are gone.
+A guard deletes both entries however the test ends. On Windows it also asks
+`cmdkey /list:<target>` that the entry exists under
+`com.sotyware.desktop/cloud-account/<id>` after storing and is gone at the
+end.
+
+```bash
+cd src-tauri
+cargo test --lib cloud::keyring::os_backend -- --ignored --nocapture
+```
+
+With `SOTYWARE_IT_KEYRING_EXPECT=unavailable` it checks the opposite: every
+call (store, load, exists, delete) must fail with `Unavailable`. Use it where
+no Secret Service runs:
+
+```bash
+SOTYWARE_IT_KEYRING_EXPECT=unavailable cargo test --lib cloud::keyring::os_backend -- --ignored --nocapture                  # WSL2: bus socket missing
+dbus-run-session -- env SOTYWARE_IT_KEYRING_EXPECT=unavailable cargo test --lib cloud::keyring::os_backend -- --ignored      # a bus, no provider
+```
+
+**Windows:** run it in PowerShell from a Windows checkout; it writes to your
+own Credential Manager (and removes what it wrote). `cmdkey /list |
+Select-String com.sotyware.desktop` should print nothing afterwards.
+
+**Linux desktop:** run it in the desktop session; GNOME Keyring or KWallet
+may ask to unlock. Seahorse ("Passwords and Keys") shows the entries while the
+test runs.
+
+**WSL2 (no desktop keyring):** a real GNOME Keyring can run on a private
+session bus with a throwaway keyring, never touching `~/.local/share/keyrings`.
+Without root, unpack the Ubuntu packages `gnome-keyring`, `libgck-1-0` and
+`libgcr-base-3-1` (`apt-get download`, or the same files from an Ubuntu
+mirror, checking each SHA-256 against `apt-cache show <pkg>=<version>`) with
+`dpkg -x` into a folder `$GK`, then, in one script run under
+`dbus-run-session --`:
+
+```bash
+export HOME=$(mktemp -d) XDG_DATA_HOME=$HOME/data GSETTINGS_BACKEND=memory
+export XDG_RUNTIME_DIR=$(mktemp -d /tmp/gk.XXXXXX)   # short: a Unix socket path must stay under 108 bytes
+export CARGO_HOME=<your ~/.cargo> RUSTUP_HOME=<your ~/.rustup> LD_LIBRARY_PATH=$GK/usr/lib/x86_64-linux-gnu
+printf 'test-only-password' | $GK/usr/bin/gnome-keyring-daemon --foreground --unlock --components=secrets &
+# wait until org.freedesktop.secrets has an owner (dbus-send … NameHasOwner), then:
+cargo test --lib cloud::keyring::os_backend -- --ignored --nocapture
+```
+
+`--unlock` creates and unlocks a "login" collection with that password.
+Locking it (`org.freedesktop.Secret.Service.Lock` on
+`/org/freedesktop/secrets/collection/login` with `dbus-send`) makes the next
+write ask for an unlock prompt that cannot be shown there: `AccessDenied`
+("prompt dismissed"), nothing written. This is a real Secret Service
+implementation on a real bus, but not a desktop session: no prompt is ever
+shown to a person.
 
 ## Cloud storage integration tests
 

@@ -3,15 +3,16 @@
 //!
 //! An account is one set of credentials at one provider (two Backblaze
 //! accounts are two accounts). It names the buckets sotyware may use and holds
-//! no secret: credentials are looked up by account id
-//! ([`super::credentials`]). Configurations are kept behind [`AccountStore`]
-//! (SQLite in `storage.rs`), the same split as feature preferences.
+//! no secret: its credentials are kept by account id in a
+//! [`CredentialStore`] (the OS credential service in the app). Configurations
+//! are kept behind [`AccountStore`] (SQLite in `storage.rs`), the same split
+//! as feature preferences. [`Accounts`] keeps the two consistent.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::credentials::{CredentialError, CredentialSource};
+use super::credentials::{CredentialError, CredentialStore, Credentials};
 use super::provider::{self, Addressing, EndpointRule, ProviderProfile};
 use super::s3::{ClientOptions, S3Store};
 use crate::features::StoreError;
@@ -89,7 +90,9 @@ pub struct ResolvedAccount {
     pub max_concurrent_transfers: u8,
 }
 
-fn is_kebab_case(id: &str) -> bool {
+/// Account ids are lowercase kebab-case, at most 64 characters. They become
+/// database keys and OS credential names, so nothing else is allowed.
+pub(crate) fn is_kebab_case(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && !id.starts_with('-')
@@ -238,7 +241,7 @@ pub trait AccountStore: Send {
     fn remove(&mut self, id: &str) -> Result<(), StoreError>;
 }
 
-/// Why an account operation failed.
+/// Why an account operation failed. No variant carries a secret.
 #[derive(Debug)]
 pub enum AccountError {
     Config(ConfigError),
@@ -246,6 +249,20 @@ pub enum AccountError {
     Credentials(CredentialError),
     Duplicate(String),
     Unknown(String),
+    /// Adding failed after the credentials were stored, and removing them
+    /// again failed too: they are left in the OS credential store under the
+    /// account id. Adding the account again overwrites them.
+    AddRollbackFailed {
+        id: String,
+        save: StoreError,
+        cleanup: CredentialError,
+    },
+    /// Removing failed after the credentials were deleted: the account is
+    /// still listed but has no credentials. Removing it again finishes.
+    RemovedOnlyCredentials {
+        id: String,
+        error: StoreError,
+    },
 }
 
 impl fmt::Display for AccountError {
@@ -256,6 +273,16 @@ impl fmt::Display for AccountError {
             Self::Credentials(e) => e.fmt(f),
             Self::Duplicate(id) => write!(f, "an account '{id}' already exists"),
             Self::Unknown(id) => write!(f, "no account '{id}'"),
+            Self::AddRollbackFailed { id, save, cleanup } => write!(
+                f,
+                "account '{id}' was not added ({save}), and its credentials could not \
+                 be removed again ({cleanup}); adding the account again replaces them"
+            ),
+            Self::RemovedOnlyCredentials { id, error } => write!(
+                f,
+                "the credentials of account '{id}' were removed, but the account \
+                 itself could not be ({error}); remove it again"
+            ),
         }
     }
 }
@@ -268,18 +295,27 @@ struct Inner {
     connected: HashMap<String, Arc<S3Store>>,
 }
 
-/// Every configured account, and a connection to each one in use.
+/// Every configured account, their credentials, and a connection to each
+/// one in use.
+///
+/// Holds exactly one [`CredentialStore`]; there is no second source to fall
+/// back to. Operations that touch both stores run under one lock, in an
+/// order that never leaves a secret behind silently: see [`Self::add`] and
+/// [`Self::remove`].
 pub struct Accounts {
     inner: Mutex<Inner>,
+    credentials: Arc<dyn CredentialStore>,
     options: ClientOptions,
 }
 
 impl Accounts {
     /// Loads the stored accounts. A stored account that no longer validates
     /// (for example a provider this build does not know) is kept in the list
-    /// and in the store, and fails only when used.
+    /// and in the store, and fails only when used. Credentials are not read
+    /// here (on Linux that could open an unlock prompt at startup).
     pub fn load(
         mut store: Box<dyn AccountStore>,
+        credentials: Arc<dyn CredentialStore>,
         options: ClientOptions,
     ) -> Result<Self, StoreError> {
         let configs = store.load()?;
@@ -289,6 +325,7 @@ impl Accounts {
                 configs,
                 connected: HashMap::new(),
             }),
+            credentials,
             options,
         })
     }
@@ -301,14 +338,42 @@ impl Accounts {
         self.lock().configs.clone()
     }
 
-    /// Validates and saves a new account. Nothing changes if either fails.
-    pub fn add(&self, config: AccountConfig) -> Result<(), AccountError> {
+    /// Validates and saves a new account with its credentials.
+    ///
+    /// Order: credentials first, then the configuration. If storing the
+    /// credentials fails, nothing was saved. If saving the configuration
+    /// fails, the credentials just stored are deleted again; only if that
+    /// delete fails too is something left behind, and the error
+    /// ([`AccountError::AddRollbackFailed`]) says so.
+    pub fn add(
+        &self,
+        config: AccountConfig,
+        credentials: &Credentials,
+    ) -> Result<(), AccountError> {
         config.resolve().map_err(AccountError::Config)?;
+        credentials.validate().map_err(|reason| {
+            AccountError::Credentials(CredentialError::Invalid {
+                account_id: config.id.clone(),
+                reason: reason.into(),
+            })
+        })?;
         let mut inner = self.lock();
         if inner.configs.iter().any(|c| c.id == config.id) {
             return Err(AccountError::Duplicate(config.id));
         }
-        inner.store.save(&config).map_err(AccountError::Store)?;
+        self.credentials
+            .store(&config.id, credentials)
+            .map_err(AccountError::Credentials)?;
+        if let Err(save) = inner.store.save(&config) {
+            return Err(match self.credentials.delete(&config.id) {
+                Ok(()) => AccountError::Store(save),
+                Err(cleanup) => AccountError::AddRollbackFailed {
+                    id: config.id,
+                    save,
+                    cleanup,
+                },
+            });
+        }
         inner.configs.push(config);
         inner.configs.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(())
@@ -328,26 +393,72 @@ impl Accounts {
         Ok(())
     }
 
-    /// Forgets an account. Its credentials and its data at the provider are
-    /// not touched.
+    /// Replaces an existing account's credentials (a new or rotated key) in
+    /// one write: the old ones are never deleted first, so a failed write
+    /// leaves them in place. Its connection is dropped so the next use signs
+    /// with the new key.
+    pub fn set_credentials(&self, id: &str, credentials: &Credentials) -> Result<(), AccountError> {
+        credentials.validate().map_err(|reason| {
+            AccountError::Credentials(CredentialError::Invalid {
+                account_id: id.to_owned(),
+                reason: reason.into(),
+            })
+        })?;
+        let mut inner = self.lock();
+        if !inner.configs.iter().any(|c| c.id == id) {
+            return Err(AccountError::Unknown(id.into()));
+        }
+        self.credentials
+            .store(id, credentials)
+            .map_err(AccountError::Credentials)?;
+        inner.connected.remove(id);
+        Ok(())
+    }
+
+    /// Whether the account has credentials stored, without reading them into
+    /// the caller.
+    pub fn has_credentials(&self, id: &str) -> Result<bool, AccountError> {
+        if !self.lock().configs.iter().any(|c| c.id == id) {
+            return Err(AccountError::Unknown(id.into()));
+        }
+        self.credentials
+            .exists(id)
+            .map_err(AccountError::Credentials)
+    }
+
+    /// Forgets an account and deletes its credentials. **Its buckets and
+    /// objects at the provider are never touched**: no request is sent.
+    ///
+    /// Order: credentials first, then the configuration. If deleting the
+    /// credentials fails, nothing changes and the error is returned (the
+    /// account stays listed, so the user can retry; never a silent success
+    /// with a secret left behind). If removing the configuration then fails,
+    /// the result is [`AccountError::RemovedOnlyCredentials`]. Credentials
+    /// that were already missing do not stop the removal.
     pub fn remove(&self, id: &str) -> Result<(), AccountError> {
         let mut inner = self.lock();
         if !inner.configs.iter().any(|c| c.id == id) {
             return Err(AccountError::Unknown(id.into()));
         }
-        inner.store.remove(id).map_err(AccountError::Store)?;
-        inner.configs.retain(|c| c.id != id);
+        self.credentials
+            .delete(id)
+            .map_err(AccountError::Credentials)?;
         inner.connected.remove(id);
+        inner
+            .store
+            .remove(id)
+            .map_err(|error| AccountError::RemovedOnlyCredentials {
+                id: id.into(),
+                error,
+            })?;
+        inner.configs.retain(|c| c.id != id);
         Ok(())
     }
 
-    /// The account's store, connected with its own credentials. No request is
-    /// sent here: a wrong key or an unreachable endpoint shows on first use.
-    pub fn connect(
-        &self,
-        id: &str,
-        credentials: &dyn CredentialSource,
-    ) -> Result<Arc<S3Store>, AccountError> {
+    /// The account's store, connected with its own credentials from the
+    /// credential store. No request is sent here: a wrong key or an
+    /// unreachable endpoint shows on first use.
+    pub fn connect(&self, id: &str) -> Result<Arc<S3Store>, AccountError> {
         let mut inner = self.lock();
         if let Some(store) = inner.connected.get(id) {
             return Ok(Arc::clone(store));
@@ -358,8 +469,9 @@ impl Accounts {
             .find(|c| c.id == id)
             .ok_or_else(|| AccountError::Unknown(id.into()))?;
         let resolved = config.resolve().map_err(AccountError::Config)?;
-        let creds = credentials
-            .credentials(id)
+        let creds = self
+            .credentials
+            .load(id)
             .map_err(AccountError::Credentials)?;
         let store = Arc::new(S3Store::new(resolved, creds, self.options.clone()));
         inner.connected.insert(id.into(), Arc::clone(&store));
@@ -373,6 +485,7 @@ impl Accounts {
 pub struct MemoryAccountStore {
     pub rows: Arc<Mutex<Vec<AccountConfig>>>,
     pub fail_saves: bool,
+    pub fail_removes: bool,
 }
 
 #[cfg(test)]
@@ -393,6 +506,9 @@ impl AccountStore for MemoryAccountStore {
     }
 
     fn remove(&mut self, id: &str) -> Result<(), StoreError> {
+        if self.fail_removes {
+            return Err(StoreError::new("disk full"));
+        }
         self.rows.lock().unwrap().retain(|c| c.id != id);
         Ok(())
     }
@@ -400,7 +516,7 @@ impl AccountStore for MemoryAccountStore {
 
 #[cfg(test)]
 mod tests {
-    use super::super::credentials::{Credentials, Secret, StaticCredentials};
+    use super::super::credentials::{MemoryCredentialStore, Secret};
     use super::*;
 
     fn b2() -> AccountConfig {
@@ -526,108 +642,317 @@ mod tests {
         }
     }
 
-    fn accounts(store: &MemoryAccountStore) -> Accounts {
-        Accounts::load(Box::new(store.clone()), ClientOptions::default()).unwrap()
+    fn creds(key: &str, secret: &str) -> Credentials {
+        Credentials {
+            access_key_id: key.into(),
+            secret_access_key: Secret::new(secret),
+        }
+    }
+
+    fn accounts_with(store: &MemoryAccountStore, keys: &Arc<MemoryCredentialStore>) -> Accounts {
+        Accounts::load(
+            Box::new(store.clone()),
+            Arc::clone(keys) as Arc<dyn CredentialStore>,
+            ClientOptions::default(),
+        )
+        .unwrap()
+    }
+
+    fn accounts(store: &MemoryAccountStore) -> (Accounts, Arc<MemoryCredentialStore>) {
+        let keys = Arc::new(MemoryCredentialStore::default());
+        (accounts_with(store, &keys), keys)
     }
 
     #[test]
     fn accounts_are_added_listed_updated_and_removed_through_the_store() {
         let store = MemoryAccountStore::default();
-        let a = accounts(&store);
-        a.add(hetzner()).unwrap();
-        a.add(b2()).unwrap();
+        let (a, keys) = accounts(&store);
+        a.add(hetzner(), &creds("kh", "sh")).unwrap();
+        a.add(b2(), &creds("kb", "sb")).unwrap();
         let ids: Vec<_> = a.list().into_iter().map(|c| c.id).collect();
         assert_eq!(ids, ["b2-photos", "hetzner-backup"]);
         assert_eq!(*store.rows.lock().unwrap(), a.list());
+        assert_eq!(keys.ids(), ["b2-photos", "hetzner-backup"]);
 
         let mut changed = b2();
         changed.label = "Family photos".into();
         a.update(changed.clone()).unwrap();
         assert!(store.rows.lock().unwrap().contains(&changed));
+        // A configuration change leaves the credentials alone.
+        assert_eq!(keys.load("b2-photos").unwrap(), creds("kb", "sb"));
 
         a.remove("hetzner-backup").unwrap();
         assert_eq!(a.list(), [changed]);
         assert_eq!(store.rows.lock().unwrap().len(), 1);
-        // A restart sees the same accounts.
-        assert_eq!(accounts(&store).list(), a.list());
+        assert_eq!(
+            keys.ids(),
+            ["b2-photos"],
+            "removing deletes the credentials"
+        );
+        // A restart sees the same accounts and credentials.
+        let again = accounts_with(&store, &keys);
+        assert_eq!(again.list(), a.list());
+        assert!(again.has_credentials("b2-photos").unwrap());
     }
 
     #[test]
     fn two_accounts_of_the_same_provider_are_independent() {
         let store = MemoryAccountStore::default();
-        let a = accounts(&store);
+        let (a, keys) = accounts(&store);
         let mut second = b2();
         second.id = "b2-work".into();
         second.buckets = vec!["soty-work".into()];
-        a.add(b2()).unwrap();
-        a.add(second).unwrap();
-        let creds = StaticCredentials(vec![
-            (
-                "b2-photos",
-                Credentials {
-                    access_key_id: "k1".into(),
-                    secret_access_key: Secret::new("s1"),
-                },
-            ),
-            (
-                "b2-work",
-                Credentials {
-                    access_key_id: "k2".into(),
-                    secret_access_key: Secret::new("s2"),
-                },
-            ),
-        ]);
-        let photos = a.connect("b2-photos", &creds).unwrap();
-        let work = a.connect("b2-work", &creds).unwrap();
+        a.add(b2(), &creds("k1", "s1")).unwrap();
+        a.add(second, &creds("k2", "s2")).unwrap();
+        let photos = a.connect("b2-photos").unwrap();
+        let work = a.connect("b2-work").unwrap();
         assert!(!Arc::ptr_eq(&photos, &work));
         assert_eq!(photos.access_key_id(), "k1");
         assert_eq!(work.access_key_id(), "k2");
         // The same account reuses its one connection (and transfer queue).
-        assert!(Arc::ptr_eq(
-            &photos,
-            &a.connect("b2-photos", &creds).unwrap()
-        ));
+        assert!(Arc::ptr_eq(&photos, &a.connect("b2-photos").unwrap()));
+
+        // Rotating one account's key changes only that account.
+        a.set_credentials("b2-work", &creds("k2-new", "s2-new"))
+            .unwrap();
+        assert_eq!(keys.load("b2-photos").unwrap(), creds("k1", "s1"));
+        assert_eq!(a.connect("b2-work").unwrap().access_key_id(), "k2-new");
+        assert!(Arc::ptr_eq(&photos, &a.connect("b2-photos").unwrap()));
+
+        // Removing one leaves the other's credentials.
+        a.remove("b2-photos").unwrap();
+        assert_eq!(keys.ids(), ["b2-work"]);
+        assert_eq!(a.connect("b2-work").unwrap().access_key_id(), "k2-new");
     }
 
     #[test]
     fn invalid_duplicate_and_unknown_accounts_are_rejected_without_saving() {
         let store = MemoryAccountStore::default();
-        let a = accounts(&store);
-        a.add(b2()).unwrap();
-        assert!(matches!(a.add(b2()), Err(AccountError::Duplicate(_))));
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k", "s")).unwrap();
+        assert!(matches!(
+            a.add(b2(), &creds("other", "other-secret")),
+            Err(AccountError::Duplicate(_))
+        ));
+        assert_eq!(
+            keys.load("b2-photos").unwrap(),
+            creds("k", "s"),
+            "a duplicate add must not overwrite the existing credentials"
+        );
         let mut bad = hetzner();
         bad.region = "Bad".into();
-        assert!(matches!(a.add(bad), Err(AccountError::Config(_))));
+        assert!(matches!(
+            a.add(bad, &creds("k", "s")),
+            Err(AccountError::Config(_))
+        ));
+        assert!(matches!(
+            a.add(hetzner(), &creds("k", "with space")),
+            Err(AccountError::Credentials(CredentialError::Invalid { .. }))
+        ));
         assert!(matches!(a.update(hetzner()), Err(AccountError::Unknown(_))));
+        assert!(matches!(
+            a.set_credentials("nope", &creds("k", "s")),
+            Err(AccountError::Unknown(_))
+        ));
         assert!(matches!(a.remove("nope"), Err(AccountError::Unknown(_))));
+        assert!(matches!(
+            a.has_credentials("nope"),
+            Err(AccountError::Unknown(_))
+        ));
         assert_eq!(store.rows.lock().unwrap().len(), 1);
+        assert_eq!(
+            keys.ids(),
+            ["b2-photos"],
+            "nothing stored for rejected adds"
+        );
     }
 
     #[test]
-    fn a_failed_save_changes_nothing() {
+    fn a_failed_save_stores_no_credentials() {
         let store = MemoryAccountStore {
             fail_saves: true,
             ..Default::default()
         };
-        let a = accounts(&store);
-        assert!(matches!(a.add(b2()), Err(AccountError::Store(_))));
+        let (a, keys) = accounts(&store);
+        assert!(matches!(
+            a.add(b2(), &creds("k", "s")),
+            Err(AccountError::Store(_))
+        ));
+        assert!(a.list().is_empty());
+        assert!(keys.ids().is_empty(), "the credentials were rolled back");
+    }
+
+    #[test]
+    fn a_failed_rollback_is_reported_not_hidden() {
+        let store = MemoryAccountStore {
+            fail_saves: true,
+            ..Default::default()
+        };
+        let (a, keys) = accounts(&store);
+        *keys.fail_delete.lock().unwrap() = Some(CredentialError::Backend {
+            backend: "test backend",
+            detail: "delete refused".into(),
+        });
+        let e = a.add(b2(), &creds("k", "the-secret")).unwrap_err();
+        assert!(matches!(e, AccountError::AddRollbackFailed { .. }), "{e:?}");
+        let text = e.to_string();
+        assert!(text.contains("could not be removed again"), "{text}");
+        assert!(!format!("{text} {e:?}").contains("the-secret"));
+        assert!(a.list().is_empty());
+    }
+
+    #[test]
+    fn a_failed_credential_store_saves_no_account() {
+        let store = MemoryAccountStore::default();
+        let keys = Arc::new(MemoryCredentialStore::unavailable());
+        let a = accounts_with(&store, &keys);
+        let e = a.add(b2(), &creds("k", "s")).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                AccountError::Credentials(CredentialError::Unavailable { .. })
+            ),
+            "{e:?}"
+        );
+        assert!(a.list().is_empty());
+        assert!(store.rows.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_update_keeps_the_old_credentials_and_connection() {
+        let store = MemoryAccountStore::default();
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k1", "s1")).unwrap();
+        let before = a.connect("b2-photos").unwrap();
+        *keys.fail_store.lock().unwrap() = Some(CredentialError::AccessDenied {
+            backend: "test backend",
+            detail: "locked".into(),
+        });
+        let e = a
+            .set_credentials("b2-photos", &creds("k2", "s2"))
+            .unwrap_err();
+        assert!(matches!(
+            e,
+            AccountError::Credentials(CredentialError::AccessDenied { .. })
+        ));
+        assert_eq!(keys.load("b2-photos").unwrap(), creds("k1", "s1"));
+        assert!(Arc::ptr_eq(&before, &a.connect("b2-photos").unwrap()));
+    }
+
+    #[test]
+    fn a_failed_credential_delete_keeps_the_account() {
+        let store = MemoryAccountStore::default();
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k", "s")).unwrap();
+        *keys.fail_delete.lock().unwrap() = Some(CredentialError::Unavailable {
+            backend: "test backend",
+            detail: "not running".into(),
+        });
+        let e = a.remove("b2-photos").unwrap_err();
+        assert!(matches!(
+            e,
+            AccountError::Credentials(CredentialError::Unavailable { .. })
+        ));
+        assert_eq!(a.list().len(), 1, "never a silent success");
+        assert_eq!(store.rows.lock().unwrap().len(), 1);
+        // Once the backend works again, removing finishes.
+        *keys.fail_delete.lock().unwrap() = None;
+        a.remove("b2-photos").unwrap();
+        assert!(a.list().is_empty() && keys.ids().is_empty());
+    }
+
+    #[test]
+    fn a_failed_account_remove_after_the_credentials_is_reported() {
+        let mut store = MemoryAccountStore::default();
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k", "s")).unwrap();
+        store.fail_removes = true;
+        let a = accounts_with(&store, &keys);
+        let e = a.remove("b2-photos").unwrap_err();
+        assert!(
+            matches!(e, AccountError::RemovedOnlyCredentials { .. }),
+            "{e:?}"
+        );
+        assert!(keys.ids().is_empty(), "the credentials are gone");
+        assert_eq!(a.list().len(), 1, "the account is still listed");
+        assert!(!a.has_credentials("b2-photos").unwrap());
+    }
+
+    #[test]
+    fn an_account_without_credentials_can_still_be_removed() {
+        let store = MemoryAccountStore::default();
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k", "s")).unwrap();
+        keys.entries.lock().unwrap().clear();
+        a.remove("b2-photos").unwrap();
         assert!(a.list().is_empty());
     }
 
     #[test]
     fn connecting_needs_the_accounts_own_credentials() {
         let store = MemoryAccountStore::default();
-        let a = accounts(&store);
-        a.add(b2()).unwrap();
-        let none = StaticCredentials(vec![]);
-        assert!(matches!(
-            a.connect("b2-photos", &none),
-            Err(AccountError::Credentials(_))
-        ));
-        assert!(matches!(
-            a.connect("other", &none),
-            Err(AccountError::Unknown(_))
-        ));
+        let (a, keys) = accounts(&store);
+        a.add(b2(), &creds("k", "s")).unwrap();
+        keys.entries.lock().unwrap().clear();
+        let e = a.connect("b2-photos").unwrap_err();
+        assert!(
+            matches!(
+                e,
+                AccountError::Credentials(CredentialError::NotFound { .. })
+            ),
+            "{e:?}"
+        );
+        assert!(e.to_string().contains("b2-photos"), "{e}");
+        assert!(matches!(a.connect("other"), Err(AccountError::Unknown(_))));
+        assert!(!a.has_credentials("b2-photos").unwrap());
+    }
+
+    #[test]
+    fn an_unavailable_backend_is_reported_on_every_path() {
+        let store = MemoryAccountStore::default();
+        store.rows.lock().unwrap().push(b2());
+        let keys = Arc::new(MemoryCredentialStore::unavailable());
+        let a = accounts_with(&store, &keys);
+        // Loading never touches the credential store.
+        assert_eq!(a.list().len(), 1);
+        for e in [
+            a.connect("b2-photos").map(|_| ()).unwrap_err(),
+            a.has_credentials("b2-photos").map(|_| ()).unwrap_err(),
+            a.set_credentials("b2-photos", &creds("k", "s"))
+                .unwrap_err(),
+            a.remove("b2-photos").unwrap_err(),
+        ] {
+            assert!(
+                matches!(
+                    e,
+                    AccountError::Credentials(CredentialError::Unavailable { .. })
+                ),
+                "{e:?}"
+            );
+        }
+        assert_eq!(a.list().len(), 1);
+    }
+
+    #[test]
+    fn errors_never_contain_a_secret() {
+        let store = MemoryAccountStore {
+            fail_saves: true,
+            ..Default::default()
+        };
+        let (a, _keys) = accounts(&store);
+        let secret = "K003-very-secret-value";
+        let mut shown = String::new();
+        for e in [
+            a.add(b2(), &creds("k", secret)).unwrap_err(),
+            a.add(b2(), &creds("k", &format!("{secret} "))).unwrap_err(),
+            a.set_credentials("b2-photos", &creds("k", secret))
+                .unwrap_err(),
+        ] {
+            shown.push_str(&format!("{e} {e:?} "));
+        }
+        assert!(!shown.contains("very-secret"), "{shown}");
+        let config = format!("{:?}", b2());
+        assert!(!config.contains("very-secret"));
     }
 
     #[test]
@@ -636,11 +961,10 @@ mod tests {
         let mut old = b2();
         old.provider = "retired-provider".into();
         store.rows.lock().unwrap().push(old);
-        let a = accounts(&store);
+        let (a, _keys) = accounts(&store);
         assert_eq!(a.list().len(), 1);
-        let creds = StaticCredentials(vec![]);
         assert!(matches!(
-            a.connect("b2-photos", &creds),
+            a.connect("b2-photos"),
             Err(AccountError::Config(_))
         ));
     }

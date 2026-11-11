@@ -511,4 +511,82 @@ Status: Accepted (proof of concept; not wired into the app)
   codes, checksum headers, path style on Hetzner) stays unverified until the
   opt-in integration tests run with real accounts. Wiring the module into the
   app needs its own decision (a feature, commands and permissions, keyring
-  credentials). Details: [cloud-storage.md](cloud-storage.md).
+  credentials). Details: [cloud-storage.md](cloud-storage.md). Credentials:
+  moved from environment variables to the OS credential store by
+  [ADR-017](#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
+
+## ADR-017: Cloud account credentials live only in the OS credential store
+
+Status: Accepted (part of the cloud storage proof of concept; not wired into
+the app)
+
+- **Context:** ADR-016 left credentials to environment variables, which other
+  processes of the same user can read and which a desktop app cannot ask a user
+  to set. Accounts need their secrets kept by the operating system, per
+  account (also several at one provider), changeable and removable with the
+  account, with no plaintext fallback and no secret in SQLite, logs, errors or
+  `Debug` output. Linux desktops may have no Secret Service at all (vanilla
+  window managers, WSL2, headless sessions).
+- **Decision:**
+  - **One `CredentialStore` trait** (`cloud/credentials.rs`): `store`
+    (insert or replace), `load`, `delete` (missing is not an error), `exists`.
+    `Accounts` holds exactly one, so there is no second source to switch to.
+    One real implementation, `OsCredentialStore` (`cloud/keyring.rs`); tests
+    inject `MemoryCredentialStore`, which can fail each operation.
+  - **Dependencies:** `keyring-core` 1.0.1 (the platform-independent API of
+    the `keyring` project, rust-version 1.85) with one store crate per OS:
+    `windows-native-keyring-store` 1.1.0 (Windows Credential Manager, generic
+    credentials; no default features, so no `regex`) and
+    `zbus-secret-service-keyring-store` 1.0.1 (Secret Service over D-Bus,
+    pure Rust, feature `rt-async-io-crypto-rust`). The Linux store runs on the
+    `zbus` 5.19.0 already in the tree for the tray and single instance; its
+    `async-io` runtime is the one already enabled, so the zbus feature set is
+    unchanged (the `rt-tokio` variant would have switched zbus's runtime for
+    the tray too). `secret-service` 5.1.0 is a Linux-only direct dependency
+    without features, only to name its error type. Cost: Linux graph 365 → 379
+    crates (`keyring-core`, the store, `secret-service`, and the RustCrypto
+    `aes`/`cbc`/`hkdf`/`num` crates for the DH session); Windows 288 → 290.
+    Release binaries: Linux +1,536 bytes, Windows unchanged (nothing calls the
+    module yet).
+  - **Names come from the account id only:** service `com.sotyware.desktop`,
+    user `cloud-account/<id>`; Windows target
+    `com.sotyware.desktop/cloud-account/<id>`, persisted `Local` (this
+    machine; the crate default `Enterprise` roams with domain profiles);
+    Secret Service attributes `service`/`username`, label
+    `sotyware cloud account <id>`, default collection. The account id is
+    checked to be kebab-case before any backend call.
+  - **One entry per account** holding the key id and the secret
+    (`sotyware-s3-credentials-v1\n<key id>\n<secret>`), so rotating a key is
+    one replace, never delete-then-write. Values with whitespace or control
+    characters, or over 512 bytes per part, are refused before the backend.
+  - **Errors by type, not text:** `NotFound`, `Unavailable`, `AccessDenied`,
+    `Backend`, `Invalid`. On Linux the `secret-service`/`zbus` error types are
+    inspected (`Unavailable`, a missing bus socket, D-Bus `ServiceUnknown`/
+    `NameHasNoOwner` → unavailable; `Locked`, `Prompt`, D-Bus `AccessDenied`
+    → access denied). On Windows the store crate's error type is private:
+    "no logon session" is unavailable, every other Win32 code is a backend
+    failure with the code shown. The `keyring-core` variants that carry stored
+    bytes (`BadEncoding`, `BadDataFormat`) are never formatted.
+  - **Lifecycle order** (`Accounts`, under one lock): add = credentials, then
+    configuration, rolling the credentials back if the configuration save
+    fails; remove = credentials, then configuration, stopping if the
+    credentials cannot be deleted. Remote buckets and objects are never
+    touched. Failures that leave something behind have their own error
+    variants.
+  - **Environment variables are test-only:** `EnvCredentials` is compiled only
+    under `cfg(test)`, for the opt-in provider tests. Nothing copies them into
+    the OS store.
+  - Rejected: the `keyring` 4 facade crate (it picks stores by default
+    features and adds macOS/Android crates); `dbus-secret-service-keyring-store`
+    (links libdbus, a C library and a build dependency); the
+    `linux-keyutils` store (kernel keyring, lost on reboot); an encrypted file
+    as a fallback (it would be the plaintext fallback under another name, with
+    a key stored next to it); two entries per account (an update could leave a
+    new key id with an old secret).
+- **Consequences:** without a Secret Service, Linux users cannot save
+  accounts: every credential call fails with `Unavailable` and a message that
+  says nothing is stored elsewhere. That is the intended behaviour, not a
+  bug; a UI must show it. Secret Service calls can block on an unlock prompt,
+  so callers must stay off the UI thread. Access denied on Windows is not
+  distinguishable from other backend failures. Details:
+  [cloud-storage.md](cloud-storage.md#credentials).

@@ -27,7 +27,7 @@ use aws_sdk_s3::error::DisplayErrorContext;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::account::AccountConfig;
-use super::credentials::{CredentialSource, Credentials, EnvCredentials, Secret};
+use super::credentials::{Credentials, EnvCredentials, Secret};
 use super::s3::{ClientOptions, S3Store, StorageError, Verification};
 use super::test_server::TempDir;
 

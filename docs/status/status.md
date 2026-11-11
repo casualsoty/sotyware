@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (cloud storage proof of concept: headless on WSL2 and native Windows 11, desktop regression runs on both). Update this file whenever
+Last updated: 2026-11-11 (OS credential store for cloud accounts: real Windows Credential Manager and a real GNOME Keyring under WSL2, headless and desktop regression runs on both). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -48,7 +48,7 @@ real desktop 99/0 three times
 | Persistent feature preferences: each user switch saved in `preferences.sqlite3` (app local data folder, SQLite via `rusqlite` bundled), loaded before the event loop, stored choice or `enabled_by_default` at startup; schema versioned with `PRAGMA user_version` and transactional migrations; unusable database left untouched and reported (`storageError`), failed saves reported (`saveError`) | `features/preferences.rs`, `storage.rs`, `run()` in `lib.rs` ([features.md](../architecture/features.md#persistence), [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)) |
 | Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
-| Cloud storage proof of concept, **not wired into the app**: provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id from environment variables, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter)) |
+| Cloud storage proof of concept, **not wired into the app**: provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
@@ -89,6 +89,48 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### OS credential store (2026-11-11)
+
+Tested as an uncommitted working tree on top of `de2e7f3` (not committed
+yet). Code: `cloud/credentials.rs`, `cloud/keyring.rs`, `cloud/account.rs`
+([cloud-storage.md](../architecture/cloud-storage.md#credentials), ADR-017).
+The app still does not call the module.
+
+**Linux: WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0.** No desktop
+keyring is installed and `DBUS_SESSION_BUS_ADDRESS` points to
+`/run/user/1000/bus`, which does not exist.
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check` (0/0), `npm run build`, `npm run tauri build -- --no-bundle` | static | ✅ |
+| `npm run test:headless`: 38 frontend and **160 Rust tests** (140 before: +5 credentials, +7 keyring of which 1 Linux-only, +8 accounts; one S3-server test replaced by a key-rotation/removal test), 4 ignored (3 before + the OS keyring test) | headless | ✅ |
+| Dependency graph: Linux 365 → 379 crates; zbus feature set unchanged (`cargo tree -e features -i zbus` identical before and after) | static | ✅ |
+| Release binary 7,469,688 → 7,471,224 bytes (+1,536; the module is not called) | static | ✅ recorded |
+| `npm run test:desktop:virtual` on the new release binary (regression) | virtual display | ✅ 115/0/0, 3 runs |
+| Real backend, **no Secret Service** (opt-in test with `SOTYWARE_IT_KEYRING_EXPECT=unavailable`): (a) the WSL2 bus address with no socket, (b) no bus address and a missing runtime folder, (c) a real `dbus-daemon` (`dbus-run-session`) without a provider (`ServiceUnknown`). Every call `Unavailable` | headless, real zbus/D-Bus | ✅ each case. The first run of (a) failed: zbus's `Connection` error was reported as `Backend`; fixed in the mapping, unit test added |
+| Real backend, **GNOME Keyring 46.1** (Ubuntu's `gnome-keyring` 46.1-2ubuntu0.2 with `libgck-1-0`/`libgcr-base-3-1` 3.41.2, unpacked without root, SHA-256 checked against the apt index) on a private `dbus-run-session` bus, throwaway HOME and login keyring, unlocked with `--unlock`: opt-in round trip (missing → store → read → second account → update → delete → gone) | headless, real Secret Service | ✅ 3/3 runs on the final code (plus 4 earlier passing runs before the last test edits) |
+| Independent check after those runs: `SearchItems` over D-Bus for `service=com.sotyware.desktop` | real Secret Service | ✅ 0 items |
+| Login collection locked over D-Bus, then the round trip: reads of missing entries `NotFound`; the first write asked for an unlock prompt that cannot be shown there and failed with `AccessDenied` ("prompt dismissed"); 0 items afterwards | real Secret Service | ✅ as designed (the test is expected to fail at that step) |
+| A real Linux desktop session (GNOME, KDE/KWallet, KeePassXC), an unlock prompt answered by a person | real desktop | — not run (no Linux desktop available) |
+| B2 integration test with the test-only `EnvCredentials` | — | — not run (no credentials in this session); compiles, and the `EnvCredentials` unit tests pass |
+
+**Windows: native Windows 11 Home 25H2, build 26200, Rust 1.99.1 MSVC, Node
+24.14.1**, not elevated, PowerShell 5.1 from WSL with the registry `PATH`; a
+copy of the working tree in a new folder `C:\dev\sotyware-keyring` (files
+checked identical by SHA-256).
+
+| Check | Category | Result |
+| --- | --- | --- |
+| First `cargo clippy`: `PlatformKind::AccessDenied` never constructed on Windows (`-D warnings`); fixed with a Linux-only `allow(dead_code)` | static | ❌ → ✅ |
+| `npm ci`, `npm run check` (0/0), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run tauri build -- --no-bundle` (`sotyware.exe` 5,494,272 bytes, unchanged) | static | ✅ |
+| Windows graph 288 → 290 crates (`keyring-core`, `windows-native-keyring-store`); no `zbus`/`secret-service` | static | ✅ |
+| `npm run test:headless`: 38 frontend and **151 Rust tests** (the 9 Linux-only tests excluded), 4 ignored | headless | ✅ |
+| **Real Windows Credential Manager**, opt-in round trip with two dedicated test accounts (missing → store → read → second account → update → delete → gone, fresh store sees nothing) | real OS backend | ✅ 3/3 runs |
+| Independent check in each run with `cmdkey /list:<target>`: not listed before storing, listed as `com.sotyware.desktop/cloud-account/<id>` after storing, not listed after deleting | real OS backend | ✅ 3/3 (the first 3 attempts failed in the test's own `cmdkey` parsing, which matched the header line; fixed before these runs) |
+| `cmdkey /list` lines containing `com.sotyware.desktop` before and after all runs | real OS backend | ✅ 0 and 0 |
+| `npm run test:desktop:windows:isolated` on the new release binary (regression) | private desktop | ✅ 56/0, 3 runs |
+| `windows.ps1` (real desktop), Windows 10, a roaming/domain profile, `Local` persistence checked from outside, a second process reading the entry | — | — not run |
 
 ### Backblaze B2 against the real provider (2026-11-11)
 

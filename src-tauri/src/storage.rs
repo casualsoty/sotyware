@@ -793,22 +793,29 @@ mod tests {
     #[test]
     fn the_accounts_database_holds_no_secret() {
         use crate::cloud::account::Accounts;
-        use crate::cloud::credentials::{Credentials, Secret, StaticCredentials};
+        use crate::cloud::credentials::{
+            CredentialStore, Credentials, MemoryCredentialStore, Secret,
+        };
         use crate::cloud::s3::ClientOptions;
+        use std::sync::Arc;
 
         let dir = TestDir::new("accounts-secret");
         let path = dir.0.join(ACCOUNTS_FILE_NAME);
         let store = SqliteAccountStore::open(&path).unwrap();
-        let accounts = Accounts::load(Box::new(store), ClientOptions::default()).unwrap();
-        accounts.add(b2_account()).unwrap();
-        let creds = StaticCredentials(vec![(
-            "b2-photos",
-            Credentials {
-                access_key_id: "0031234567890ab0000000001".into(),
-                secret_access_key: Secret::new("K003-super-secret-application-key"),
-            },
-        )]);
-        accounts.connect("b2-photos", &creds).unwrap();
+        let keys = Arc::new(MemoryCredentialStore::default());
+        let accounts = Accounts::load(
+            Box::new(store),
+            Arc::clone(&keys) as Arc<dyn CredentialStore>,
+            ClientOptions::default(),
+        )
+        .unwrap();
+        let creds = Credentials {
+            access_key_id: "0031234567890ab0000000001".into(),
+            secret_access_key: Secret::new("K003-super-secret-application-key"),
+        };
+        accounts.add(b2_account(), &creds).unwrap();
+        accounts.connect("b2-photos").unwrap();
+        assert_eq!(keys.load("b2-photos").unwrap(), creds);
         drop(accounts);
         let bytes = fs::read(&path).unwrap();
         let text = String::from_utf8_lossy(&bytes);

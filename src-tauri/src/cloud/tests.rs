@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::account::{AccountConfig, Accounts, MemoryAccountStore};
-use super::credentials::{Credentials, Secret, StaticCredentials};
+use super::credentials::{
+    CredentialError, CredentialStore, Credentials, MemoryCredentialStore, Secret,
+};
 use super::s3::{ClientOptions, S3Store, StorageError, UploadPlan, Verification};
 use super::test_server::{TempDir, TestServer};
 
@@ -336,24 +338,29 @@ async fn a_missing_local_file_is_a_local_error() {
     assert!(matches!(e, StorageError::Io(_)), "{e:?}");
 }
 
-fn accounts_for(servers: &[(&str, &TestServer)]) -> (Accounts, StaticCredentials) {
-    let accounts = Accounts::load(Box::<MemoryAccountStore>::default(), test_options()).unwrap();
-    let mut creds = Vec::new();
+fn accounts_for(servers: &[(&str, &TestServer)]) -> (Accounts, Arc<MemoryCredentialStore>) {
+    let keys = Arc::new(MemoryCredentialStore::default());
+    let accounts = Accounts::load(
+        Box::<MemoryAccountStore>::default(),
+        Arc::clone(&keys) as Arc<dyn CredentialStore>,
+        test_options(),
+    )
+    .unwrap();
     for (id, server) in servers {
-        accounts.add(server.account(id, &[BUCKET])).unwrap();
-        let id: &'static str = Box::leak(id.to_string().into_boxed_str());
-        creds.push((id, server.credentials()));
+        accounts
+            .add(server.account(id, &[BUCKET]), &server.credentials())
+            .unwrap();
     }
-    (accounts, StaticCredentials(creds))
+    (accounts, keys)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn several_accounts_work_at_the_same_time_and_stay_separate() {
     let first = TestServer::start("key-one", "secret-one", &[BUCKET]).await;
     let second = TestServer::start("key-two", "secret-two", &[BUCKET]).await;
-    let (accounts, creds) = accounts_for(&[("first", &first), ("second", &second)]);
-    let a = accounts.connect("first", &creds).unwrap();
-    let b = accounts.connect("second", &creds).unwrap();
+    let (accounts, _keys) = accounts_for(&[("first", &first), ("second", &second)]);
+    let a = accounts.connect("first").unwrap();
+    let b = accounts.connect("second").unwrap();
 
     let dir = TempDir::new("multi");
     let fa = dir.file("a.bin", 7 * MIB, 7); // multipart
@@ -399,12 +406,12 @@ async fn several_accounts_work_at_the_same_time_and_stay_separate() {
 async fn each_account_has_its_own_transfer_queue() {
     let first = TestServer::start("key-one", "secret-one", &[BUCKET]).await;
     let second = TestServer::start("key-two", "secret-two", &[BUCKET]).await;
-    let (accounts, creds) = accounts_for(&[("first", &first), ("second", &second)]);
+    let (accounts, _keys) = accounts_for(&[("first", &first), ("second", &second)]);
     let mut one_slot = first.account("first", &[BUCKET]);
     one_slot.max_concurrent_transfers = 1;
     accounts.update(one_slot).unwrap();
-    let a = accounts.connect("first", &creds).unwrap();
-    let b = accounts.connect("second", &creds).unwrap();
+    let a = accounts.connect("first").unwrap();
+    let b = accounts.connect("second").unwrap();
     let dir = TempDir::new("queue");
     let file = dir.file("f", 1000, 9);
 
@@ -470,16 +477,47 @@ async fn local_throughput() {
     );
 }
 
-#[test]
-fn static_credentials_are_per_account() {
-    let creds = StaticCredentials(vec![(
-        "a",
-        Credentials {
-            access_key_id: "k".into(),
-            secret_access_key: Secret::new("s"),
-        },
-    )]);
-    use super::credentials::CredentialSource;
-    assert!(creds.credentials("a").is_ok());
-    assert!(creds.credentials("b").is_err());
+#[tokio::test(flavor = "multi_thread")]
+async fn rotated_credentials_are_used_and_removal_leaves_remote_data() {
+    let server = server().await;
+    let (accounts, keys) = accounts_for(&[]);
+    let wrong = Credentials {
+        access_key_id: server.credentials().access_key_id,
+        secret_access_key: Secret::new("not-the-secret"),
+    };
+    accounts
+        .add(server.account("rotating", &[BUCKET]), &wrong)
+        .unwrap();
+    let e = accounts
+        .connect("rotating")
+        .unwrap()
+        .list_objects(BUCKET, "")
+        .await
+        .unwrap_err();
+    assert!(matches!(e, StorageError::InvalidCredentials(_)), "{e:?}");
+
+    // The corrected key replaces the old one and the next connection uses it.
+    accounts
+        .set_credentials("rotating", &server.credentials())
+        .unwrap();
+    let s = accounts.connect("rotating").unwrap();
+    let dir = TempDir::new("rotate");
+    let file = dir.file("f", 1000, 11);
+    s.upload_file(BUCKET, "kept", &file).await.unwrap();
+
+    // Removing the account deletes its credentials, never its objects.
+    drop(s);
+    accounts.remove("rotating").unwrap();
+    assert!(keys.ids().is_empty());
+    assert!(matches!(
+        keys.load("rotating"),
+        Err(CredentialError::NotFound { .. })
+    ));
+    assert!(server.object_path(BUCKET, "kept").exists());
+    let direct = S3Store::new(
+        server.resolved("direct", &[BUCKET]),
+        server.credentials(),
+        test_options(),
+    );
+    assert_eq!(direct.list_objects(BUCKET, "").await.unwrap().len(), 1);
 }

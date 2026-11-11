@@ -8,7 +8,8 @@ The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`s3.rs`) and `SqliteAccountStore` in `src-tauri/src/storage.rs`.
+`keyring.rs`, `s3.rs`) and `SqliteAccountStore` in `src-tauri/src/storage.rs`.
+Credentials: [ADR-017](decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
 
 ## Pieces
 
@@ -17,16 +18,19 @@ AccountConfig (no secret) ──resolve()──▶ ResolvedAccount ──┐
         │                                  ▲               ├─▶ S3Store (one per account)
         │ AccountStore (SQLite)            │ ProviderProfile│     aws-sdk-s3 client + connection pool
         ▼                                  │ (data)         │     transfer queue (semaphore)
-   Accounts ── connect(id, CredentialSource) ──────────────┘     SHA-256 end to end
+   Accounts ── connect(id) ─────────────────────────────────┘     SHA-256 end to end
+        │
+        │ CredentialStore (OS: Credential Manager / Secret Service), by account id
 ```
 
 | Piece | What it is |
 | --- | --- |
 | `ProviderProfile` (`provider.rs`) | **Data, not code**: endpoint rule, addressing style, SDK checksum policy, documented transfer limits, capabilities (versioning, Object Lock), known regions, documentation URL. Profiles: `backblaze-b2`, `hetzner`, `s3-compatible` (custom endpoint). |
 | `AccountConfig` (`account.rs`) | One set of credentials at one provider: `id` (kebab-case, stable), `label`, `provider`, `region`, optional `endpoint` and `path_style` overrides, the `buckets` it may use, `max_concurrent_transfers`. **No secret.** `resolve()` validates it and computes the endpoint. |
-| `Accounts` (`account.rs`) | The set of accounts: add, update, remove (each saved through `AccountStore` first; nothing changes if the save fails), list, and `connect(id, credentials)`, which creates and caches one `S3Store` per account. |
+| `Accounts` (`account.rs`) | The set of accounts and their one `CredentialStore`: `add(config, credentials)`, `update(config)`, `set_credentials(id, credentials)`, `has_credentials(id)`, `remove(id)` (also deletes the credentials), list, and `connect(id)`, which loads the credentials and creates and caches one `S3Store` per account. Order and failure handling: [Credentials](#credentials). |
 | `AccountStore` trait / `SqliteAccountStore` | `load`, `save`, `remove`. SQLite in `cloud-accounts.sqlite3` (tables `storage_accounts`, `storage_account_buckets`; `ACCOUNT_MIGRATIONS`, `PRAGMA user_version`), using the same open/check/migrate code as the preferences database. Schema has no column for a secret. |
-| `CredentialSource` trait (`credentials.rs`) | Looks up an account's key pair **by account id**. Today: `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`). `Secret` never prints its value in `Debug`/`Display`. |
+| `CredentialStore` trait (`credentials.rs`) | `store`, `load`, `delete`, `exists` for an account's key pair, **by account id**. `Secret` never prints its value in `Debug`/`Display`. `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`) exists only in test builds, for the opt-in provider tests. |
+| `OsCredentialStore` (`keyring.rs`) | The one real `CredentialStore`: Windows Credential Manager or the Linux Secret Service through `keyring-core`. No fallback. |
 | `S3Store` (`s3.rs`) | The one adapter: `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
 
 ### Why one adapter and no `ObjectStore` trait
@@ -114,15 +118,93 @@ object → `NotFound` ("Key not found"); an unknown key id was not tried. No err
   `max_concurrent_transfers` (default 4, 1 to 32) that each upload and download
   waits on. A full queue on one account never delays another (tested).
 - **Credentials:** never in `AccountConfig`, the database, logs or error
-  messages. The proof of concept reads environment variables. Planned: the OS
-  credential store (Windows Credential Manager, Linux Secret Service), as a
-  second `CredentialSource`. The Linux part must handle a desktop without a
-  Secret Service, like dashboard-only mode handles a missing tray host.
+  messages; kept in the OS credential store by account id. See below.
 - **Persistence:** `cloud-accounts.sqlite3`, a separate file, so that this
   unwired proof of concept does not change the released preferences schema.
   Whether it merges into `preferences.sqlite3` is decided when it is wired in.
   A stored account that no longer validates (an unknown provider, an
   out-of-range value) is kept and refused only when used.
+
+## Credentials
+
+Decision: [ADR-017](decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
+
+### Backend per OS
+
+| OS | Backend | Crate | Where the entry is |
+| --- | --- | --- | --- |
+| Windows 10/11 | Windows Credential Manager (generic credential, `CRED_PERSIST_LOCAL_MACHINE`: survives logoff and reboot, does not roam) | `windows-native-keyring-store` | target `com.sotyware.desktop/cloud-account/<id>`, user `cloud-account/<id>`; visible in Control Panel → Credential Manager → Windows Credentials, and with `cmdkey /list:com.sotyware.desktop/*` |
+| Linux | Secret Service API over the D-Bus session bus, DH-encrypted session. Tested with GNOME Keyring 46.1 only; KWallet and KeePassXC also offer the API (not tested) | `zbus-secret-service-keyring-store` (pure Rust, on the `zbus` already used by the tray) | attributes `service=com.sotyware.desktop`, `username=cloud-account/<id>`, label `sotyware cloud account <id>`, in the default collection (usually "login") |
+| other | none: every call fails with `Unavailable` | — | — |
+
+The names are derived from the **account id only**, never from the provider,
+so two accounts at one provider are two entries. Account ids are kebab-case
+(checked again before any backend call), so they cannot inject separators.
+
+### Stored value
+
+One entry per account, holding both parts:
+`sotyware-s3-credentials-v1\n<access key id>\n<secret access key>`. A rotation
+replaces the whole entry in one write. A value in any other format (for
+example written by hand) is refused as `Invalid` without being repeated.
+Parts must be 1 to 512 bytes without whitespace or control characters; this is
+checked before the backend is called, and keeps the value inside Windows'
+2,560-byte credential limit.
+
+### Operations and their order
+
+`Accounts` runs every operation under one lock:
+
+| Operation | Order | On failure |
+| --- | --- | --- |
+| `add(config, credentials)` | validate both → credentials stored → configuration saved | credential store fails: nothing saved. Configuration save fails: the credentials are deleted again (`Store` error); if that delete fails too, `AddRollbackFailed` names what is left (adding again overwrites it). A duplicate id never touches the existing credentials. |
+| `set_credentials(id, credentials)` | one replace; then the cached connection is dropped | the old credentials and connection stay; nothing is deleted first |
+| `update(config)` | configuration only | credentials untouched |
+| `remove(id)` | credentials deleted (missing ones count as deleted) → configuration removed | credential delete fails: nothing changes, the error is returned, the account stays listed (never a silent success). Configuration remove fails: `RemovedOnlyCredentials`; removing again finishes. |
+| `connect(id)` | credentials loaded → `S3Store` created | `NotFound` says "enter the account's key again" |
+
+**Removing an account never sends a request to the provider:** its buckets and
+objects stay (tested against the in-process S3 server). `Accounts::load` does
+not read credentials, so startup never opens an unlock prompt.
+
+### Errors
+
+`CredentialError`: `NotFound` (nothing stored; actionable hint), `Unavailable`
+(no Secret Service, no session bus, no Windows logon session; the message says
+sotyware never falls back to storing elsewhere), `AccessDenied` (Linux: the
+collection is locked and the unlock prompt was dismissed or could not be
+shown, or D-Bus `AccessDenied`), `Backend` (anything else, with the Windows
+error code or D-Bus error), `Invalid` (bad input or an entry not in
+sotyware's format). Sorting is by error type (`secret-service`/`zbus` types,
+D-Bus error names), never by message text. No variant holds a secret: the
+`keyring-core` errors that carry stored bytes are never formatted, and tests
+check `Display` and `Debug` of every path for the secret.
+
+On Windows the store crate keeps its error type private, so `ERROR_ACCESS_DENIED`
+and other codes are all `Backend` ("Windows error code N"); only "no logon
+session" is recognised (as `Unavailable`).
+
+### Threads and blocking
+
+Calls block: a D-Bus round trip, and on Linux possibly an unlock prompt that
+waits for the user. A later Tauri command must run them off the main thread
+(Tauri's thread pool, as `set_feature_enabled` does). `OsCredentialStore`
+serialises its own calls, because `keyring-core` warns that the platform
+stores may not handle one credential from several threads. The platform store
+is opened on first use; while it cannot be opened (no Secret Service yet), each
+call tries again, so a keyring daemon that starts later is used without a
+restart. There is no polling.
+
+### Migration from environment variables
+
+Nothing to migrate in stored data: the accounts schema never had a secret
+column and is unchanged, so existing `cloud-accounts.sqlite3` files load as
+before. What changed is the code path: the app has no way to read credentials
+from the environment any more (`EnvCredentials` is test-only), and nothing
+copies environment variables into the OS store. An account saved before this
+change has no OS entry, so `connect` reports `NotFound` until its key is
+entered again (`set_credentials`). No released build ever used cloud accounts,
+so no user is affected.
 
 ## Backups with restic (planned, not built)
 
@@ -139,7 +221,7 @@ backup format of its own. Findings (restic 0.19.1, docs and the experiment in
   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, and the
   repository password through `RESTIC_PASSWORD_COMMAND` or
   `RESTIC_PASSWORD_FILE` (never on the command line, where other processes can
-  read it). sotyware would take them from the same `CredentialSource`.
+  read it). sotyware would take them from the same `CredentialStore`.
 - **Encryption and deduplication:** AES-256-CTR + Poly1305-AES, scrypt key
   derivation, content-defined chunking. Seen in the experiment: no plaintext in
   the stored objects; a second backup with a 20 MB copy of an existing file
@@ -181,5 +263,6 @@ backup format of its own. Findings (restic 0.19.1, docs and the experiment in
 No UI, Tauri command, event or feature; no synchronisation, folder watching,
 scheduled backups, retention, restic integration, client-side encryption,
 sharing or public links, virtual filesystem, retrying queue, parallel parts
-within one file, resumable uploads, or keyring storage. See
+within one file, resumable uploads, credential import from environment
+variables or files, or a credential fallback outside the OS store. See
 [roadmap.md](../status/roadmap.md).

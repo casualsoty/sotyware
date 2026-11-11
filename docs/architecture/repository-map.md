@@ -48,7 +48,8 @@ Where things are. Generated and ignored paths are listed in
 │       │   ├── mod.rs        Module overview, re-exports SqliteAccountStore
 │       │   ├── provider.rs   ProviderProfile data: backblaze-b2, hetzner, s3-compatible + tests
 │       │   ├── account.rs    AccountConfig + resolve(), Accounts, AccountStore trait + tests
-│       │   ├── credentials.rs  Secret, Credentials, CredentialSource, EnvCredentials + tests
+│       │   ├── credentials.rs  Secret, Credentials (validation, stored format), CredentialStore trait, CredentialError; test-only EnvCredentials, MemoryCredentialStore + tests
+│       │   ├── keyring.rs    OsCredentialStore: Windows Credential Manager / Secret Service via keyring-core, entry names, error mapping + tests, opt-in real-backend test
 │       │   ├── s3.rs         S3Store (aws-sdk-s3): list, upload (single/multipart), download, delete, SHA-256, errors + tests
 │       │   ├── tests.rs      Storage operations against the in-process S3 server
 │       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs) and temp-file helpers, tests only

@@ -5,8 +5,10 @@
 //!   Hetzner Object Storage are profiles, not code.
 //! - [`account`]: account configurations (no secrets), validation, the set of
 //!   accounts and the [`account::AccountStore`] trait (SQLite in `storage.rs`).
-//! - [`credentials`]: secrets, looked up per account by a
-//!   [`credentials::CredentialSource`].
+//! - [`credentials`]: secrets and the [`credentials::CredentialStore`] trait
+//!   they are kept behind, by account id.
+//! - [`keyring`]: the one real credential store, the operating system's
+//!   (Windows Credential Manager, Linux Secret Service). No fallback.
 //! - [`s3`]: the one adapter, on the official AWS SDK, with end-to-end SHA-256
 //!   verification and a transfer queue per account.
 //!
@@ -17,6 +19,7 @@
 
 pub mod account;
 pub mod credentials;
+pub mod keyring;
 pub mod provider;
 pub mod s3;
 

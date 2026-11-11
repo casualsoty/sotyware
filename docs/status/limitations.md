@@ -258,9 +258,30 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   parts, throttling (429/503), interrupted transfers, Object Lock and
   lifecycle rules, and keys without a prefix restriction. Hetzner: nothing
   (path-style addressing, the minimum part size, its error codes).
-- **Credentials only from environment variables.** No OS keyring yet;
-  environment variables are visible to other processes of the same user and
-  are meant for development and the opt-in tests only.
+- **Credentials only in the OS credential store, and no fallback**
+  ([cloud-storage.md](../architecture/cloud-storage.md#credentials), ADR-017).
+  Linux without a Secret Service (no keyring daemon, no session bus: WSL2,
+  minimal window managers, headless sessions, SSH logins) cannot save or read
+  any account credentials; every call reports `Unavailable`. A locked keyring
+  whose unlock prompt cannot be shown (no prompter, as in a headless session)
+  is `AccessDenied`. Neither has a workaround in sotyware by design.
+- **Secret Service calls can block** on an unlock prompt until the user
+  answers; callers must stay off the UI thread (nothing calls them yet).
+- **Windows access errors are not told apart.** The store crate's error type
+  is private, so `ERROR_ACCESS_DENIED` and every other Win32 code except "no
+  logon session" are reported as a backend failure with the code.
+- **Backends validated:** Windows Credential Manager on native Windows 11
+  (2026-11-11) and GNOME Keyring 46.1 on a private D-Bus session under WSL2
+  (2026-11-11), both by the opt-in test only. Not tested: KWallet, KeePassXC,
+  any real Linux desktop session, Windows 10, a roaming or domain profile, an
+  unlock prompt answered by a person, two sotyware processes writing at once.
+- **Credentials do not travel with the accounts database.** Copying
+  `cloud-accounts.sqlite3` to another machine (or restoring it) leaves its
+  accounts without credentials (`NotFound`) until their keys are entered
+  again. Removing the database by hand leaves orphaned OS entries; they are
+  visible in Credential Manager or Seahorse under `com.sotyware.desktop`.
+- **Environment-variable credentials exist only in test builds** (the opt-in
+  provider tests); the app cannot use them, and nothing imports them.
 - **Uploads:** the file is read twice (hash, then send); the parts of one file
   are sent one after another, not in parallel; an interrupted upload starts
   again from the beginning (no resume); a file that changes during upload is

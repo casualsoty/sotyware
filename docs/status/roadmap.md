@@ -47,9 +47,11 @@ order:
    ([how](../development/testing.md#cloud-storage-integration-tests)).
 2. Confirm VAT and currency charges on the first Backblaze invoice, and set the
    bucket's lifecycle rule (keep only the last version).
-3. Credentials in the OS keyring (Windows Credential Manager, Secret Service)
-   as a second `CredentialSource`, with a decision for Linux without a Secret
-   Service.
+3. Credentials in the OS credential store: done 2026-11-11 (ADR-017,
+   [status.md](status.md#os-credential-store-2026-11-11)). Linux without a
+   Secret Service stays unsupported for accounts by design. Open: a run on a
+   real Linux desktop session (GNOME, KDE/KWallet) with an unlock prompt
+   answered by a person.
 4. Wire the module in as a built-in feature with its commands, permissions and
    a minimal account UI (its own ADR; decide then whether the accounts table
    moves into `preferences.sqlite3`).

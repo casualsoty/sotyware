@@ -36,6 +36,9 @@ aws-smithy-http-client = { version = "1", default-features = false, features = [
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "sync", "rt"] }
 # Already in the tree through Tauri: end-to-end SHA-256 of uploaded objects.
 sha2 = "0.10"
+# Cloud account credentials in the OS credential store (ADR-017): the
+# platform-independent API; one platform store crate per OS below.
+keyring-core = "1"
 
 [profile.release]
 codegen-units = 1
@@ -63,6 +66,11 @@ digest = "=0.11.0-rc.4"
 hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 
+[target.'cfg(windows)'.dependencies]
+# Windows Credential Manager for keyring-core (ADR-017). No default features:
+# `search` (and its regex) is not needed.
+windows-native-keyring-store = { version = "1", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Not used directly: enables tray-icon's pure-Rust StatusNotifierItem backend
 # (ksni) on the tray-icon that Tauri already depends on. tray-icon selects ksni
@@ -75,3 +83,12 @@ tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
 # tray host here" apart from real failures (ADR-012). No features are added.
 ksni = { version = "0.3", default-features = false }
 zbus = { version = "5", default-features = false }
+# Secret Service for keyring-core over the zbus already in the tree (ADR-017):
+# pure Rust, no libdbus/libsecret. `rt-async-io`: the zbus runtime already
+# enabled; the tokio variant would switch zbus's runtime for the tray too.
+# `crypto-rust`: the secret travels DH-encrypted over D-Bus.
+zbus-secret-service-keyring-store = { version = "1", default-features = false, features = ["rt-async-io-crypto-rust"] }
+# Already in the tree through the store above; declared only so keyring.rs
+# can name its error type and tell "no Secret Service" and "locked" apart
+# from other failures. No features are added.
+secret-service = { version = "5", default-features = false }

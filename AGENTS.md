@@ -44,7 +44,7 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11 (cloud storage proof of concept).
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11 (OS credential store for cloud accounts).
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
@@ -73,6 +73,10 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `aws-smithy-http-client` (feature `rustls-ring`: rustls on ring, not aws-lc-rs) | `1` | 1.1.9 |
 | `tokio` (`fs`, `io-util`, `sync`; already in the tree through Tauri) | `1` | 1.54.1 |
 | `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
+| `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
+| `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
+| `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
+| `secret-service` (Linux only, through the store above; also a direct dependency without features, to name its error type) | `5` | 5.1.0 |
 | `s3s` + `s3s-fs` (dev only: in-process S3 test server), `hyper-util` (dev only), `digest` (dev only, pinned `=0.11.0-rc.4` for `s3s`) | `0.12` | 0.12.0 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
@@ -120,12 +124,15 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `src-tauri/src/cloud/`: provider profiles as data (`backblaze-b2`,
   `hetzner`, `s3-compatible`), accounts without secrets (`AccountConfig`,
   `Accounts`, `AccountStore`; SQLite `cloud-accounts.sqlite3` in
-  `storage.rs`), credentials by account id (`CredentialSource`, environment
-  variables only), and one S3 adapter (`S3Store`, `aws-sdk-s3`) with
-  end-to-end SHA-256 and a transfer queue per account. No feature, command or
-  UI uses it
+  `storage.rs`), credentials by account id in the OS credential store only
+  (`CredentialStore` trait, `OsCredentialStore` in `cloud/keyring.rs`:
+  Windows Credential Manager, Linux Secret Service; no fallback; environment
+  variables only in test builds), and one S3 adapter (`S3Store`,
+  `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. No
+  feature, command or UI uses it
   ([cloud-storage.md](docs/architecture/cloud-storage.md),
-  [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter)).
+  [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
+  [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)).
 - **Frontend:** `src/App.svelte` with `src/Features.svelte`. Its only access to
   Rust is the commands `operating_mode`, `list_features` and
   `set_feature_enabled` (permissions `allow-operating-mode`,
@@ -139,7 +146,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, cloud storage UI or command, keyring credential storage, backups
+tray fallback, cloud storage UI or command, credential import or any
+credential fallback outside the OS store, backups
 or restic integration, custom event, or custom command besides `operating_mode`,
 `list_features` and `set_feature_enabled`. Never describe these as existing.
 
@@ -247,7 +255,7 @@ Every coding agent must:
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
-   `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`, the capability file) before
+   `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`, the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

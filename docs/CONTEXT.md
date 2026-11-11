@@ -47,7 +47,11 @@ features exist**.
   it): `src-tauri/src/cloud/`, provider profiles as data (Backblaze B2,
   Hetzner, any S3-compatible), storage accounts without secrets (SQLite
   `cloud-accounts.sqlite3`, separate from the preferences), credentials by
-  account id from environment variables, one S3 adapter on `aws-sdk-s3` with
+  account id only in the OS credential store (Windows Credential Manager,
+  Linux Secret Service via `keyring-core`; no fallback, so Linux without a
+  Secret Service cannot store any; environment variables only in test
+  builds; adding and removing an account keep account and credentials
+  consistent, removing never touches remote data), one S3 adapter on `aws-sdk-s3` with
   end-to-end SHA-256, multipart uploads and a transfer queue per account.
   Recommended first provider: Backblaze B2, EU Central.
   [cloud-storage.md](architecture/cloud-storage.md),
@@ -59,7 +63,7 @@ features exist**.
 src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage PoC: provider.rs, account.rs, credentials.rs, s3.rs; tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage PoC: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs; tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
@@ -118,6 +122,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- OS credential store (2026-11-11, uncommitted tree on `de2e7f3`): `cargo
+  test` 160 on WSL2 (151 on native Windows 11), 4 ignored; the opt-in
+  `cloud::keyring::os_backend::round_trip` passed **against the real Windows
+  Credential Manager** (3 runs, entries checked with `cmdkey`, none left) and
+  **against a real GNOME Keyring 46.1 on a private D-Bus session under WSL2**
+  (3 runs, none left); "no Secret Service" reported as `Unavailable` in three
+  real WSL2 conditions; a locked keyring as `AccessDenied`. Not run on a real
+  Linux desktop session. Regression: virtual display 115/0/0 and Windows
+  private desktop 56/0, 3 runs each.
+  [status.md](status/status.md#os-credential-store-2026-11-11). The counts
+  below are from before this change.
 - `cargo test`: 140 unit tests (2026-11-11, cloud storage proof of concept:
   passes on WSL2 and on native Windows 11, 132 there; virtual display 115/0/0
   and Windows private desktop 56/0, 3 runs each, unchanged). 51 cover cloud
@@ -225,7 +240,9 @@ tray-host failures (a watcher that leaves mid-call, other watcher errors) still
 exit 1. Left click needs the tray host to send `Activate`. Single instance
 silently turns off without a D-Bus session bus. Placeholder icons; no autostart.
 A corrupt feature-preferences database is never repaired: defaults are used
-until the user moves the file away. Full list: [limitations.md](status/limitations.md).
+until the user moves the file away. Cloud account credentials need the OS
+credential store: Linux without a Secret Service (WSL2, minimal window
+managers) cannot store any, by design. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
