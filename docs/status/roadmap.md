@@ -56,6 +56,11 @@ Fixes found during validation come before anything below.
   ([ADR-011](../architecture/decisions.md#adr-011-linux-tray-uses-tray-icons-ksni-backend-not-libayatana-appindicator)).
 - Make the D-Bus fallback warning visible (for example by installing a logging
   subscriber), if that is wanted.
+- Built-in features: run the new feature checks on Windows (build, headless suite,
+  and a Features-section check in `tests/desktop/windows.ps1`), and the
+  manual checklist's step 9. The foundation itself is implemented
+  ([features.md](../architecture/features.md)). The items it deliberately leaves
+  out are under Ideas.
 
 ## Ideas (not decided)
 
@@ -64,6 +69,13 @@ decision and no code for any of them. Do not implement them without an explicit
 request and a recorded decision.
 
 - Autostart on login.
-- Local persistence (SQLite has been mentioned).
-- A feature manager / plugin architecture.
+- Local persistence (SQLite has been mentioned). For features, the plug-in
+  point is designed ([features.md](../architecture/features.md#persistence-not-implemented)),
+  but nothing is stored.
+- A feature-management UI beyond the minimal Features section, events from
+  Rust to the page for feature state, a way for a running feature to report a
+  failure, and dependencies between features.
+- Third-party plugins (possibly sandboxed WASM). The built-in feature registry
+  ([ADR-014](../architecture/decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry))
+  is not a plugin runtime.
 - Synchronization.

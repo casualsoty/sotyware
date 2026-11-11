@@ -40,6 +40,9 @@ the tray rows, real mouse clicks and Quit; details in
 | Implicit exit (`code: None`) blocked | ✅ unit tests (the decision) | — not triggered: the window is never destroyed | — | — |
 | Tray menu items and click dispatch (the decision) | ✅ unit tests | menu over D-Bus | ✅ real clicks | ✅ |
 | "Hide dashboard" button sends the hide request; errors shown | ✅ mocked IPC | ✅ real button via AT-SPI (tray mode, hides the window) | ✅ real button | ✅ |
+| Built-in features: registration, lifecycle table, start/stop failures, isolation, shutdown order, concurrent requests | ✅ unit tests (registry with recording and failing test features) | — | — | — |
+| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | — not yet in the Windows test | ✅ (step 9) |
+| Features stopped on exit | ✅ unit tests (`stop_all`) | — not observable from outside | — | — |
 | Hide permission granted in tray mode only (runtime capability) | ✅ unit test (the decision) | ✅ tray mode: Hide works; dashboard-only: no button | ✅ tray mode | — |
 | The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
 | Focus and un-minimize on second launch | — | ✅ openbox honours the requests | ✅ | ✅ |
@@ -85,6 +88,22 @@ double ([ADR-009](../architecture/decisions.md#adr-009-lifecycle-decisions-are-p
 The real window, tray and single-instance plugin cannot run under `cargo test`;
 they need a display and an event loop.
 
+The feature registry needs no such doubles: it never touches Tauri, so
+`features/registry.rs` tests it with plain test features that record their
+`start`/`stop` calls in a shared log and fail on request (`TestFeature`), plus
+one that blocks in `start` until released (`SlowFeature`, run on a second
+thread). They cover registration (order, metadata, duplicate and malformed
+IDs, empty fields), the whole lifecycle table, startup (enabled and disabled
+features, runs once), start and stop failures (failed state, retry, disable
+without `stop`, error kept and cleared), isolation (a failing feature between
+two working ones), `stop_all` (reverse order, only running ones, continues
+after a failing stop) and concurrency (a starting feature is visible as
+`initializing`, a second request is rejected, other features stay usable).
+`features/mod.rs` checks that every built-in feature registers and starts and
+stops cleanly, and the JSON shape the frontend parses. The command functions
+themselves are one-line delegations to the tested registry methods; that the
+real webview may call them is checked by the virtual-display test.
+
 ## Frontend tests
 
 ```bash
@@ -107,6 +126,18 @@ a test says otherwise. It checks that:
 - if `operating_mode` fails or returns an unknown value, the error is shown and
   there is no Hide button;
 - `main.ts` throws without `#app`.
+
+`src/Features.test.ts` mounts `Features.svelte` (and once the whole `App`) with
+a mocked registry. It checks that the list is read once on mount and shown in
+order with name, version, state and description; that a failed feature shows
+its error without an alert; that the checkbox is unavailable while a feature is
+starting or stopping, or while a request is in flight; that unchecking and
+checking send `set_feature_enabled` with `{ id, enabled }` and show the new
+state; that a refused switch restores the checkbox and shows the error in a
+`role="alert"`; that a list error or a malformed answer is shown as an error;
+and that the dashboard's only button is still "Hide dashboard". `parseFeature`
+is tested against the shape Rust sends and against malformed values.
+`App.test.ts`'s mocked Rust side answers `list_features` with no features.
 
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)
@@ -149,14 +180,18 @@ Files:
   - 11: `$XDG_RUNTIME_DIR` under a read-only directory (as under WSL): still
     starts with one tray item and quits with 0, because the `ksni` backend
     writes no icon file.
-  - 12: tray mode, the page: tray hint and a "Hide dashboard" button; activating
-    it through AT-SPI hides the window (so the runtime `tray-mode` capability
-    works); tray Open Dashboard restores it; Quit.
+  - 12: tray mode, the page: tray hint and a "Hide dashboard" button; the
+    Features section lists the example feature as running with a checked
+    checkbox (`CHECK_BOX` role, named "Example"); toggling it through AT-SPI
+    shows it disabled, toggling again shows it running, with no error (so the
+    static capability allows `list_features` and `set_feature_enabled`);
+    activating Hide through AT-SPI hides the window (so the runtime `tray-mode`
+    capability works); tray Open Dashboard restores it; Quit.
   - 13: dashboard-only mode, session bus without a watcher: process alive and
     dashboard visible; mode and reason on stderr; no item registered and no
     `org.kde.StatusNotifierItem-<pid>-*` name owned; the page shows the no-tray
     note and no button (scenario 12 is the control that proves a button would
-    be found); a second launch exits 0 and restores the minimized dashboard
+    be found); the example feature is listed as running here too; a second launch exits 0 and restores the minimized dashboard
     without a new window or process; a watcher started afterwards gets no
     registration (no retry); closing the dashboard exits 0 and leaves nothing.
   - 14: relaunch with the watcher back: tray mode again, close hides, Quit.
@@ -635,19 +670,23 @@ AppIndicator extension is enabled).
    log shows no error. Start sotyware again: it starts normally.
 8. Windows only: left-click the tray icon. Expected: the dashboard opens.
    Right-click shows the menu.
+9. In the dashboard's Features section, "Example" is listed as Running with a
+   checked box. Uncheck it: it shows Disabled and no red error. Check it again:
+   Running. Quit and start sotyware: it is Running again (nothing is persisted).
+   Repeat in dashboard-only mode.
 
 Dashboard-only mode (Linux desktops without a tray host, for example vanilla
 GNOME without the AppIndicator extension):
 
-9. Start sotyware. Expected: the dashboard opens, shows the note that no
+10. Start sotyware. Expected: the dashboard opens, shows the note that no
    compatible system tray is available, and has no Hide button. No tray icon. The
    log names dashboard-only mode and the reason.
-10. Minimize it, start sotyware again. Expected: the same dashboard comes back,
+11. Minimize it, start sotyware again. Expected: the same dashboard comes back,
     still one process.
-11. Close the dashboard with ✕. Expected: the process is gone
+12. Close the dashboard with ✕. Expected: the process is gone
     (`pgrep -a sotyware` prints nothing), the shell prompt returns, and the exit
     status is 0 (`echo ${PIPESTATUS[0]}` after the `tee` command above).
-12. Enable a tray host (for example the AppIndicator extension) and start
+13. Enable a tray host (for example the AppIndicator extension) and start
     sotyware again. Expected: tray mode, as in steps 1–7.
 
 ## Rules

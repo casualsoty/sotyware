@@ -44,8 +44,13 @@ state. It never changes while the process runs:
      and the mode. The mode is managed, no capability is added;
    - any other error: prints `sotyware: cannot create system tray icon: …` and
      calls `exit(1)`.
+   In tray mode and dashboard-only mode alike, `setup` then starts the built-in
+   features (`FeatureRegistry::start_all`). A feature that fails to start is
+   recorded as `failed` and does not affect startup. With the fatal tray error,
+   no feature is started ([features.md](features.md#lifecycle)).
 5. `app.run(...)` enters the event loop. The page asks for the mode with the
-   `operating_mode` command and renders accordingly.
+   `operating_mode` command and renders accordingly, and asks for the feature
+   list with `list_features`.
 
 ## Mode selection
 
@@ -94,6 +99,11 @@ for a tray host: one that appears later is used on the next start.
   The page shows the Hide button only for `"tray"`. If the command fails, it
   shows the error and no Hide button
   ([ADR-013](decisions.md#adr-013-the-frontend-reads-the-mode-through-one-command-hiding-is-granted-only-in-tray-mode)).
+- **Features stop when the process ends.** On `RunEvent::Exit`, which follows
+  every allowed exit, `FeatureRegistry::stop_all()` stops the running features
+  in reverse registration order. Errors are logged. If the OS kills the
+  process, or the session ends without Tauri's exit path, no feature is stopped
+  ([limitations](../status/limitations.md#built-in-features)).
 - **An unexpected tray failure is fatal.** `setup` exits with code 1 when
   `select_mode()` does not recognise the error as a missing tray host. (A
   watcher that accepts the item while no panel displays it is not detected; see

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11. Update this file whenever
+Last updated: 2026-11-11 (built-in feature foundation). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -36,14 +36,17 @@ were split into headless, private-desktop and real-desktop categories
 | Tauri 2 desktop runtime (one process, one window `main`) | `src-tauri/src/lib.rs`, `tauri.conf.json` |
 | Svelte 5 dashboard (static page; "Hide dashboard" button in tray mode, a no-tray note in dashboard-only mode) | `src/App.svelte` |
 | Operating modes: tray mode, and dashboard-only mode on Linux without a tray host (close quits, no hide) | `select_mode`, `close_action` in `lib.rs`; `unavailable_reason` in `tray.rs` |
-| `operating_mode` command (the frontend's only custom call) | `lib.rs`, app manifest in `build.rs` |
+| `operating_mode` command | `lib.rs`, app manifest in `build.rs` |
+| Built-in feature foundation: `Feature` trait, `builtin()` list, `FeatureRegistry` (duplicate/malformed IDs rejected, lifecycle registered → disabled / initializing → running / failed, stopping → disabled; per-feature error isolation; started in `setup`, stopped on exit), enabled state from each feature's default (not persisted) | `src-tauri/src/features/` ([features.md](../architecture/features.md)) |
+| Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
+| `list_features` and `set_feature_enabled` commands, and the dashboard's minimal Features section (state and enable checkbox per feature) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`allow-operating-mode`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -53,8 +56,11 @@ a minimized dashboard and focus on second launch run on Linux only under the
 virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
-Nothing else exists: no product features, no settings, no persistence, no
-custom Tauri events, and no custom command other than `operating_mode`.
+Nothing else exists: no product features (only the example feature), no
+settings, no persistence (feature choices reset to their defaults on every
+start), no custom Tauri events, no feature-management UI, no third-party
+plugins, and no custom command other than `operating_mode`, `list_features` and
+`set_feature_enabled`.
 
 ## Validation matrix
 
@@ -72,6 +78,21 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Built-in feature foundation (WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0, 2026-11-11)
+
+Application code of `e30ac7b` (registry `5e2e475`, frontend `e30ac7b`),
+desktop driver of `a9fb338`. Nothing of this has run on Windows.
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | static | ✅ |
+| `npm run check` (0 errors, 0 warnings), `npm run build`, `npm run tauri build -- --no-bundle` | static | ✅ |
+| `npm run test:headless`: 29 frontend (13 existing + 16 new) and 58 Rust (31 existing + 27 new) tests | headless | ✅ |
+| Not vacuous: 3 hand-made mutants of `Features.svelte` (no checkbox restore, no in-flight lock, no state update) each fail ≥ 1 frontend test | headless | ✅ |
+| `npm run test:desktop:virtual`: 96 passed, 0 failed, 0 skipped (92 existing + 4 feature checks), 3 runs | virtual display | ✅ |
+| Not vacuous: with `allow-set-feature-enabled` removed from the capability, the run fails exactly the two switch checks (94/2/0; the page shows "Command set_feature_enabled not allowed by ACL") | virtual display | ✅ |
+| `tests/desktop/run.sh` (WSLg), Windows headless suite, `windows.ps1`, `windows-isolated.ps1`, manual checklist step 9 | — | — not run |
 
 ### Static checks and builds (WSL2, Ubuntu 24.04, Rust 1.99.1, Node 24.22.0)
 

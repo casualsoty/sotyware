@@ -10,7 +10,11 @@ sotyware is one Tauri 2 process with:
 
 - **one dashboard window** (label `main`) rendering a Svelte 5 single-page app, and
 - **one system tray icon** with an "Open Dashboard" / "Quit" menu, where the
-  environment has a tray host.
+  environment has a tray host, and
+- a **registry of built-in features**: native Rust modules that start with
+  the app, can be switched on and off from the dashboard, and stop at exit
+  ([features.md](features.md)). The only one today is `example`, which does
+  nothing visible.
 
 In **tray mode** the process keeps running in the background. The window is
 hidden and shown, never destroyed, and only the tray "Quit" ends the process. On
@@ -25,14 +29,18 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
                 │ tray (tray.rs) ── Open Dashboard ──────┘   Quit ──► exit(0)     │
                 │                                                                 │
                 │ setup: tray::create() → select_mode() → OperatingMode (state)   │
+                │        → FeatureRegistry::start_all() (features/, state)        │
                 │                                                                 │
                 │ window "main" ◄── CloseRequested → tray mode: hide()  (lib.rs)  │
                 │                                   dashboard-only: exit(0)       │
                 │   └ WebView: Svelte app (src/) ── invoke("operating_mode")      │
                 │                                  getCurrentWindow().hide()      │
                 │                                  (allowed in tray mode only)    │
+                │                                  invoke("list_features")        │
+                │                                  invoke("set_feature_enabled")  │
                 │                                                                 │
                 │ RunEvent::ExitRequested { code: None } → prevent_exit()         │
+                │ RunEvent::Exit → FeatureRegistry::stop_all()                    │
                 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,20 +50,23 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | --- | --- | --- |
 | Binary entry point | `src-tauri/src/main.rs` | Calls `sotyware_lib::run()`. Nothing else. |
 | Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup` and picks the `OperatingMode`, turns window close into hide (tray mode) or exit (dashboard-only mode), adds the hide capability in tray mode only, serves the `operating_mode` command, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`select_mode`, `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
+| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), the `list_features` and `set_feature_enabled` commands, and the example feature. Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
-| Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the `operating_mode` command, so it needs a permission. |
+| Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`), so each needs a permission. |
 | Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
-| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`. `core:window:allow-hide` is added at runtime, in tray mode only. |
-| Frontend | `index.html`, `src/main.ts`, `src/App.svelte` | Static dashboard. Tray mode: a "Hide dashboard" button. Dashboard-only mode: a note instead. |
+| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`, `allow-list-features` and `allow-set-feature-enabled`. `core:window:allow-hide` is added at runtime, in tray mode only. |
+| Frontend | `index.html`, `src/main.ts`, `src/App.svelte`, `src/Features.svelte`, `src/features.ts` | Dashboard. Tray mode: a "Hide dashboard" button. Dashboard-only mode: a note instead. Both: a minimal Features section (one checkbox per feature, with its state) through the typed wrappers in `features.ts`. |
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through exactly two calls: the
-  custom command `operating_mode` (read-only, returns `"tray"` or
-  `"dashboard-only"`) and Tauri's built-in window API
-  (`getCurrentWindow().hide()`, tray mode only). There is no other custom command
-  and there are **no custom events** (`emit`/`listen`). Adding either is an
-  architectural change: record it in [decisions.md](decisions.md).
+- **Frontend ↔ Rust.** The frontend reaches Rust through three custom commands
+  and one built-in call. The commands are `operating_mode` (read-only, returns
+  `"tray"` or `"dashboard-only"`), `list_features` (read-only) and
+  `set_feature_enabled` (switches one feature through the registry's lifecycle
+  rules). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
+  tray mode only). There is no other custom command, and there are **no custom
+  events** (`emit`/`listen`). Adding either is an architectural change: record
+  it in [decisions.md](decisions.md).
 - **Platform detection lives in Rust.** Only `tray::unavailable_reason()` looks
   at the tray error. The frontend never inspects the OS or D-Bus.
 - **Lifecycle lives in `lib.rs`.** Window, exit and single-instance handling are
@@ -63,8 +74,13 @@ Boundaries that hold today:
   calls `show_dashboard()` or `AppHandle::exit(0)`.
 - **One window.** All code that shows the dashboard looks up the existing window
   by `DASHBOARD_LABEL` and never creates one.
+- **Features live behind the registry.** Lifecycle code (`lib.rs`) calls only
+  `start_all` and `stop_all`, and the frontend uses the two feature commands.
+  Nothing else reaches a feature, and a feature's error never affects the mode,
+  the tray, the window or another feature.
 - **No background work.** No threads, timers, polling, retries or async tasks
-  of sotyware's own. Everything is driven by Tauri events.
+  of sotyware's own. Everything is driven by Tauri events. The example feature
+  starts nothing. `set_feature_enabled` runs on Tauri's own blocking thread pool.
 - **No persistence, no network, no settings.** Nothing is stored or fetched.
 
 ## Security model
@@ -72,8 +88,10 @@ Boundaries that hold today:
 - CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'` (inline styles are
   needed by Svelte).
 - Capability `default` applies to window `main` only and grants
-  `allow-operating-mode` (the app's one command) and nothing else, not even
-  `core:default`. In tray mode, `setup` adds the runtime capability `tray-mode`,
+  `allow-operating-mode`, `allow-list-features` and
+  `allow-set-feature-enabled` (the app's three commands) and nothing else, not
+  even `core:default`
+  ([ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). In tray mode, `setup` adds the runtime capability `tray-mode`,
   which grants window `main` `core:window:allow-hide` and nothing else
   ([ADR-013](decisions.md#adr-013-the-frontend-reads-the-mode-through-one-command-hiding-is-granted-only-in-tray-mode)).
 - The single-instance plugin has no JavaScript API and needs no capability.
@@ -83,5 +101,6 @@ Boundaries that hold today:
 ## Further reading
 
 - [lifecycle.md](lifecycle.md): window, tray and exit behaviour.
+- [features.md](features.md): built-in features, their lifecycle, and how to add one.
 - [single-instance.md](single-instance.md): how the second launch is handled.
 - [decisions.md](decisions.md): why things are the way they are.

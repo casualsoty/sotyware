@@ -172,6 +172,29 @@ affected.
   `%LOCALAPPDATA%\com.sotyware.desktop` would be removed is unknown, because
   running the build output also creates it.
 
+## Built-in features
+
+Design and rationale: [features.md](../architecture/features.md),
+[ADR-014](../architecture/decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry).
+
+- **Nothing is persisted.** On every start each feature returns to its
+  `enabled_by_default`. A feature the user disabled runs again after a restart.
+- **Only one feature, and it does nothing.** `example` demonstrates the
+  lifecycle. There are no product features.
+- **No events.** The page sees a state change only in the response to its own
+  switch, plus the list it reads on mount. A feature still `initializing` when
+  the page loads is shown so until the page is reloaded.
+- **A running feature cannot report a later failure.** It stays `running`.
+- **Panics are not isolated.** Release builds abort on panic, so a panicking
+  feature ends the whole process. Only returned errors are isolated.
+- **Stop at exit only on Tauri's exit path.** `stop_all` runs on
+  `RunEvent::Exit`. A killed process, a crash, or an OS shutdown or logoff that
+  ends the process without that path skips it. The Windows behaviour on
+  logoff/shutdown is not checked.
+- **Validation:** the unit tests, and on Linux the virtual-display test, run
+  it (2026-11-11). The Windows desktop tests do not check the Features section
+  yet, and it has not been run on Windows at all.
+
 ## General
 
 - **Placeholder icons.** `src-tauri/icons/` contains Tauri's default icons.

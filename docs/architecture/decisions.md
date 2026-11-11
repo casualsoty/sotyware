@@ -285,3 +285,62 @@ Status: Accepted. Supersedes ADR-006.
   and given its own permission. The runtime capability is checked by the
   virtual-display test (scenario 12 clicks Hide in the real WebKitGTK webview),
   not yet on Windows.
+
+## ADR-014: Built-in features are Rust modules in a fixed registry
+
+Status: Accepted
+
+- **Context:** sotyware needs a way to add built-in features (native Rust
+  modules) without changing the whole app for each one. Each feature has to be
+  identifiable, switchable from the frontend, isolated from the others' failures,
+  and cleaned up at exit. Persistence (SQLite) and third-party plugins (maybe
+  WASM) are planned but undecided, and must not be designed in now.
+- **Decision:**
+  - A feature implements the trait `Feature` (`metadata`, `start`, `stop`) and
+    is listed once in `features::builtin()`. There is no static registry, no
+    `inventory`/linker-section registration and no macro. One explicit list
+    keeps the order deterministic and visible.
+  - `FeatureRegistry` is built in `run()` and managed as Tauri state. It rejects
+    duplicate or non-kebab-case IDs and empty metadata, skipping only the bad
+    entry. After that its set of features is fixed: registering needs
+    `&mut self`.
+  - States are `registered`, `disabled`, `initializing`, `running`, `failed`
+    and `stopping`. All transitions come from one pure table (`plan`). A failing
+    `start` → `failed` (retry or disable). A failing `stop` → `disabled` with
+    the error kept. Invalid transitions are rejected without calling the
+    feature.
+  - Locks are per feature, not one lock for the registry. A status lock is held
+    only to check and claim a transition, and a feature lock is held while
+    `start`/`stop` runs. Then a slow or failing feature cannot block or stop
+    another, concurrent requests for one feature cannot both run, and the
+    transient states are visible.
+  - Features start in `setup` after the operating mode is chosen, in both modes,
+    and not at all when the tray error is fatal. They stop in reverse order on
+    `RunEvent::Exit`. Panics are not caught (`panic = "abort"`).
+  - The frontend gets two commands, `list_features` and
+    `set_feature_enabled { id, enabled }`, each with its own generated
+    permission granted to window `main` in the static capability `default`.
+    The capability now holds three permissions (this widens ADR-013's one
+    command). `set_feature_enabled` runs on Tauri's blocking thread pool
+    (`#[tauri::command(async)]`), so a feature's `start`/`stop` never blocks the
+    event loop. There are no events: each switch returns the new state.
+  - Startup asks `enabled_at_startup(&metadata)`, which today returns the
+    feature's `enabled_by_default`. Persistence will answer there and save after
+    a successful switch in the command layer. The registry never sees storage.
+  - `serde` (with `derive`, already in the tree through Tauri, same version) is
+    now a direct dependency, to derive `Serialize` for `FeatureInfo` and
+    `FeatureState`.
+  - Rejected: one `Mutex<FeatureRegistry>` (a slow `start` would block every
+    other feature and the list, and hide `initializing`); separate
+    `enable_feature`/`disable_feature` commands (two permissions for one
+    switch, with no finer grant that is useful now); pushing state changes as
+    events (needs `core:event` permissions; nothing changes state except the
+    page itself and startup); a trait for the preference store (it would have
+    no implementation yet).
+- **Consequences:** a new feature without its own command touches only its file
+  and one line of `builtin()`. A feature that needs a frontend call adds a
+  command, a manifest entry and a permission, with an ADR. Without persistence,
+  every restart returns each feature to its default. A feature cannot report a
+  failure after it is `running`, and pages other than the one that switched it
+  do not learn of changes. Both wait for a feature that needs them. Details:
+  [features.md](features.md).

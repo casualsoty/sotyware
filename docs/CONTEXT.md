@@ -13,7 +13,8 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 
 ## What works today
 
-Only the desktop runtime; **no product features exist**.
+The desktop runtime and the foundation for built-in features; **no product
+features exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -25,14 +26,22 @@ Only the desktop runtime; **no product features exist**.
 - Single instance in both modes: a second launch shows the existing dashboard
   and exits 0.
 - Any other tray creation error: exit 1.
+- Built-in features (both modes): native Rust modules (`Feature` trait) listed
+  in `features::builtin()` and run by a `FeatureRegistry`. Enabled ones start in
+  `setup`, and running ones stop on exit. A failing feature becomes `failed`
+  without affecting the others. The dashboard lists them and has an enable
+  checkbox per feature. The only feature is `example` (does nothing visible).
+  Enabled state is **not persisted**: every start uses each feature's default.
+  [features.md](architecture/features.md).
 
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs
+src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, example.rs
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
-src/App.test.ts      Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
+src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop)
 docs/                architecture/, development/, status/
@@ -50,13 +59,19 @@ Full map: [repository-map.md](architecture/repository-map.md).
 - The mode is chosen in `select_mode()` (`lib.rs`) from the tray result. Only
   `tray::unavailable_reason()` (Linux, typed `ksni`/`zbus` errors) may select
   dashboard-only mode; every other error stays fatal. No retries or polling.
-- The frontend may call the `operating_mode` command (`allow-operating-mode`)
-  and, in tray mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`,
-  granted at runtime). No other custom command, no custom events.
+- The frontend may call the commands `operating_mode`, `list_features` and
+  `set_feature_enabled` (`allow-operating-mode`, `allow-list-features`,
+  `allow-set-feature-enabled`) and, in tray mode only,
+  `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at runtime).
+  No other custom command, no custom events.
+- A new built-in feature is a module in `src-tauri/src/features/` plus one line
+  in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
+  ([how to add one](architecture/features.md#adding-a-built-in-feature))
 - The single-instance plugin must stay the first plugin registered.
 
 Details: [overview.md](architecture/overview.md),
 [lifecycle.md](architecture/lifecycle.md),
+[features.md](architecture/features.md),
 [single-instance.md](architecture/single-instance.md),
 [decisions.md](architecture/decisions.md).
 
@@ -79,10 +94,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- `cargo test`: 31 unit tests of lifecycle, mode and tray decisions (mode
-  selection from the real `ksni`/`zbus` error types, close → hide or quit per
-  mode, hide granted only in tray mode, implicit exit blocked, unexpected tray
-  failure → exit 1, second launch, tray dispatch, config labels). No display needed.
+- `cargo test`: 58 unit tests. 31 cover the lifecycle, mode and tray
+  decisions (mode selection from the real `ksni`/`zbus` error types, close →
+  hide or quit per mode, hide granted only in tray mode, implicit exit blocked,
+  unexpected tray failure → exit 1, second launch, tray dispatch, config
+  labels). 27 cover the feature registry (registration, duplicate IDs,
+  lifecycle table, start/stop failures, isolation, shutdown order, concurrent
+  requests, JSON shape). No display needed.
+- Built-in features (2026-11-11, WSL2, `e30ac7b`/`a9fb338`): headless 58 Rust +
+  29 frontend tests, and `npm run test:desktop:virtual` 96/0/0 in 3 runs (the
+  4 new checks switch the example feature through AT-SPI). **Not run on
+  Windows yet.** The counts below are from before this change.
 - `npm run test:headless` (31 Rust + 13 frontend tests): passes on WSL2
   (2026-11-10, `8ca3bd7`) and natively on Windows 11 (2026-11-10, `e8834fd`;
   23 Rust tests there, the 8 `ksni`/`zbus` ones are Linux-only; again at
@@ -156,5 +178,6 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). SQLite, feature manager, plugins, sync and
-autostart are undecided ideas, not tasks.
+[roadmap.md](status/roadmap.md). SQLite (including persisting feature choices),
+a feature-management UI, third-party plugins, sync and autostart are undecided
+ideas, not tasks.

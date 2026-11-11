@@ -13,8 +13,10 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   continuously in the background, stays lightweight, lives in the system tray and
   opens a dashboard window on demand. Where Linux has no tray host, it runs as a
   plain window instead (dashboard-only mode).
-- **Current scope:** only the desktop runtime (window, tray, lifecycle, single
-  instance). No product features exist yet. Current milestone and status:
+- **Current scope:** the desktop runtime (window, tray, lifecycle, single
+  instance) and the foundation for built-in features (registry, lifecycle,
+  enable/disable from the dashboard, one example feature). No product features
+  exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -30,6 +32,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | dashboard-only mode | Linux without a reachable tray host: no tray, no hide, close quits (`OperatingMode::DashboardOnly`) |
 | open / show | `show_dashboard()`: un-minimize, show, focus the existing window |
 | primary instance / second launch | the running process / a later start that hands over and exits |
+| feature | a built-in Rust module implementing `Feature`, listed in `features::builtin()` and run by the `FeatureRegistry`; not a third-party plugin |
+| enable / disable (a feature) | start it / stop it through the registry's lifecycle (`set_feature_enabled`) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -45,6 +49,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | tauri-build | `2` | 2.7.4 |
 | tauri-plugin-single-instance (desktop targets only) | `2` | 2.5.5 |
 | Rust | edition 2024, `rust-version = "1.90"` | developed with 1.99.1 |
+| `serde` (feature `derive`; already in the tree through Tauri) | `1` | 1.0.229 |
 | `@tauri-apps/api` (only runtime JS dependency) | `^2.12.4` | 2.12.4 |
 | `@tauri-apps/cli` | `^2.12.4` | 2.12.4 |
 | Svelte | `^5.57.3` | 5.57.3 |
@@ -71,8 +76,10 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 - **Entry point:** `src-tauri/src/main.rs` → `sotyware_lib::run()` in
   `src-tauri/src/lib.rs`.
 - **Runtime:** `run()` builds the Tauri app: single-instance plugin (first, desktop
-  only) → window `main` from `tauri.conf.json` → `setup` creates the tray and
-  picks the `OperatingMode` (`select_mode`) → event loop.
+  only) → `FeatureRegistry` from `features::builtin()` (managed state) → window
+  `main` from `tauri.conf.json` → `setup` creates the tray, picks the
+  `OperatingMode` (`select_mode`) and starts the enabled features → event loop.
+  `RunEvent::Exit` stops the running features.
 - **Operating modes:** tray mode when the tray is created. Dashboard-only mode
   when `tray::unavailable_reason()` recognises a missing Linux tray host (no
   session bus, no StatusNotifierWatcher, no StatusNotifierHost). Any other tray
@@ -85,17 +92,26 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   "Quit" → `exit(0)`. Exists in tray mode only.
 - **Single instance:** second launch hands over to the primary, which calls
   `show_dashboard()`; the new process exits 0. Same in both modes.
-- **Frontend:** `src/App.svelte`, a static page. Its only access to Rust is the
-  `operating_mode` command (permission `allow-operating-mode` in
-  `src-tauri/capabilities/default.json`) and, in tray mode only,
-  `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at runtime by the
-  `tray-mode` capability in `setup`). No other custom command, no custom events.
+- **Built-in features:** `src-tauri/src/features/` (`Feature` trait, `builtin()`
+  list, `FeatureRegistry` with states registered/disabled/initializing/running/
+  failed/stopping, per-feature error isolation, the `example` feature). Enabled
+  state is not persisted: each start uses `enabled_by_default`. Details and how
+  to add a feature: [features.md](docs/architecture/features.md).
+- **Frontend:** `src/App.svelte` with `src/Features.svelte`. Its only access to
+  Rust is the commands `operating_mode`, `list_features` and
+  `set_feature_enabled` (permissions `allow-operating-mode`,
+  `allow-list-features`, `allow-set-feature-enabled` in
+  `src-tauri/capabilities/default.json`; typed wrappers for the feature commands
+  in `src/features.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
+  `setup`). No other custom command, no custom events.
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
-persistence, settings, autostart, feature/plugin system, sync, backend service,
-XEmbed tray fallback, custom event, or custom command besides `operating_mode`.
-Never describe these as existing.
+persistence (also not of feature enabled/disabled choices), settings, autostart,
+third-party plugin system, feature-management UI, sync, backend service, XEmbed
+tray fallback, custom event, or custom command besides `operating_mode`,
+`list_features` and `set_feature_enabled`. Never describe these as existing.
 
 ## Coding conventions
 
@@ -200,7 +216,9 @@ Every coding agent must:
 
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
-   `TrayAction`, the capability file) before introducing new ones.
+   `TrayAction`, `Feature`/`FeatureRegistry`, the capability file) before
+   introducing new ones. New built-in functionality is a feature in
+   `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.
 4. Avoid speculative abstractions and premature architecture. Build what the task
    needs, nothing for hypothetical features.
