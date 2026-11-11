@@ -1,5 +1,6 @@
 # Native Windows desktop test of the sotyware release binary: window lifecycle,
-# "Hide dashboard" button, tray icon and menu, single instance, Quit and relaunch.
+# "Hide dashboard" button, built-in features section (list and switch the example
+# feature), tray icon and menu, single instance, Quit and relaunch.
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
@@ -55,6 +56,11 @@ public static class W {
     return res.ToArray();
   }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  // The top-level window (GA_ROOT) that a click at this point would reach.
+  public static IntPtr TopLevelAt(int x, int y) { var p = new POINT { X = x, Y = y }; return GetAncestor(WindowFromPoint(p), 2); }
   // The title bar is not in the UIA tree, so find the close button the way the
   // window manager does: the point where WM_NCHITTEST answers HTCLOSE (20).
   public static int[] FindClose(IntPtr h) {
@@ -175,6 +181,57 @@ function TrayMenu([string]$item) {
   [W]::Click([int](($rc.L + $rc.R) / 2), [int](($rc.T + $rc.B) / 2), $false)
   return $true
 }
+# Built-in features section (src/Features.svelte) as WebView2 exposes it through UIA:
+# the checkbox is named after the feature, and its list item's name is the item's
+# text (version, state label and description).
+$ExampleFeature = "Example"   # src-tauri/src/features/example.rs, enabled by default
+$ExampleVersion = "0.1.0"
+$ExampleDescription = "Demonstrates the built-in feature lifecycle. It does nothing visible."
+$Toggle = [System.Windows.Automation.TogglePattern]::Pattern
+$Walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+function PCT($type) { [System.Windows.Automation.PropertyCondition]::new($A::ControlTypeProperty, $type) }
+function FeatureBox {
+  $d = Dash; if (-not $d) { return $null }
+  $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::CheckBox)), (PC $A::NameProperty $ExampleFeature)))
+}
+# The example feature as shown: checkbox checked and enabled (not busy), and its
+# list item's text. $null until the list has loaded.
+function FeatureView {
+  $b = FeatureBox; if (-not $b) { return $null }
+  try {
+    $on = $b.GetCurrentPattern($Toggle).Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+    $li = $b
+    for ($i = 0; $i -lt 4 -and $li -and $li.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem; $i++) { $li = $Walker.GetParent($li) }
+    $item = if ($li -and $li.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem) { $li.Current.Name } else { "" }
+    [pscustomobject]@{ Box = $b; On = $on; Ready = $b.Current.IsEnabled; Item = $item }
+  } catch { $null }
+}
+# Every name in the page, to look for error text ("Could not ..." from Features.svelte).
+function PageNames {
+  $d = Dash; if (-not $d) { return "" }
+  try { (@($d.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) | ForEach-Object { $_.Current.Name }) -join "`n" } catch { "" }
+}
+function PageError { (PageNames) -match "Could not" }
+function SwitchedTo([bool]$on, [string]$state) {
+  $v = FeatureView
+  ($null -ne $v) -and $v.On -eq $on -and $v.Ready -and $v.Item.Contains($state) -and -not (PageError)
+}
+function FeatureDetail { $v = FeatureView; if ($v) { "on=$($v.On) ready=$($v.Ready) item='$($v.Item)' error=$(PageError)" } else { "checkbox not found" } }
+# Switches the example feature through UIA (TogglePattern, what assistive technology uses).
+function ToggleFeature { $v = FeatureView; if (-not $v) { return $false }; try { $v.Box.GetCurrentPattern($Toggle).Toggle(); $true } catch { $false } }
+# Switches it with a real mouse click on the checkbox, after checking that the click
+# would reach the dashboard and not a window covering it.
+function ClickFeature {
+  $v = FeatureView; if (-not $v) { $script:why = "checkbox not found"; return $false }
+  try { $v.Box.SetFocus() } catch { }   # scrolls it into view
+  $r = $v.Box.Current.BoundingRectangle
+  if ($r.IsEmpty) { $script:why = "checkbox has no on-screen rectangle"; return $false }
+  $x = [int]($r.X + $r.Width / 2); $y = [int]($r.Y + $r.Height / 2)
+  $at = [W]::TopLevelAt($x, $y)
+  if ($at -ne (Hwnd)) { $script:why = "point $x,$y is covered by $([W]::ClassOf($at))"; return $false }
+  [W]::Click($x, $y, $false)
+  return $true
+}
 function SecondLaunch($label) {
   $before = (Procs).Id
   $p = Start-Process $Exe -PassThru
@@ -203,6 +260,30 @@ Check "startup: exactly one sotyware tray icon" ((WaitFor { OpenOverflow; (TrayI
 $items = MenuItems
 Check "tray: menu items are Open Dashboard, Quit" (($items -join "|") -eq "Open Dashboard|Quit") "got=$($items -join '|')"
 Check "tray: menu dismissed, process alive, still one process" ((Procs).Count -eq 1)
+
+# --- built-in features (WebView2 content, real capability and IPC) ------------
+# list_features and set_feature_enabled through the static capability: the page
+# lists the example feature (enabled by default) and switching it round-trips to
+# Rust, whose answer updates the checkbox and the state label.
+$heading = $null
+WaitFor { $script:heading = (Dash).FindFirst($S::Descendants, (PC $A::AutomationIdProperty "features-heading")); $script:heading -ne $null } 10 | Out-Null
+Check "features: Features section present in WebView2 content" (($null -ne $heading) -and $heading.Current.Name -eq "Features")
+$listed = WaitFor { $v = FeatureView; ($null -ne $v) -and $v.Item -ne "" } 10
+$v = FeatureView
+Check "features: example feature listed with name, version and description" ($listed -and $v.Item.Contains($ExampleVersion) -and $v.Item.Contains($ExampleDescription)) (FeatureDetail)
+Check "features: example checkbox checked and Running at startup" ($listed -and (SwitchedTo $true "Running")) (FeatureDetail)
+$ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
+Check "features: unchecking (UIA toggle) disables it" $ok (FeatureDetail)
+$ok = (ToggleFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
+Check "features: checking (UIA toggle) enables it" $ok (FeatureDetail)
+$script:why = ""
+$ok = (ClickFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
+Check "features: real mouse click on the checkbox disables it" $ok "$script:why $(FeatureDetail)"
+$script:why = ""
+$ok = (ClickFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
+Check "features: real mouse click re-enables it" $ok "$script:why $(FeatureDetail)"
+$primary.Refresh()
+Check "features: dashboard still responsive (window answers, visible, one process)" ($primary.Responding -and (Visible) -and (Procs).Count -eq 1 -and -not $primary.HasExited)
 
 # --- Hide dashboard button (WebView2 content, UIA invoke = click) ---------
 $btn = $null
@@ -284,6 +365,10 @@ Check "concurrent x4: one window" ((DashHwnds).Count -eq 1)
 $n = TrayIconCount; Check "after all launches: exactly one tray icon" ($n -eq 1) "count=$n"
 
 # --- quit and relaunch ------------------------------------------------------------
+# Quit with the example feature disabled; the relaunch must start it again, since
+# enabled state is not persisted.
+$ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
+Check "quit: example feature disabled before quitting" $ok (FeatureDetail)
 $btn = (Dash).FindFirst($S::Descendants, (PC $A::NameProperty "Hide dashboard"))
 if ($btn) { $btn.GetCurrentPattern($Invoke).Invoke() }
 Check "quit: dashboard hidden first" (WaitFor { Hidden } 5)
@@ -300,6 +385,7 @@ $fresh = Start-Process $Exe -PassThru
 Check "relaunch: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch: fresh process is the running primary" (-not $fresh.HasExited -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $fresh.Id)
 Check "relaunch: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
+Check "relaunch: example feature Running again, checkbox checked (not persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
 $ok = TrayMenu "Quit"; Check "relaunch: tray Quit invoked" $ok $script:why
 Check "relaunch: quit exits 0" ($fresh.WaitForExit(10000) -and $fresh.ExitCode -eq 0)
 [W]::Esc()
