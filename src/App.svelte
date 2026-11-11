@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
+  import Features from "./Features.svelte";
 
   // Decided once by the Rust side (`OperatingMode` in src-tauri/src/lib.rs):
   // "tray" when the tray icon exists, "dashboard-only" when no tray host is available.
@@ -59,6 +60,7 @@
   {#if error}
     <p class="error" role="alert">{error}</p>
   {/if}
+  <Features />
 </main>
 
 <style>

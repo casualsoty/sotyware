@@ -15,6 +15,7 @@ interface IpcCall {
 }
 
 const MODE_CMD = "operating_mode"; // #[tauri::command] in src-tauri/src/lib.rs
+const LIST_CMD = "list_features"; // #[tauri::command] in src-tauri/src/features/mod.rs; tested in Features.test.ts
 const HIDE_CMD = "plugin:window|hide";
 
 let calls: IpcCall[];
@@ -22,9 +23,19 @@ let mode: unknown;
 let respond: (cmd: string) => unknown;
 let app: ReturnType<typeof mount> | undefined;
 
-/** The Rust side: answers the mode command with `mode`, everything else with null. */
+/** The Rust side: answers the mode command with `mode`, the feature list with no
+ * features (Features.test.ts covers them), everything else with null. */
 function backend(cmd: string): unknown {
+  if (cmd === LIST_CMD) {
+    return [];
+  }
   return cmd === MODE_CMD ? mode : null;
+}
+
+/** The commands sent so far, in a stable order (the page and its Features
+ * section ask on mount independently). */
+function sentCommands(): string[] {
+  return calls.map((c) => c.cmd).sort();
 }
 
 beforeEach(() => {
@@ -80,9 +91,9 @@ function hideCalls(): IpcCall[] {
 }
 
 describe("dashboard in tray mode", () => {
-  it("asks Rust for the mode once, and nothing else, when it renders", async () => {
+  it("asks Rust for the mode and the feature list once each, and nothing else, when it renders", async () => {
     await render();
-    expect(calls.map((c) => c.cmd)).toEqual([MODE_CMD]);
+    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD]);
   });
 
   it("renders the heading, the tray hint and a plain button, no error", async () => {
@@ -182,13 +193,13 @@ describe("dashboard in dashboard-only mode", () => {
     expect(findHideButton(root)).toBeUndefined();
     expect(root.querySelectorAll("button")).toHaveLength(0);
     expect(root.textContent).not.toContain("from the system tray");
-    expect(calls.map((c) => c.cmd)).toEqual([MODE_CMD]);
+    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD]);
   });
 });
 
 describe("dashboard when the mode cannot be read", () => {
   it("shows the error and offers no Hide action when the command fails", async () => {
-    respond = (cmd): unknown => (cmd === MODE_CMD ? Promise.reject("operating_mode not allowed") : null);
+    respond = (cmd): unknown => (cmd === MODE_CMD ? Promise.reject("operating_mode not allowed") : backend(cmd));
     const root = await render();
     expect(root.querySelector('[role="alert"]')?.textContent).toBe(
       "Could not check whether a system tray is available: operating_mode not allowed",
