@@ -15,8 +15,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   plain window instead (dashboard-only mode).
 - **Current scope:** the desktop runtime (window, tray, lifecycle, single
   instance) and the foundation for built-in features (registry, lifecycle,
-  enable/disable from the dashboard, one example feature). No product features
-  exist yet. Current milestone and status:
+  enable/disable from the dashboard, one example feature), and cloud storage
+  account management in the dashboard (add, edit, check, remove; no file
+  transfers). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -120,7 +121,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   append-only `MIGRATIONS`). Loaded in `run()` between `build()` and `run()`;
   the registry never touches storage
   ([ADR-015](docs/architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)).
-- **Cloud storage (proof of concept, not wired into the app):**
+- **Cloud storage:**
   `src-tauri/src/cloud/`: provider profiles as data (`backblaze-b2`,
   `hetzner`, `s3-compatible`), accounts without secrets (`AccountConfig`,
   `Accounts`, `AccountStore`; SQLite `cloud-accounts.sqlite3` in
@@ -128,28 +129,39 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   (`CredentialStore` trait, `OsCredentialStore` in `cloud/keyring.rs`:
   Windows Credential Manager, Linux Secret Service; no fallback; environment
   variables only in test builds), and one S3 adapter (`S3Store`,
-  `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. No
-  feature, command or UI uses it
-  ([cloud-storage.md](docs/architecture/cloud-storage.md),
+  `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account.
+  The dashboard reaches only the account part, through `cloud/dashboard.rs`
+  (`CloudAccounts`, managed state loaded in `run()` before the event loop, no
+  credential read at startup): list, add, edit, remove accounts and a
+  connection check (`S3Store::check_bucket`: `HeadBucket`, at most one
+  `ListObjectsV2` of one key; never `ListBuckets`). Credential-store and
+  SQLite work runs in `spawn_blocking`. No command uploads, downloads, lists
+  objects or returns a credential
+  ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
-  [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)).
-- **Frontend:** `src/App.svelte` with `src/Features.svelte`. Its only access to
-  Rust is the commands `operating_mode`, `list_features` and
-  `set_feature_enabled` (permissions `allow-operating-mode`,
-  `allow-list-features`, `allow-set-feature-enabled` in
-  `src-tauri/capabilities/default.json`; typed wrappers for the feature commands
-  in `src/features.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
+  [ADR-018](docs/architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
+- **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
+  with `src/Features.svelte` and `src/CloudStorage.svelte`
+  (+ `src/CloudAccountForm.svelte`). Its only access to Rust is the commands
+  `operating_mode`, `list_features`, `set_feature_enabled`,
+  `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
+  `update_cloud_account`, `remove_cloud_account` and `check_cloud_account`
+  (one `allow-<command>` permission each in
+  `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
+  and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events.
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
-persistence other than the feature enabled/disabled choices, no settings, autostart,
+persistence other than the feature enabled/disabled choices and the cloud
+storage accounts, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, cloud storage UI or command, credential import or any
-credential fallback outside the OS store, backups
-or restic integration, custom event, or custom command besides `operating_mode`,
-`list_features` and `set_feature_enabled`. Never describe these as existing.
+tray fallback, cloud file browser, upload/download or transfer UI, credential
+import or any credential fallback outside the OS store, backups
+or restic integration, cost estimator, custom event, or custom command besides
+the nine listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -255,7 +267,8 @@ Every coding agent must:
 1. Inspect the relevant code before modifying it. Read the code, not only the docs.
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
-   `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`, the capability file) before
+   `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
+   `CloudAccounts`, the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

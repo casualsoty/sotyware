@@ -183,6 +183,33 @@ layers, the first two in every `cargo test`:
   connection, and removing an account deleting its credentials but not its
   objects. A measurement, not a check:
   `cargo test --release --lib cloud::tests::local_throughput -- --ignored --nocapture`.
+- **The dashboard's account commands** (`cloud/dashboard.rs`), with the
+  in-memory stores and the in-process S3 server: provider presets as JSON,
+  ids from labels (also non-ASCII and very long ones), an added account's JSON
+  shape without key id or secret, trimmed inputs, two accounts with the same
+  name and provider kept apart, invalid input changing nothing, an
+  unavailable or locked credential store saving no account (each its own
+  error kind), a rename never touching the credential store (every credential
+  call made to fail), hidden settings kept on edit, a new key replacing the
+  old one only once stored (old key kept on a refused or invalid replacement),
+  a failed save after a new key reported as `partial`, a provider change
+  refused, removal kept when the key cannot be deleted and `partial` when only
+  the configuration removal fails, unknown accounts, an unusable account
+  database, a stored account that no longer validates, `CredentialInput`'s
+  redacted `Debug` and unknown fields refused, and no secret in any error.
+  Connection checks against the S3 server, which records every operation and
+  can refuse chosen ones with `AccessDenied` (`TestServer::start_denying`):
+  a valid key → `connected` with exactly one `HeadBucket`; a key refused
+  `ListBuckets` (a bucket-restricted Backblaze key) → `connected`, no
+  `ListBuckets` sent; `HeadBucket` refused but listing allowed → `connected`
+  via one `ListObjectsV2`; both refused → `access-denied`, not invalid
+  credentials; wrong secret or unknown key id → `invalid-credentials`; a
+  missing bucket → `bucket-unavailable`; an unreachable endpoint →
+  `network`; missing, unavailable or locked credentials → their own status
+  with no request sent; a result dropped when the account changes. And, on a
+  single-threaded runtime with a credential store that blocks until released
+  (as during an unlock prompt), that an add and a check leave the async
+  thread free.
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
 - **The real OS credential store**, opt-in only:
   [below](#os-credential-store-test).
@@ -379,6 +406,35 @@ clears that alert; and that a malformed switch answer is an error.
 the shapes Rust sends and against malformed values. `App.test.ts`'s mocked Rust
 side answers `list_features` with no features and no storage error.
 
+`src/CloudStorage.test.ts` mounts `CloudStorage.svelte` (and the whole `App`
+for navigation) with a mocked Rust side that plays the six cloud commands. It
+checks the navigation (the dashboard opens on the Overview with no cloud
+command sent and the only button "Hide dashboard"; the "Cloud Storage" link
+shows the section and back); the empty state with its Add account action;
+the list with provider, bucket, region, endpoint and status, also for two
+accounts at the same provider, each with its own actions; a stored account
+that no longer validates; an unopenable account database (no actions) and a
+failing list. Adding: the first provider's presets and region suggestions,
+the endpoint becoming required for a generic service, password inputs without
+autocomplete, exactly `{ account, credentials }` sent, the new account
+listed, no key id or secret left in the DOM or in local/session storage,
+empty credential fields when the form opens again, a second account at the
+same provider, a credential store that is unavailable (form kept open, the
+message says nothing is stored elsewhere; cancel clears the key), invalid
+input and a locked keyring as their own messages, the form disabled while
+saving. Editing: a rename sends `credentials: null` and needs no key; a key
+replacement sends the new key and the fields are empty afterwards; unticking
+"Replace access key" clears typed values; a refused replacement keeps the
+form open; a `partial` result clears the key and reloads the list. Removing:
+a confirmation that names the bucket and says its files are not deleted,
+cancel sends nothing, confirm removes only that account; a failed removal
+keeps it listed with the error. Checking: "Checking connection…" and a
+disabled button while pending (the other account unaffected), then the
+result; every status with its own label and, for failures, the hint and
+detail; access denied not shown as invalid credentials; a vanished account
+reloads the list. `cloud.ts`'s parsers and `toCommandError` are tested
+against the Rust shapes and malformed values.
+
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)
 and the [Windows desktop test](#windows-desktop-test).
@@ -430,7 +486,14 @@ Files:
     shows it disabled, toggling again shows it running, with no error (so the
     static capability allows `list_features` and `set_feature_enabled`);
     activating Hide through AT-SPI hides the window (so the runtime `tray-mode`
-    capability works); tray Open Dashboard restores it; Quit.
+    capability works); tray Open Dashboard restores it; Quit. Before Hide, the
+    Cloud Storage section: exactly the links "Overview" and "Cloud Storage"
+    (`LINK` role); following "Cloud Storage" shows its heading, the empty
+    state and "Add account" as the only button, with no error (so the static
+    capability allows `list_cloud_providers` and `list_cloud_accounts`);
+    `cloud-accounts.sqlite3` exists in the private data folder with no
+    accounts; "Overview" brings back "Hide dashboard" and the features. No
+    account is added: the private bus has no Secret Service.
   - 13: dashboard-only mode, session bus without a watcher: process alive and
     dashboard visible; mode and reason on stderr; no item registered and no
     `org.kde.StatusNotifierItem-<pid>-*` name owned; the page shows the no-tray
@@ -614,6 +677,14 @@ What it does, and how:
   "Could not" text is on the page; then it checks that the process still
   answers (`Process.Responding`). This proves the static capability lets
   WebView2 call `list_features` and `set_feature_enabled`.
+- Follows the "Cloud Storage" navigation link (UI Automation `Hyperlink`,
+  `InvokePattern`) and checks the section's heading (`cloud-storage-heading`),
+  the empty state ("No storage accounts yet"), an "Add account" button, no
+  "Hide dashboard" button and no error text; that
+  `cloud-accounts.sqlite3` was created; then follows "Overview" back to the
+  Hide button and the features. It adds no account, so it never writes to
+  the Credential Manager. An existing `cloud-accounts.sqlite3` is moved aside
+  and put back like the preferences database.
 - Checks that the choice survives real restarts: before Quit it disables the
   example again; the relaunch (a new process) must show it Disabled and
   unchecked, with `preferences.sqlite3` present; it enables it, quits (exit 0,
@@ -730,6 +801,11 @@ launcher therefore prints `elevated: True|False` and, when elevated, prints
 `NOT RUN` and exits 4 before creating the desktop or starting sotyware. Run it
 from a non-elevated PowerShell. GitHub-hosted runners run jobs as administrator
 ([CI](#manual-desktop-workflows)).
+
+It does not move databases aside: sotyware creates `preferences.sqlite3` and
+`cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop\` if they are
+missing (both left empty, since the test switches nothing and adds no
+account). Remove them afterwards if you had none before.
 
 ## Headless Windows desktop testing
 
@@ -852,7 +928,7 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   gir1.2-atspi-2.0 at-spi2-core dbus-x11`). `virtual.sh` already fails on any
   FAIL or SKIP, a missing dependency (exit 2) and a display that does not start
   (exit 3). The workflow additionally requires the summary line
-  `115 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
+  `119 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
   in the same commit that adds or removes a check; it stayed at 92 when
   `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
   run summary, and fails on anything else. It is virtual-display testing, not
@@ -977,19 +1053,40 @@ AppIndicator extension is enabled).
    (closing the dashboard quits there). The choice is stored in
    `preferences.sqlite3` in `~/.local/share/com.sotyware.desktop/` (Linux) or
    `%LOCALAPPDATA%\com.sotyware.desktop\` (Windows).
+10. Cloud Storage (needs a test bucket and an application key restricted to
+    it; on Linux a running keyring such as GNOME Keyring or KWallet). Follow
+    "Cloud Storage": a heading, an explanation and "No storage accounts yet".
+    "Add account": Backblaze B2 with region `eu-central-003` pre-filled; enter
+    a name, the bucket, the key ID and the secret (both shown as dots); "Add
+    account". Expected: the account is listed with provider, bucket, region and
+    endpoint, and the key is in Credential Manager (`cmdkey /list |
+    Select-String com.sotyware.desktop`) or Seahorse under
+    `com.sotyware.desktop`, but not in `cloud-accounts.sqlite3`. If the keyring
+    asks to unlock, the window stays responsive while the prompt is open.
+    "Check connection": "Checking connection…", then **Connected** (a key
+    restricted to the bucket must not show Invalid credentials or Access
+    denied). Edit the name only: saved without asking for the key. Edit with
+    "Replace access key" and a wrong secret: the check now shows **Invalid
+    credentials**. Edit the bucket to one that does not exist: **Bucket
+    unavailable**. Disconnect the network: **Network error**. Add a second
+    account at the same provider: two separate entries. Remove one: the
+    confirmation says the bucket and files are not deleted; afterwards the
+    key is gone from the credential store and the bucket's files are still
+    there in the provider's console. Quit and start sotyware: the remaining
+    account is listed, "Not checked yet".
 
 Dashboard-only mode (Linux desktops without a tray host, for example vanilla
 GNOME without the AppIndicator extension):
 
-10. Start sotyware. Expected: the dashboard opens, shows the note that no
+11. Start sotyware. Expected: the dashboard opens, shows the note that no
    compatible system tray is available, and has no Hide button. No tray icon. The
    log names dashboard-only mode and the reason.
-11. Minimize it, start sotyware again. Expected: the same dashboard comes back,
+12. Minimize it, start sotyware again. Expected: the same dashboard comes back,
     still one process.
-12. Close the dashboard with ✕. Expected: the process is gone
+13. Close the dashboard with ✕. Expected: the process is gone
     (`pgrep -a sotyware` prints nothing), the shell prompt returns, and the exit
     status is 0 (`echo ${PIPESTATUS[0]}` after the `tee` command above).
-13. Enable a tray host (for example the AppIndicator extension) and start
+14. Enable a tray host (for example the AppIndicator extension) and start
     sotyware again. Expected: tray mode, as in steps 1–7.
 
 ## Rules

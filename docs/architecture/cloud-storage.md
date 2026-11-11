@@ -1,14 +1,19 @@
-# Cloud storage (proof of concept)
+# Cloud storage
 
-How sotyware talks to S3-compatible cloud storage. Status: a tested library
-module, **not wired into the running app**. No feature, command or dashboard
-element uses it yet, so the release binary behaves exactly as before. Decision
-and rationale: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
+How sotyware talks to S3-compatible cloud storage. Status: the backend is a
+tested library module; the dashboard's **Cloud Storage** section uses its
+account part (list, add, edit, check, remove; [Dashboard](#dashboard),
+[ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
+Uploads, downloads, listings of objects and the transfer queue are not
+reachable from the app: no command exposes them. Decision and rationale of
+the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs`) and `SqliteAccountStore` in `src-tauri/src/storage.rs`.
+`keyring.rs`, `s3.rs`, `dashboard.rs`) and `SqliteAccountStore` in
+`src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
+`src/CloudAccountForm.svelte`, `src/cloud.ts` and `src/cloudMessages.ts`.
 Credentials: [ADR-017](decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
 
 ## Pieces
@@ -31,7 +36,8 @@ AccountConfig (no secret) ──resolve()──▶ ResolvedAccount ──┐
 | `AccountStore` trait / `SqliteAccountStore` | `load`, `save`, `remove`. SQLite in `cloud-accounts.sqlite3` (tables `storage_accounts`, `storage_account_buckets`; `ACCOUNT_MIGRATIONS`, `PRAGMA user_version`), using the same open/check/migrate code as the preferences database. Schema has no column for a secret. |
 | `CredentialStore` trait (`credentials.rs`) | `store`, `load`, `delete`, `exists` for an account's key pair, **by account id**. `Secret` never prints its value in `Debug`/`Display`. `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`) exists only in test builds, for the opt-in provider tests. |
 | `OsCredentialStore` (`keyring.rs`) | The one real `CredentialStore`: Windows Credential Manager or the Linux Secret Service through `keyring-core`. No fallback. |
-| `S3Store` (`s3.rs`) | The one adapter: `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
+| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
+| `CloudAccounts` (`dashboard.rs`) | What the dashboard's commands work on: `Accounts` (or why its database could not be opened) plus the last connection check per account, in memory. Safe shapes (`AccountInfo`, `ProviderInfo`), structured `CommandError`, account ids from labels. [Dashboard](#dashboard). |
 
 ### Why one adapter and no `ObjectStore` trait
 
@@ -119,10 +125,10 @@ object → `NotFound` ("Key not found"); an unknown key id was not tried. No err
   waits on. A full queue on one account never delays another (tested).
 - **Credentials:** never in `AccountConfig`, the database, logs or error
   messages; kept in the OS credential store by account id. See below.
-- **Persistence:** `cloud-accounts.sqlite3`, a separate file, so that this
-  unwired proof of concept does not change the released preferences schema.
-  Whether it merges into `preferences.sqlite3` is decided when it is wired in.
-  A stored account that no longer validates (an unknown provider, an
+- **Persistence:** `cloud-accounts.sqlite3`, a separate file next to
+  `preferences.sqlite3` in the app's local data folder. Kept separate when the
+  dashboard was wired in (ADR-018): the schemas evolve independently, and the
+  preferences schema did not have to change. A stored account that no longer validates (an unknown provider, an
   out-of-range value) is kept and refused only when used.
 
 ## Credentials
@@ -187,8 +193,11 @@ session" is recognised (as `Unavailable`).
 ### Threads and blocking
 
 Calls block: a D-Bus round trip, and on Linux possibly an unlock prompt that
-waits for the user. A later Tauri command must run them off the main thread
-(Tauri's thread pool, as `set_feature_enabled` does). `OsCredentialStore`
+waits for the user. The dashboard's commands run every call that can reach
+the credential store or SQLite in `tokio::task::spawn_blocking` (Tauri runs
+`async` commands on its tokio workers, which must not block either), so
+neither the event loop nor an async worker waits for a prompt
+([Dashboard](#dashboard)). `OsCredentialStore`
 serialises its own calls, because `keyring-core` warns that the platform
 stores may not handle one credential from several threads. The platform store
 is opened on first use; while it cannot be opened (no Secret Service yet), each
@@ -258,11 +267,104 @@ backup format of its own. Findings (restic 0.19.1, docs and the experiment in
   free in time for millions of objects. Both are reasons to prefer provider
   usage data when it can be fetched.
 
+## Dashboard
+
+The **Cloud Storage** section of the dashboard (decision:
+[ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
+It manages accounts only; it is not a file browser.
+
+```
+CloudStorage.svelte ── cloud.ts ──invoke──▶ cloud::dashboard (commands)
+  CloudAccountForm.svelte                     │ spawn_blocking: SQLite, credential store
+                                              ▼
+                                           CloudAccounts ── Accounts ── AccountStore (SQLite)
+                                              │                  └──── OsCredentialStore
+                                              └─ check: S3Store::check_bucket (async runtime)
+```
+
+| Command (permission `allow-<name with ->`) | Arguments | Returns |
+| --- | --- | --- |
+| `list_cloud_providers` | — | every `ProviderInfo`: id, name, `endpointRequired`, `defaultRegion`, `knownRegions` |
+| `list_cloud_accounts` | — | `{ accounts: AccountInfo[], storageError }` |
+| `add_cloud_account` | `account`, `credentials` | the new `AccountInfo` |
+| `update_cloud_account` | `id`, `account`, `credentials` or `null` | the changed `AccountInfo` |
+| `remove_cloud_account` | `id` | nothing |
+| `check_cloud_account` | `id` | the `AccountInfo` with `lastCheck` |
+
+`account` is `{ label, provider, region, endpoint, bucket }` (`endpoint` `null`
+for the provider's regional one); `credentials` is
+`{ accessKeyId, secretAccessKey }`. `AccountInfo` is `{ id, label, provider,
+providerName, region, endpoint, endpointUrl, bucket, configError, lastCheck }`;
+it never contains a key id or a secret, and no command returns one. Failures
+reject with `{ kind, message }` (kinds in ADR-018); the page picks its text
+by `kind` and shows `message` as the detail.
+
+**Flows:**
+
+- **Add:** the form asks for provider, name, bucket, region (pre-filled with
+  the provider's first known region, suggestions from the profile; `us-east-1`
+  for a generic service), endpoint (required only for `s3-compatible`,
+  otherwise an optional override) and the key pair in two password inputs.
+  Rust trims the inputs, generates the id from the name (`Photos` →
+  `photos`, the next one `photos-2`), validates, stores the credentials,
+  then the configuration (rolling the credentials back if that fails).
+- **Edit:** the provider is shown read-only and cannot change. Without
+  "Replace access key" only the configuration is saved and the credential
+  store is not touched. With it, everything is validated first, the new key
+  replaces the old one in one write (the old one stays if that fails), then
+  the configuration is saved; if only that fails, the error is `partial`
+  ("the new access key was saved, but the other changes were not") and the
+  page reloads.
+- **Remove:** asks for confirmation and says that the bucket and its objects
+  at the provider are not deleted or changed (no request is sent). Uses
+  `Accounts::remove`: credentials first; if they cannot be deleted the
+  account stays listed and the error is shown; never a success with a key
+  left behind.
+- **Credentials in the page:** only in the form's state while it is open;
+  cleared after a successful save, on cancel, when "Replace access key" is
+  unticked and when the form is destroyed. Never in local or session storage,
+  never echoed back.
+
+**Connection check** (`S3Store::check_bucket`): `HeadBucket` on the account's
+bucket proves the key and the bucket together and needs no listing
+permission. A HEAD response has no body, so a 403 is ambiguous (wrong secret
+or missing permission); only then one `ListObjectsV2` with `max-keys=1` on
+the same bucket is sent, and its error code decides: `InvalidAccessKeyId` or
+`SignatureDoesNotMatch` → invalid credentials, `AccessDenied` → access denied.
+`ListBuckets` is never sent (a valid Backblaze key restricted to one bucket
+is refused it), and nothing is written. Results:
+
+| Status | When |
+| --- | --- |
+| `connected` | `HeadBucket` (or the fallback listing) succeeded |
+| `invalid-credentials` | unknown key id or wrong secret |
+| `access-denied` | key accepted, bucket refused |
+| `bucket-unavailable` | no such bucket at this endpoint/region |
+| `network` | unreachable, connection broken, timed out |
+| `credential-store-unavailable` / `credential-store-locked` / `credentials-missing` | the key could not be loaded; no request sent |
+| `invalid-configuration` | the stored settings do not validate, or no bucket |
+| `error` | anything else (message shown) |
+
+The credentials are loaded on the blocking pool, the request runs on the async
+runtime with the client's timeouts (10 s connect, 60 s read, 3 attempts).
+Results are kept in memory per account until the account changes; a check
+that was running during a change does not record its result.
+
+**Against which providers this is verified:** the in-process S3 server (`s3s`)
+with an access hook that refuses chosen operations, so a key that is refused
+`ListBuckets`, or `HeadBucket` too, or everything, is simulated; and the
+real binary through its UI against a real GNOME Keyring under WSL2. The
+opt-in Backblaze and Hetzner integration tests call `check_bucket` too, but
+were not run after it was added: whether Backblaze answers `HeadBucket` for a
+bucket-restricted key is not yet confirmed against the real provider.
+
 ## Not built (deliberately)
 
-No UI, Tauri command, event or feature; no synchronisation, folder watching,
+No object browser, upload or download UI, transfer queue UI, event or
+feature; no synchronisation, folder watching,
 scheduled backups, retention, restic integration, client-side encryption,
 sharing or public links, virtual filesystem, retrying queue, parallel parts
 within one file, resumable uploads, credential import from environment
-variables or files, or a credential fallback outside the OS store. See
+variables or files, automatic provider or bucket discovery, cost estimator,
+or a credential fallback outside the OS store. See
 [roadmap.md](../status/roadmap.md).

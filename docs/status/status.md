@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (OS credential store for cloud accounts: real Windows Credential Manager and a real GNOME Keyring under WSL2, headless and desktop regression runs on both). Update this file whenever
+Last updated: 2026-11-11 (Cloud Storage dashboard: account management in the app; headless and desktop suites on WSL2 and native Windows 11, an end-to-end UI run against a real GNOME Keyring under WSL2). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -35,6 +35,11 @@ Feature preferences are stored in SQLite since `93f7667` and survive real
 restarts on both platforms: virtual display 115/0/0 three times, Windows 11
 real desktop 99/0 three times
 ([details](#persistent-feature-preferences-2026-11-11)).
+The Cloud Storage section (account management, connection check) passed on
+2026-11-11: virtual display 119/0/0 and Windows 11 real desktop 103/0 and
+private desktop 56/0, three runs each; the connection check has not been run
+against a real provider
+([details](#cloud-storage-dashboard-2026-11-11)).
 
 ## Implemented
 
@@ -48,14 +53,15 @@ real desktop 99/0 three times
 | Persistent feature preferences: each user switch saved in `preferences.sqlite3` (app local data folder, SQLite via `rusqlite` bundled), loaded before the event loop, stored choice or `enabled_by_default` at startup; schema versioned with `PRAGMA user_version` and transactional migrations; unusable database left untouched and reported (`storageError`), failed saves reported (`saveError`) | `features/preferences.rs`, `storage.rs`, `run()` in `lib.rs` ([features.md](../architecture/features.md#persistence), [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)) |
 | Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
-| Cloud storage proof of concept, **not wired into the app**: provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
+| Cloud Storage section in the dashboard (navigation link; account list with empty state, add/edit form with provider presets, connection check, removal with confirmation; keys in two password inputs, sent only to Rust and never returned) and its six commands `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` (safe DTOs, structured errors, `spawn_blocking` for SQLite and the credential store); connection check `S3Store::check_bucket` (`HeadBucket`, one-key `ListObjectsV2` only after a refused HEAD, never `ListBuckets`) | `src/App.svelte`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/dashboard.rs`, `check_bucket` in `cloud/s3.rs`, `run()` in `lib.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#dashboard), [ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)) |
+| Cloud storage backend (uploads, downloads and listings not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, and one `allow-…` permission per cloud account command; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -65,13 +71,13 @@ a minimized dashboard and focus on second launch run on Linux only under the
 virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
-Nothing else exists: no product features (only the example feature), no
-settings, no persistence other than the feature choices (the cloud account
-store exists as code but the app never opens it), no cloud storage UI or
-command, no backups, no sync, no custom
+Nothing else exists: no product features (only the example feature and
+cloud account management), no settings, no persistence other than the feature
+choices and the cloud storage accounts, no cloud file browser, upload,
+download or transfer UI, no backups, no sync, no custom
 Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than `operating_mode`, `list_features` and
-`set_feature_enabled`.
+plugins, and no custom command other than `operating_mode`, `list_features`,
+`set_feature_enabled` and the six cloud account commands.
 
 ## Validation matrix
 
@@ -89,6 +95,50 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud Storage dashboard (2026-11-11)
+
+Tested as an uncommitted working tree on top of `c022b4e` (not committed).
+Code and design: [cloud-storage.md](../architecture/cloud-storage.md#dashboard),
+[ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands).
+No dependency was added (`Cargo.lock` and `package-lock.json` unchanged).
+
+**WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0:**
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm run check` (0 errors, 0 warnings), `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` | static | ✅ |
+| `cargo test`: 188 passed, 4 ignored (160 before; 28 new in `cloud::dashboard`, list in [testing.md](../development/testing.md#rust-unit-tests)); every existing cloud backend test still passes | headless | ✅ |
+| Connection checks against the in-process S3 server with refused operations: valid key → one `HeadBucket`; key refused `ListBuckets` → connected, no `ListBuckets` sent; `HeadBucket` refused → one `ListObjectsV2`, connected; both refused → access denied (not invalid credentials); wrong secret / unknown key → invalid credentials; missing bucket; unreachable endpoint; missing/unavailable/locked credentials send no request | headless | ✅ |
+| A credential store that blocks (as during an unlock prompt) leaves a single-threaded async runtime free during add and check | headless | ✅ |
+| Frontend: 63 passed (38 before; 25 in `CloudStorage.test.ts`) | headless | ✅ |
+| `npm run test:desktop:virtual` on the release binary: **119 passed, 0 failed, 0 skipped, 3 runs** (4 new checks: navigation links, the Cloud Storage page with its empty state and only "Add account" through the real capability, the account database created with no accounts, back to the overview) | virtual display | ✅ 3/3 |
+| One-off end-to-end run of the release binary through its UI (script not in the repository: Xvfb + openbox, private D-Bus session, AT-SPI to find and press controls, XTest keystrokes to type, since this WebKitGTK exposes no AT-SPI `EditableText`), against a **real GNOME Keyring 46.1** (`gnome-keyring-daemon --unlock`, throwaway keyring, the Ubuntu packages unpacked as in [testing.md](../development/testing.md#os-credential-store-test)), dashboard-only mode: add an account with an endpoint nobody listens on → the Secret Service item `cloud-account/photos` holds exactly the typed key (read back over D-Bus), the database row has no key id or secret (file bytes checked), the page shows neither; Check connection → **Network error**; rename → keyring entry unchanged; Replace access key → still one entry, now the new key; Remove → confirmation text, then gone from page, database and keyring; a second account, the login collection locked over D-Bus → Check shows **Credential store locked**, Remove reports the error and keeps the account and its key; no key id or secret in sotyware's output | real Secret Service, virtual display | ✅ 14/14, 3 runs |
+| Same script against a fake Secret Service that never answers `OpenSession`: the add shows "Saving…"; meanwhile the Overview link switches sections within 5 s and the example feature can still be disabled (another command); back on Cloud Storage the page shows "Loading…" (the account list waits behind the pending add, [limitations](limitations.md#cloud-storage)); the process keeps running | virtual display | ✅ 7/7, 3 runs |
+| Found by that run and fixed before the results above: labels wrapping their inputs gave each input an accessible name with its placeholder or value appended ("Name Photos"); the form now uses `for`/`id` pairs | virtual display | ❌ → ✅ |
+| Release binary 7,471,224 → 10,656,632 bytes (+3.19 MB: the S3 SDK and rustls are now linked, as the app calls them) | static | ✅ recorded |
+| `tests/desktop/run.sh` (WSLg), a real Linux desktop session, an unlock prompt answered by a person, KWallet | — | — not run |
+
+**Native Windows 11 Home 25H2 (build 26200.9711), Rust 1.99.1 (MSVC), Node
+24.14.1, npm 11.12.1**, a separate copy of the same tree (`C:\dev\sotyware-cloud-ui`,
+not a git checkout; later edits not copied: doc comments in `lib.rs` and
+`storage.rs`, `EXPECTED_CHECKS` in `desktop-virtual.yml`, the documentation):
+
+| Check | Category | Result |
+| --- | --- | --- |
+| `npm ci`, `npm run check` (0/0), `npm run build`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, release build (`--no-bundle`) | static | ✅ |
+| `npm run test:headless`: frontend 63 passed; `cargo test` 179 passed, 4 ignored (151 before; the Linux-only tests do not exist there) | headless | ✅ |
+| `windows-isolated.ps1`: 56 passed, 0 failed, not elevated | private desktop | ✅ 3/3 |
+| `windows.ps1`: **103 passed, 0 failed** (99 before; 4 new: navigation links through UI Automation `Hyperlink`/`Invoke`, heading, empty state, "Add account", no Hide button and no error on the Cloud Storage page, `cloud-accounts.sqlite3` created, back to the Hide button and features); the existing preferences database moved aside and put back each run, unchanged afterwards (size and timestamp checked) | real desktop | ✅ 3/3 |
+| Credential Manager after all runs: no `com.sotyware.desktop` entry (`cmdkey /list`); the empty `cloud-accounts.sqlite3` the isolated runs created (0 accounts, checked) was removed afterwards | real desktop | ✅ |
+| Adding, checking, editing or removing an account through the Windows UI (Credential Manager through the dashboard); Windows 10; the NSIS/MSI installers | — | — not run |
+
+**Not run anywhere:** the connection check against **Backblaze B2** or
+**Hetzner** (the opt-in round trip now calls `check_bucket`, but no
+credentials were available in this session; whether Backblaze answers
+`HeadBucket` for a bucket-restricted key is therefore unconfirmed),
+`desktop-virtual.yml` on GitHub (now expects 119), and a person's visual
+check of the new section in either theme.
 
 ### OS credential store (2026-11-11)
 

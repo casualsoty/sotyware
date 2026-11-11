@@ -13,8 +13,9 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 
 ## What works today
 
-The desktop runtime and the foundation for built-in features; **no product
-features exist**.
+The desktop runtime, the foundation for built-in features and cloud storage
+account management; **no file transfers, backups or other product features
+exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -43,27 +44,37 @@ features exist**.
   shows the error; a failed save keeps the switch for the session and is shown.
   [features.md](architecture/features.md#persistence), ADR-015.
 
-- Cloud storage proof of concept (**not wired into the app**; nothing calls
-  it): `src-tauri/src/cloud/`, provider profiles as data (Backblaze B2,
-  Hetzner, any S3-compatible), storage accounts without secrets (SQLite
-  `cloud-accounts.sqlite3`, separate from the preferences), credentials by
-  account id only in the OS credential store (Windows Credential Manager,
-  Linux Secret Service via `keyring-core`; no fallback, so Linux without a
-  Secret Service cannot store any; environment variables only in test
-  builds; adding and removing an account keep account and credentials
-  consistent, removing never touches remote data), one S3 adapter on `aws-sdk-s3` with
-  end-to-end SHA-256, multipart uploads and a transfer queue per account.
-  Recommended first provider: Backblaze B2, EU Central.
-  [cloud-storage.md](architecture/cloud-storage.md),
-  [cloud-providers.md](architecture/cloud-providers.md), ADR-016.
+- Cloud Storage section (both modes; the dashboard's second navigation link,
+  [ADR-018](architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)):
+  list, add, edit, check and remove storage accounts at Backblaze B2, Hetzner
+  or any S3-compatible service; one bucket per account; several accounts at
+  one provider. Keys go from two password inputs straight to Rust and into
+  the OS credential store (Windows Credential Manager, Linux Secret Service
+  via `keyring-core`; no fallback, so Linux without a Secret Service cannot
+  store any); no command returns them; the form clears them. Account settings
+  in `cloud-accounts.sqlite3` (separate from the preferences). Editing without
+  a new key never touches the credential store; a new key replaces the old one
+  only once stored; removal asks first, never touches remote data, and keeps
+  the account if its key cannot be deleted. "Check connection": `HeadBucket`
+  on the account's bucket, a one-key `ListObjectsV2` only after a refused
+  HEAD, never `ListBuckets` (a bucket-restricted Backblaze key is refused
+  that); statuses connected / invalid credentials / access denied / bucket
+  unavailable / network / credential store unavailable or locked / credentials
+  missing / configuration / other. Credential-store and SQLite calls run in
+  `spawn_blocking`. Backend underneath: provider profiles as data, one S3
+  adapter on `aws-sdk-s3` with end-to-end SHA-256, multipart and a transfer
+  queue per account; uploads and downloads are **not reachable from the
+  app**. Recommended first provider: Backblaze B2, EU Central.
+  [cloud-storage.md](architecture/cloud-storage.md#dashboard),
+  [cloud-providers.md](architecture/cloud-providers.md), ADR-016, ADR-017.
 
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, cloud.ts, cloudMessages.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage PoC: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs; tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands); tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
@@ -83,11 +94,13 @@ Full map: [repository-map.md](architecture/repository-map.md).
 - The mode is chosen in `select_mode()` (`lib.rs`) from the tray result. Only
   `tray::unavailable_reason()` (Linux, typed `ksni`/`zbus` errors) may select
   dashboard-only mode; every other error stays fatal. No retries or polling.
-- The frontend may call the commands `operating_mode`, `list_features` and
-  `set_feature_enabled` (`allow-operating-mode`, `allow-list-features`,
-  `allow-set-feature-enabled`) and, in tray mode only,
-  `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at runtime).
-  No other custom command, no custom events.
+- The frontend may call the commands `operating_mode`, `list_features`,
+  `set_feature_enabled`, `list_cloud_providers`, `list_cloud_accounts`,
+  `add_cloud_account`, `update_cloud_account`, `remove_cloud_account` and
+  `check_cloud_account` (one `allow-<command>` permission each) and, in tray
+  mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
+  runtime). No other custom command, no custom events. No command returns a
+  stored credential.
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line
   in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
   ([how to add one](architecture/features.md#adding-a-built-in-feature))
@@ -122,6 +135,19 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Cloud Storage dashboard (2026-11-11, uncommitted tree on `c022b4e`): WSL2
+  `cargo test` 188 passed, 4 ignored (28 new: commands, error kinds, no
+  secrets, connection checks against the in-process S3 server with simulated
+  bucket-restricted keys, credential store waiting without blocking the async
+  thread), frontend 63 (25 new), virtual display **119/0/0, 3 runs**. A
+  one-off end-to-end run of the release binary through its UI (AT-SPI + XTest)
+  against a **real GNOME Keyring on a private D-Bus session** passed 14/14
+  three times (add, check, rename, key replacement, removal, locked keyring),
+  and against a Secret Service that never answers 7/7 (window and other
+  commands stay responsive). Native Windows 11: see
+  [status.md](status/status.md#cloud-storage-dashboard-2026-11-11). The
+  connection check was **not** run against Backblaze or Hetzner. Counts below
+  are from before this change.
 - OS credential store (2026-11-11, uncommitted tree on `de2e7f3`): `cargo
   test` 160 on WSL2 (151 on native Windows 11), 4 ignored; the opt-in
   `cloud::keyring::os_backend::round_trip` passed **against the real Windows
@@ -242,7 +268,9 @@ silently turns off without a D-Bus session bus. Placeholder icons; no autostart.
 A corrupt feature-preferences database is never repaired: defaults are used
 until the user moves the file away. Cloud account credentials need the OS
 credential store: Linux without a Secret Service (WSL2, minimal window
-managers) cannot store any, by design. Full list: [limitations.md](status/limitations.md).
+managers) cannot store any, by design. The connection check is unverified
+against real providers; while one credential-store call waits (an unlock
+prompt), the other account calls wait behind it. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
@@ -252,8 +280,9 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next steps (real-account
-integration tests first): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next steps (re-run the Backblaze
+test with the connection check, then a read-only object listing as the first
+step of the file browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

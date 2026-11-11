@@ -11,14 +11,15 @@
 //!   (Windows Credential Manager, Linux Secret Service). No fallback.
 //! - [`s3`]: the one adapter, on the official AWS SDK, with end-to-end SHA-256
 //!   verification and a transfer queue per account.
+//! - [`dashboard`]: the Tauri commands of the Cloud Storage page (ADR-018):
+//!   list, add, edit and remove accounts and check their connection. No file
+//!   browsing, transfers or backups are reachable from the app yet.
 //!
-//! Not wired into the running app yet: no feature, command or UI uses it, so
-//! the dashboard and the release binary behave as before. It is public so the
-//! opt-in integration tests and later the app can reach it.
 //! Design: docs/architecture/cloud-storage.md.
 
 pub mod account;
 pub mod credentials;
+pub mod dashboard;
 pub mod keyring;
 pub mod provider;
 pub mod s3;

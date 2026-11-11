@@ -1,5 +1,5 @@
-//! SQLite storage for feature preferences (ADR-015) and, for the cloud
-//! storage proof of concept, account configurations (ADR-016).
+//! SQLite storage for feature preferences (ADR-015) and cloud storage account
+//! configurations (ADR-016, ADR-018).
 //!
 //! One database file, `preferences.sqlite3`, in the app's local data
 //! directory (`run()` resolves it). The schema version is SQLite's
@@ -173,9 +173,8 @@ pub fn open_feature_store(
     Ok(Box::new(SqliteStore::open_in(&dir)?))
 }
 
-/// The cloud storage account database, separate from the preferences: the
-/// proof of concept is not wired into the app, so it must not change the
-/// released preferences schema (ADR-016).
+/// The cloud storage account database, separate from the preferences so the
+/// two schemas evolve independently (ADR-016, kept so by ADR-018).
 pub const ACCOUNTS_FILE_NAME: &str = "cloud-accounts.sqlite3";
 
 /// Schema of [`ACCOUNTS_FILE_NAME`]; append only, like [`MIGRATIONS`]. There
@@ -210,6 +209,19 @@ impl SqliteAccountStore {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         open_database(path, ACCOUNT_MIGRATIONS).map(|conn| Self { conn })
     }
+}
+
+/// The account store `run()` uses: [`ACCOUNTS_FILE_NAME`] in `dir`, the app's
+/// local data directory (created if needed), or the reason it cannot be used.
+pub fn open_account_store(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn AccountStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteAccountStore::open(
+        &dir.join(ACCOUNTS_FILE_NAME),
+    )?))
 }
 
 impl AccountStore for SqliteAccountStore {

@@ -241,13 +241,41 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
   (Windows: unit tests). Not checked on Windows 10, real Linux desktops, the
   installed copies, a roaming or redirected profile, or a network drive.
 
-## Cloud storage (proof of concept)
+## Cloud storage
 
 Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 [cloud-providers.md](../architecture/cloud-providers.md).
 
-- **Not part of the app.** No feature, command or dashboard element uses the
-  `cloud` module; a user cannot configure an account or transfer a file.
+- **Accounts only.** The dashboard manages accounts and checks their
+  connection; it cannot list, upload, download or delete objects, and has no
+  transfer queue, backups or sync
+  ([cloud-storage.md](../architecture/cloud-storage.md#dashboard)).
+- **The connection check is not yet verified against a real provider.**
+  `HeadBucket` (with a one-key `ListObjectsV2` only after a refused HEAD) is
+  tested against the in-process S3 server with simulated permission
+  refusals, not against Backblaze or Hetzner: whether Backblaze answers
+  `HeadBucket` for a bucket-restricted key, and which codes it returns for
+  it, is unconfirmed until the opt-in integration test (which now calls
+  `check_bucket`) runs again. A key that may neither `HeadBucket` nor list
+  the bucket (for example write-only) reports **access denied**, although it
+  could upload.
+- **One bucket per account in the dashboard.** The backend allows several
+  (or none, meaning any); the form edits exactly one, and saving an edited
+  account replaces its bucket list with that one.
+- **Check results are not kept.** They live in memory until sotyware quits
+  or the account changes; after a restart every account is "Not checked yet".
+- **One credential-store call at a time.** While an add, edit, removal or
+  check waits for the credential store (for example an unlock prompt nobody
+  answers), every other account call waits behind it: the window stays
+  responsive (tested), but the Cloud Storage page shows "Loading…" or
+  "Saving…" until the prompt is answered or fails. There is no cancel.
+- **No key id is shown.** Showing it would mean reading the credential store
+  (possibly an unlock prompt) just to list accounts; the page shows provider,
+  bucket, region and endpoint only.
+- **Secrets in the page's memory:** the typed key is held in the form's state
+  only while the form is open and is cleared afterwards, but JavaScript
+  strings cannot be wiped, and the Rust side does not zero its copy either
+  (`String`); both are freed, not overwritten.
 - **Backblaze verified only for what the opt-in test does; Hetzner never
   run.** Against a real B2 bucket in `eu-central-003` (2026-11-11, WSL2 and
   native Windows 11): endpoint, region, path style, a 200 kB PUT, a 3-part
@@ -266,7 +294,10 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   whose unlock prompt cannot be shown (no prompter, as in a headless session)
   is `AccessDenied`. Neither has a workaround in sotyware by design.
 - **Secret Service calls can block** on an unlock prompt until the user
-  answers; callers must stay off the UI thread (nothing calls them yet).
+  answers. The dashboard's commands run them on the blocking pool, so the
+  window is not blocked (shown with a Secret Service that never answers,
+  under WSL2); an unlock prompt answered by a person on a real desktop was not
+  tried.
 - **Windows access errors are not told apart.** The store crate's error type
   is private, so `ERROR_ACCESS_DENIED` and every other Win32 code except "no
   logon session" are reported as a backend failure with the code.

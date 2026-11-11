@@ -52,12 +52,27 @@ order:
    Secret Service stays unsupported for accounts by design. Open: a run on a
    real Linux desktop session (GNOME, KDE/KWallet) with an unlock prompt
    answered by a person.
-4. Wire the module in as a built-in feature with its commands, permissions and
-   a minimal account UI (its own ADR; decide then whether the accounts table
-   moves into `preferences.sqlite3`).
-5. restic orchestration (child process, `--json`, exit codes), tried first
+4. Account management in the dashboard: done 2026-11-11 (ADR-018, not a
+   feature; `cloud-accounts.sqlite3` stays separate;
+   [status.md](status.md#cloud-storage-dashboard-2026-11-11)). Open:
+   - run the opt-in Backblaze test again, now that it calls the connection
+     check (`HeadBucket` with the bucket-restricted key), and Hetzner's for
+     the first time;
+   - a person's run on a real Linux desktop (GNOME Keyring or KWallet with an
+     unlock prompt) and on Windows 10;
+   - adding an account and checking it through the Windows UI (the automated
+     Windows test stops at the empty state, so it never writes to the
+     Credential Manager).
+5. **Next toward the file browser:** a read-only object listing of one
+   account's bucket, one folder level at a time: `S3Store::list_objects`
+   with a delimiter and pagination (it lists everything today), one new
+   command returning names, sizes and dates for a prefix, and a list view
+   under the account. No uploads, downloads or deletes in that step; they
+   follow with progress reporting (the first custom event, its own ADR) and
+   the per-account transfer queue.
+6. restic orchestration (child process, `--json`, exit codes), tried first
    against the B2 test bucket.
-6. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+7. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
 
 Synchronisation, folder watching, scheduled backups, retention, sharing and a
 virtual filesystem stay ideas until then.
@@ -94,8 +109,9 @@ virtual filesystem stay ideas until then.
   restart-persistence checks passed on 2026-11-11. The foundation and its saved
   choices are implemented ([features.md](../architecture/features.md)). The
   items they deliberately leave out are under Ideas.
-- Feature preferences: run `desktop-virtual.yml` once on GitHub with
-  `EXPECTED_CHECKS: 115`; check whether the NSIS/MSI uninstallers leave
+- Feature preferences and the Cloud Storage section: run `desktop-virtual.yml`
+  once on GitHub with `EXPECTED_CHECKS: 119` (115 before the Cloud Storage
+  checks); check whether the NSIS/MSI uninstallers leave
   `%LOCALAPPDATA%\com.sotyware.desktop` (and so `preferences.sqlite3`) behind,
   together with the existing open question about the webview data
   ([limitations.md](limitations.md#feature-preferences)).

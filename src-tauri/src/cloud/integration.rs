@@ -140,6 +140,14 @@ async fn round_trip(t: Target) {
         }
         Err(e) => panic!("list buckets: {e}"),
     }
+    // The dashboard's connection check (HeadBucket, then at most a one-key
+    // listing): must pass for a key restricted to this bucket, without
+    // ListBuckets.
+    let started = Instant::now();
+    match store.check_bucket(&t.bucket).await {
+        Ok(()) => println!("connection check: connected in {:?}", started.elapsed()),
+        Err(e) => panic!("connection check: {e}"),
+    }
     assert!(
         store
             .list_objects(&t.bucket, &prefix)
@@ -251,6 +259,9 @@ async fn round_trip(t: Target) {
         );
         let e = wrong.list_objects(&t.bucket, &prefix).await.unwrap_err();
         println!("wrong secret: {e}");
+        assert!(matches!(e, StorageError::InvalidCredentials(_)), "{e:?}");
+        let e = wrong.check_bucket(&t.bucket).await.unwrap_err();
+        println!("connection check, wrong secret: {e}");
         assert!(matches!(e, StorageError::InvalidCredentials(_)), "{e:?}");
         Ok::<(), StorageError>(())
     }

@@ -13,10 +13,13 @@
 # keyboard while it runs. It needs no extra modules: Windows PowerShell 5.1, UI
 # Automation and user32 only.
 #
-# Feature preferences are stored in %LOCALAPPDATA%\com.sotyware.desktop\
-# preferences.sqlite3, which Windows does not let a test redirect. So that the run
-# starts from the defaults, an existing database is moved aside first and put back
-# at the end; the path of the moved copy is printed in case the run is interrupted.
+# Feature preferences and cloud storage accounts are stored in
+# %LOCALAPPDATA%\com.sotyware.desktop\ (preferences.sqlite3,
+# cloud-accounts.sqlite3), which Windows does not let a test redirect. So that the
+# run starts from the defaults, existing databases are moved aside first and put
+# back at the end; the paths of the moved copies are printed in case the run is
+# interrupted. The run never adds a cloud account, so it never writes to the
+# Windows Credential Manager.
 #
 # Each check prints PASS or FAIL; INFO lines record observations that Windows
 # focus rules may legitimately change (which window is in the foreground).
@@ -259,9 +262,15 @@ if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"
 # Tauri's app_local_data_dir (FOLDERID_LocalAppData\<identifier>), as in src-tauri/src/storage.rs.
 $PrefsDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\preferences.sqlite3"
 $PrefsBackup = "$PrefsDb.windows-test-backup"
-if (Test-Path $PrefsBackup) { "ABORT: $PrefsBackup exists (left by an interrupted run?); restore or remove it first"; exit 2 }
+$CloudDb = Join-Path (Split-Path $PrefsDb) "cloud-accounts.sqlite3"
+$CloudBackup = "$CloudDb.windows-test-backup"
+foreach ($b in @($PrefsBackup, $CloudBackup)) {
+  if (Test-Path $b) { "ABORT: $b exists (left by an interrupted run?); restore or remove it first"; exit 2 }
+}
 foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsDb), $PrefsBackup) } }
 if (Test-Path $PrefsBackup) { "preferences: existing database moved to $PrefsBackup for this run" }
+foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudDb), $CloudBackup) } }
+if (Test-Path $CloudBackup) { "cloud accounts: existing database moved to $CloudBackup for this run" }
 
 # --- startup -------------------------------------------------------------
 $primary = Start-Process $Exe -PassThru
@@ -297,6 +306,29 @@ $ok = (ClickFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
 Check "features: real mouse click re-enables it" $ok "$script:why $(FeatureDetail)"
 $primary.Refresh()
 Check "features: dashboard still responsive (window answers, visible, one process)" ($primary.Responding -and (Visible) -and (Procs).Count -eq 1 -and -not $primary.HasExited)
+
+# --- Cloud Storage section (WebView2 content, real capability and IPC) -------
+# The navigation links switch sections; list_cloud_providers and
+# list_cloud_accounts are allowed by the static capability; with the account
+# database moved aside the page shows its empty state. Listing never reads the
+# Credential Manager. Then back to the overview.
+function Named($name, $type) {
+  (Dash).FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $type), (PC $A::NameProperty $name)))
+}
+function PageNames { @((Dash).FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join " | " }
+$HyperlinkType = [System.Windows.Automation.ControlType]::Hyperlink
+$ButtonType = [System.Windows.Automation.ControlType]::Button
+$cloudLink = $null
+WaitFor { $script:cloudLink = Named "Cloud Storage" $HyperlinkType; $script:cloudLink -ne $null } 10 | Out-Null
+Check "cloud storage: Overview and Cloud Storage navigation links present" (($null -ne $cloudLink) -and ($null -ne (Named "Overview" $HyperlinkType)))
+if ($cloudLink) { $cloudLink.GetCurrentPattern($Invoke).Invoke() }
+$shown = WaitFor { ($null -ne (Dash).FindFirst($S::Descendants, (PC $A::AutomationIdProperty "cloud-storage-heading"))) -and ((PageNames) -like "*No storage accounts yet*") } 10
+$names = PageNames
+Check "cloud storage: heading, empty state and Add account shown, no error" ($shown -and ($null -ne (Named "Add account" $ButtonType)) -and ($null -eq (Named "Hide dashboard" $ButtonType)) -and ($names -notlike "*Could not*") -and ($names -notlike "*could not be opened*")) $names
+Check "cloud storage: account database created in the app data folder" (Test-Path $CloudDb) $CloudDb
+$overview = Named "Overview" $HyperlinkType
+if ($overview) { $overview.GetCurrentPattern($Invoke).Invoke() }
+Check "cloud storage: Overview link brings back the Hide button and the features" ((WaitFor { ($null -ne (Named "Hide dashboard" $ButtonType)) -and ($null -ne (FeatureView)) } 10)) (PageNames)
 
 # --- Hide dashboard button (WebView2 content, UIA invoke = click) ---------
 $btn = $null
@@ -427,6 +459,9 @@ $null = WaitFor { (Procs).Count -eq 0 } 5
 foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
 foreach ($f in @($PrefsBackup, "$PrefsBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsBackup), $PrefsDb) } }
 if (Test-Path $PrefsDb) { "preferences: your database was put back" }
+foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
+foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
 
 ""
 "summary: $script:pass passed, $script:fail failed"

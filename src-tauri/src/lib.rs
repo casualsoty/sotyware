@@ -19,6 +19,10 @@
 //! (`storage`, SQLite), which are loaded between `build()` and `run()`, before
 //! the event loop runs.
 //!
+//! The cloud storage accounts (`cloud::dashboard::CloudAccounts`) are loaded at
+//! the same point, from their own SQLite database; the OS credential store is
+//! not touched until the user acts on an account in the dashboard.
+//!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
@@ -28,6 +32,8 @@ pub mod cloud;
 mod features;
 mod storage;
 mod tray;
+
+use std::sync::Arc;
 
 use tauri::{
     AppHandle, Manager, RunEvent, Runtime, State, WebviewWindow, WindowEvent,
@@ -232,7 +238,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             operating_mode,
             features::list_features,
-            features::set_feature_enabled
+            features::set_feature_enabled,
+            cloud::dashboard::list_cloud_providers,
+            cloud::dashboard::list_cloud_accounts,
+            cloud::dashboard::add_cloud_account,
+            cloud::dashboard::update_cloud_account,
+            cloud::dashboard::remove_cloud_account,
+            cloud::dashboard::check_cloud_account
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -304,6 +316,16 @@ pub fn run() {
         .collect();
     let store = storage::open_feature_store(app.path().app_local_data_dir());
     app.manage(features::FeaturePreferences::load(store, &feature_ids));
+    // The cloud storage accounts, for the same reasons at the same point. Only
+    // the account database is read here; the OS credential store is first
+    // used when the user adds, changes, removes or checks an account (on
+    // Linux it may show an unlock prompt), always off the event loop
+    // (ADR-018). A database that cannot be opened is shown by the page.
+    app.manage(Arc::new(cloud::dashboard::CloudAccounts::load(
+        storage::open_account_store(app.path().app_local_data_dir()),
+        Arc::new(cloud::keyring::OsCredentialStore::new()),
+        cloud::s3::ClientOptions::default(),
+    )));
 
     app.run(|app, event| match event {
         RunEvent::ExitRequested { code, api, .. } if !exit_allowed(code) => {
@@ -556,14 +578,20 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
             serde_json::json!([
                 "allow-operating-mode",
                 "allow-list-features",
-                "allow-set-feature-enabled"
+                "allow-set-feature-enabled",
+                "allow-list-cloud-providers",
+                "allow-list-cloud-accounts",
+                "allow-add-cloud-account",
+                "allow-update-cloud-account",
+                "allow-remove-cloud-account",
+                "allow-check-cloud-account"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

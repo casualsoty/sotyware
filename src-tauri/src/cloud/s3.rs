@@ -486,6 +486,45 @@ impl S3Store {
             .collect())
     }
 
+    /// Checks that the credentials are accepted and may use `bucket`, without
+    /// changing anything and without listing the account's buckets (a key
+    /// restricted to one bucket may be refused `ListBuckets` while being
+    /// perfectly valid for its bucket).
+    ///
+    /// First `HeadBucket` on the bucket: success proves both. A HEAD response
+    /// has no body, so a refusal there is only a status (403 is the same for
+    /// a wrong secret and a missing permission). Only then one
+    /// `ListObjectsV2` of at most one key in the same bucket is sent, whose
+    /// error body carries a code that tells the two apart: success means the
+    /// key may read the bucket, `AccessDenied` that the key is valid but not
+    /// allowed, `InvalidAccessKeyId`/`SignatureDoesNotMatch` that it is wrong.
+    pub async fn check_bucket(&self, bucket: &str) -> Result<(), StorageError> {
+        self.check_target(bucket, None)?;
+        let head = self
+            .client
+            .head_bucket()
+            .bucket(bucket)
+            .send()
+            .await
+            .map(drop)
+            .map_err(|e| classify("check bucket", e));
+        match head {
+            Err(StorageError::AccessDenied(_))
+            | Err(StorageError::Provider {
+                status: 400..=499, ..
+            }) => self
+                .client
+                .list_objects_v2()
+                .bucket(bucket)
+                .max_keys(1)
+                .send()
+                .await
+                .map(drop)
+                .map_err(|e| classify("check bucket", e)),
+            other => other,
+        }
+    }
+
     /// Every object under `prefix`, following continuation tokens.
     pub async fn list_objects(
         &self,

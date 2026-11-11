@@ -11,7 +11,10 @@ window instead (dashboard-only mode: no hiding, closing quits). The foundation
 for built-in features (native Rust modules that can be enabled and disabled
 from the dashboard) exists with one example feature, and each enable/disable
 choice is saved locally (SQLite, in the app's data folder) and survives
-restarts; no product features exist yet. It has been validated
+restarts. A Cloud Storage section manages storage accounts at Backblaze B2,
+Hetzner or any S3-compatible service (add, edit, check the connection,
+remove; keys only in the OS credential store); it does not transfer files
+yet, and no other product features exist. It has been validated
 natively on Windows 11 (automated desktop test) and in a simulated Linux
 environment (WSL2); Windows 10 and real Linux desktops are not yet validated.
 See [docs/status/status.md](docs/status/status.md).

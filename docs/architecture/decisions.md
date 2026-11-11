@@ -590,3 +590,79 @@ the app)
   so callers must stay off the UI thread. Access denied on Windows is not
   distinguishable from other backend failures. Details:
   [cloud-storage.md](cloud-storage.md#credentials).
+
+## ADR-018: The dashboard manages cloud accounts through six narrow commands
+
+Status: Accepted (2026-11-11). Wires the account part of ADR-016 and
+ADR-017 into the app; file browsing, transfers and backups stay unreachable.
+
+- **Context:** the cloud storage backend (accounts, OS credential store, S3
+  adapter) existed only as code. Users need to add, edit, check and remove
+  storage accounts from the dashboard without the page ever holding a stored
+  secret, without logic duplicated in Svelte, and without blocking the UI
+  while the Linux Secret Service waits for an unlock prompt. A connection
+  check must not call `ListBuckets`: a Backblaze key restricted to one bucket
+  is refused it ("not entitled", seen against B2 on 2026-11-11) although it is
+  valid.
+- **Decision:**
+  - **Not a built-in feature.** Account management has no lifecycle and runs
+    nothing in the background, so it is not a `Feature` (ADR-014). It is
+    `cloud::dashboard`: a `CloudAccounts` value managed as Tauri state
+    (`Arc`), loaded in `run()` between `build()` and `run()` like the feature
+    preferences, from `cloud-accounts.sqlite3` (kept separate from
+    `preferences.sqlite3`, schema unchanged). Loading reads only SQLite; the
+    credential store is first touched by a user action. Something that later
+    runs in the background (backups, sync) becomes a feature then.
+  - **Six commands**, each with its own permission in
+    `capabilities/default.json` and the app manifest: `list_cloud_providers`
+    (profiles and presets, pure data), `list_cloud_accounts`,
+    `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`,
+    `check_cloud_account`. No command returns a key id or a secret, and there
+    is no command to read one back.
+  - **Safe shapes.** `AccountInfo` carries label, provider, region, endpoint,
+    bucket, a configuration error and the last check. `CredentialInput` is
+    the only type holding a secret: its `Debug` is redacted and it is turned
+    into `Credentials` at once. Both inputs refuse unknown fields.
+  - **Structured errors.** `CommandError { kind, message }` with kinds
+    `invalid-input`, `unknown-account`, `storage`,
+    `credential-store-unavailable`, `credential-store-locked`,
+    `credential-store`, `partial`, `other`; check results have their own
+    `status` (`connected`, `invalid-credentials`, `access-denied`,
+    `bucket-unavailable`, `network`, `credential-store-unavailable`,
+    `credential-store-locked`, `credentials-missing`,
+    `invalid-configuration`, `error`). The page chooses its text by kind or
+    status; Rust's message (whose types never format a secret) is the detail.
+  - **Rust owns the rules.** Account ids are generated from the label
+    (kebab-case, `-2`, `-3`, … for duplicates), so two accounts with the same
+    name and provider stay separate; validation, write order and rollback stay
+    in `Accounts`. An edit keeps the id, the provider (a provider change is
+    refused: the keys belong to it) and settings the form does not show
+    (addressing, transfer concurrency); without new credentials it never
+    touches the credential store; with them it validates everything first,
+    stores the new key in one replace (the old one stays if that fails), then
+    saves the configuration, and reports `partial` if only the key changed.
+    The dashboard gives each account exactly one bucket.
+  - **Threads.** Every command that can reach SQLite or the credential store
+    is `async` and runs that work in `tokio::task::spawn_blocking`; Tauri runs
+    `async` commands on its tokio workers, which must not block either. The
+    connection check loads the credentials on the blocking pool and sends its
+    requests on the async runtime.
+  - **Connection check:** `S3Store::check_bucket` sends `HeadBucket` on the
+    account's bucket. A HEAD response has no body, so a 403 cannot tell a
+    wrong secret from a missing permission; only then one `ListObjectsV2`
+    with `max-keys=1` on the same bucket is sent, whose error code settles it.
+    Never `ListBuckets`, nothing that writes. Results live in memory, per
+    account, and are dropped when the account changes (a check that was
+    running meanwhile does not record its result).
+  - Rejected: one generic `cloud_command` (one permission for everything);
+    returning the key id for display (it would need a credential-store read,
+    on Linux possibly an unlock prompt, just to list accounts); checking with
+    `ListBuckets` or a test upload; ids typed by the user; a modal dialog
+    library; keeping check results in SQLite.
+- **Consequences:** the frontend's permissions grow from three commands to
+  nine (`lib.rs` test). The page can be reloaded or left without losing
+  anything stored. While one call waits for the credential store (an unlock
+  prompt), the other account calls queue behind the `Accounts` lock: the page
+  stays responsive but shows "Loading…" or "Saving…" until the prompt is
+  answered. Release binaries now link the S3 adapter (size not measured).
+  Details: [cloud-storage.md](cloud-storage.md#dashboard).

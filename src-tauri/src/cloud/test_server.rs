@@ -3,11 +3,15 @@
 //! temporary folder. Listens on 127.0.0.1 only; nothing leaves the machine.
 
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
+use s3s::access::{S3Access, S3AccessContext};
 use s3s::auth::SimpleAuth;
 use s3s::service::S3ServiceBuilder;
 use tokio::net::TcpListener;
@@ -21,14 +25,63 @@ pub struct TestServer {
     pub endpoint: String,
     pub access_key_id: String,
     pub secret: String,
+    /// The S3 operation names (`HeadBucket`, `ListBuckets`, …) of every
+    /// authenticated request, in order.
+    pub operations: Arc<Mutex<Vec<String>>>,
     root: PathBuf,
     task: JoinHandle<()>,
+}
+
+/// Records every authenticated operation and refuses the `denied` ones with
+/// `AccessDenied`, as a provider does for a key without that permission (a
+/// Backblaze key restricted to one bucket is refused `ListBuckets`).
+struct Access {
+    denied: Vec<&'static str>,
+    operations: Arc<Mutex<Vec<String>>>,
+}
+
+// Written out instead of with `#[async_trait]`, which would be a new
+// dependency only for this; it is the signature that macro generates.
+impl S3Access for Access {
+    fn check<'a, 'b, 'c, 'f>(
+        &'a self,
+        cx: &'b mut S3AccessContext<'c>,
+    ) -> Pin<Box<dyn Future<Output = s3s::S3Result<()>> + Send + 'f>>
+    where
+        'a: 'f,
+        'b: 'f,
+        'c: 'f,
+        Self: 'f,
+    {
+        let op = cx.s3_op().name().to_owned();
+        let signed = cx.credentials().is_some();
+        Box::pin(async move {
+            if !signed {
+                return Err(s3s::s3_error!(AccessDenied, "Signature is required"));
+            }
+            self.operations.lock().unwrap().push(op.clone());
+            if self.denied.contains(&op.as_str()) {
+                return Err(s3s::s3_error!(AccessDenied, "not entitled"));
+            }
+            Ok(())
+        })
+    }
 }
 
 impl TestServer {
     /// Starts a server that accepts only `access_key_id`/`secret`, with the
     /// given (empty) buckets.
     pub async fn start(access_key_id: &str, secret: &str, buckets: &[&str]) -> Self {
+        Self::start_denying(access_key_id, secret, buckets, &[]).await
+    }
+
+    /// Like [`Self::start`], but the key is refused the `denied` operations.
+    pub async fn start_denying(
+        access_key_id: &str,
+        secret: &str,
+        buckets: &[&str],
+        denied: &[&'static str],
+    ) -> Self {
         static N: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "sotyware-s3-test-{}-{}",
@@ -43,6 +96,11 @@ impl TestServer {
         let fs = s3s_fs::FileSystem::new(&root).unwrap();
         let mut builder = S3ServiceBuilder::new(fs);
         builder.set_auth(SimpleAuth::from_single(access_key_id, secret));
+        let operations = Arc::new(Mutex::new(Vec::new()));
+        builder.set_access(Access {
+            denied: denied.to_vec(),
+            operations: Arc::clone(&operations),
+        });
         let service = builder.build();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -64,6 +122,7 @@ impl TestServer {
             endpoint: format!("http://{addr}"),
             access_key_id: access_key_id.into(),
             secret: secret.into(),
+            operations,
             root,
             task,
         }

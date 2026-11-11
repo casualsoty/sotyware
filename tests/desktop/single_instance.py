@@ -415,6 +415,22 @@ def example_feature(pid):
     return box, page_text(pid)
 
 
+def page_links(pid):
+    return [(n, node) for r, n, _, node in _page_nodes(pid) if r == Atspi.Role.LINK]
+
+
+def click_link(pid, name):
+    """Follows the named navigation link, as a keyboard or screen-reader user would."""
+    for n, node in page_links(pid):
+        if n == name:
+            return Atspi.Action.do_action(node, 0)
+    return False
+
+
+def page_headings(pid):
+    return [n or t for r, n, t, _ in _page_nodes(pid) if r == Atspi.Role.HEADING]
+
+
 def click_button(pid, name):
     """Activates the named button the way a screen reader or keyboard user would."""
     for n, node in page_buttons(pid):
@@ -718,6 +734,32 @@ on = off and Atspi.Action.do_action(example_feature(tm.pid)[0], 0) and wait_for(
     lambda: switched_to(True, "Running"), 5)
 check("12 tray mode: checking it again starts it", on,
       f"text={example_feature(tm.pid)[1] if page else ''!r}")
+# The Cloud Storage section through the real webview and capability: the link
+# switches sections, list_cloud_providers and list_cloud_accounts are allowed,
+# and with no accounts (fresh XDG_DATA_HOME) the empty state and the Add
+# account action are shown. Listing never touches the credential store, so no
+# Secret Service is needed. Then back to the overview, whose buttons are
+# unchanged.
+links = [n for n, _ in page_links(tm.pid)] if page else []
+check("12 tray mode: page has Overview and Cloud Storage navigation links",
+      links == ["Overview", "Cloud Storage"], f"links={links}")
+to_cloud = page and click_link(tm.pid, "Cloud Storage") and wait_for(
+    lambda: "No storage accounts yet" in page_text(tm.pid), 10)
+text = page_text(tm.pid) if page else ""
+check("12 tray mode: Cloud Storage shows its heading, empty state and Add account, no error",
+      to_cloud and "Cloud Storage" in page_headings(tm.pid)
+      and [n for n, _ in page_buttons(tm.pid)] == ["Add account"]
+      and "Could not" not in text and "could not be opened" not in text,
+      f"headings={page_headings(tm.pid) if page else None} buttons={[n for n, _ in page_buttons(tm.pid)] if page else None} text={text!r}")
+back = to_cloud and click_link(tm.pid, "Overview") and wait_for(
+    lambda: [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"], 10)
+check("12 tray mode: Overview link returns to the Hide button and features", back and example_feature(tm.pid)[0] is not None,
+      f"buttons={[n for n, _ in page_buttons(tm.pid)] if page else None}")
+cloud_db = os.path.join(DATA_HOME, "com.sotyware.desktop", "cloud-accounts.sqlite3")
+check("12 tray mode: the account database is created in the app data folder, with no accounts",
+      os.path.exists(cloud_db) and sqlite3.connect(f"file:{cloud_db}?mode=ro", uri=True)
+      .execute("SELECT count(*) FROM storage_accounts").fetchone() == (0,),
+      cloud_db)
 can_click_hide = bool(tm_win) and page and click_button(tm.pid, "Hide dashboard")
 hidden = can_click_hide and wait_for(lambda: not viewable(tm_win))
 check("12 tray mode: Hide button hides the dashboard, process keeps running",
