@@ -69,14 +69,15 @@ three times on the tree with bucket browsing, and the dataset test lists
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
 | Cloud Storage section in the dashboard (navigation link; account list with empty state, add/edit form with provider presets, connection check, removal with confirmation; keys in two password inputs, sent only to Rust and never returned) and its six commands `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` (safe DTOs, structured errors, `spawn_blocking` for SQLite and the credential store); connection check `S3Store::check_bucket` (`HeadBucket`, one-key `ListObjectsV2` only after a refused HEAD, never `ListBuckets`) | `src/App.svelte`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/dashboard.rs`, `check_bucket` in `cloud/s3.rs`, `run()` in `lib.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#dashboard), [ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)) |
 | Read-only bucket browser in the Cloud Storage section ("Open bucket" per account: folders, files, sizes, dates, breadcrumbs, Up, Refresh, Load more, back to the accounts) and the command `list_cloud_folder` (one `ListObjectsV2` page of one folder level of the account's configured bucket, delimiter `/`; folder prefixes kept exactly, marker objects hidden; continuation tokens kept in Rust behind cursors tied to account, bucket and prefix; structured errors) | `src/CloudBrowser.svelte`, `src/CloudStorage.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/browser.rs`, cursors in `cloud/dashboard.rs`, `list_folder` in `cloud/s3.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket), [ADR-019](../architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)) |
-| Cloud storage backend (uploads, downloads and changes to objects not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
+| Single-file downloads from the bucket browser (Download per file; native save dialog opened by Rust, the page never sends a path; one at a time; progress with percent and bytes over a per-call Tauri channel; Cancel; Try download again to the same destination; completed / cancelled / failed with what was verified) and the commands `download_cloud_file`, `cancel_cloud_download`, `retry_cloud_download`; `S3Store::download` streams into a hidden temporary file next to the destination, verifies size and the stored SHA-256, then hard-links or renames it into place; `TransferControl` settles cancel against completion; quitting cancels and cleans up | `src/CloudBrowser.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/download.rs`, `download` in `cloud/s3.rs`, `prepare_download` in `cloud/dashboard.rs`, `run()` in `lib.rs` (dialog plugin, managed state, shutdown), `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file), [ADR-020](../architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)) |
+| Cloud storage backend (uploads and changes to objects not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account | `src-tauri/src/cloud/`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, and `allow-list-cloud-folder`; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, `allow-list-cloud-folder` and the three download permissions; no `dialog:` or `fs:` permission; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -87,13 +88,14 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
 Nothing else exists: no product features (only the example feature and
-cloud account management), no settings, no persistence other than the feature
-choices and the cloud storage accounts, no file operations in the bucket
-browser (it only lists), no upload, download or transfer UI, no backups, no
-sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than `operating_mode`, `list_features`,
-`set_feature_enabled`, the six cloud account commands and
-`list_cloud_folder`.
+cloud storage accounts, browsing and single-file downloads), no settings, no
+persistence other than the feature choices and the cloud storage accounts,
+no file operations in the bucket browser other than downloading one file at a
+time (no upload, folder or multiple downloads, rename or delete), no transfer
+queue UI or download history, no backups, no sync, no custom Tauri events,
+no feature-management UI, no third-party plugins, and no custom command other
+than `operating_mode`, `list_features`, `set_feature_enabled`, the six cloud
+account commands, `list_cloud_folder` and the three download commands.
 
 ## Validation matrix
 
@@ -111,6 +113,78 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud Storage: single-file downloads (2026-11-12)
+
+Tree: uncommitted, on `8e23fd4`. New: `cloud/download.rs` (three commands,
+ADR-020), `S3Store::download` with `TransferControl` (progress, cancel, new
+temporary-file naming, final move by hard link or rename), the dialog plugin
+(`tauri-plugin-dialog` 2.8.4 with `rfd` 0.17.2, plus `tauri-plugin-fs` 2.7.1 as
+its dependency; 4 new crates), the Download action and progress panel in
+`CloudBrowser.svelte`, an object backend for the in-process test server
+(`start_objects`: exact keys, optional SHA-256 metadata, no `Content-Length`,
+slow, stalled or cut bodies) and a `download` phase in both Cloud Storage UI
+drivers. Nothing was written to or read from a real provider.
+
+| Check | WSL2 (Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0) | Native Windows 11 Home 25H2 (build 26200.9711; fresh copy `C:\dev\sotyware-download`) |
+| --- | --- | --- |
+| fmt, clippy `-D warnings`, `npm run check` (0/0), `npm run build`, release build | ✅ | ✅ |
+| `cargo test` | ✅ **236 passed, 11 ignored**, 3 runs (27 new: 24 in `download/tests.rs`, 3 in `s3.rs`; 1 new ignored UI helper) | ✅ **226 passed, 11 ignored** (the Linux-only tray tests and the Unix permission test do not build there) |
+| Frontend (Vitest) | ✅ **93** (12 new), 3 runs | ✅ 93 |
+| `npm run test:desktop:virtual` (virtual display) | ✅ 119/0/0, 3 runs | — |
+| `windows-isolated.ps1` (private desktop) | — | ✅ 56/0, 3 runs |
+| Cloud UI `local` | ✅ 16/16, 3 runs (`cloud-ui.sh`, Xvfb, real GNOME Keyring) | ✅ 19/19, 4 runs (real Credential Manager) |
+| Cloud UI `hang` | ✅ 8/8, 3 runs | — |
+| Cloud UI `browse` (local listing server) | ✅ 17/17 in 5 of 6 runs; run 2 of the first 3 stopped with an AT-SPI reply timeout (below) | ✅ 29/29, 4 runs |
+| **Cloud UI `download`** (local object server, **native save dialog**) | ✅ **22/22, 6 runs** (GTK 3 file chooser under Xvfb + openbox: a virtual display, not a real desktop) | ✅ **35/35, 3 runs** on the **real, interactive Windows 11 desktop** (common item dialog and "Confirm Save As"; driven through UI Automation and window messages, no mouse or keystrokes, nobody watching) |
+| `windows.ps1` (real desktop, moves the mouse) | — | ✅ **103/0, 3 runs** (run with the user's agreement after the other checks; both databases moved aside and put back) |
+
+What the `download` phase showed through the release binary: a Download
+action per file; the native dialog opening with the key's last segment
+suggested (also `Bericht 2024 ü & co.pdf` unchanged); cancelling the dialog
+starts nothing; Save → the file's SHA-256 equals the server's and the page
+says the stored checksum matched; an existing file → the dialog's own
+question (GTK "already exists" + Replace, Windows "Confirm Save As" + Yes),
+the old file unchanged until answered, replaced afterwards, no temporary
+file left; a file without stored SHA-256 → completed with "could not be
+verified"; a slow 16 MiB file → percent and "of 16 MiB", one hidden
+`.large.bin.<pid>-<n>.sotyware-partial`, Cancel → "Download cancelled.
+Nothing was saved." and no file; a connection cut after 256 KiB → failed,
+Try download again without a dialog fails the same way, nothing saved; a
+SHA-256 mismatch → integrity failure, nothing saved; at the end exactly the
+completed files in the folder. Linux only: closing the window (dashboard-only
+mode quits) during a download → exit 0 and the temporary file removed. The
+test server saw only `GetObject`, `ListObjectsV2` and `HeadBucket` (13
+`GetObject` per Linux run, 12 per Windows run).
+
+Problems met and fixed during the runs (test code only):
+
+- Windows: the large-file test read the temporary file's size through
+  `DirEntry::metadata`, which on Windows reports a still-open file's size as
+  of its last close; it now asks the file (`fs::metadata`). Failed once
+  before the fix, then passed.
+- Windows: the common item dialog's File name box, Save, Cancel and the Yes
+  of "Confirm Save As" are not in its UI Automation tree (Windows 11 25H2);
+  the first three `-Mode download` attempts failed there (and, by a script
+  exception, left their made-up test entries in Credential Manager, which
+  were removed by hand; the mode now turns any exception into a failed check
+  and still removes the account). The driver finds them by control id and
+  uses `WM_SETTEXT`/`BM_CLICK`/`TDM_CLICK_BUTTON`.
+- WSL2: in one of the first three `cloud-ui.sh` runs, pressing "← Back to
+  accounts" after the 1,000-row page got no AT-SPI reply in time (the
+  browser now has one Download button per row, and a Windows build ran on
+  the same machine meanwhile) and the driver stopped. `press` now reports a
+  missing reply and lets the following check decide; the 3 `browse` reruns
+  passed without hitting it.
+- The Windows C: drive was full (0 bytes; `os error 112` in the first
+  Windows build); with the user's agreement the `src-tauri\target` folders of
+  seven earlier test copies under `C:\dev` were deleted (about 57 GB).
+
+Not verified: any download from Backblaze or Hetzner (the opt-in tests were
+not extended; see [roadmap.md](roadmap.md#cloud-storage-after-the-proof-of-concept));
+quitting during a download on Windows through the tray (only the Rust test
+and the Linux window-close run); the XDG portal dialog; a person using the
+dialogs; Windows 10.
 
 ### Real Windows desktop and fewer Backblaze listings (2026-11-12)
 

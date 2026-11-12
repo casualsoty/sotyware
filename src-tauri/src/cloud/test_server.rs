@@ -15,7 +15,10 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
 use s3s::access::{S3Access, S3AccessContext};
 use s3s::auth::SimpleAuth;
-use s3s::dto::{HeadBucketInput, HeadBucketOutput, ListObjectsV2Input, ListObjectsV2Output};
+use s3s::dto::{
+    GetObjectInput, GetObjectOutput, HeadBucketInput, HeadBucketOutput, ListObjectsV2Input,
+    ListObjectsV2Output,
+};
 use s3s::service::S3ServiceBuilder;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -224,6 +227,223 @@ impl s3s::S3 for Listing {
     }
 }
 
+/// How the [`TestServer::start_objects`] server sends an object's body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// All of it, as fast as possible.
+    None,
+    /// Waits this long before every chunk.
+    Slow(Duration),
+    /// Sends this many bytes, then nothing more (the connection stays open).
+    StallAfter(usize),
+    /// Sends this many bytes, then breaks the connection.
+    CutAfter(usize),
+}
+
+/// One object of a [`TestServer::start_objects`] bucket.
+#[derive(Clone)]
+pub struct TestObject {
+    pub key: String,
+    pub data: Arc<Vec<u8>>,
+    /// Sent as `x-amz-meta-sotyware-sha256`, as if sotyware had uploaded it.
+    pub sha256: Option<String>,
+    /// Whether the response has a `Content-Length`.
+    pub announce_length: bool,
+    pub fault: Fault,
+}
+
+/// `size` bytes of a deterministic, non-repeating pattern.
+pub fn pattern(size: usize, seed: u8) -> Vec<u8> {
+    let mut x = u32::from(seed).wrapping_mul(2_654_435_761) | 1;
+    (0..size)
+        .map(|_| {
+            // xorshift: cheap, and different for every byte position.
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+impl TestObject {
+    /// An object as sotyware uploads it: with its SHA-256 and a length.
+    pub fn new(key: &str, data: Vec<u8>) -> Self {
+        Self {
+            key: key.to_owned(),
+            sha256: Some(sha256_hex(&data)),
+            data: Arc::new(data),
+            announce_length: true,
+            fault: Fault::None,
+        }
+    }
+
+    /// An object uploaded by something else: no SHA-256 metadata.
+    pub fn foreign(key: &str, data: Vec<u8>) -> Self {
+        Self {
+            sha256: None,
+            ..Self::new(key, data)
+        }
+    }
+
+    pub fn with_fault(mut self, fault: Fault) -> Self {
+        self.fault = fault;
+        self
+    }
+}
+
+/// Body chunk size of the object server.
+const BODY_CHUNK: usize = 64 * 1024;
+
+/// An object body as a stream that can be slow, stall or break.
+struct Body {
+    data: Arc<Vec<u8>>,
+    pos: usize,
+    fault: Fault,
+    delay: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl futures_core::Stream for Body {
+    type Item = Result<bytes::Bytes, std::io::Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        if this.pos >= this.data.len() {
+            return Poll::Ready(None);
+        }
+        let mut end = (this.pos + BODY_CHUNK).min(this.data.len());
+        match this.fault {
+            Fault::None => {}
+            Fault::Slow(d) => {
+                let sleep = this
+                    .delay
+                    .get_or_insert_with(|| Box::pin(tokio::time::sleep(d)));
+                if sleep.as_mut().poll(cx).is_pending() {
+                    return Poll::Pending;
+                }
+                this.delay = None;
+            }
+            Fault::StallAfter(n) | Fault::CutAfter(n) if this.pos >= n => {
+                return if matches!(this.fault, Fault::CutAfter(_)) {
+                    Poll::Ready(Some(Err(std::io::Error::other(
+                        "connection cut by the test",
+                    ))))
+                } else {
+                    Poll::Pending // never woken: the body stalls
+                };
+            }
+            Fault::StallAfter(n) | Fault::CutAfter(n) => end = end.min(n),
+        }
+        let chunk = bytes::Bytes::copy_from_slice(&this.data[this.pos..end]);
+        this.pos = end;
+        Poll::Ready(Some(Ok(chunk)))
+    }
+}
+
+/// The buckets of [`TestServer::start_objects`]: the objects, and the same
+/// keys as a [`Listing`] so the browser can list them.
+#[derive(Default)]
+struct Objects {
+    buckets: HashMap<String, HashMap<String, TestObject>>,
+    listing: Listing,
+}
+
+impl s3s::S3 for Objects {
+    fn list_objects_v2<'life0, 'async_trait>(
+        &'life0 self,
+        req: s3s::S3Request<ListObjectsV2Input>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = s3s::S3Result<s3s::S3Response<ListObjectsV2Output>>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let result = self.listing.list(req.input).map(s3s::S3Response::new);
+        Box::pin(async move { result })
+    }
+
+    fn head_bucket<'life0, 'async_trait>(
+        &'life0 self,
+        req: s3s::S3Request<HeadBucketInput>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = s3s::S3Result<s3s::S3Response<HeadBucketOutput>>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let result = if self.buckets.contains_key(&req.input.bucket) {
+            Ok(s3s::S3Response::new(HeadBucketOutput::default()))
+        } else {
+            Err(s3s::s3_error!(NoSuchBucket))
+        };
+        Box::pin(async move { result })
+    }
+
+    fn get_object<'life0, 'async_trait>(
+        &'life0 self,
+        req: s3s::S3Request<GetObjectInput>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = s3s::S3Result<s3s::S3Response<GetObjectOutput>>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let result = (|| {
+            let bucket = self
+                .buckets
+                .get(&req.input.bucket)
+                .ok_or_else(|| s3s::s3_error!(NoSuchBucket))?;
+            let object = bucket
+                .get(&req.input.key)
+                .ok_or_else(|| s3s::s3_error!(NoSuchKey))?;
+            let body = Body {
+                data: Arc::clone(&object.data),
+                pos: 0,
+                fault: object.fault,
+                delay: None,
+            };
+            Ok(s3s::S3Response::new(GetObjectOutput {
+                body: Some(s3s::dto::StreamingBlob::wrap(body)),
+                content_length: object
+                    .announce_length
+                    .then(|| i64::try_from(object.data.len()).unwrap_or(i64::MAX)),
+                metadata: object.sha256.as_ref().map(|sha| {
+                    HashMap::from([(crate::cloud::s3::SHA256_METADATA.to_owned(), sha.clone())])
+                }),
+                ..Default::default()
+            }))
+        })();
+        Box::pin(async move { result })
+    }
+}
+
 impl TestServer {
     /// Starts a server that accepts only `access_key_id`/`secret`, with the
     /// given (empty) buckets.
@@ -272,6 +492,33 @@ impl TestServer {
                 .insert((*key).to_owned(), *size);
         }
         Self::serve(listing, fresh_root(), access_key_id, secret, denied).await
+    }
+
+    /// A server that sends and lists objects (`GetObject`, `ListObjectsV2`,
+    /// `HeadBucket`): each bucket holds exactly the given objects, keys kept
+    /// as they are (s3s-fs keeps objects as files, so it cannot hold keys
+    /// such as `a//b` or `..`), with the given body behaviour. Every other
+    /// operation is refused.
+    pub async fn start_objects(
+        access_key_id: &str,
+        secret: &str,
+        objects: &[(&str, TestObject)],
+    ) -> Self {
+        let mut backend = Objects::default();
+        for (bucket, object) in objects {
+            backend
+                .buckets
+                .entry((*bucket).to_owned())
+                .or_default()
+                .insert(object.key.clone(), object.clone());
+            backend
+                .listing
+                .buckets
+                .entry((*bucket).to_owned())
+                .or_default()
+                .insert(object.key.clone(), object.data.len() as u64);
+        }
+        Self::serve(backend, fresh_root(), access_key_id, secret, &[]).await
     }
 
     async fn serve(
@@ -459,5 +706,83 @@ async fn serve_listing_for_ui() {
         ops.iter()
             .all(|op| op == "ListObjectsV2" || op == "HeadBucket"),
         "browsing must only list: {ops:?}"
+    );
+}
+
+/// What the Cloud Storage UI test downloads (tests/desktop/cloud_ui.py and
+/// windows-cloud-ui.ps1, phase `download`): a small and a 3 MiB file with
+/// their SHA-256, odd names, a file without a stored SHA-256, a slow 16 MiB
+/// file (time to cancel), one whose connection breaks and one whose content
+/// does not match its SHA-256.
+pub fn ui_download_objects() -> Vec<TestObject> {
+    let mut tampered = TestObject::new("broken/tampered.bin", pattern(100 * 1024, 33));
+    tampered.sha256 = Some(sha256_hex(b"not this content"));
+    vec![
+        TestObject::new("readme.txt", b"hello, cloud".to_vec()),
+        TestObject::new("docs/Bericht 2024 ü & co.pdf", pattern(3 * 1024 * 1024, 31)),
+        TestObject::foreign("foreign.txt", b"uploaded by another tool".to_vec()),
+        TestObject::new("slow/large.bin", pattern(16 * 1024 * 1024, 32))
+            .with_fault(Fault::Slow(Duration::from_millis(40))),
+        TestObject::new("broken/cut.bin", pattern(1024 * 1024, 34))
+            .with_fault(Fault::CutAfter(256 * 1024)),
+        tampered,
+    ]
+}
+
+pub const UI_DOWNLOAD_BUCKET: &str = "download-bucket";
+
+/// Not a test: serves [`ui_download_objects`] for the Cloud Storage UI test
+/// until the file named by `SOTYWARE_UI_SERVER_FILE` (where it writes its
+/// endpoint; the objects' sizes and SHA-256 go to the same name plus
+/// `.json`) is deleted, then fails if anything but listing, the connection
+/// check and `GetObject` was requested. Started by tests/desktop/cloud-ui.sh
+/// (phase `download`) and windows-cloud-ui.ps1 (`-Mode download`); the key
+/// and secret are made up.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "helper for the Cloud Storage UI test, not a test"]
+async fn serve_objects_for_ui() {
+    let file = std::env::var("SOTYWARE_UI_SERVER_FILE").expect("set SOTYWARE_UI_SERVER_FILE");
+    let objects = ui_download_objects();
+    let manifest: Vec<String> = objects
+        .iter()
+        .map(|o| {
+            format!(
+                "{{\"key\":{:?},\"size\":{},\"sha256\":{:?}}}",
+                o.key,
+                o.data.len(),
+                sha256_hex(&o.data)
+            )
+        })
+        .collect();
+    fs::write(format!("{file}.json"), format!("[{}]", manifest.join(","))).unwrap();
+    let pairs: Vec<(&str, TestObject)> = objects
+        .into_iter()
+        .map(|o| (UI_DOWNLOAD_BUCKET, o))
+        .collect();
+    let server = TestServer::start_objects(
+        "e2eDownloadKey00000001",
+        "e2e-Download-Secret-0123456789",
+        &pairs,
+    )
+    .await;
+    fs::write(&file, &server.endpoint).unwrap();
+    println!("serving {} at {}", UI_DOWNLOAD_BUCKET, server.endpoint);
+    while Path::new(&file).exists() {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let ops = server.operations.lock().unwrap().clone();
+    let gets = ops.iter().filter(|op| *op == "GetObject").count();
+    println!(
+        "operations: {} GetObject, {} ListObjectsV2, others: {:?}",
+        gets,
+        ops.iter().filter(|op| *op == "ListObjectsV2").count(),
+        ops.iter()
+            .filter(|op| !matches!(op.as_str(), "GetObject" | "ListObjectsV2"))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ops.iter()
+            .all(|op| matches!(op.as_str(), "GetObject" | "ListObjectsV2" | "HeadBucket")),
+        "downloading must only read: {ops:?}"
     );
 }

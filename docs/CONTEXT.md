@@ -14,8 +14,8 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 ## What works today
 
 The desktop runtime, the foundation for built-in features, cloud storage
-account management and read-only bucket browsing; **no file transfers,
-backups or other product features exist**.
+account management, bucket browsing and single-file downloads; **no uploads,
+other changes to objects, backups or other product features exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -71,24 +71,38 @@ backups or other product features exist**.
   names), marker objects hidden; the continuation token stays in Rust behind
   a cursor tied to account, bucket and prefix; stale answers are dropped;
   structured errors (missing key → Edit account). A key limited to a file
-  name prefix is refused the root at Backblaze, so it cannot browse. Backend underneath: provider profiles as data, one S3
-  adapter on `aws-sdk-s3` with end-to-end SHA-256, multipart and a transfer
-  queue per account; uploads and downloads are **not reachable from the
-  app**. Recommended first provider: Backblaze B2, EU Central.
+  name prefix is refused the root at Backblaze, so it cannot browse.
+  **Download** per file (`download_cloud_file`, `cancel_cloud_download`,
+  `retry_cloud_download`,
+  [ADR-020](architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)):
+  Rust opens the native save dialog (`tauri-plugin-dialog`; GTK 3 / Windows
+  common item dialog; the page never sends a path; the dialog asks before
+  replacing an existing file, and only that file may be replaced); one
+  download at a time (`busy` otherwise); the body streams into a hidden
+  `.<name>.<pid>-<n>.sotyware-partial` next to the destination, is synced and
+  checked (size; SHA-256 if sotyware stored one at upload, else "size only"
+  is said), then hard-linked/renamed into place; progress on a per-call
+  Tauri `Channel` (≤ 4/s, then one final completed/cancelled/failed); Cancel
+  drops the stream and removes the temporary file, too late once the final
+  move began (`finishing`); Try download again reuses the destination;
+  leaving the browser or quitting cancels. Backend underneath: provider
+  profiles as data, one S3 adapter on `aws-sdk-s3` with end-to-end SHA-256,
+  multipart and a transfer queue per account; uploads are **not reachable
+  from the app**. Recommended first provider: Backblaze B2, EU Central.
   [cloud-storage.md](architecture/cloud-storage.md#dashboard),
   [cloud-providers.md](architecture/cloud-providers.md), ADR-016, ADR-017.
 
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte, cloud.ts, cloudMessages.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), cloud.ts, cloudMessages.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands), browser.rs (list_cloud_folder); tests.rs, browser/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands); tests.rs, browser/tests.rs, download/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing: cloud-ui.sh, windows-cloud-ui.ps1)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing and downloads: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
 
@@ -107,11 +121,13 @@ Full map: [repository-map.md](architecture/repository-map.md).
 - The frontend may call the commands `operating_mode`, `list_features`,
   `set_feature_enabled`, `list_cloud_providers`, `list_cloud_accounts`,
   `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`,
-  `check_cloud_account` and `list_cloud_folder` (one `allow-<command>`
-  permission each) and, in tray
+  `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
+  `cancel_cloud_download` and `retry_cloud_download` (one `allow-<command>`
+  permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
-  runtime). No other custom command, no custom events. No command returns a
-  stored credential.
+  runtime). No other custom command, no custom events (download progress
+  uses a per-call channel). No command returns a stored credential or
+  accepts a local path.
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line
   in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
   ([how to add one](architecture/features.md#adding-a-built-in-feature))
@@ -146,6 +162,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Cloud Storage single-file downloads (2026-11-12, uncommitted tree on
+  `8e23fd4`): WSL2 `cargo test` **236 passed, 11 ignored** (27 new), frontend
+  **93** (12 new); Windows 11 226 + 93. Through the release binary with the
+  **native save dialog** against the in-process object server: Linux
+  `cloud-ui.sh download` **22/22, 6 runs** (GTK under Xvfb: virtual display)
+  and Windows `windows-cloud-ui.ps1 -Mode download` **35/35, 3 runs** on the
+  **real Windows 11 desktop** (dialog cancel, save + SHA-256, replace after
+  the dialog's confirmation, Unicode name, no stored checksum, progress +
+  Cancel, broken connection + Try again, checksum mismatch; Linux also quit
+  during a download). Regression: virtual display 119/0/0 (3), `cloud-ui.sh`
+  local 16/16, hang 8/8 (3), browse 17/17 (5 of 6; one AT-SPI reply timeout,
+  driver hardened); Windows private desktop 56/0 (3), cloud UI local 19/19
+  and browse 29/29 (4), real desktop `windows.ps1` 103/0 (3). **Not run:**
+  any real provider.
+  [status.md](status/status.md#cloud-storage-single-file-downloads-2026-11-12).
 - Real Windows desktop and fewer Backblaze listings (2026-11-12, tree
   `f304019` + test-only change): `windows.ps1` on the **real** Windows 11
   desktop, release binary, **103/0, 3 runs** (user data put back unchanged).
@@ -350,8 +381,12 @@ prompt), the other account calls wait behind it. The bucket browser is verified
 at Backblaze with a temporary 1,040-object dataset (WSL2/Xvfb and Windows 11),
 never at Hetzner; Backblaze answers a continuation token it never issued with
 the first page instead of an error; a key limited to a file name prefix cannot
-browse (Backblaze refuses the root); no total count, no cache, no file
-operations. Full list: [limitations.md](status/limitations.md).
+browse (Backblaze refuses the root); no total count, no cache. Downloads
+are verified only against the local object server (never a real provider),
+one at a time, without resume; a killed process leaves its hidden
+`.sotyware-partial` file; on file systems without hard links a file
+appearing at a new destination in the last instant could be replaced.
+Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
@@ -361,7 +396,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (downloads from the browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (a download from a real provider, then uploads and deletes with their own confirmation design): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

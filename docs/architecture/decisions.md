@@ -728,3 +728,84 @@ downloads and every other change to objects stay unreachable.
   name prefix cannot list the bucket's root: Backblaze refuses it
   (`AccessDenied`, seen 2026-11-11), so the browser shows Access denied
   there. Details: [cloud-storage.md](cloud-storage.md#browsing-a-bucket).
+
+## ADR-020: Single-file downloads go through a save dialog opened by Rust, one at a time, with progress on a channel
+
+Status: Accepted (2026-11-12). Extends ADR-019 with downloading one file from
+the browser; uploads, deletes, renames and every other change stay
+unreachable.
+
+- **Context:** users want to fetch a file they see in the browser. A download
+  can take minutes, must not block the window, must be cancellable, must not
+  leave a half-written file where the user expects a complete one, and must
+  never let a remote object key decide where on the local disk something is
+  written (keys may be `../../x`, `a\b`, `CON`). `S3Store` already streamed a
+  download into a temporary file with end-to-end SHA-256 verification, but
+  without progress or cancellation. sotyware had no custom events and no file
+  dialog.
+- **Decision:**
+  - **Three commands**, each with its own permission:
+    `download_cloud_file(id, bucket, key, onEvent)`,
+    `cancel_cloud_download(transfer)` and
+    `retry_cloud_download(transfer, onEvent)` (`cloud/download.rs`). The
+    object is always read from the account's *configured* bucket; `bucket` is
+    only compared with it, so a stale view is refused (`outdated-page`). The
+    key is used exactly as the listing returned it.
+  - **Rust opens the native save dialog** (`tauri-plugin-dialog`, a new
+    dependency: rfd with GTK 3 on Linux, the common item dialog on Windows),
+    parented to the dashboard, suggesting a file name made from the key's
+    last segment with characters Windows or Linux refuse replaced. The
+    frontend gets **no** `dialog:` or file system permission and never sends
+    or receives a full local path (only the chosen file's name, for display).
+    Both dialogs ask before returning an existing file; that file, and only
+    that one, may be replaced (`Existing::Replace`, one rename); any other
+    existing file, also one that appears during the download, is left alone
+    (`Existing::Refuse`: a hard link that fails if the name is taken, else
+    check-then-rename on file systems without hard links). A cancelled
+    dialog starts nothing.
+  - **Progress on a Tauri `Channel`** passed with the command, not a global
+    event: messages reach only the page and the download they belong to,
+    need no event permission, and arrive in order. Each message is
+    `{ transfer, state, bytes, total, integrity, error }`; "active" at most
+    every 250 ms (plus one at the start), then exactly one final message
+    (completed, cancelled or failed), sent after the slot is free and, for
+    "completed", after the verified file is in place. The page also checks
+    the transfer id and ignores anything that is not its current download.
+  - **One download at a time** (`CloudDownloads`, managed state): a second
+    download or a second open dialog is refused with `busy`; the page
+    disables every Download action meanwhile. No queue, no history: only the
+    last failed download is kept, for **retry** to the same destination
+    without asking again.
+  - **Cancellation is cooperative and settled in one place**
+    (`TransferControl`): cancelling drops the pending request or body stream
+    (closing the connection) and removes the temporary file. Once the
+    verified file is being moved into place, cancelling is too late
+    (`finishing`) and the download completes. Cancelling is idempotent and
+    never affects another transfer id. Leaving the browser cancels; quitting
+    cancels and waits up to 5 s for the temporary file to be removed
+    (`RunEvent::Exit`).
+  - **Integrity is reported as what was checked:** `sha256-verified` only
+    when the object carries the SHA-256 sotyware stores at upload and it
+    matched; otherwise `size-only` (the size the provider announced), and the
+    page says the content could not be verified. A mismatch fails the
+    download and nothing is saved. Provider-side checksums (the SDK's
+    response validation) are not claimed.
+  - **Errors** extend `ErrorKind` with `busy`, `object-not-found`,
+    `integrity`, `disk-full`, `local-permission`, `destination-unavailable`,
+    `destination-exists` and `local-file`; messages are sotyware's own (the
+    user's own destination path may appear; provider text never does).
+  - Rejected: a frontend save dialog (`dialog:allow-save` would hand the
+    page any path to write to through a later command); global events (any
+    window could listen, and events from an old download would need the same
+    filtering anyway); several downloads at once and a transfer manager (not
+    asked for; one slot keeps cancellation and shutdown simple); writing
+    straight to the destination (a crash or cancel would leave a partial
+    file); trusting the key as a file name without the dialog.
+- **Consequences:** the frontend's permissions grow to thirteen commands
+  (`lib.rs` test). `tauri-plugin-dialog` and `tauri-plugin-fs` (required by
+  it, unused) join the dependency tree, and the dialog plugin injects its
+  small init script into the webview. A download costs one `GetObject` (a
+  billed class B transaction at Backblaze) plus egress. A process killed
+  during a download (crash, power loss, `kill -9`) leaves its hidden
+  temporary file next to the destination. Details:
+  [cloud-storage.md](cloud-storage.md#downloading-a-file).

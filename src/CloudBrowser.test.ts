@@ -7,8 +7,11 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import CloudStorage from "./CloudStorage.svelte";
 import {
+  CANCEL_CLOUD_DOWNLOAD,
+  DOWNLOAD_CLOUD_FILE,
   LIST_CLOUD_ACCOUNTS,
   LIST_CLOUD_FOLDER,
+  RETRY_CLOUD_DOWNLOAD,
   LIST_CLOUD_PROVIDERS,
   parseFolderListing,
   type AccountInfo,
@@ -60,6 +63,27 @@ let listCalls: number;
 let queued: ((call: FolderCall) => unknown)[];
 let app: ReturnType<typeof mount> | undefined;
 
+/** The channel a download command was given (a real `Channel`; the mock
+ * passes arguments through, so tests call its handler directly). */
+interface FakeChannel {
+  onmessage: (message: unknown) => void;
+}
+
+interface DownloadCall {
+  id: string;
+  bucket: string;
+  key: string;
+  channel: FakeChannel;
+}
+
+let downloadCalls: DownloadCall[];
+let retryCalls: { transfer: string; channel: FakeChannel }[];
+let cancelCalls: string[];
+/** What `download_cloud_file` answers (default: started as download-N). */
+let onDownload: (call: DownloadCall) => unknown;
+let onRetry: (transfer: string) => unknown;
+let onCancel: (transfer: string) => unknown;
+
 function crumbsOf(prefix: string): { name: string; prefix: string }[] {
   // Test data only: the component never splits prefixes itself.
   const crumbs = [];
@@ -101,6 +125,12 @@ beforeEach(() => {
   folderCalls = [];
   listCalls = 0;
   queued = [];
+  downloadCalls = [];
+  retryCalls = [];
+  cancelCalls = [];
+  onDownload = (call) => ({ transfer: `download-${downloadCalls.length}`, fileName: call.key.split("/").pop() ?? "" });
+  onRetry = () => ({ transfer: `download-retry-${retryCalls.length}`, fileName: "chosen.bin" });
+  onCancel = () => "cancelling";
   mockWindows("main");
   mockIPC((cmd, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>;
@@ -115,6 +145,26 @@ beforeEach(() => {
         folderCalls.push(call);
         const next = queued.shift();
         return next ? next(call) : serve(call);
+      }
+      case DOWNLOAD_CLOUD_FILE: {
+        const call = {
+          id: args["id"] as string,
+          bucket: args["bucket"] as string,
+          key: args["key"] as string,
+          channel: args["onEvent"] as FakeChannel,
+        };
+        downloadCalls.push(call);
+        return onDownload(call);
+      }
+      case RETRY_CLOUD_DOWNLOAD: {
+        const transfer = args["transfer"] as string;
+        retryCalls.push({ transfer, channel: args["onEvent"] as FakeChannel });
+        return onRetry(transfer);
+      }
+      case CANCEL_CLOUD_DOWNLOAD: {
+        const transfer = args["transfer"] as string;
+        cancelCalls.push(transfer);
+        return onCancel(transfer);
       }
       default:
         return null;
@@ -186,9 +236,11 @@ async function openBucket(root: HTMLElement, id = "photos"): Promise<HTMLElement
   return browser(root);
 }
 
+/** Name, size and date of each row (the action column is checked by the
+ * download tests). */
 function rows(root: ParentNode): string[] {
   return [...root.querySelectorAll("tbody tr")].map((tr) =>
-    [...tr.querySelectorAll("td")].map((td) => text(td)).join(" | "),
+    [...tr.querySelectorAll("td:not(.row-actions):not(:last-child)")].map((td) => text(td)).join(" | "),
   );
 }
 
@@ -560,5 +612,246 @@ describe("listing wrapper", () => {
     expect(() => parseFolderListing({ ...listing, files: [{ ...file("x"), size: "1" }] })).toThrow("invalid file");
     expect(() => parseFolderListing({ ...listing, folders: [{ name: "x" }] })).toThrow("invalid folder");
     expect(() => parseFolderListing({ ...listing, breadcrumbs: [{ prefix: 1 }] })).toThrow("invalid breadcrumb");
+  });
+});
+
+describe("downloading a file", () => {
+  const TOTAL = 4 * 1024 * 1024;
+
+  function event(
+    transfer: string,
+    state: string,
+    bytes: number,
+    total: number | null = TOTAL,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return { transfer, state, bytes, total, integrity: null, error: null, ...extra };
+  }
+
+  async function send(channel: FakeChannel, message: Record<string, unknown>): Promise<void> {
+    channel.onmessage(message);
+    flushSync();
+    await settle();
+  }
+
+  function panel(root: ParentNode): HTMLElement {
+    const el = root.querySelector<HTMLElement>("div.download");
+    if (!el) {
+      throw new Error("no download panel");
+    }
+    return el;
+  }
+
+  function downloadButton(root: ParentNode, key: string): HTMLButtonElement {
+    const b = root.querySelector<HTMLButtonElement>(`tr[data-key="${CSS.escape(key)}"] button.download-action`);
+    if (!b) {
+      throw new Error(`no download action for ${key}`);
+    }
+    return b;
+  }
+
+  async function clickDownload(root: ParentNode, key: string): Promise<void> {
+    downloadButton(root, key).click();
+    flushSync();
+    await settle();
+  }
+
+  async function opened(): Promise<HTMLElement> {
+    tree = { photos: PHOTOS };
+    const root = await render();
+    return openBucket(root);
+  }
+
+  it("offers a download action per file, not per folder, and sends the exact key", async () => {
+    const b = await opened();
+    expect(b.querySelectorAll("tr.folder button.download-action")).toHaveLength(0);
+    expect(downloadButton(b, "readme.txt").getAttribute("aria-label")).toBe("Download readme.txt");
+    await openFolder(b, "Ferien 2024 ü/");
+    const odd = "Ferien 2024 ü/<b>not bold</b> & ok.txt";
+    const pending = deferred<unknown>();
+    onDownload = () => pending.promise;
+    await clickDownload(b, odd);
+    expect(downloadCalls.map(({ id, bucket, key }) => ({ id, bucket, key }))).toEqual([
+      { id: "photos", bucket: "soty-photos", key: odd },
+    ]);
+    // No local path ever leaves the page: Rust opens the dialog.
+    expect(Object.keys(downloadCalls[0]!)).toEqual(["id", "bucket", "key", "channel"]);
+    expect(panel(b).dataset["downloadState"]).toBe("choosing");
+    expect(text(panel(b))).toContain("<b>not bold</b> & ok.txt");
+    expect(panel(b).querySelector("b")).toBeNull();
+    expect(text(panel(b))).toContain("Choose where to save the file");
+    pending.resolve({ transfer: "download-1", fileName: "saved copy.txt" });
+    await settle();
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+    expect(panel(b).dataset["transfer"]).toBe("download-1");
+    expect(text(panel(b).querySelector(".download-name"))).toBe("saved copy.txt");
+  });
+
+  it("starts nothing when the save dialog is cancelled", async () => {
+    const b = await opened();
+    onDownload = () => null;
+    await clickDownload(b, "readme.txt");
+    expect(downloadCalls).toHaveLength(1);
+    expect(b.querySelector("div.download")).toBeNull();
+    expect(downloadButton(b, "readme.txt").disabled).toBe(false);
+    expect(alerts(b)).toEqual([]);
+  });
+
+  it("shows progress and blocks a second download while one is active", async () => {
+    const b = await opened();
+    await clickDownload(b, "big.bin");
+    const ch = downloadCalls[0]!.channel;
+    await send(ch, event("download-1", "active", 0));
+    await send(ch, event("download-1", "active", TOTAL / 2));
+    const progress = panel(b).querySelector("progress");
+    expect(progress?.value).toBe(50);
+    expect(text(panel(b).querySelector(".download-progress"))).toBe("50% · 2.0 MiB of 4.0 MiB");
+    for (const key of ["big.bin", "readme.txt"]) {
+      expect(downloadButton(b, key).disabled).toBe(true);
+    }
+    // The browser stays usable: folders still open.
+    await openFolder(b, "2024/");
+    expect(current(b)).toBe("2024");
+    expect(downloadButton(b, "2024/cat.jpg").disabled).toBe(true);
+    downloadButton(b, "2024/cat.jpg").click();
+    await settle();
+    expect(downloadCalls).toHaveLength(1);
+    expect(panel(b).dataset["transfer"]).toBe("download-1");
+  });
+
+  it("shows bytes without a percentage when the size is unknown", async () => {
+    const b = await opened();
+    await clickDownload(b, "big.bin");
+    await send(downloadCalls[0]!.channel, event("download-1", "active", 1536, null));
+    expect(panel(b).querySelector("progress")).toBeNull();
+    expect(text(panel(b).querySelector(".download-progress"))).toBe("1.5 KiB downloaded (total size unknown)");
+  });
+
+  it("reports completion with what was verified and frees the action", async () => {
+    const b = await opened();
+    await clickDownload(b, "big.bin");
+    const ch = downloadCalls[0]!.channel;
+    await send(ch, event("download-1", "active", TOTAL / 4));
+    await send(ch, event("download-1", "completed", TOTAL, TOTAL, { integrity: "sha256-verified" }));
+    expect(panel(b).dataset["downloadState"]).toBe("completed");
+    expect(text(panel(b))).toContain("Downloaded 4.0 MiB. The SHA-256 checksum stored with the file matched.");
+    expect(downloadButton(b, "readme.txt").disabled).toBe(false);
+    // A late message of the finished transfer changes nothing.
+    await send(ch, event("download-1", "active", 1));
+    expect(panel(b).dataset["downloadState"]).toBe("completed");
+    await click(b, "Dismiss");
+    expect(b.querySelector("div.download")).toBeNull();
+
+    await clickDownload(b, "readme.txt");
+    await send(downloadCalls[1]!.channel, event("download-2", "completed", 12, 12, { integrity: "size-only" }));
+    expect(text(panel(b))).toContain("no SHA-256 checksum stored by sotyware, so its content could not be verified");
+    expect(text(panel(b))).not.toContain("SHA-256 checksum stored with the file matched");
+  });
+
+  it("cancels the running transfer by its id", async () => {
+    const b = await opened();
+    await clickDownload(b, "big.bin");
+    const ch = downloadCalls[0]!.channel;
+    await send(ch, event("download-1", "active", 100));
+    await click(b, "Cancel download");
+    expect(cancelCalls).toEqual(["download-1"]);
+    expect(text(panel(b).querySelector(".download-progress"))).toBe("Cancelling…");
+    expect(button(b, "Cancel download").disabled).toBe(true);
+    await send(ch, event("download-1", "cancelled", 100));
+    expect(panel(b).dataset["downloadState"]).toBe("cancelled");
+    expect(text(panel(b))).toContain("Download cancelled. Nothing was saved.");
+    expect(downloadButton(b, "big.bin").disabled).toBe(false);
+  });
+
+  it("says when cancelling is too late and the file is completed", async () => {
+    const b = await opened();
+    onCancel = () => "finishing";
+    await clickDownload(b, "big.bin");
+    const ch = downloadCalls[0]!.channel;
+    await send(ch, event("download-1", "active", TOTAL));
+    await click(b, "Cancel download");
+    expect(text(panel(b))).toContain("cannot be cancelled any more");
+    await send(ch, event("download-1", "completed", TOTAL, TOTAL, { integrity: "sha256-verified" }));
+    expect(panel(b).dataset["downloadState"]).toBe("completed");
+  });
+
+  it("shows a failure and retries it as a new transfer, ignoring the old one", async () => {
+    const b = await opened();
+    await clickDownload(b, "big.bin");
+    const first = downloadCalls[0]!.channel;
+    await send(first, event("download-1", "active", 10));
+    await send(
+      first,
+      event("download-1", "failed", 10, TOTAL, {
+        error: { kind: "network", message: "the connection to the provider failed or broke off" },
+      }),
+    );
+    expect(panel(b).dataset["downloadState"]).toBe("failed");
+    expect(alerts(b).join(" ")).toContain("Download failed. Nothing was saved.");
+    expect(alerts(b).join(" ")).toContain("could not be reached");
+    expect(downloadButton(b, "readme.txt").disabled).toBe(false);
+
+    await click(b, "Try download again");
+    expect(retryCalls.map((r) => r.transfer)).toEqual(["download-1"]);
+    expect(downloadCalls).toHaveLength(1); // no second dialog
+    expect(panel(b).dataset["transfer"]).toBe("download-retry-1");
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+    // Messages of the old transfer, on either channel, are ignored.
+    await send(first, event("download-1", "failed", 0, TOTAL, { error: { kind: "other", message: "old" } }));
+    await send(retryCalls[0]!.channel, event("download-1", "completed", TOTAL));
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+    await send(retryCalls[0]!.channel, event("download-retry-1", "completed", TOTAL, TOTAL, { integrity: "size-only" }));
+    expect(panel(b).dataset["downloadState"]).toBe("completed");
+  });
+
+  it("ignores messages of other transfers and accepts its own before the reply", async () => {
+    const b = await opened();
+    const pending = deferred<unknown>();
+    onDownload = () => pending.promise;
+    await clickDownload(b, "big.bin");
+    const ch = downloadCalls[0]!.channel;
+    await send(ch, event("download-7", "active", TOTAL / 4));
+    expect(panel(b).dataset["transfer"]).toBe("download-7");
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+    await send(ch, event("download-8", "completed", TOTAL));
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+    pending.resolve({ transfer: "download-7", fileName: "big.bin" });
+    await settle();
+    await send(ch, event("download-7", "active", TOTAL / 2));
+    expect(panel(b).querySelector("progress")?.value).toBe(50);
+  });
+
+  it("shows a refused start and asks again through the dialog", async () => {
+    const b = await opened();
+    onDownload = () => Promise.reject({ kind: "busy", message: "another download is running" });
+    await clickDownload(b, "readme.txt");
+    expect(panel(b).dataset["downloadState"]).toBe("failed");
+    expect(alerts(b).join(" ")).toContain("Another download is running");
+    onDownload = (call) => ({ transfer: "download-2", fileName: call.key });
+    await click(b, "Try download again");
+    expect(retryCalls).toHaveLength(0);
+    expect(downloadCalls.map((c) => c.key)).toEqual(["readme.txt", "readme.txt"]);
+    expect(panel(b).dataset["downloadState"]).toBe("active");
+  });
+
+  it("offers Edit account when the key must be fixed", async () => {
+    const b = await opened();
+    await clickDownload(b, "readme.txt");
+    await send(
+      downloadCalls[0]!.channel,
+      event("download-1", "failed", 0, null, { error: { kind: "credentials-missing", message: "no key" } }),
+    );
+    expect(button(b, "Edit account")).toBeTruthy();
+  });
+
+  it("cancels a running download when the browser is closed", async () => {
+    const root = await render();
+    tree = { photos: PHOTOS };
+    const b = await openBucket(root);
+    await clickDownload(b, "big.bin");
+    await send(downloadCalls[0]!.channel, event("download-1", "active", 5));
+    await click(b, "← Back to accounts");
+    expect(root.querySelector("section.browser")).toBeNull();
+    expect(cancelCalls).toEqual(["download-1"]);
   });
 });

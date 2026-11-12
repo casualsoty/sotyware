@@ -2,7 +2,7 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse <binary>   (run by cloud-ui.sh, which sets up
+usage: cloud_ui.py local|hang|b2|browse|download <binary>   (run by cloud-ui.sh, which sets up
 Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
@@ -12,6 +12,12 @@ Phases:
   browse a real GNOME Keyring and the in-process listing server of the Rust
          tests (endpoint in SOTYWARE_UI_ENDPOINT, started by cloud-ui.sh):
          open the bucket, folders, breadcrumbs, Up, Load more, Refresh, Back
+  download a real GNOME Keyring and the in-process object server of the
+         Rust tests (endpoint in SOTYWARE_UI_ENDPOINT, objects' SHA-256 in
+         SOTYWARE_UI_MANIFEST): download through the native GTK save dialog
+         (cancel it, save, replace an existing file after its confirmation),
+         progress, Cancel, failures with Try again, and quitting during a
+         download; every saved file is compared with the server's SHA-256
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -116,6 +122,46 @@ def type_text(value):
         time.sleep(0.01)
 
 
+def keysym(name):
+    return X.XKeysymToKeycode(dpy, X.XStringToKeysym(name.encode()))
+
+
+def ctrl(letter):
+    c = keysym("Control_L")
+    XT.XTestFakeKeyEvent(dpy, c, 1, 0)
+    key(keysym(letter))
+    XT.XTestFakeKeyEvent(dpy, c, 0, 0)
+    X.XSync(dpy, 0)
+
+
+NET_CLOSE = X.XInternAtom(dpy, b"_NET_CLOSE_WINDOW", 0)
+
+
+class XClientMessage(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p), ("window", W), ("message_type", W), ("format", ctypes.c_int),
+                ("data", ctypes.c_long * 5)]
+
+
+class XEvent(ctypes.Union):
+    _fields_ = [("xclient", XClientMessage), ("pad", ctypes.c_long * 24)]
+
+
+X.XSendEvent.argtypes = [ctypes.c_void_p, W, ctypes.c_int, ctypes.c_long, ctypes.POINTER(XEvent)]
+
+
+def close_windows(pid):
+    """Asks the window manager to close the process's windows, as the title
+    bar's X does (_NET_CLOSE_WINDOW)."""
+    root = X.XDefaultRootWindow(dpy)
+    for w in windows_of(pid):
+        ev = XEvent()
+        ev.xclient.type, ev.xclient.window, ev.xclient.message_type, ev.xclient.format = 33, w, NET_CLOSE, 32
+        ev.xclient.data[0], ev.xclient.data[1] = 0, 2
+        X.XSendEvent(dpy, root, 0, (1 << 20) | (1 << 19), ctypes.byref(ev))
+    X.XSync(dpy, 0)
+
+
 def focus_window(pid):
     for w in windows_of(pid):
         X.XRaiseWindow(dpy, w)
@@ -153,6 +199,14 @@ elif PHASE == "b2-browse":
     with open(need("SOTYWARE_UI_MANIFEST"), encoding="utf-8") as mf:
         MANIFEST = json.load(mf)
     MANIFEST["folders"] = {f["path"]: f for f in MANIFEST["folders"]}
+elif PHASE == "download":
+    # The made-up key of serve_objects_for_ui (src-tauri/src/cloud/test_server.rs).
+    KEY1, SECRET1 = "e2eDownloadKey00000001", "e2e-Download-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "download-bucket", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
+    with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
+        OBJECTS = {o["key"]: o for o in json.load(mf)}
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -289,7 +343,14 @@ def press(pid, name):
     whitespace, is `name` (folder buttons also hold a hidden icon)."""
     for n, node in by_role(pid, Atspi.Role.PUSH_BUTTON):
         if n.strip() == name or n.replace("📁", "").strip() == name:
-            return Atspi.Action.do_action(node, 0)
+            try:
+                return Atspi.Action.do_action(node, 0)
+            except GLib.Error as e:
+                # The press was sent, but the reply did not come in time (seen
+                # once while a 1,000-row page was torn down under load). The
+                # caller's wait_for checks whether it took effect.
+                print(f"  press {name!r}: no AT-SPI reply ({e.message[:60]})", flush=True)
+                return True
     print(f"  no button {name!r}; buttons: {[b.strip() for b in buttons(pid)][:40]}", flush=True)
     return False
 
@@ -459,7 +520,8 @@ def table_rows(pid):
     for role, _, _, node in nodes(pid):
         if role != Atspi.Role.TABLE_ROW:
             continue
-        cells = [cell_text(node.get_child_at_index(j)) for j in range(node.get_child_count())]
+        # Name, size and date; the fourth cell holds the Download action.
+        cells = [cell_text(node.get_child_at_index(j)) for j in range(min(3, node.get_child_count()))]
         if cells != ["Name", "Size", "Last modified"]:
             out.append(cells)
     return out
@@ -624,6 +686,180 @@ try:
         check("Back to accounts shows the account list again", bool(ok), str(buttons(pid)))
         ok, confirm, removed = remove("Browse")
         check("remove the account afterwards", removed and rows() == [], str(rows()))
+
+    elif PHASE == "download":
+        import hashlib
+        out = os.path.join(os.environ["HOME"], "downloads")
+        os.makedirs(out, exist_ok=True)
+
+        def saved():
+            return sorted(os.listdir(out))
+
+        def sha_of(path):
+            with open(path, "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+
+        def chooser():
+            """The open GTK save dialog's name field, or None."""
+            for role, name, _, node in nodes(pid):
+                if role == Atspi.Role.FILE_CHOOSER or (role == Atspi.Role.DIALOG and name == "Save download as"):
+                    found = []
+
+                    def walk(n):
+                        try:
+                            if n.get_role() == Atspi.Role.TEXT and n.get_state_set().contains(Atspi.StateType.EDITABLE) \
+                                    and n.get_state_set().contains(Atspi.StateType.SHOWING):
+                                found.append(n)
+                            for j in range(n.get_child_count()):
+                                c = n.get_child_at_index(j)
+                                if c is not None:
+                                    walk(c)
+                        except GLib.Error:
+                            pass
+
+                    walk(node)
+                    if found:
+                        return found[0]
+            return None
+
+        def entry_text(node):
+            return Atspi.Text.get_text(node, 0, Atspi.Text.get_character_count(node))
+
+        def open_dialog(button_name):
+            if not press(pid, button_name):
+                return None
+            return wait_for(chooser, 20)
+
+        def save_as(entry, path):
+            """Types `path` into the dialog's name field and presses Enter."""
+            Atspi.Component.grab_focus(entry)
+            wait_for(lambda: entry.get_state_set().contains(Atspi.StateType.FOCUSED), 3)
+            ctrl("a")
+            type_text(path)
+            if not wait_for(lambda: entry_text(entry) == path, 5):
+                print(f"  name field: {entry_text(entry)!r}", flush=True)
+                return False
+            key(keysym("Return"))
+            return True
+
+        def panel_says(*parts, timeout=60):
+            return wait_for(lambda: all(x in text(pid) for x in parts), timeout)
+
+        ok = add("Downloads", BUCKET, KEY1, SECRET1, ENDPOINT)
+        check("add an account for the local object server",
+              bool(ok and wait_for(lambda: "Added Downloads" in text(pid))), text(pid))
+        ok = press(pid, "Open bucket") and wait_for(lambda: "readme.txt" in text(pid), 30)
+        check("Open bucket lists the files with a Download action each",
+              bool(ok) and "Download readme.txt" in buttons(pid) and "Download foreign.txt" in buttons(pid),
+              str(buttons(pid)))
+
+        entry = open_dialog("Download readme.txt")
+        check("Download opens the native save dialog with the file name suggested",
+              entry is not None and entry_text(entry) == "readme.txt",
+              entry_text(entry) if entry else text(pid)[-300:])
+        check("while the dialog is open, every Download action is disabled",
+              entry is not None and "Choose where to save the file" in text(pid))
+        if entry is not None:
+            Atspi.Component.grab_focus(entry)
+            key(keysym("Escape"))
+        gone = wait_for(lambda: chooser() is None and "Choose where to save" not in text(pid), 10)
+        check("cancelling the dialog starts nothing and leaves no file", bool(gone) and saved() == [], str(saved()))
+
+        target = os.path.join(out, "readme copy.txt")
+        entry = open_dialog("Download readme.txt")
+        ok = entry is not None and save_as(entry, target)
+        done = ok and panel_says("Downloaded", "SHA-256 checksum stored with the file matched")
+        check("save: the file is downloaded and its SHA-256 verified",
+              bool(done) and saved() == ["readme copy.txt"] and sha_of(target) == OBJECTS["readme.txt"]["sha256"],
+              f"{saved()} {text(pid)[-300:]}")
+        press(pid, "Dismiss")
+
+        mine = os.path.join(out, "existing.txt")
+        with open(mine, "w") as fh:
+            fh.write("an older file of mine")
+        entry = open_dialog("Download readme.txt")
+        ok = entry is not None and save_as(entry, mine)
+        confirm = ok and wait_for(lambda: "Replace" in buttons(pid) and "already exists" in text(pid), 10)
+        check("an existing file: the dialog asks before replacing it, and nothing is written meanwhile",
+              bool(confirm) and open(mine).read() == "an older file of mine", text(pid)[-300:])
+        ok = bool(confirm) and press(pid, "Replace") and panel_says("Downloaded", "matched")
+        check("after Replace the file is replaced in place, no temporary file left",
+              bool(ok) and sha_of(mine) == OBJECTS["readme.txt"]["sha256"]
+              and saved() == ["existing.txt", "readme copy.txt"], str(saved()))
+        press(pid, "Dismiss")
+
+        ok = press(pid, "docs") and wait_for(lambda: "Bericht 2024 ü & co.pdf" in text(pid), 20)
+        key_ = "docs/Bericht 2024 ü & co.pdf"
+        entry = ok and open_dialog("Download Bericht 2024 ü & co.pdf")
+        check("a Unicode name with & and spaces is suggested unchanged",
+              bool(entry) and entry_text(entry) == "Bericht 2024 ü & co.pdf", entry_text(entry) if entry else "")
+        ok = bool(entry) and save_as(entry, os.path.join(out, "bericht.pdf"))
+        done = ok and panel_says("Downloaded 3.0 MiB", "matched")
+        check("the 3 MiB file under its exact key, SHA-256 verified",
+              bool(done) and sha_of(os.path.join(out, "bericht.pdf")) == OBJECTS[key_]["sha256"], text(pid)[-300:])
+        press(pid, "Dismiss")
+        press(pid, BUCKET) and wait_for(lambda: "readme.txt" in text(pid), 20)
+
+        entry = open_dialog("Download foreign.txt")
+        ok = entry is not None and save_as(entry, os.path.join(out, "foreign.txt"))
+        done = ok and panel_says("Downloaded", "no SHA-256 checksum stored by sotyware")
+        check("a file without a stored SHA-256: completed, and the page says only the size was checked",
+              bool(done) and "checksum stored with the file matched" not in text(pid)
+              and sha_of(os.path.join(out, "foreign.txt")) == OBJECTS["foreign.txt"]["sha256"], text(pid)[-300:])
+        press(pid, "Dismiss")
+
+        ok = press(pid, "slow") and wait_for(lambda: "large.bin" in text(pid), 20)
+        entry = ok and open_dialog("Download large.bin")
+        ok = bool(entry) and save_as(entry, os.path.join(out, "large.bin"))
+        progress = ok and panel_says("% ·", "of 16 MiB", timeout=20)
+        partial = [n for n in saved() if n.endswith(".sotyware-partial")]
+        check("progress shows percent and bytes; the data goes to a hidden temporary file",
+              bool(progress) and len(partial) == 1 and partial[0].startswith(".large.bin.")
+              and "large.bin" not in saved(), f"{saved()} {text(pid)[-200:]}")
+        check("while downloading, the other Download actions are disabled and Cancel is offered",
+              "Cancel download" in buttons(pid))
+        ok = press(pid, "Cancel download") and panel_says("Download cancelled. Nothing was saved.", timeout=15)
+        check("Cancel stops it: no file and no temporary file",
+              bool(ok) and not any(n.startswith(".large.bin") or n == "large.bin" for n in saved()), str(saved()))
+        press(pid, "Dismiss")
+        press(pid, BUCKET) and wait_for(lambda: "readme.txt" in text(pid), 20)
+
+        ok = press(pid, "broken") and wait_for(lambda: "cut.bin" in text(pid), 20)
+        entry = ok and open_dialog("Download cut.bin")
+        ok = bool(entry) and save_as(entry, os.path.join(out, "cut.bin"))
+        failed = ok and panel_says("Download failed. Nothing was saved.", "could not be reached", timeout=30)
+        check("a broken connection: failed, with Try again, nothing saved",
+              bool(failed) and "Try download again" in buttons(pid) and "cut.bin" not in saved()
+              and not any(n.endswith(".sotyware-partial") for n in saved()), f"{saved()} {text(pid)[-300:]}")
+        ok = press(pid, "Try download again") and wait_for(
+            lambda: "Try download again" in buttons(pid) and "Download failed" in text(pid), 30)
+        check("Try again repeats it without a dialog (and fails the same way here)",
+              bool(ok) and chooser() is None and "cut.bin" not in saved(), text(pid)[-300:])
+        press(pid, "Dismiss")
+        entry = open_dialog("Download tampered.bin")
+        ok = bool(entry) and save_as(entry, os.path.join(out, "tampered.bin"))
+        failed = ok and panel_says("Download failed", "did not pass the integrity check", timeout=30)
+        check("content that does not match its SHA-256 is never saved",
+              bool(failed) and "tampered.bin" not in saved(), f"{saved()} {text(pid)[-300:]}")
+        press(pid, "Dismiss")
+
+        # Quitting while a download runs: in dashboard-only mode closing the
+        # window quits; the temporary file must be gone afterwards.
+        press(pid, BUCKET) and wait_for(lambda: "slow" in text(pid), 20)
+        ok = press(pid, "slow") and wait_for(lambda: "large.bin" in text(pid), 20)
+        entry = ok and open_dialog("Download large.bin")
+        ok = bool(entry) and save_as(entry, os.path.join(out, "quit.bin"))
+        running = ok and panel_says("% ·", timeout=20) and any(n.startswith(".quit.bin.") for n in saved())
+        close_windows(pid)
+        try:
+            code = p.wait(15)
+        except subprocess.TimeoutExpired:
+            code = None
+        check("closing the window during a download quits (exit 0) and removes the temporary file",
+              bool(running) and code == 0 and not any(n.startswith(".quit.bin") or n == "quit.bin" for n in saved()),
+              f"exit {code}, {saved()}")
+        check("the saved files are exactly the completed downloads",
+              saved() == ["bericht.pdf", "existing.txt", "foreign.txt", "readme copy.txt"], str(saved()))
 
     elif PHASE == "b2":
         label = f"sotyware e2e {RUN}"

@@ -14,8 +14,10 @@
 //! - [`dashboard`]: the Tauri commands of the Cloud Storage page (ADR-018):
 //!   list, add, edit and remove accounts and check their connection.
 //! - [`browser`]: read-only browsing of an account's bucket, one folder level
-//!   and one page at a time (ADR-019). No transfers or backups are reachable
-//!   from the app yet.
+//!   and one page at a time (ADR-019).
+//! - [`download`]: downloading one file at a time from the browser to a path
+//!   chosen in the native save dialog, with progress and cancellation
+//!   (ADR-020). Uploads, deletes and backups are not reachable from the app.
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
@@ -23,6 +25,7 @@ pub mod account;
 pub mod browser;
 pub mod credentials;
 pub mod dashboard;
+pub mod download;
 pub mod keyring;
 pub mod provider;
 pub mod s3;

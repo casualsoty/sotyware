@@ -5,7 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse b2 b2-browse (default: local hang browse)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download b2 b2-browse
+#        (default: local hang browse download)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
 #                            (dpkg -x), if gnome-keyring-daemon is not installed
@@ -15,6 +16,10 @@
 # browse: the bucket browser against the in-process listing server of the Rust
 #        tests (cargo test ... serve_listing_for_ui -- --ignored), which fails
 #        if anything but a listing reached it; contacts no provider.
+# download: downloads through the native GTK save dialog from the in-process
+#        object server of the Rust tests (serve_objects_for_ui), which fails if
+#        anything but listing, the connection check and GetObject reached it;
+#        contacts no provider. Ends by closing the window during a download.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -37,7 +42,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/release/sotyware}")
@@ -55,7 +60,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse) ;;
+      local|hang|browse|download) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -170,6 +175,24 @@ for phase in "${PHASES[@]}"; do
         echo "[PASS] browse: the server saw only listings ($(grep -o 'operations: .*' "$WORK/browse-server.log"))"
       else
         echo "[FAIL] browse: the listing server failed:"; tail -20 "$WORK/browse-server.log"; rc=1
+      fi
+      SRV_PID="" ;;
+    download)
+      SRV_FILE=$WORK/download-endpoint
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+        cloud::test_server::serve_objects_for_ui -- --ignored --nocapture >"$WORK/download-server.log" 2>&1) &
+      SRV_PID=$!
+      for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
+      [ -s "$SRV_FILE" ] || { echo "object server did not start:"; cat "$WORK/download-server.log"; exit 3; }
+      start_keyring
+      SOTYWARE_UI_ENDPOINT=$(cat "$SRV_FILE") SOTYWARE_UI_MANIFEST=$SRV_FILE.json \
+        python3 "$H/cloud_ui.py" download "$BIN" || rc=1
+      stop_keyring
+      rm -f -- "$SRV_FILE" "$SRV_FILE.json"
+      if wait "$SRV_PID"; then
+        echo "[PASS] download: the server saw only reads ($(grep -o 'operations: .*' "$WORK/download-server.log"))"
+      else
+        echo "[FAIL] download: the object server failed:"; tail -20 "$WORK/download-server.log"; rc=1
       fi
       SRV_PID="" ;;
     b2)

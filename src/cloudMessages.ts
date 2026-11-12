@@ -55,6 +55,15 @@ const ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "invalid-configuration": "The account's settings cannot be used. Edit the account to fix them. Details:",
   provider: "The provider could not complete the request:",
   "outdated-page": "This list is out of date. Refresh to load it again. Details:",
+  busy: "Another download is running. Wait for it to finish or cancel it first. Details:",
+  "object-not-found": "The file could not be found. It may have been deleted or renamed; refresh the folder. Details:",
+  integrity: "The downloaded data did not pass the integrity check, so it was not saved. Try again. Details:",
+  "disk-full": "The destination drive is full. Free some space or choose another location. Details:",
+  "local-permission": "sotyware may not write to this location. Choose another folder. Details:",
+  "destination-unavailable": "The destination folder is not available (removed, or a drive was disconnected). Details:",
+  "destination-exists":
+    "A file with this name appeared while downloading. It was not replaced; download again and choose to replace it. Details:",
+  "local-file": "The file could not be written. Details:",
   other: "Something went wrong:",
 };
 

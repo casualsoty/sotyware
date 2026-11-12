@@ -244,7 +244,12 @@ async fn corrupted_content_is_detected_and_never_written_to_the_destination() {
     let e = s.download_file(BUCKET, "doc.pdf", &dest).await.unwrap_err();
     assert!(matches!(e, StorageError::Integrity(_)), "{e:?}");
     assert!(!dest.exists());
-    assert!(!dir.path("doc-back.pdf.sotyware-partial").exists());
+    // Only the source file: no temporary file is left.
+    let names: Vec<_> = fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["doc.pdf"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -274,7 +279,16 @@ async fn a_download_never_overwrites_an_existing_file() {
     let dest = dir.path("mine.txt");
     fs::write(&dest, b"my own file").unwrap();
     let e = s.download_file(BUCKET, "a", &dest).await.unwrap_err();
-    assert!(matches!(e, StorageError::Refused(_)), "{e:?}");
+    assert!(
+        matches!(
+            e,
+            StorageError::LocalWrite {
+                kind: std::io::ErrorKind::AlreadyExists,
+                ..
+            }
+        ),
+        "{e:?}"
+    );
     assert_eq!(fs::read(&dest).unwrap(), b"my own file");
 }
 

@@ -238,6 +238,40 @@ layers, the first two in every `cargo test`:
   account changed or went while it ran, an account without a bucket, a
   prefix that is not a folder; the JSON shape without key or token; and that
   browsing sends nothing but `ListObjectsV2`.
+- **Single-file downloads** (`cloud/download/tests.rs`), against the
+  in-process server's object backend (`TestServer::start_objects`: exact
+  keys, optional `sotyware-sha256` metadata, with or without
+  `Content-Length`, bodies that are slow, stall or break off after N bytes).
+  Pure rules: the suggested file name (last segment, `..`, `folder/`,
+  Windows-illegal and control characters, `CON`/`COM1`, length), key
+  lengths, which destinations may be replaced (the dialog's existing file
+  only; a folder or relative path refused), the 250 ms progress throttle, and
+  every error kind with sotyware's own text. Through `CloudDownloads` and
+  `S3Store::download`: a 300 KiB file verified, its messages (one `active` at
+  0 bytes first, bytes only growing, exactly one final message, last), no
+  temporary file left, one `GetObject`, no secret in any message; an empty
+  file; a 24 MiB file whose temporary file grows on disk during the stream
+  (no step over 1 MiB); progress throttled with no announced size (`total`
+  `null`); cancel during a stalled body (stops within seconds, not by the
+  30 s read timeout; another id and a repeat do nothing; nothing left; not
+  retryable); cancel right before the final move (cancelled, nothing
+  written) and right after it (`finishing`, completed); a SHA-256 mismatch;
+  no stored SHA-256 (`size-only`); a connection cut mid-body (failed,
+  retried as a new transfer to the same destination, only the latest failure
+  retryable); a retry after the missing key was stored; a simulated full disk
+  (`disk-full`, temporary file removed); a read-only folder and a vanished
+  folder (Unix); an existing destination refused, one that appears during
+  the download left untouched, a chosen one replaced, a failed replacement
+  keeping the old file; ten unusual keys (`a//b`, `../../outside.txt`,
+  Unicode, `+ & ? # %`, `\`, spaces, an emoji) fetched exactly into the
+  chosen files and nothing written outside; `a/b` not found where `a//b`
+  exists; two accounts at two servers with their own keys and distinct
+  transfer ids, one account's key refused by the other; one download or
+  dialog at a time (`busy`, a closed dialog frees the slot); a changed bucket
+  (`outdated-page`) or removed account with no request sent; quitting during
+  a download (cancelled, temporary file removed, no new download); and a
+  stalled body ending as `network` after the SDK's ~5 s stalled-stream
+  protection.
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
 - **The real OS credential store**, opt-in only:
   [below](#os-credential-store-test).
@@ -554,6 +588,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `local` | **Network error** (endpoint `http://127.0.0.1:9`, made-up keys) | a second account with the login collection locked over D-Bus: **Credential store locked**, and Remove keeps the account while its key cannot be deleted. Where gnome-keyring's system prompter is installed (the distribution package ships `org.gnome.keyring.SystemPrompter.service`, which the private bus activates), the unlock dialog of `gcr-prompter` opens on the Xvfb display; the driver presses its Cancel through AT-SPI, as a person who declines would, and prints how many it declined. With an unpacked gnome-keyring there is no prompter and the store refuses at once; nothing is pressed |
 | Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Overview link and the example feature's switch still work, the process keeps running |
 | Linux `browse`, Windows `-Mode browse` | — (Windows: **Connected**) | the bucket browser against the in-process listing server (`cargo test … serve_listing_for_ui -- --ignored`, started by the script in this checkout's `src-tauri`, made-up key): Open bucket → the root's folders and files with size; a folder with spaces and Unicode; the bucket breadcrumb; `photos/` without its marker or nested file; `photos/2024/` with a MiB size; Up one folder; a marker-only folder → "This folder is empty."; a folder of 1,005 entries → "1000 items shown; more are available", Load more → 1,005, no Load more; Refresh → 1,000 again; ← Back to accounts; remove. The server fails the phase if anything but `ListObjectsV2` (or `HeadBucket`) reached it |
+| Linux `download`, Windows `-Mode download` | — (Windows: **Connected**) | downloads through the **native save dialog** from the in-process object server (`cargo test … serve_objects_for_ui -- --ignored`, made-up key; it writes the objects' sizes and SHA-256 next to its endpoint file): every file row has Download; the dialog opens with the key's last segment suggested, and cancelling it starts nothing; Save → "Downloaded …" with the SHA-256 matched and the file's SHA-256 equal to the server's; an existing file → the dialog's own replace question (GTK: "already exists" + Replace; Windows: "Confirm Save As" + Yes), the old file untouched until then, replaced afterwards; `docs/Bericht 2024 ü & co.pdf` (3 MiB) suggested unchanged and verified; a file without a stored SHA-256 → completed, "could not be verified"; a slow 16 MiB file → percent and "of 16 MiB", a hidden `.large.bin.*.sotyware-partial`, Cancel → "Download cancelled. Nothing was saved.", no file left; a connection cut after 256 KiB → failed with the network text, Try download again (no dialog) fails the same way; content that does not match its SHA-256 → integrity failure, nothing saved; at the end the download folder holds exactly the completed files. Linux only: closing the window during a download (dashboard-only mode quits) → exit 0 and no temporary file. Files go to a folder in the throwaway HOME (Linux) or a new folder under `%TEMP%` (Windows, removed afterwards). The server fails the phase if anything but `GetObject`, `ListObjectsV2` or `HeadBucket` reached it. On Linux the GTK dialog's name field is found through AT-SPI and the path typed with XTest (ASCII paths only); on Windows the common item dialog's File name box, Save and Cancel are not in its UI Automation tree (Windows 11 25H2), so they are found as child windows by control id (Edit `1001`, Button `1`, `2`) and driven with `WM_SETTEXT` / `BM_CLICK`, and the Yes of "Confirm Save As" with `TDM_CLICK_BUTTON`; any script error in this mode is a failed check and the account is still removed |
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
 | Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
@@ -563,8 +598,8 @@ folder." with the network error and Try again; in `b2` it is pressed at the
 root once and must show a listing or Access denied (the test key is limited
 to `sotyware-it/`), then ← Back to accounts.
 
-**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [b2] [b2-browse]`, default `local
-hang browse`): Xvfb + openbox and a private `dbus-run-session`, a real
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [download] [b2] [b2-browse]`, default `local
+hang browse download`): Xvfb + openbox and a private `dbus-run-session`, a real
 `gnome-keyring-daemon --unlock` with a throwaway login keyring in a
 throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
 keyring included; never your own keyrings or display). It needs what
@@ -594,9 +629,10 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|b2|b2-browse]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|b2|b2-browse]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
-keystrokes, but a logged-in session. The existing `cloud-accounts.sqlite3`
+keystrokes, but a logged-in session (`download` shows the real save dialog
+on the desktop; it is driven through UI Automation too, not clicked). The existing `cloud-accounts.sqlite3`
 is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
 from `%USERPROFILE%\.sotyware-it\b2.xml` (`Get-Credential | Export-Clixml`:
 keyID as user name, applicationKey as password, DPAPI-encrypted for your
@@ -606,11 +642,13 @@ integration-test variables only around the `cargo test` fingerprint calls.
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode browse
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode download
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
 ```
 
-`browse` (and `cloud-ui.sh browse`) compiles and runs the test build the
-first time, so it needs the Rust toolchain, like `b2`.
+`browse` and `download` (and the same phases of `cloud-ui.sh`) compile and
+run the test build the first time, so they need the Rust toolchain, like
+`b2`.
 
 `b2-browse` needs the variables of `b2` plus the read-only key's two (Linux;
 Windows reads `b2.xml`, `b2-read.xml` and `b2-bucket.txt`), the Rust
@@ -624,7 +662,9 @@ complete). On Windows the page's dates follow the Windows display language
 script passes `(Get-UICulture).Name` to the same `toLocaleString` call.
 
 Not covered by either: an unlock prompt answered by a person, KWallet,
-Windows 10, the connection check against Hetzner, browsing at Hetzner.
+Windows 10, the connection check against Hetzner, browsing at Hetzner,
+downloading from any real provider, the XDG desktop portal's save dialog,
+quitting through the tray during a download (Windows).
 
 ## Frontend tests
 
@@ -718,6 +758,22 @@ only where editing fixes it; Edit account opening that account's form; a
 removed account closing the browser with a message and a reload; and that a
 slow answer for one account never shows in another's browser.
 `parseFolderListing` is tested against the Rust shape and malformed values.
+Downloads, with mocked `download_cloud_file`, `cancel_cloud_download` and
+`retry_cloud_download` whose channel the test feeds directly: a Download
+action per file (none per folder) sending the account, the browsed bucket and
+the exact key (with markup in its name, shown as text) and no path; "Choose
+where to save" while the dialog is open; a cancelled dialog (`null`)
+starting nothing; progress with percent and bytes, every Download action
+disabled meanwhile (a second click sends nothing) while folders still open;
+an unknown size shown as bytes only; completion with "SHA-256 … matched" or
+the size-only text, a late message ignored, Dismiss; Cancel sending the
+transfer id, "Cancelling…", then "Download cancelled"; a cancel answered
+`finishing`; a failure with its text, Try download again sending the old
+transfer id (no dialog) and following the new one while ignoring the old
+transfer on both channels; messages of another transfer ignored and the
+own one accepted before the command's reply; a refused start (`busy`) asking
+again through the dialog; Edit account for a missing key; and leaving the
+browser cancelling the running download.
 
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)

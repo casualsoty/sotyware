@@ -2,18 +2,26 @@
   import { onDestroy, onMount } from "svelte";
   import {
     CloudCommandError,
+    cancelDownload,
+    downloadFile,
     listFolder,
+    retryDownload,
     type AccountInfo,
     type Breadcrumb,
+    type DownloadEvent,
+    type DownloadStarted,
     type FileEntry,
     type FolderEntry,
+    type IntegrityCheck,
   } from "./cloud";
   import { FIXED_BY_EDITING, describeError } from "./cloudMessages";
 
-  // Read-only browser of one account's bucket, one folder level and one page
-  // at a time. Folder prefixes are only ever ones Rust returned (or "" for the
+  // Browser of one account's bucket, one folder level and one page at a
+  // time. Folder prefixes are only ever ones Rust returned (or "" for the
   // root): the page never joins names into a prefix, so keys are kept
-  // exactly. Nothing here uploads, downloads, renames or deletes.
+  // exactly. Files can be downloaded one at a time: Rust opens the save
+  // dialog, so the page never names a local path. Nothing here uploads,
+  // renames or deletes.
 
   interface Props {
     account: AccountInfo;
@@ -41,6 +49,34 @@
   // dropped, so a slow folder can never overwrite a newer one.
   let request = 0;
   let destroyed = false;
+
+  /** The one download this browser shows (none, or the latest). */
+  interface Download {
+    /** Which start this is; messages of an older one are ignored. */
+    seq: number;
+    /** Known once Rust started it (from its reply or its first message). */
+    transfer: string | null;
+    file: FileEntry;
+    /** The chosen file's name, else the remote name until it is known. */
+    fileName: string;
+    state: "choosing" | "active" | "completed" | "cancelled" | "failed";
+    bytes: number;
+    total: number | null;
+    integrity: IntegrityCheck | null;
+    error: unknown;
+    cancel: "requested" | "finishing" | null;
+  }
+
+  let download = $state<Download | null>(null);
+  let downloadSeq = 0;
+  const downloadBusy = $derived(download !== null && (download.state === "choosing" || download.state === "active"));
+  const percent = $derived(
+    download === null || download.total === null
+      ? null
+      : download.total === 0
+        ? 100
+        : Math.min(100, Math.floor((download.bytes / download.total) * 100)),
+  );
 
   const parentCrumbs = $derived(crumbs.length === 0 ? null : crumbs.slice(0, -1));
   const empty = $derived(loading === null && error === null && folders.length === 0 && files.length === 0);
@@ -154,6 +190,160 @@
     }
   }
 
+  /** The current download, if `seq` is still it. */
+  function current(seq: number): Download | null {
+    return !destroyed && download !== null && download.seq === seq ? download : null;
+  }
+
+  function onDownloadEvent(seq: number, event: DownloadEvent): void {
+    const d = current(seq);
+    // Another transfer's message (an older start, or one this page no longer
+    // shows): ignore it.
+    if (d === null || (d.transfer !== null && d.transfer !== event.transfer)) {
+      return;
+    }
+    if (d.state === "completed" || d.state === "cancelled" || d.state === "failed") {
+      return;
+    }
+    d.transfer = event.transfer;
+    d.bytes = event.bytes;
+    d.total = event.total;
+    if (event.state === "active") {
+      d.state = "active";
+      return;
+    }
+    d.state = event.state;
+    d.integrity = event.integrity;
+    d.error = event.error === null ? null : new CloudCommandError(event.error.kind, event.error.message);
+    d.cancel = null;
+  }
+
+  function adopt(seq: number, started: DownloadStarted): void {
+    const d = current(seq);
+    if (d === null) {
+      // The page went away meanwhile: nobody can see or cancel it.
+      if (destroyed) {
+        void cancelDownload(started.transfer).catch(() => undefined);
+      }
+      return;
+    }
+    if (d.transfer !== null && d.transfer !== started.transfer) {
+      return;
+    }
+    d.transfer = started.transfer;
+    d.fileName = started.fileName;
+    if (d.state === "choosing") {
+      d.state = "active";
+    }
+  }
+
+  function begin(file: FileEntry): number {
+    const seq = ++downloadSeq;
+    download = {
+      seq,
+      transfer: null,
+      file,
+      fileName: shownName(file.name),
+      state: "choosing",
+      bytes: 0,
+      total: null,
+      integrity: null,
+      error: null,
+      cancel: null,
+    };
+    return seq;
+  }
+
+  function failStart(seq: number, e: unknown): void {
+    const d = current(seq);
+    if (d !== null && d.state !== "completed" && d.state !== "cancelled" && d.state !== "failed") {
+      d.state = "failed";
+      d.error = e;
+    }
+  }
+
+  async function startDownload(file: FileEntry): Promise<void> {
+    if (downloadBusy) {
+      return;
+    }
+    const seq = begin(file);
+    try {
+      const started = await downloadFile(account.id, bucket, file.key, (e) => onDownloadEvent(seq, e));
+      if (started === null) {
+        // The save dialog was cancelled: nothing started.
+        if (current(seq)?.state === "choosing") {
+          download = null;
+        }
+        return;
+      }
+      adopt(seq, started);
+    } catch (e) {
+      if (errorKind(e) === "unknown-account") {
+        onclose(`${account.label} no longer exists; it was removed or changed elsewhere.`);
+        return;
+      }
+      failStart(seq, e);
+    }
+  }
+
+  async function retryFailed(): Promise<void> {
+    const failed = download;
+    if (failed === null || failed.state !== "failed") {
+      return;
+    }
+    if (failed.transfer === null) {
+      // It never started (for example the account changed): ask again.
+      await startDownload(failed.file);
+      return;
+    }
+    const previous = failed.transfer;
+    const seq = begin(failed.file);
+    const d = current(seq);
+    if (d !== null) {
+      d.fileName = failed.fileName;
+      d.state = "active";
+    }
+    try {
+      adopt(seq, await retryDownload(previous, (e) => onDownloadEvent(seq, e)));
+    } catch (e) {
+      failStart(seq, e);
+    }
+  }
+
+  async function cancelActive(): Promise<void> {
+    const d = download;
+    if (d === null || d.state !== "active" || d.transfer === null || d.cancel !== null) {
+      return;
+    }
+    const seq = d.seq;
+    d.cancel = "requested";
+    try {
+      const outcome = await cancelDownload(d.transfer);
+      const now = current(seq);
+      if (now !== null && now.state === "active") {
+        now.cancel = outcome === "finishing" ? "finishing" : "requested";
+      }
+    } catch (e) {
+      const now = current(seq);
+      if (now !== null && now.state === "active") {
+        now.cancel = null;
+        now.error = e;
+      }
+    }
+  }
+
+  function dismissDownload(): void {
+    if (!downloadBusy) {
+      download = null;
+    }
+  }
+
+  function integrityText(check: IntegrityCheck | null): string {
+    return check === "sha256-verified"
+      ? "The SHA-256 checksum stored with the file matched."
+      : "The size matched. This file has no SHA-256 checksum stored by sotyware, so its content could not be verified.";
+  }
+
   function shownName(name: string): string {
     return name === "" ? "(no name)" : name;
   }
@@ -190,6 +380,11 @@
 
   onDestroy(() => {
     destroyed = true;
+    // Leaving the browser cancels a running download: no page would show it.
+    const d = download;
+    if (d !== null && d.state === "active" && d.transfer !== null) {
+      void cancelDownload(d.transfer).catch(() => undefined);
+    }
   });
 </script>
 
@@ -229,6 +424,69 @@
     <button type="button" onclick={refresh}>Refresh</button>
   </div>
 
+  {#if download !== null}
+    <div
+      class="download"
+      class:failed={download.state === "failed"}
+      data-download-state={download.state}
+      data-transfer={download.transfer ?? ""}
+      aria-label="Download"
+      role="region"
+    >
+      <p class="download-name"><strong>{download.fileName}</strong></p>
+      {#if download.state === "choosing"}
+        <p role="status">Choose where to save the file…</p>
+      {:else if download.state === "active"}
+        {#if percent !== null}
+          <progress max="100" value={percent} aria-label={`Downloading ${download.fileName}`}>{percent}%</progress>
+        {/if}
+        <p role="status" class="download-progress">
+          {#if download.cancel === "requested"}
+            Cancelling…
+          {:else if download.cancel === "finishing"}
+            Almost done; the file is being saved and cannot be cancelled any more.
+          {:else if download.total !== null}
+            {percent}% · {formatSize(download.bytes)} of {formatSize(download.total)}
+          {:else}
+            {formatSize(download.bytes)} downloaded (total size unknown)
+          {/if}
+        </p>
+        {#if download.error !== null}
+          <p role="alert">Could not cancel: {describeError(download.error)}</p>
+        {/if}
+        <div class="actions">
+          <button type="button" disabled={download.transfer === null || download.cancel !== null} onclick={() => void cancelActive()}>
+            Cancel download
+          </button>
+        </div>
+      {:else if download.state === "completed"}
+        <p role="status" class="download-result">
+          Downloaded {formatSize(download.bytes)}. {integrityText(download.integrity)}
+        </p>
+        <div class="actions">
+          <button type="button" onclick={dismissDownload}>Dismiss</button>
+        </div>
+      {:else if download.state === "cancelled"}
+        <p role="status" class="download-result">Download cancelled. Nothing was saved.</p>
+        <div class="actions">
+          <button type="button" onclick={dismissDownload}>Dismiss</button>
+        </div>
+      {:else}
+        <div role="alert" class="download-result">
+          <p><strong>Download failed. Nothing was saved.</strong></p>
+          <p>{describeError(download.error)}</p>
+        </div>
+        <div class="actions">
+          <button type="button" onclick={() => void retryFailed()}>Try download again</button>
+          {#if fixedByEditing(download.error)}
+            <button type="button" onclick={onedit}>Edit account</button>
+          {/if}
+          <button type="button" onclick={dismissDownload}>Dismiss</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if loading === "folder"}
     <p class="loading" role="status">Loading folder…</p>
   {:else if error?.during === "folder"}
@@ -257,6 +515,7 @@
           <th scope="col">Name</th>
           <th scope="col" class="num">Size</th>
           <th scope="col">Last modified</th>
+          <th scope="col"><span class="visually-hidden">Actions</span></th>
         </tr>
       </thead>
       <tbody>
@@ -270,6 +529,7 @@
             </td>
             <td class="num">Folder</td>
             <td>—</td>
+            <td></td>
           </tr>
         {/each}
         {#each files as file (file.key)}
@@ -277,6 +537,16 @@
             <td class="name">{shownName(file.name)}</td>
             <td class="num" title={`${file.size.toLocaleString()} bytes`}>{formatSize(file.size)}</td>
             <td>{formatDate(file.lastModified)}</td>
+            <td class="row-actions">
+              <button
+                type="button"
+                class="download-action"
+                disabled={downloadBusy}
+                aria-label={`Download ${shownName(file.name)}`}
+                title={downloadBusy ? "Another download is running" : "Download this file"}
+                onclick={() => void startDownload(file)}>Download</button
+              >
+            </td>
           </tr>
         {/each}
       </tbody>
@@ -408,6 +678,50 @@
     white-space: nowrap;
   }
 
+  .row-actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .row-actions button {
+    padding: 0.15rem 0.6rem;
+    font-size: 0.9em;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .download {
+    margin: 0.75rem 0;
+    padding: 0.5rem 1rem;
+    border-left: 3px solid #1565c0;
+    background: rgb(0 0 0 / 4%);
+  }
+
+  .download.failed {
+    border-left-color: #c62828;
+  }
+
+  .download p {
+    margin: 0.25rem 0;
+    overflow-wrap: anywhere;
+  }
+
+  .download-name {
+    white-space: pre-wrap;
+  }
+
+  .download progress {
+    width: 100%;
+    max-width: 28rem;
+  }
+
   .count,
   .loading {
     color: #6b6b73;
@@ -450,8 +764,13 @@
     }
 
     .empty,
-    .problem {
+    .problem,
+    .download {
       background: rgb(255 255 255 / 6%);
+    }
+
+    .download {
+      border-left-color: #90caf9;
     }
   }
 </style>

@@ -16,8 +16,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 - **Current scope:** the desktop runtime (window, tray, lifecycle, single
   instance) and the foundation for built-in features (registry, lifecycle,
   enable/disable from the dashboard, one example feature), and cloud storage
-  account management in the dashboard (add, edit, check, remove; no file
-  transfers). No other product features exist yet. Current milestone and status:
+  in the dashboard: account management (add, edit, check, remove), read-only
+  bucket browsing and downloading one file at a time (no uploads or other
+  changes). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -45,13 +46,14 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-11 (OS credential store for cloud accounts).
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-12 (native save dialog for cloud downloads).
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
 | Tauri (Rust crate, feature `tray-icon`) | `2` | 2.12.5 |
 | tauri-build | `2` | 2.7.4 |
 | tauri-plugin-single-instance (desktop targets only) | `2` | 2.5.5 |
+| tauri-plugin-dialog (desktop targets only; Rust-side save dialog for cloud downloads, no frontend permission) | `2` | 2.8.4 (with `rfd` 0.17.2: GTK 3 on Linux, common item dialog on Windows; `tauri-plugin-fs` 2.7.1 as its dependency, not registered) |
 | Rust | edition 2024, `rust-version = "1.90"` | developed with 1.99.1 |
 | `serde` (feature `derive`; already in the tree through Tauri) | `1` | 1.0.229 |
 | `rusqlite` (feature `bundled`, no default features; feature preferences) | `0.41` | 0.41.1 |
@@ -79,6 +81,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
 | `secret-service` (Linux only, through the store above; also a direct dependency without features, to name its error type) | `5` | 5.1.0 |
 | `s3s` + `s3s-fs` (dev only: in-process S3 test server), `hyper-util` (dev only), `digest` (dev only, pinned `=0.11.0-rc.4` for `s3s`) | `0.12` | 0.12.0 |
+| `bytes`, `futures-core` (dev only, already in the tree: the test server's slow, stalled or cut-off object bodies) | `1`, `0.3` | 1.12.1, 0.3.34 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
 
@@ -140,36 +143,48 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   one `ListObjectsV2` page of one folder level, delimiter `/`; the
   provider's continuation token stays in Rust behind a cursor tied to the
   account, bucket and prefix). No command uploads, downloads, changes
-  objects or returns a credential
+  objects or returns a credential. One file at a time can be downloaded
+  through `cloud/download.rs` (`download_cloud_file`, `cancel_cloud_download`,
+  `retry_cloud_download`; `CloudDownloads` managed state, one slot): Rust
+  opens the native save dialog (`tauri-plugin-dialog`; the frontend never
+  sends a path), `S3Store::download` streams into a temporary file next to
+  the destination, verifies size and stored SHA-256, then moves it into
+  place; progress goes over a Tauri `Channel` passed with the command;
+  quitting cancels a running download
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
   [ADR-018](docs/architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands),
-  [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
+  [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust),
+  [ADR-020](docs/architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
   (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
-  `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` and
-  `list_cloud_folder`
+  `update_cloud_account`, `remove_cloud_account`, `check_cloud_account`,
+  `list_cloud_folder`, `download_cloud_file`, `cancel_cloud_download` and
+  `retry_cloud_download`
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
   and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
-  `setup`). No other custom command, no custom events.
+  `setup`). No other custom command, no custom events (download progress
+  uses a per-call Tauri channel, not an event), no `dialog:` or `fs:`
+  permission.
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices and the cloud
 storage accounts, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, file operations in the cloud browser (it only lists: no
-upload, download, rename, delete or folder creation), transfer UI, credential
+tray fallback, file operations in the cloud browser other than downloading
+one file at a time (no upload, folder or multiple downloads, rename, delete
+or folder creation), transfer queue UI or download history, credential
 import or any credential fallback outside the OS store, backups
 or restic integration, cost estimator, custom event, or custom command besides
-the ten listed above. Never describe these as existing.
+the thirteen listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -276,7 +291,8 @@ Every coding agent must:
 2. Understand existing abstractions (`show_dashboard()`, `AppControl`,
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
-   `CloudAccounts`, `cloud::browser`, the capability file) before
+   `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
+   the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.

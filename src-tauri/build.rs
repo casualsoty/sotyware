@@ -13,6 +13,9 @@ fn main() {
             "remove_cloud_account",
             "check_cloud_account",
             "list_cloud_folder",
+            "download_cloud_file",
+            "cancel_cloud_download",
+            "retry_cloud_download",
         ]),
     ))
     .expect("failed to run tauri-build");

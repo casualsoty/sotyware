@@ -83,14 +83,27 @@ order:
      page instead of an error (seen with a made-up token; an expired one was
      not tried): decide whether Load more should detect a page that starts
      over (today the page only drops the repeated rows).
-6. **Next: downloads from the browser**, one file at a time into a folder the
-   user picks, through the existing verified `S3Store::download_file` and the
-   per-account transfer queue, with progress reporting (the first custom
-   event: its own ADR) and cancel. Uploads, deletes and folder creation come
-   after, each with its own confirmation design.
-7. restic orchestration (child process, `--json`, exit codes), tried first
+6. Single-file downloads from the browser: done 2026-11-12 (ADR-020,
+   `download_cloud_file`, `cancel_cloud_download`, `retry_cloud_download`;
+   native save dialog opened by Rust, progress on a Tauri channel, cancel,
+   retry, one at a time;
+   [status.md](status.md#cloud-storage-single-file-downloads-2026-11-12)).
+   Open:
+   - a download from a real provider (only the in-process object server so
+     far): one small object from the Backblaze test bucket would confirm that
+     `GetObject` returns the stored `sotyware-sha256` metadata and a
+     `Content-Length` there (a billed class B transaction and a few bytes of
+     egress; no write needed if an existing object of the test prefix is
+     used);
+   - a person's run with the dialogs on a real Linux desktop (GNOME/KDE,
+     possibly the XDG portal instead of GTK's own dialog) and Windows 10;
+   - decide whether stale `.sotyware-partial` files left by a killed process
+     should be found and offered for removal.
+7. **Next:** uploads, deletes and folder creation, each with its own
+   confirmation design.
+8. restic orchestration (child process, `--json`, exit codes), tried first
    against the B2 test bucket.
-8. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+9. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
 
 Synchronisation, folder watching, scheduled backups, retention, sharing and a
 virtual filesystem stay ideas until then.

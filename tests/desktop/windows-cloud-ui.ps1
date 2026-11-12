@@ -5,7 +5,7 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse] [-Exe <path>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|download] [-Exe <path>]
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -14,6 +14,16 @@
 #   the Rust tests (cargo test ... serve_listing_for_ui -- --ignored, in this
 #   checkout's src-tauri; made-up key), which fails if anything but a listing
 #   or the connection check reached it. Contacts no provider.
+# -Mode download: downloads through the native Windows save dialog (the common
+#   item dialog: Cancel, File name + Save, the "Confirm Save As" question for
+#   an existing file; its controls are not in the UI Automation tree, so they
+#   are found by control id and driven with window messages, not the mouse) from the in-process
+#   object server of the Rust tests (serve_objects_for_ui; made-up key), which
+#   fails if anything but listing, the connection check and GetObject reached
+#   it. Checks progress, Cancel, failures with Try again, and each saved
+#   file's SHA-256 against the server's. Files go to a new folder under
+#   %TEMP%, removed afterwards. Contacts no provider. The dialog is a real
+#   window on the desktop (it is not moved or clicked with the mouse).
 # -Mode b2: the real Backblaze B2 test bucket. The key comes from
 #   $env:USERPROFILE\.sotyware-it\b2.xml (Get-Credential | Export-Clixml: keyID
 #   as user name, applicationKey as password, DPAPI-encrypted for this Windows
@@ -37,7 +47,7 @@
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003"
 )
@@ -52,6 +62,34 @@ public static class CloudUiW {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumProc f, IntPtr l);
+  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, System.Text.StringBuilder l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static string GetText(IntPtr h) { var sb = new System.Text.StringBuilder(4096); SendMessage(h, 0x000D, (IntPtr)4096, sb); return sb.ToString(); }
+  public static void SetText(IntPtr h, string t) { SendMessage(h, 0x000C, IntPtr.Zero, t); }
+  // BM_CLICK, posted: the dialog may open a modal question in reply.
+  public static bool Click(IntPtr h) { return PostMessage(h, 0x00F5, IntPtr.Zero, IntPtr.Zero); }
+  // Presses button `id` (IDYES = 6) of a task dialog (TDM_CLICK_BUTTON), or of
+  // a classic message box (WM_COMMAND), whichever `h` is.
+  public static void Answer(IntPtr h, int id) {
+    var b = ChildById(h, id, "Button");
+    if (b != IntPtr.Zero) { Click(b); return; }
+    PostMessage(h, 0x0400 + 102, (IntPtr)id, IntPtr.Zero);
+  }
+  // The first descendant window of `parent` with control id `id` (and class
+  // `cls`, if given): the common item dialog's Save (1), Cancel (2) and File
+  // name edit (1001) are classic child windows that its UI Automation tree
+  // does not always expose.
+  public static IntPtr ChildById(IntPtr parent, int id, string cls) {
+    IntPtr found = IntPtr.Zero;
+    EnumChildWindows(parent, (h, l) => {
+      var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256);
+      if (GetDlgCtrlID(h) == id && (cls == null || sb.ToString() == cls)) { found = h; return false; }
+      return true; }, IntPtr.Zero);
+    return found;
+  }
   public static IntPtr[] Find(string cls, uint[] pids) {
     var res = new System.Collections.Generic.List<IntPtr>();
     EnumWindows((h, l) => { uint pid; GetWindowThreadProcessId(h, out pid);
@@ -188,21 +226,29 @@ if ($Mode -eq "b2-browse") {
   $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
   $Key2 = $Key1; $Secret2 = "sotywareE2eWrongSecret0123456789abcdef"
   $Endpoint = ""
-} elseif ($Mode -eq "browse") {
-  # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
-  $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"
+} elseif ($Mode -eq "browse" -or $Mode -eq "download") {
+  # The made-up keys of serve_listing_for_ui / serve_objects_for_ui (src-tauri/src/cloud/test_server.rs).
+  if ($Mode -eq "browse") {
+    $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
+  } else {
+    $Key1 = "e2eDownloadKey00000001"; $Secret1 = "e2e-Download-Secret-0123456789"; $Bucket = "download-bucket"; $Helper = "serve_objects_for_ui"
+  }
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
-  $Bucket = "browse-bucket"
-  $SrvFile = Join-Path $env:TEMP "sotyware-browse-endpoint-$run.txt"
-  $SrvOut = Join-Path $env:TEMP "sotyware-browse-server-$run.log"
+  $SrvFile = Join-Path $env:TEMP "sotyware-$Mode-endpoint-$run.txt"
+  $SrvOut = Join-Path $env:TEMP "sotyware-$Mode-server-$run.log"
   $env:SOTYWARE_UI_SERVER_FILE = $SrvFile
-  $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::serve_listing_for_ui", "--", "--ignored", "--nocapture" `
+  $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::$Helper", "--", "--ignored", "--nocapture" `
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
   Remove-Item Env:SOTYWARE_UI_SERVER_FILE
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
-  "listing server: $Endpoint"
+  "test server: $Endpoint"
+  if ($Mode -eq "download") {
+    $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
+    $Out = Join-Path $env:TEMP "sotyware-downloads-$run"
+    New-Item -ItemType Directory $Out | Out-Null
+  }
 } else {
   $Key1 = "e2eKeyIdOne000000000001"; $Secret1 = "e2e-Secret-One-0123456789abcdef"
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
@@ -346,6 +392,46 @@ function Shows($rel, [bool]$firstPage = $false) {
 }
 function Go($folder, $rel, [bool]$firstPage = $false) { (PressFolder $folder) -and (Shows $rel $firstPage) }
 
+# ---- the native save dialog (download mode) ----
+function DialogNamed($title) {
+  $p = [uint32[]]@((Procs).Id); if ($p.Count -eq 0) { return $null }
+  foreach ($h in [CloudUiW]::Find("#32770", $p)) { $e = $A::FromHandle($h); if ($e.Current.Name -eq $title) { return $e } }
+  $null
+}
+function PCA($id) { [System.Windows.Automation.PropertyCondition]::new($A::AutomationIdProperty, $id) }
+# The save dialog's File name box (common item dialog: Edit 1001, found as a
+# child window by its control id).
+function Hwnd($el) { [IntPtr][int64]$el.Current.NativeWindowHandle }
+# The common item dialog's File name box (Edit, control id 1001) and its
+# Save (1) and Cancel (2) buttons are classic child windows; its UI
+# Automation tree does not expose them (Windows 11 25H2), so they are found
+# by control id and driven with WM_GETTEXT / WM_SETTEXT / BM_CLICK (UI
+# Automation "no keystrokes, no mouse" still holds).
+function NameBox($dlg) { $h = [CloudUiW]::ChildById((Hwnd $dlg), 1001, "Edit"); if ($h -eq [IntPtr]::Zero) { $null } else { $h } }
+function DialogButton($dlg, [int]$id) { $h = [CloudUiW]::ChildById((Hwnd $dlg), $id, "Button"); if ($h -eq [IntPtr]::Zero) { $null } else { $h } }
+# Presses the file's Download action and waits for the save dialog and its
+# File name box (the window exists a moment before its controls do).
+function OpenSave($file) {
+  if (-not (Press "Download $file")) { return $null }
+  $script:dlg = $null
+  $ready = WaitFor { $script:dlg = DialogNamed "Save download as"; ($null -ne $script:dlg) -and ($null -ne (NameBox $script:dlg)) } 20
+  if ($script:dlg -and -not $ready) { Write-Host "  save dialog without a File name box" }
+  $script:dlg
+}
+function CancelDialog($dlg) { $b = DialogButton $dlg 2; if ($b) { [void][CloudUiW]::Click($b) } }
+function Suggested($dlg) { $b = NameBox $dlg; if (-not $b) { return "" }; [CloudUiW]::GetText($b) }
+# Types $path into File name and presses Save.
+function SaveAs($dlg, $path) {
+  $b = NameBox $dlg; if (-not $b) { Write-Host "  no File name box"; return $false }
+  [CloudUiW]::SetText($b, $path)
+  if (-not (WaitFor { [CloudUiW]::GetText($b) -eq $path } 5)) { return $false }
+  $save = DialogButton $dlg 1; if (-not $save) { return $false }
+  [CloudUiW]::Click($save)
+}
+function Saved { @(Get-ChildItem -Force $Out | ForEach-Object { $_.Name } | Sort-Object) }
+function Sha($path) { (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() }
+function Says([string[]]$parts, [double]$timeout = 60) { WaitFor { $t = PageText; foreach ($x in $parts) { if (-not $t.Contains($x)) { return $false } }; $true } $timeout }
+
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
   $p = Start-Process $Exe -PassThru
@@ -414,6 +500,84 @@ try {
     $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
     $ok = $ok -and (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Root of the bucket*") -and ($t -notlike "*Loading*") } 60)
     Check "Back to accounts, then Open bucket again starts at the bucket's root" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+  } elseif ($Mode -eq "download") {
+   try {
+    $ok = $ok -and (WaitFor { (PageText) -like "*readme.txt*" } 30)
+    Check "Open bucket lists the files with a Download action each" ($ok -and $null -ne (Named "Download readme.txt" $CT::Button) -and $null -ne (Named "Download foreign.txt" $CT::Button)) (PageText)
+
+    $dlg = OpenSave "readme.txt"
+    Check "Download opens the native save dialog with the file name suggested" ($null -ne $dlg -and (Suggested $dlg) -eq "readme.txt") "$(if ($dlg) { Suggested $dlg }) | $(PageText)"
+    Check "while the dialog is open, the page says so" ((PageText) -like "*Choose where to save the file*")
+    if ($dlg) { CancelDialog $dlg }
+    $gone = WaitFor { ($null -eq (DialogNamed "Save download as")) -and ((PageText) -notlike "*Choose where to save*") } 10
+    Check "Cancel in the dialog starts nothing and leaves no file" ($gone -and (Saved).Count -eq 0) "$(Saved)"
+
+    $target = Join-Path $Out "readme copy.txt"
+    $dlg = OpenSave "readme.txt"
+    $ok = $dlg -and (SaveAs $dlg $target) -and (Says @("Downloaded", "SHA-256 checksum stored with the file matched"))
+    Check "save: the file is downloaded and its SHA-256 verified" ($ok -and ((Saved) -join "|") -eq "readme copy.txt" -and (Sha $target) -eq $script:objects["readme.txt"].sha256) "$(Saved) | $(PageText)"
+    $null = Press "Dismiss"
+
+    $mine = Join-Path $Out "existing.txt"
+    Set-Content $mine "an older file of mine" -NoNewline
+    $dlg = OpenSave "readme.txt"
+    $ok = $dlg -and (SaveAs $dlg $mine)
+    $script:conf = $null
+    $asked = $ok -and (WaitFor { $script:conf = DialogNamed "Confirm Save As"; $null -ne $script:conf } 10)
+    Check "an existing file: Windows asks before replacing it, and nothing is written meanwhile" ($asked -and (Get-Content $mine -Raw) -eq "an older file of mine") "$(PageText)"
+    # "Confirm Save As" is a task dialog; its Yes (IDYES) is pressed through
+    # UI Automation if it is exposed there, else with TDM_CLICK_BUTTON.
+    if ($script:conf) {
+      $yes = $script:conf.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $CT::Button), (PCN "Yes")))
+      if ($yes) { $yes.GetCurrentPattern($Invoke).Invoke() } else { [CloudUiW]::Answer((Hwnd $script:conf), 6) }
+    }
+    $ok = $asked -and (Says @("Downloaded", "matched"))
+    Check "after Yes the file is replaced in place, no temporary file left" ($ok -and (Sha $mine) -eq $script:objects["readme.txt"].sha256 -and ((Saved) -join "|") -eq "existing.txt|readme copy.txt") "$(Saved)"
+    $null = Press "Dismiss"
+
+    $key = "docs/Bericht 2024 $([char]0xFC) & co.pdf"; $name = "Bericht 2024 $([char]0xFC) & co.pdf"
+    $ok = (PressFolder "docs") -and (WaitFor { (PageText).Contains($name) } 20)
+    $dlg = if ($ok) { OpenSave $name } else { $null }
+    Check "a Unicode name with & and spaces is suggested unchanged" ($null -ne $dlg -and (Suggested $dlg) -eq $name) "$(if ($dlg) { Suggested $dlg })"
+    $dest = Join-Path $Out $name
+    $ok = $dlg -and (SaveAs $dlg $dest) -and (Says @("Downloaded 3.0 MiB", "matched"))
+    Check "the 3 MiB file under its exact key and a Unicode file name, SHA-256 verified" ($ok -and (Sha $dest) -eq $script:objects[$key].sha256) (PageText)
+    $null = Press "Dismiss"
+    $null = (PressFolder $Bucket) -and (WaitFor { (PageText) -like "*readme.txt*" } 20)
+
+    $dlg = OpenSave "foreign.txt"
+    $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "foreign.txt")) -and (Says @("Downloaded", "no SHA-256 checksum stored by sotyware"))
+    Check "a file without a stored SHA-256: completed, and only the size is claimed" ($ok -and ((PageText) -notlike "*checksum stored with the file matched*") -and (Sha (Join-Path $Out "foreign.txt")) -eq $script:objects["foreign.txt"].sha256) (PageText)
+    $null = Press "Dismiss"
+
+    $ok = (PressFolder "slow") -and (WaitFor { (PageText) -like "*large.bin*" } 20)
+    $dlg = if ($ok) { OpenSave "large.bin" } else { $null }
+    $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "large.bin")) -and (Says @("% ", "of 16 MiB") 20)
+    $partial = @(Saved | Where-Object { $_ -like ".large.bin.*.sotyware-partial" })
+    Check "progress shows percent and bytes; the data goes to a temporary file" ($ok -and $partial.Count -eq 1 -and (Saved) -notcontains "large.bin") "$(Saved) | $(PageText)"
+    $ok = (Press "Cancel download") -and (Says @("Download cancelled. Nothing was saved.") 15)
+    Check "Cancel stops it: no file and no temporary file" ($ok -and @(Saved | Where-Object { $_ -like "*large.bin*" }).Count -eq 0) "$(Saved)"
+    $null = Press "Dismiss"
+    $null = (PressFolder $Bucket) -and (WaitFor { (PageText) -like "*readme.txt*" } 20)
+
+    $ok = (PressFolder "broken") -and (WaitFor { (PageText) -like "*cut.bin*" } 20)
+    $dlg = if ($ok) { OpenSave "cut.bin" } else { $null }
+    $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "cut.bin")) -and (Says @("Download failed. Nothing was saved.", "could not be reached") 30)
+    Check "a broken connection: failed, with Try again, nothing saved" ($ok -and $null -ne (Named "Try download again" $CT::Button) -and @(Saved | Where-Object { $_ -like "*cut.bin*" }).Count -eq 0) "$(Saved) | $(PageText)"
+    $ok = (Press "Try download again") -and (WaitFor { ((PageText) -like "*Download failed*") -and $null -ne (Named "Try download again" $CT::Button) } 30)
+    Check "Try again repeats it without a dialog (and fails the same way here)" ($ok -and $null -eq (DialogNamed "Save download as") -and @(Saved | Where-Object { $_ -like "*cut.bin*" }).Count -eq 0) (PageText)
+    $null = Press "Dismiss"
+    $dlg = OpenSave "tampered.bin"
+    $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "tampered.bin")) -and (Says @("Download failed", "did not pass the integrity check") 30)
+    Check "content that does not match its SHA-256 is never saved" ($ok -and @(Saved | Where-Object { $_ -like "*tampered*" }).Count -eq 0) "$(Saved) | $(PageText)"
+    $null = Press "Dismiss"
+    Check "the saved files are exactly the completed downloads" (((Saved) -join "|") -eq "Bericht 2024 $([char]0xFC) & co.pdf|existing.txt|foreign.txt|readme copy.txt") "$(Saved)"
+   } catch {
+    # Still go on to remove the account, so no test key stays behind.
+    Check "download steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    $d = DialogNamed "Save download as"; if ($d) { CancelDialog $d }
+    $null = Press "Dismiss"
+   }
   } elseif ($Mode -eq "b2") {
     $outcome = if ($t -like "*the provider refused this request*") { "access denied" } elseif ($t -like "*Could not load this folder.*") { "error" } else { "listed" }
     "  Open bucket at the root: $outcome"
@@ -490,15 +654,16 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse") {
-    Remove-Item $SrvFile -EA SilentlyContinue
+  if ($Mode -eq "browse" -or $Mode -eq "download") {
+    Remove-Item $SrvFile, "$SrvFile.json" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
+  if ($Mode -eq "download" -and (Test-Path $Out)) { Remove-Item -Recurse -Force $Out }
 }
-if ($Mode -eq "browse") {
+if ($Mode -eq "browse" -or $Mode -eq "download") {
   $srvLog = (Get-Content $SrvOut -Raw -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
-  Check "browse: the listing server saw only listings and the check ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
+  Check "${Mode}: the test server saw only reads and the check ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
 $after = CmdkeyLines

@@ -246,11 +246,40 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
 Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 [cloud-providers.md](../architecture/cloud-providers.md).
 
-- **Accounts and read-only browsing only.** The dashboard manages accounts,
-  checks their connection and lists their buckets one folder at a time; it
-  cannot upload, download, rename, move, delete or create anything, and has
-  no transfer queue, backups or sync
-  ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket)).
+- **Accounts, browsing and single-file downloads only.** The dashboard
+  manages accounts, checks their connection, lists their buckets one folder
+  at a time and downloads one file at a time; it cannot upload, rename,
+  move, delete or create anything, download folders or several files at
+  once, and has no transfer queue, download history, backups or sync
+  ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
+- **Downloads are verified only against the in-process object server, never
+  at a real provider** (2026-11-12). Whether Backblaze or Hetzner return the
+  stored `sotyware-sha256` metadata and a `Content-Length` on `GetObject` is
+  assumed from the upload round trip of 2026-11-11, which ran through the
+  same adapter code before progress and cancellation were added
+  ([status.md](status.md#cloud-storage-single-file-downloads-2026-11-12)).
+- **Download limits:** one at a time; no resume (a failed or cancelled
+  download starts over); no retries inside a download (the SDK retries only
+  the request, not a broken body); a body that delivers nothing for about
+  5 s (the SDK's stalled-stream protection) fails as a network error;
+  leaving the browser cancels the download; reloading the page while a
+  download runs loses its progress display, and new downloads are refused as
+  busy until it ends; editing or removing the account does not stop a
+  running download; objects without the SHA-256 that sotyware stores at
+  upload are checked only by size (the page says so).
+- **A killed process leaves its temporary download file.** Quitting cancels
+  and removes it (waiting up to 5 s), but a crash, power loss or `kill -9`
+  leaves `.<name>.<pid>-<n>.sotyware-partial` next to the destination (hidden
+  on Linux, visible on Windows); sotyware does not look for such files later.
+- **Replacing a file relies on the save dialog's confirmation.** The GTK and
+  Windows dialogs ask before returning an existing file, and only such a
+  file is replaced. On file systems without hard links (FAT, exFAT, some
+  network shares) a file that appears at a new destination in the moment
+  between the final check and the rename would be replaced. With the XDG
+  desktop portal's dialog (not used: rfd's GTK 3 backend) the confirmation
+  was not checked. Quitting during a download was tested end to end only on
+  Linux (dashboard-only mode, window closed); on Windows only through the
+  Rust tests (the tray's Quit is not driven by the download test).
 - **A key restricted to a file name prefix cannot browse the bucket's root.**
   Backblaze refuses the root listing for such a key (`AccessDenied`, "not
   entitled", 2026-11-11), and the browser always starts at the root, so it

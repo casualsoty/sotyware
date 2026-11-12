@@ -11,7 +11,12 @@
 // page of one folder of the account's configured bucket. Folder prefixes and
 // object keys are passed through exactly as Rust returns them; the page never
 // builds a prefix from names.
-import { invoke } from "@tauri-apps/api/core";
+//
+// `downloadFile` downloads one file (src-tauri/src/cloud/download.rs): Rust
+// opens the native save dialog, so the page never sends a local path, only
+// the account, the bucket it browsed and the object key exactly as listed.
+// Progress arrives on a Tauri channel created for that one download.
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export const LIST_CLOUD_PROVIDERS = "list_cloud_providers";
 export const LIST_CLOUD_ACCOUNTS = "list_cloud_accounts";
@@ -20,6 +25,9 @@ export const UPDATE_CLOUD_ACCOUNT = "update_cloud_account";
 export const REMOVE_CLOUD_ACCOUNT = "remove_cloud_account";
 export const CHECK_CLOUD_ACCOUNT = "check_cloud_account";
 export const LIST_CLOUD_FOLDER = "list_cloud_folder";
+export const DOWNLOAD_CLOUD_FILE = "download_cloud_file";
+export const CANCEL_CLOUD_DOWNLOAD = "cancel_cloud_download";
+export const RETRY_CLOUD_DOWNLOAD = "retry_cloud_download";
 
 // `CheckStatus` in dashboard.rs, serialized in kebab-case.
 export const CHECK_STATUSES = [
@@ -55,6 +63,14 @@ export const ERROR_KINDS = [
   "invalid-configuration",
   "provider",
   "outdated-page",
+  "busy",
+  "object-not-found",
+  "integrity",
+  "disk-full",
+  "local-permission",
+  "destination-unavailable",
+  "destination-exists",
+  "local-file",
   "other",
 ] as const;
 
@@ -139,6 +155,42 @@ export interface FolderListing {
   files: FileEntry[];
   /** Pass to `listFolder` for the next page of the same folder. */
   nextPage: string | null;
+}
+
+// `TransferState`, `Integrity`, `CancelOutcome` in download.rs (kebab-case).
+export const TRANSFER_STATES = ["active", "completed", "cancelled", "failed"] as const;
+export type TransferState = (typeof TRANSFER_STATES)[number];
+
+export const INTEGRITY_CHECKS = ["sha256-verified", "size-only"] as const;
+export type IntegrityCheck = (typeof INTEGRITY_CHECKS)[number];
+
+export const CANCEL_OUTCOMES = ["cancelling", "finishing", "not-active"] as const;
+export type CancelOutcome = (typeof CANCEL_OUTCOMES)[number];
+
+/** A command error as it travels inside a download message. */
+export interface TransferError {
+  kind: ErrorKind;
+  message: string;
+}
+
+// `DownloadEvent` in download.rs.
+export interface DownloadEvent {
+  transfer: string;
+  state: TransferState;
+  bytes: number;
+  /** `null` when the provider did not announce a size. */
+  total: number | null;
+  /** Only for "completed". */
+  integrity: IntegrityCheck | null;
+  /** Only for "failed". */
+  error: TransferError | null;
+}
+
+// `DownloadStarted` in download.rs.
+export interface DownloadStarted {
+  transfer: string;
+  /** The chosen file's name (not its folder). */
+  fileName: string;
 }
 
 // `AccountInput` in dashboard.rs: the non-secret part of the form.
@@ -313,6 +365,46 @@ export function parseFolderListing(value: unknown): FolderListing {
   };
 }
 
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === "number";
+}
+
+export function parseDownloadEvent(value: unknown): DownloadEvent {
+  if (
+    !isRecord(value) ||
+    typeof value["transfer"] !== "string" ||
+    !oneOf(TRANSFER_STATES, value["state"]) ||
+    typeof value["bytes"] !== "number" ||
+    !isNullableNumber(value["total"]) ||
+    !(value["integrity"] === null || oneOf(INTEGRITY_CHECKS, value["integrity"]))
+  ) {
+    throw invalid("download event", value);
+  }
+  const error = value["error"];
+  let parsedError: TransferError | null = null;
+  if (error !== null) {
+    if (!isRecord(error) || !oneOf(ERROR_KINDS, error["kind"]) || typeof error["message"] !== "string") {
+      throw invalid("download event", value);
+    }
+    parsedError = { kind: error["kind"], message: error["message"] };
+  }
+  return {
+    transfer: value["transfer"],
+    state: value["state"],
+    bytes: value["bytes"],
+    total: value["total"],
+    integrity: value["integrity"],
+    error: parsedError,
+  };
+}
+
+export function parseDownloadStarted(value: unknown): DownloadStarted {
+  if (!isRecord(value) || typeof value["transfer"] !== "string" || typeof value["fileName"] !== "string") {
+    throw invalid("download start", value);
+  }
+  return { transfer: value["transfer"], fileName: value["fileName"] };
+}
+
 /** Turns a command's rejection into a `CloudCommandError` when it has the
  * structured shape; anything else (an IPC or permission failure) becomes an
  * `Error` with its text. */
@@ -376,4 +468,45 @@ export async function checkAccount(id: string): Promise<AccountInfo> {
  * `nextPage`, or `null` for the first page. */
 export async function listFolder(id: string, prefix: string, page: string | null): Promise<FolderListing> {
   return parseFolderListing(await call(LIST_CLOUD_FOLDER, { id, prefix, page }));
+}
+
+function progressChannel(onEvent: (event: DownloadEvent) => void): Channel<unknown> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (message: unknown): void => {
+    onEvent(parseDownloadEvent(message));
+  };
+  return channel;
+}
+
+/** Asks for a destination in the native save dialog (opened by Rust) and
+ * starts downloading `key` from the account's bucket, which must still be
+ * `bucket`. Resolves with `null` if the dialog was cancelled (nothing
+ * started). Every message about this download goes to `onEvent`, possibly
+ * also before this resolves. */
+export async function downloadFile(
+  id: string,
+  bucket: string,
+  key: string,
+  onEvent: (event: DownloadEvent) => void,
+): Promise<DownloadStarted | null> {
+  const value = await call(DOWNLOAD_CLOUD_FILE, { id, bucket, key, onEvent: progressChannel(onEvent) });
+  return value === null ? null : parseDownloadStarted(value);
+}
+
+/** Repeats the failed download `transfer` to the same destination, without
+ * a dialog, as a new transfer. */
+export async function retryDownload(
+  transfer: string,
+  onEvent: (event: DownloadEvent) => void,
+): Promise<DownloadStarted> {
+  return parseDownloadStarted(await call(RETRY_CLOUD_DOWNLOAD, { transfer, onEvent: progressChannel(onEvent) }));
+}
+
+/** Cancels the running download `transfer`; never affects another one. */
+export async function cancelDownload(transfer: string): Promise<CancelOutcome> {
+  const value = await call(CANCEL_CLOUD_DOWNLOAD, { transfer });
+  if (!oneOf(CANCEL_OUTCOMES, value)) {
+    throw invalid("cancel outcome", value);
+  }
+  return value;
 }

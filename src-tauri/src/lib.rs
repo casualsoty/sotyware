@@ -21,7 +21,9 @@
 //!
 //! The cloud storage accounts (`cloud::dashboard::CloudAccounts`) are loaded at
 //! the same point, from their own SQLite database; the OS credential store is
-//! not touched until the user acts on an account in the dashboard.
+//! not touched until the user acts on an account in the dashboard. A cloud
+//! download that is still running when the process exits is cancelled and its
+//! temporary file removed (`cloud::download::CloudDownloads::shutdown`).
 //!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
@@ -230,11 +232,16 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             on_second_launch(app);
         }));
+        // The native save dialog for cloud downloads, used from Rust only; no
+        // capability grants the frontend a `dialog:` permission (ADR-020).
+        builder = builder.plugin(tauri_plugin_dialog::init());
     }
 
     let app = builder
         // The set of features is fixed here; `setup` starts them, exit stops them.
         .manage(features::FeatureRegistry::with_features(features::builtin()))
+        // Holds no file or connection until a download starts.
+        .manage(Arc::new(cloud::download::CloudDownloads::new()))
         .invoke_handler(tauri::generate_handler![
             operating_mode,
             features::list_features,
@@ -245,7 +252,10 @@ pub fn run() {
             cloud::dashboard::update_cloud_account,
             cloud::dashboard::remove_cloud_account,
             cloud::dashboard::check_cloud_account,
-            cloud::browser::list_cloud_folder
+            cloud::browser::list_cloud_folder,
+            cloud::download::download_cloud_file,
+            cloud::download::cancel_cloud_download,
+            cloud::download::retry_cloud_download
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -342,6 +352,11 @@ pub fn run() {
             }
             if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
                 prefs.close();
+            }
+            // A running download is cancelled; its temporary file is removed
+            // before the process ends (bounded wait, ADR-020).
+            if let Some(downloads) = app.try_state::<Arc<cloud::download::CloudDownloads>>() {
+                downloads.shutdown(cloud::download::SHUTDOWN_WAIT);
             }
         }
         _ => {}
@@ -579,7 +594,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -593,7 +608,10 @@ mod tests {
                 "allow-update-cloud-account",
                 "allow-remove-cloud-account",
                 "allow-check-cloud-account",
-                "allow-list-cloud-folder"
+                "allow-list-cloud-folder",
+                "allow-download-cloud-file",
+                "allow-cancel-cloud-download",
+                "allow-retry-cloud-download"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

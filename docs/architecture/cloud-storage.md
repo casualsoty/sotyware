@@ -7,14 +7,17 @@ account part (list, add, edit, check, remove; [Dashboard](#dashboard),
 and lists each account's bucket one folder and one page at a time, read-only
 ([Browsing a bucket](#browsing-a-bucket),
 [ADR-019](decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)).
-Uploads, downloads, any change to objects and the transfer queue are not
-reachable from the app: no command exposes them. Decision and rationale of
+From the browser one file at a time can be downloaded to a place the user
+picks in the native save dialog ([Downloading a file](#downloading-a-file),
+[ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
+Uploads, any change to objects and the transfer queue are not reachable
+from the app: no command exposes them. Decision and rationale of
 the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs`, `dashboard.rs`, `browser.rs`) and `SqliteAccountStore` in
+`keyring.rs`, `s3.rs`, `dashboard.rs`, `browser.rs`, `download.rs`) and `SqliteAccountStore` in
 `src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
 `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` and
 `src/cloudMessages.ts`.
@@ -40,9 +43,10 @@ AccountConfig (no secret) ──resolve()──▶ ResolvedAccount ──┐
 | `AccountStore` trait / `SqliteAccountStore` | `load`, `save`, `remove`. SQLite in `cloud-accounts.sqlite3` (tables `storage_accounts`, `storage_account_buckets`; `ACCOUNT_MIGRATIONS`, `PRAGMA user_version`), using the same open/check/migrate code as the preferences database. Schema has no column for a secret. |
 | `CredentialStore` trait (`credentials.rs`) | `store`, `load`, `delete`, `exists` for an account's key pair, **by account id**. `Secret` never prints its value in `Debug`/`Display`. `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`) exists only in test builds, for the opt-in provider tests. |
 | `OsCredentialStore` (`keyring.rs`) | The one real `CredentialStore`: Windows Credential Manager or the Linux Secret Service through `keyring-core`. No fallback. |
-| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_folder` (one page of one folder level, for the browser), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download_file`, `delete_object`. |
+| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_folder` (one page of one folder level, for the browser), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download` (streamed, with progress and a `TransferControl` for cancellation; `download_file` is it without either), `delete_object`. |
 | `CloudAccounts` (`dashboard.rs`) | What the dashboard's commands work on: `Accounts` (or why its database could not be opened) plus the last connection check and the listing cursors per account, in memory. Safe shapes (`AccountInfo`, `ProviderInfo`), structured `CommandError`, account ids from labels. [Dashboard](#dashboard). |
 | `cloud::browser` (`browser.rs`) | `list_cloud_folder`: `FolderListing` (folders, files, breadcrumbs, next-page cursor), the prefix and key rules, listing errors. [Browsing a bucket](#browsing-a-bucket). |
+| `cloud::download` (`download.rs`) | `download_cloud_file`, `cancel_cloud_download`, `retry_cloud_download`; `CloudDownloads` (the one download slot, managed state), progress messages, the save dialog, download errors. [Downloading a file](#downloading-a-file). |
 
 ### Why one adapter and no `ObjectStore` trait
 
@@ -297,6 +301,9 @@ CloudStorage.svelte ── cloud.ts ──invoke──▶ cloud::dashboard (comm
 | `remove_cloud_account` | `id` | nothing |
 | `check_cloud_account` | `id` | the `AccountInfo` with `lastCheck` |
 | `list_cloud_folder` | `id`, `prefix`, `page` or `null` | one `FolderListing` ([Browsing a bucket](#browsing-a-bucket)) |
+| `download_cloud_file` | `id`, `bucket`, `key`, `onEvent` (channel) | `null` (dialog cancelled) or `{ transfer, fileName }` ([Downloading a file](#downloading-a-file)) |
+| `cancel_cloud_download` | `transfer` | `cancelling`, `finishing` or `not-active` |
+| `retry_cloud_download` | `transfer`, `onEvent` (channel) | `{ transfer, fileName }` |
 
 `account` is `{ label, provider, region, endpoint, bucket }` (`endpoint` `null`
 for the provider's regional one); `credentials` is
@@ -449,11 +456,129 @@ continuation token it never issued with the first page, not an error
 ([status.md](../status/status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
 Not seen at Hetzner.
 
+## Downloading a file
+
+Decision: [ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel).
+Every file row in the browser has a **Download** action. One download runs
+at a time; while it runs (or its save dialog is open) every Download action
+is disabled, and the browser stays usable (folders, Refresh, Load more).
+
+```
+CloudBrowser.svelte ── downloadFile(id, bucket, key, onEvent) ──▶ download_cloud_file
+   ▲                                                               │ reserve the slot (else busy)
+   │                                                               │ spawn_blocking: account, bucket still the same?
+   │                                                               │ native save dialog (Rust, tauri-plugin-dialog)
+   │                                                               │   cancelled → null, nothing started
+   │  { transfer, fileName }  ◀────────────────────────────────────┤ start: spawn on the async runtime
+   │                                                               ▼
+   │  Channel: DownloadEvent ◀── CloudDownloads::run ── spawn_blocking: credentials (OS store)
+   │   active (≤ 4/s), then one of                    S3Store::download ── GetObject (configured bucket, exact key)
+   │   completed / cancelled / failed                   │ body chunk by chunk → temporary file, SHA-256 on the way
+   │                                                    │ sync, check size (+ stored SHA-256)
+   └── cancel_cloud_download(transfer) ──▶ TransferControl: cancel, or "finishing" after the commit point
+                                                        │ move into place (hard link / rename)
+```
+
+**Where the file goes.** Rust opens the native save dialog (GTK 3 file
+chooser on Linux, the common item dialog on Windows) over the dashboard,
+titled "Save download as", suggesting the key's last segment with `< > : "
+/ \ | ? *` and control characters replaced by `_`, trailing dots and spaces
+dropped, `CON`/`NUL`/`COM1`… prefixed with `_`, and `download` for an empty
+name (`folder/`, `..`). That is only a suggestion: the path is whatever the
+user picks, and the page never sends or sees one (it gets the chosen file's
+name for display). The path must be absolute and not a folder.
+
+**Existing files.** Both dialogs ask before returning a file that exists
+(GTK's overwrite confirmation; the Windows dialog's "Confirm Save As"), so
+such a file is replaced, in one rename once the download is verified; until
+then the old file is untouched, and a failed or cancelled download keeps it.
+A destination that did not exist must still not exist at the end: the
+verified file is hard-linked to it, which fails if something appeared there
+meanwhile (`destination-exists`; that file is left as it is). On file
+systems without hard links (FAT, exFAT, some network shares) it is checked
+and then renamed, so a file created in that one moment would be replaced.
+
+**Temporary file.** The data is written to a new file next to the
+destination, `.<name>.<process id>-<n>.sotyware-partial` (hidden on Linux; at
+most 100 bytes of the name; opened with create-new, so it never opens or
+truncates an existing file). The final move is a rename or link on the same
+file system, so the destination is never partly written. The temporary file
+is removed on every failure, on cancel, and when quitting during a download.
+Only a process that is killed (crash, power loss) leaves it behind.
+
+**Streaming and memory.** The response body is read chunk by chunk (the
+SDK's chunks, at most about 1 MiB in tests) and each chunk is written before
+the next is read, so memory use does not grow with the file size (a 24 MiB
+test shows the temporary file growing while it streams). The transfer runs on
+the async runtime; the command returns as soon as it has started. The
+client's limits apply: 10 s to connect, 60 s read timeout; the SDK's
+stalled-stream protection ends a body that delivers nothing for its 5 s grace
+period (about 6 s in the test), which is reported as a network failure. A
+download is one `GetObject`; there are no retries within a download and no
+resuming.
+
+**Progress** goes over a Tauri `Channel` created for that one download:
+`{ transfer, state, bytes, total, integrity, error }`, `state` one of
+`active`, `completed`, `cancelled`, `failed`. `total` is the size the provider
+announced, `null` if it gave none (the page then shows bytes without a
+percentage). "active" messages are throttled to one per 250 ms (the first one
+always goes); then exactly one final message follows, sent after the slot is
+free and, for `completed`, after the verified file is in place. The page
+accepts messages only for its current download and transfer id (also one
+that arrives before the command's reply), ignores everything after the final
+one, and treats a later download's messages separately (each download has its
+own channel).
+
+**Cancel** (`cancel_cloud_download`) acts only on the running transfer with
+that id; any other id, a finished one, or a repeat returns `not-active` or
+the same answer again. It stops waiting for the credential store, drops the
+request or body stream (closing the connection) and removes the temporary
+file; the final message is `cancelled`. The race with completion is decided
+by `TransferControl`: once the verified file is about to be moved into place
+the answer is `finishing` and the download completes; a cancel just before
+that point wins and nothing is written. Leaving the browser (Back to
+accounts) cancels a running download. Quitting (`RunEvent::Exit`) refuses
+new downloads, cancels the running one and waits up to 5 s for its cleanup,
+then removes its temporary file itself if it is still there; a download that
+is already finishing is waited for, not cut off.
+
+**Integrity.** The file's SHA-256 is computed while it streams. If the
+object has the SHA-256 that sotyware stores at upload
+(`x-amz-meta-sotyware-sha256`), it must match, and the page says "The SHA-256
+checksum stored with the file matched." Otherwise only the size the provider
+announced is checked, and the page says the content could not be verified.
+A size or checksum mismatch fails the download (`integrity`) and nothing is
+saved. sotyware does not claim provider-side checksums.
+
+**Failures and retry.** A failed download shows its reason (`busy`,
+`outdated-page` if the account's bucket changed, `unknown-account`,
+`credentials-missing` / `invalid-credentials` / `invalid-configuration` with
+**Edit account**, `credential-store-*`, `access-denied`, `object-not-found`,
+`network`, `timeout`, `provider`, `integrity`, `disk-full` (also over quota),
+`local-permission` (also a read-only file system), `destination-unavailable`
+(folder gone, drive disconnected), `destination-exists`, `local-file`) and
+"Nothing was saved". **Try download again** repeats the last failed download
+as a new transfer to the same destination without a dialog (a start that
+was refused before the dialog asks again). Cancelled downloads are not
+retried. Expired or wrong keys fail like the listing does.
+
+**Accounts.** Each download uses the account's own `S3Store` and
+credentials; the account and bucket are checked again when the transfer
+starts. Editing or removing an account during a download does not stop it.
+
+**Verified against:** the in-process object server (exact keys, bodies that
+are slow, stall or break off, wrong checksums, no announced size), through
+Rust tests and the release binary's UI with the real native save dialog: GTK
+under Xvfb (WSL2, a virtual display) and the common item dialog on the real
+Windows 11 desktop (2026-11-12,
+[status.md](../status/status.md#cloud-storage-single-file-downloads-2026-11-12));
+never against a real provider.
+
 ## Not built (deliberately)
 
-No upload or download UI, file operations in the browser (rename, delete,
-create folder, move), transfer queue UI, event or
-feature; no synchronisation, folder watching,
+No upload UI, folder downloads, several downloads at once, download history,
+file operations in the browser (rename, delete, create folder, move),
+transfer queue UI, custom event or feature; no synchronisation, folder watching,
 scheduled backups, retention, restic integration, client-side encryption,
 sharing or public links, virtual filesystem, retrying queue, parallel parts
 within one file, resumable uploads, credential import from environment

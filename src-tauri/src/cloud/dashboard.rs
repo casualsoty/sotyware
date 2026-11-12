@@ -252,8 +252,26 @@ pub enum ErrorKind {
     /// message, never the provider's own text).
     Provider,
     /// A "load more" page that no longer fits: the account changed, the page
-    /// was already loaded, or it was for another account or folder.
+    /// was already loaded, or it was for another account or folder. For a
+    /// download: the account's bucket is no longer the one browsed.
     OutdatedPage,
+    /// Another download is running or waiting for its save dialog.
+    Busy,
+    /// The object to download is gone (or the key may not read it).
+    ObjectNotFound,
+    /// The downloaded data does not match its size or stored SHA-256.
+    Integrity,
+    /// The destination's drive is full (or over quota).
+    DiskFull,
+    /// The operating system refused to write the destination.
+    LocalPermission,
+    /// The destination's folder or drive is gone or unreachable.
+    DestinationUnavailable,
+    /// A file appeared at the destination that the user did not choose to
+    /// replace; it was left untouched.
+    DestinationExists,
+    /// Any other local file error.
+    LocalFile,
     /// Anything else.
     Other,
 }
@@ -678,6 +696,56 @@ impl CloudAccounts {
         Ok(self.info(self.find(id)?))
     }
 
+    /// The account's store with its own credentials (OS credential store).
+    fn connect(&self, id: &str) -> Result<Arc<super::s3::S3Store>, CommandError> {
+        self.accounts()?.connect(id).map_err(|e| {
+            let kind = match &e {
+                AccountError::Unknown(_) => ErrorKind::UnknownAccount,
+                AccountError::Config(_) => ErrorKind::InvalidConfiguration,
+                AccountError::Credentials(CredentialError::NotFound { .. }) => {
+                    ErrorKind::CredentialsMissing
+                }
+                AccountError::Credentials(CredentialError::Unavailable { .. }) => {
+                    ErrorKind::CredentialStoreUnavailable
+                }
+                AccountError::Credentials(CredentialError::AccessDenied { .. }) => {
+                    ErrorKind::CredentialStoreLocked
+                }
+                AccountError::Credentials(_) => ErrorKind::CredentialStore,
+                _ => ErrorKind::Other,
+            };
+            CommandError::new(kind, e.to_string())
+        })
+    }
+
+    /// Checks that `bucket` is still the account's configured bucket (the
+    /// one the page browsed). Does not touch the credential store.
+    pub(super) fn check_download_source(&self, id: &str, bucket: &str) -> Result<(), CommandError> {
+        let config = self.find(id)?;
+        match config.buckets.first() {
+            None => Err(CommandError::new(
+                ErrorKind::InvalidConfiguration,
+                "no bucket is configured for this account",
+            )),
+            Some(configured) if configured != bucket => Err(CommandError::new(
+                ErrorKind::OutdatedPage,
+                "the account's bucket changed since this folder was listed",
+            )),
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// The blocking half of a download: checks the bucket again and loads
+    /// the credentials (OS credential store). Sends no request.
+    pub(super) fn prepare_download(
+        &self,
+        id: &str,
+        bucket: &str,
+    ) -> Result<Arc<super::s3::S3Store>, CommandError> {
+        self.check_download_source(id, bucket)?;
+        self.connect(id)
+    }
+
     /// The blocking half of a folder listing: finds the account's bucket,
     /// resolves the page cursor, and loads the credentials (OS credential
     /// store). Sends no request. A cursor must have been issued for this
@@ -688,7 +756,7 @@ impl CloudAccounts {
         prefix: &str,
         page: Option<&str>,
     ) -> Result<PreparedListing, CommandError> {
-        let accounts = self.accounts()?;
+        self.accounts()?;
         let config = self.find(id)?;
         let Some(bucket) = config.buckets.first().cloned() else {
             return Err(CommandError::new(
@@ -720,24 +788,7 @@ impl CloudAccounts {
             };
             (revision, token)
         };
-        let store = accounts.connect(id).map_err(|e| {
-            let kind = match &e {
-                AccountError::Unknown(_) => ErrorKind::UnknownAccount,
-                AccountError::Config(_) => ErrorKind::InvalidConfiguration,
-                AccountError::Credentials(CredentialError::NotFound { .. }) => {
-                    ErrorKind::CredentialsMissing
-                }
-                AccountError::Credentials(CredentialError::Unavailable { .. }) => {
-                    ErrorKind::CredentialStoreUnavailable
-                }
-                AccountError::Credentials(CredentialError::AccessDenied { .. }) => {
-                    ErrorKind::CredentialStoreLocked
-                }
-                AccountError::Credentials(_) => ErrorKind::CredentialStore,
-                _ => ErrorKind::Other,
-            };
-            CommandError::new(kind, e.to_string())
-        })?;
+        let store = self.connect(id)?;
         Ok(PreparedListing {
             store,
             bucket,

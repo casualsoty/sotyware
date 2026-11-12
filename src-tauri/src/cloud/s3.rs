@@ -3,10 +3,15 @@
 //!
 //! Integrity is checked end to end, independently of the provider: before an
 //! upload the file's SHA-256 is computed and stored with the object as user
-//! metadata (`x-amz-meta-sotyware-sha256`); a download is written to a
-//! temporary file, hashed while it streams, and moved into place only if the
-//! hash and the size match. Nothing relies on ETags (an ETag is not an MD5 for
+//! metadata (`x-amz-meta-sotyware-sha256`); a download is streamed to a new
+//! temporary file next to its destination, hashed while it streams, and moved
+//! into place only if the size (and, when the object has one, the stored
+//! SHA-256) match. Nothing relies on ETags (an ETag is not an MD5 for
 //! multipart uploads and differs between providers).
+//!
+//! A download can be cancelled through its [`TransferControl`], which also
+//! settles the race between cancelling and finishing: once the verified file
+//! is being moved into place, a cancel request no longer has any effect.
 //!
 //! Each [`S3Store`] belongs to one account and has its own HTTP connection
 //! pool and its own transfer queue (a semaphore of
@@ -14,7 +19,13 @@
 //! holds up another one.
 
 use std::fmt;
+use std::future::Future;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::pin;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::Poll;
 use std::time::{Duration, SystemTime};
 
 use aws_sdk_s3::Client;
@@ -30,7 +41,7 @@ use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_http_client::tls;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 use super::account::ResolvedAccount;
 use super::credentials::Credentials;
@@ -41,6 +52,11 @@ pub const SHA256_METADATA: &str = "sotyware-sha256";
 
 /// Suffix of the temporary file a download is written to.
 const PARTIAL_SUFFIX: &str = ".sotyware-partial";
+
+/// At most this many bytes of the destination's name go into the temporary
+/// file's name, so the temporary name stays within every file system's
+/// 255-byte limit.
+const PARTIAL_NAME_BYTES: usize = 100;
 
 const MIB: u64 = 1024 * 1024;
 
@@ -99,6 +115,15 @@ pub enum StorageError {
     Refused(String),
     /// A local file could not be read or written.
     Io(String),
+    /// A download's local file could not be created, written or moved into
+    /// place; `kind` tells disk full, permission denied, a vanished folder
+    /// and an existing destination apart.
+    LocalWrite {
+        kind: io::ErrorKind,
+        message: String,
+    },
+    /// The transfer was cancelled through its [`TransferControl`].
+    Cancelled,
     /// Any other error the provider returned.
     Provider {
         status: u16,
@@ -136,6 +161,8 @@ impl fmt::Display for StorageError {
             }
             Self::Refused(m) => write!(f, "refused: {m}"),
             Self::Io(m) => write!(f, "local file error: {m}"),
+            Self::LocalWrite { message, .. } => write!(f, "cannot write the local file: {message}"),
+            Self::Cancelled => write!(f, "cancelled"),
             Self::Provider {
                 status,
                 code,
@@ -362,10 +389,268 @@ async fn hash_file(path: &Path) -> Result<(u64, Option<SystemTime>, String), Sto
     Ok((size, meta.modified().ok(), hex(&hasher.finalize())))
 }
 
-fn partial_path(dest: &Path) -> PathBuf {
-    let mut name = dest.as_os_str().to_owned();
-    name.push(PARTIAL_SUFFIX);
-    PathBuf::from(name)
+fn write_error(path: &Path) -> impl Fn(io::Error) -> StorageError + '_ {
+    move |e| StorageError::LocalWrite {
+        kind: e.kind(),
+        message: format!("{}: {e}", path.display()),
+    }
+}
+
+/// The name of the `attempt`th temporary file for `dest`: hidden on Linux,
+/// next to the destination (so the final move is a rename on the same file
+/// system), recognisably sotyware's, and unique per process and attempt.
+fn partial_name(dest: &Path, attempt: u64) -> String {
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut end = name.len().min(PARTIAL_NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        ".{}.{}-{attempt}{PARTIAL_SUFFIX}",
+        &name[..end],
+        std::process::id()
+    )
+}
+
+/// Creates a new, empty temporary file in `dest`'s folder. Never opens an
+/// existing file: a name that is taken is skipped.
+async fn create_partial(dest: &Path) -> Result<(PathBuf, tokio::fs::File), StorageError> {
+    static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+    let dir = match dest.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    for _ in 0..100 {
+        let path = dir.join(partial_name(dest, ATTEMPT.fetch_add(1, Ordering::Relaxed)));
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(write_error(&path)(e)),
+        }
+    }
+    Err(StorageError::LocalWrite {
+        kind: io::ErrorKind::AlreadyExists,
+        message: format!("{}: no free temporary file name", dir.display()),
+    })
+}
+
+/// What a download does when its destination exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Existing {
+    /// Fail, and leave the existing file alone: also when it only appears
+    /// while the download runs.
+    Refuse,
+    /// Replace it, in one rename, once the download is verified. Only for a
+    /// file the user chose to replace.
+    Replace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Running,
+    Cancelling,
+    /// The verified file is being moved into place; too late to cancel.
+    Committed,
+}
+
+/// Cancels one download, and decides the race between cancelling and
+/// finishing in one place: whichever of [`Self::cancel`] and the download's
+/// final move comes first wins, and the other one sees that.
+pub struct TransferControl {
+    phase: watch::Sender<Phase>,
+    /// The temporary file while it exists, so it can be removed at shutdown
+    /// even if the transfer cannot clean up in time.
+    partial: Mutex<Option<PathBuf>>,
+    #[cfg(test)]
+    fail_write_after: Mutex<Option<u64>>,
+    #[cfg(test)]
+    before_commit: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    after_commit: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl fmt::Debug for TransferControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TransferControl")
+            .field("phase", &*self.phase.borrow())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for TransferControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TransferControl {
+    pub fn new() -> Self {
+        Self {
+            phase: watch::Sender::new(Phase::Running),
+            partial: Mutex::new(None),
+            #[cfg(test)]
+            fail_write_after: Mutex::new(None),
+            #[cfg(test)]
+            before_commit: Mutex::new(None),
+            #[cfg(test)]
+            after_commit: Mutex::new(None),
+        }
+    }
+
+    /// Asks the download to stop. Returns `true` if it will stop (also when
+    /// it was asked before), `false` if it is already moving the verified
+    /// file into place and will complete. Safe to call any number of times.
+    pub fn cancel(&self) -> bool {
+        let mut stops = false;
+        self.phase.send_if_modified(|phase| match phase {
+            Phase::Running => {
+                *phase = Phase::Cancelling;
+                stops = true;
+                true
+            }
+            Phase::Cancelling => {
+                stops = true;
+                false
+            }
+            Phase::Committed => false,
+        });
+        stops
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.phase.borrow() == Phase::Cancelling
+    }
+
+    /// Moves to the final step unless cancelled first.
+    fn commit(&self) -> bool {
+        let mut committed = false;
+        self.phase.send_if_modified(|phase| {
+            if *phase == Phase::Running {
+                *phase = Phase::Committed;
+                committed = true;
+                true
+            } else {
+                false
+            }
+        });
+        committed
+    }
+
+    /// Resolves once [`Self::cancel`] took effect.
+    async fn cancelled(&self) {
+        let mut rx = self.phase.subscribe();
+        if rx.wait_for(|p| *p == Phase::Cancelling).await.is_err() {
+            // The sender lives in `self`, so this cannot happen.
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// `fut`'s output, or `None` as soon as the transfer is cancelled; then
+    /// `fut` is dropped, which for a request or a response body closes the
+    /// connection.
+    pub async fn unless_cancelled<T>(&self, fut: impl Future<Output = T>) -> Option<T> {
+        let mut fut = pin!(fut);
+        let mut cancelled = pin!(self.cancelled());
+        std::future::poll_fn(|cx| {
+            if let Poll::Ready(v) = fut.as_mut().poll(cx) {
+                return Poll::Ready(Some(v));
+            }
+            if cancelled.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(None);
+            }
+            Poll::Pending
+        })
+        .await
+    }
+
+    fn lock_partial(&self) -> std::sync::MutexGuard<'_, Option<PathBuf>> {
+        self.partial.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The temporary file of the running download, if there is one now.
+    pub fn partial_file(&self) -> Option<PathBuf> {
+        self.lock_partial().clone()
+    }
+
+    /// Makes the next download fail like a full disk once it has written
+    /// `bytes` bytes.
+    #[cfg(test)]
+    pub(crate) fn fail_writes_after(&self, bytes: u64) {
+        *self.fail_write_after.lock().unwrap() = Some(bytes);
+    }
+
+    /// Runs `f` after verification, right before the commit point, so a test
+    /// can cancel exactly there.
+    #[cfg(test)]
+    pub(crate) fn before_commit(&self, f: impl FnOnce() + Send + 'static) {
+        *self.before_commit.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// Runs `f` right after the commit point, before the file is moved.
+    #[cfg(test)]
+    pub(crate) fn after_commit(&self, f: impl FnOnce() + Send + 'static) {
+        *self.after_commit.lock().unwrap() = Some(Box::new(f));
+    }
+}
+
+/// Removes the temporary file and forgets it.
+async fn discard_partial(control: &TransferControl, partial: &Path) {
+    if let Err(e) = tokio::fs::remove_file(partial).await
+        && e.kind() != io::ErrorKind::NotFound
+    {
+        eprintln!(
+            "sotyware: cannot remove the temporary download file {}: {e}",
+            partial.display()
+        );
+    }
+    control.lock_partial().take();
+}
+
+/// Moves the verified temporary file to `dest`.
+async fn finalize(partial: &Path, dest: &Path, existing: Existing) -> Result<(), StorageError> {
+    match existing {
+        // One rename replaces the file atomically on Linux and Windows: the
+        // destination is either the old file or the complete new one.
+        Existing::Replace => tokio::fs::rename(partial, dest)
+            .await
+            .map_err(write_error(dest)),
+        // A hard link never replaces an existing file: if one appeared while
+        // the download ran, it stays untouched.
+        Existing::Refuse => match tokio::fs::hard_link(partial, dest).await {
+            Ok(()) => {
+                if let Err(e) = tokio::fs::remove_file(partial).await {
+                    eprintln!(
+                        "sotyware: cannot remove the temporary download file {}: {e}",
+                        partial.display()
+                    );
+                }
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(write_error(dest)(e)),
+            // File systems without hard links (FAT, exFAT, some network
+            // shares): check, then rename. A file created in between would
+            // be replaced; the window is this one call.
+            Err(_) => {
+                if tokio::fs::try_exists(dest).await.unwrap_or(true) {
+                    return Err(StorageError::LocalWrite {
+                        kind: io::ErrorKind::AlreadyExists,
+                        message: format!("{} already exists", dest.display()),
+                    });
+                }
+                tokio::fs::rename(partial, dest)
+                    .await
+                    .map_err(write_error(dest))
+            }
+        },
+    }
 }
 
 /// One account's connection to its provider.
@@ -844,71 +1129,137 @@ impl S3Store {
         result
     }
 
-    /// Downloads `bucket/key` to `dest`, which must not exist yet. The data is
-    /// written to `dest` + `.sotyware-partial`, verified, and only then renamed
-    /// to `dest`; on any failure the partial file is removed and `dest` is not
-    /// created.
+    /// Downloads `bucket/key` to `dest`, which must not exist yet: see
+    /// [`Self::download`].
     pub async fn download_file(
         &self,
         bucket: &str,
         key: &str,
         dest: &Path,
     ) -> Result<DownloadReport, StorageError> {
+        self.download(
+            bucket,
+            key,
+            dest,
+            Existing::Refuse,
+            &TransferControl::new(),
+            &mut |_, _| {},
+        )
+        .await
+    }
+
+    /// Downloads `bucket/key` (the key exactly as given) to `dest`.
+    ///
+    /// The response body is streamed chunk by chunk into a new temporary
+    /// file in `dest`'s folder, hashed on the way; nothing holds more than
+    /// one chunk in memory. `progress` gets the bytes written so far and the
+    /// size the provider announced (if it did), after every chunk. Once the
+    /// body has ended, the file is synced to disk and its size (and, if the
+    /// object has a SHA-256 stored by sotyware, its hash) checked; only then
+    /// is it moved to `dest`, per `existing`. On any failure, and on
+    /// cancellation through `control`, the temporary file is removed and
+    /// `dest` is left as it was.
+    pub async fn download(
+        &self,
+        bucket: &str,
+        key: &str,
+        dest: &Path,
+        existing: Existing,
+        control: &TransferControl,
+        progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ) -> Result<DownloadReport, StorageError> {
         self.check_target(bucket, Some(key))?;
-        if tokio::fs::try_exists(dest).await.unwrap_or(true) {
-            return Err(StorageError::Refused(format!(
-                "{} already exists",
-                dest.display()
-            )));
+        if existing == Existing::Refuse && tokio::fs::try_exists(dest).await.unwrap_or(true) {
+            return Err(StorageError::LocalWrite {
+                kind: io::ErrorKind::AlreadyExists,
+                message: format!("{} already exists", dest.display()),
+            });
         }
-        let _slot = self.transfer_slot().await?;
-        let partial = partial_path(dest);
-        let result = self.download_to(bucket, key, &partial).await;
+        let _slot = control
+            .unless_cancelled(self.transfer_slot())
+            .await
+            .ok_or(StorageError::Cancelled)??;
+        let (partial, file) = create_partial(dest).await?;
+        *control.lock_partial() = Some(partial.clone());
+        let mut result = self
+            .stream_to(bucket, key, file, &partial, control, progress)
+            .await;
+        if result.is_ok() {
+            #[cfg(test)]
+            if let Some(f) = control.before_commit.lock().unwrap().take() {
+                f();
+            }
+            if !control.commit() {
+                result = Err(StorageError::Cancelled);
+            }
+            #[cfg(test)]
+            if result.is_ok()
+                && let Some(f) = control.after_commit.lock().unwrap().take()
+            {
+                f();
+            }
+        }
         let result = match result {
-            Ok(report) => tokio::fs::rename(&partial, dest)
-                .await
-                .map(|()| report)
-                .map_err(io_error(dest)),
+            Ok(report) => finalize(&partial, dest, existing).await.map(|()| report),
             Err(e) => Err(e),
         };
         if result.is_err() {
-            let _ = tokio::fs::remove_file(&partial).await;
+            discard_partial(control, &partial).await;
+        } else {
+            control.lock_partial().take();
         }
         result
     }
 
-    async fn download_to(
+    async fn stream_to(
         &self,
         bucket: &str,
         key: &str,
+        mut file: tokio::fs::File,
         partial: &Path,
+        control: &TransferControl,
+        progress: &mut (dyn FnMut(u64, Option<u64>) + Send),
     ) -> Result<DownloadReport, StorageError> {
-        let out = self
-            .client
-            .get_object()
-            .bucket(bucket)
-            .key(key)
-            .send()
+        let out = control
+            .unless_cancelled(self.client.get_object().bucket(bucket).key(key).send())
             .await
+            .ok_or(StorageError::Cancelled)?
             .map_err(|e| classify("download", e))?;
         let expected_sha = out.metadata().and_then(|m| m.get(SHA256_METADATA)).cloned();
         let expected_size = out.content_length().and_then(|s| u64::try_from(s).ok());
         let mut body = out.body;
-        let mut file = tokio::fs::File::create(partial)
-            .await
-            .map_err(io_error(partial))?;
         let mut hasher = Sha256::new();
         let mut size = 0u64;
-        while let Some(chunk) = body
-            .try_next()
-            .await
-            .map_err(|e| StorageError::Network(format!("download: {}", DisplayErrorContext(&e))))?
-        {
+        progress(0, expected_size);
+        #[cfg(test)]
+        let fail_after = *control.fail_write_after.lock().unwrap();
+        loop {
+            let chunk = control
+                .unless_cancelled(body.try_next())
+                .await
+                .ok_or(StorageError::Cancelled)?
+                .map_err(|e| {
+                    StorageError::Network(format!("download: {}", DisplayErrorContext(&e)))
+                })?;
+            let Some(chunk) = chunk else {
+                break;
+            };
+            #[cfg(test)]
+            if fail_after.is_some_and(|limit| size + chunk.len() as u64 > limit) {
+                return Err(write_error(partial)(io::Error::from(
+                    io::ErrorKind::StorageFull,
+                )));
+            }
             hasher.update(&chunk);
+            file.write_all(&chunk).await.map_err(write_error(partial))?;
             size += chunk.len() as u64;
-            file.write_all(&chunk).await.map_err(io_error(partial))?;
+            progress(size, expected_size);
+            if control.is_cancelled() {
+                return Err(StorageError::Cancelled);
+            }
         }
-        file.sync_all().await.map_err(io_error(partial))?;
+        file.flush().await.map_err(write_error(partial))?;
+        file.sync_all().await.map_err(write_error(partial))?;
         drop(file);
         let sha256 = hex(&hasher.finalize());
         if let Some(expected) = expected_size.filter(|&e| e != size) {
@@ -917,7 +1268,7 @@ impl S3Store {
             )));
         }
         let verification = match expected_sha {
-            Some(expected) if expected == sha256 => Verification::Sha256Matched,
+            Some(expected) if expected.eq_ignore_ascii_case(&sha256) => Verification::Sha256Matched,
             Some(expected) => {
                 return Err(StorageError::Integrity(format!(
                     "{key}: SHA-256 {sha256}, expected {expected}"
@@ -1083,11 +1434,47 @@ mod tests {
     }
 
     #[test]
-    fn hex_and_partial_paths() {
+    fn hex_and_partial_names() {
         assert_eq!(hex(&[0x00, 0xab, 0xff]), "00abff");
+        let pid = std::process::id();
         assert_eq!(
-            partial_path(Path::new("dir/photo.jpg")),
-            PathBuf::from("dir/photo.jpg.sotyware-partial")
+            partial_name(Path::new("dir/photo.jpg"), 7),
+            format!(".photo.jpg.{pid}-7.sotyware-partial")
         );
+        // A long name is cut on a character boundary, never inside one.
+        let long = format!("{}.bin", "ü".repeat(200));
+        let name = partial_name(Path::new(&long), 1);
+        assert!(name.len() <= 1 + PARTIAL_NAME_BYTES + 40, "{name}");
+        assert!(name.starts_with(&format!(".{}", "ü".repeat(50))));
+    }
+
+    #[test]
+    fn cancelling_and_committing_exclude_each_other() {
+        let c = TransferControl::new();
+        assert!(!c.is_cancelled());
+        assert!(c.cancel());
+        assert!(c.cancel(), "cancelling twice is the same as once");
+        assert!(c.is_cancelled());
+        assert!(!c.commit(), "a cancelled transfer never commits");
+
+        let c = TransferControl::new();
+        assert!(c.commit());
+        assert!(!c.cancel(), "too late once committed");
+        assert!(!c.is_cancelled());
+        assert!(!c.cancel());
+    }
+
+    #[tokio::test]
+    async fn unless_cancelled_stops_waiting_when_cancelled() {
+        let c = std::sync::Arc::new(TransferControl::new());
+        assert_eq!(c.unless_cancelled(async { 5 }).await, Some(5));
+        let c2 = std::sync::Arc::clone(&c);
+        let waiter =
+            tokio::spawn(async move { c2.unless_cancelled(std::future::pending::<()>()).await });
+        tokio::task::yield_now().await;
+        c.cancel();
+        assert_eq!(waiter.await.unwrap(), None);
+        // Already cancelled: returns at once.
+        assert_eq!(c.unless_cancelled(std::future::pending::<()>()).await, None);
     }
 }
