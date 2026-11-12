@@ -403,17 +403,26 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   visible in Credential Manager or Seahorse under `com.sotyware.desktop`.
 - **Environment-variable credentials exist only in test builds** (the opt-in
   provider tests); the app cannot use them, and nothing imports them.
-- **Uploads (ADR-021, ADR-022):** the backend is tested only against the
-  in-process server and the upload panel only with mocked commands
-  (Vitest): **never at Backblaze or Hetzner**, never on native Windows,
-  never through the release binary on any desktop, the native multi-file
-  dialog never opened by a test. At most 100 files per batch, one batch at a time, the
+- **Uploads (ADR-021, ADR-022):** tested against the in-process server
+  only: in Rust, with mocked commands (Vitest), and through the release
+  binary and the native GTK multi-file dialog on a **virtual display under
+  WSL2** (`cloud-ui.sh upload`, 2026-11-12). **Never at Backblaze or
+  Hetzner**, never on native Windows (no upload mode in
+  `windows-cloud-ui.ps1`), never on a real Linux desktop, Wayland or with
+  the XDG portal's dialog. At most 100 files per batch, one batch at a time, the
   files one after another; a skipped file (existing object, duplicate name,
   invalid name) has to be renamed or moved by the user, nothing is
   overwritten or renamed automatically. The file is read twice (the first
   hashing pass, then while sending); the parts of one file are sent one
   after another, not in parallel; an interrupted upload starts again from
   the beginning (no resume).
+- **On Linux a file whose name is not valid UTF-8 disappears from the
+  selection.** The GTK dialog shows it ("(invalid encoding)") and it can be
+  selected, but rfd 0.17.2 drops every path that is not valid UTF-8 from the
+  dialog's answer (`get_results` in its GTK 3 backend), so it never reaches
+  sotyware's `invalid-name` check: the panel lists the other files and says
+  nothing about it. Seen 2026-11-12 on the virtual display; Windows not
+  checked.
 - **Upload conflicts are checked, not prevented.** The destination is
   checked by `HeadObject` before any data is sent (and before completing a
   multipart upload); another client that creates the same key in between is

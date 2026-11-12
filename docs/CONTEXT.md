@@ -195,6 +195,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Uploads through the **release binary** on the **WSL2 virtual display**
+  (2026-11-12, uncommitted test code on `f9026f5`): `cloud-ui.sh upload`
+  **51/51, 3 runs**, native **GTK multi-file dialog**, local s3s-fs server
+  (cancel, retry, multipart abort and refused abort, needs-inspection
+  without retry, changed file, download beside it, leaving the browser,
+  hide + second launch, tray Quit; bucket empty afterwards). Regression:
+  `download` 22/22 (3), local/hang/browse 16/8/17, virtual display 119/0/0,
+  headless 308 + 16 ignored, 135. **No native Windows, no real provider.**
+  [status.md](status/status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12).
 - Upload UI (2026-11-12, uncommitted on `e7ae326`, WSL2, frontend only):
   Vitest **135 passed** (42 new in `src/CloudUpload.test.ts`, mocked upload
   commands and channels; the 93 existing, including the download tests,
@@ -490,8 +499,10 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads (backend and UI) were never run at a real provider, on native
-Windows or through the release binary (the UI only with mocked commands); incomplete multipart uploads whose abort failed are remembered
+Uploads were never run at a real provider, on native Windows or on a real
+Linux desktop (the release binary and the GTK dialog only on the WSL2
+virtual display against the local server); on Linux a non-UTF-8 file name
+silently drops out of the dialog's selection (rfd); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
@@ -504,7 +515,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (desktop UI tests of uploads with the native dialog, then uploads at Backblaze and on native Windows; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (desktop UI test of uploads on native Windows, then uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

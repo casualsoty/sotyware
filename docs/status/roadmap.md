@@ -109,10 +109,11 @@ order:
    inspection" explanations; leaving the browser cancels) is done too,
    tested with mocked commands only
    ([status.md](status.md#cloud-storage-upload-ui-2026-11-12)).
-   **Next:** desktop UI tests of uploads through the release binary against
-   the in-process server (Linux virtual display, Windows real desktop, with
-   the native multi-file dialog), then runs at Backblaze and on native
-   Windows. Later: deletes and folder creation, each with its own
+   The release binary's upload workflow with the native GTK multi-file
+   dialog passed against the in-process server on the Linux virtual display
+   ([status.md](status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12)).
+   **Next:** the same on the Windows real desktop (an upload mode for
+   `windows-cloud-ui.ps1`), then runs at Backblaze. Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.
 8. restic orchestration (child process, `--json`, exit codes), tried first

@@ -127,6 +127,86 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Cloud Storage: uploads through the release binary on a virtual display (2026-11-12)
+
+Uncommitted tree on `f9026f5` (test code and docs only: new
+`serve_uploads_for_ui` helper in `src-tauri/src/cloud/test_server.rs`, new
+`upload` phase in `tests/desktop/cloud-ui.sh`, `cloud_ui.py` and
+`cloud_ui_upload.py`; no production file changed). WSL2 Ubuntu 24.04.1,
+Rust 1.99.1, Node 24.22.0. **Virtual display** (Xvfb + openbox, private
+D-Bus session, stub tray watcher, real GNOME Keyring with a throwaway
+keyring), **release binary** `src-tauri/target/release/sotyware` built by
+`npm run tauri build -- --no-bundle` at 05:32 (SHA-256 `8788e2f3…18aa`;
+nothing listened on the dev-server port 1420, so the page was the bundled
+frontend). **Local s3s-fs server** in the test process behind a throttled
+link (6 MiB/s towards the server), made-up key; no provider contacted.
+**The native GTK multi-file dialog was used** (location bar, Ctrl+A in its
+file list, Open; driven through AT-SPI and XTest).
+([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test))
+
+- `cloud-ui.sh upload`: **51 passed, 0 failed, 3 runs** (after the driver
+  was debugged; the earlier attempts failed in the driver, not the app).
+  Every batch's objects were read on the server (content, size, `HeadObject`
+  size and SHA-256 metadata, open multipart files):
+  - into `inbox/`: empty file (0 bytes, `e3b0…`), `Grüße Ünïcödé 日本.txt`,
+    `report 2024 (final) + notes & more #1.txt`, a 12 MiB file → uploaded
+    and verified, stored under their exact keys; `existing.txt` → skipped,
+    the existing object unchanged; a link to `/dev/null` → not a file; a
+    broken link → could not be read; a name with U+0001 → control
+    characters. Summary "8 files: 4 uploaded, 4 skipped." The destination
+    stayed `inbox/` although the browser was moved to the root while the
+    dialog was open. While the 12 MiB file showed "Sending · n%" the server
+    had no object for it yet.
+  - cancel during a 40 MiB PUT: the file before it kept, the file after it
+    "Not started", nothing stored for the cancelled one; **Try 2 files
+    again** uploaded exactly those two.
+  - cancel during a 72 MiB multipart upload: aborted, no parts left.
+  - abort refused (injected): "parts may remain", the parts really on the
+    server, not retryable; **Try 1 file again** took only the other file and
+    first removed the remembered parts (cleanup shown, none left).
+  - verification `HeadObject` refused after the PUT (injected): the batch
+    stopped, the file "needs inspection" (the object really was stored and
+    was not deleted), **no retry offered for it**; Try 1 file again took
+    only the not-started file.
+  - a file appended to while it was sent: failed, nothing stored, retry
+    uploaded the new content.
+  - a download through the GTK save dialog completed (SHA-256 matched)
+    while an upload in `downloads/` was still sending; the upload finished
+    too.
+  - ← Back to accounts during a batch: neither file stored 10 s later, no
+    parts; Upload files… enabled again.
+  - close (✕, tray mode: hide) during an upload: window unmapped, process
+    running; a second launch showed it again (exit 0) with the same batch,
+    which then finished.
+  - tray Quit during a multipart upload: exit 0 after about 3 s, no object,
+    parts aborted.
+  - the app sent only `HeadObject`, `PutObject`, multipart calls,
+    `GetObject` and `ListObjectsV2` (per run: 16 PUT, 3 create, 6 parts, 4
+    aborts, 52 HEAD, 1 GET, 10 lists). Cleanup deleted exactly the 13
+    uploaded keys and the 3 seeded ones by key; the bucket ended with 0
+    objects and no multipart upload.
+- Found: on Linux the GTK dialog's answer never contains a file whose name
+  is not valid UTF-8: rfd 0.17.2 (`backend/gtk3/file_dialog/dialog_ffi.rs`,
+  `get_results`) drops such paths silently, so sotyware's own
+  `invalid-name` skip is never reached and the page does not mention the
+  file ([limitations](limitations.md#cloud-storage)). Not changed.
+- Only "Sending · n%" was seen in the panel; hashing and verifying are too
+  short at these sizes to be sampled through AT-SPI (they are covered by
+  the Rust and Vitest tests).
+- Regression on the same binary: `cloud-ui.sh download` **22/22, 3 runs**;
+  `local` 16/16, `hang` 8/8, `browse` 17/17 (once each);
+  `npm run test:desktop:virtual` **119/0/0**; `npm run test:headless` 308
+  passed, 16 ignored (the new helper is one) + 135 frontend;
+  `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` pass.
+
+Not run: native Windows (`windows-cloud-ui.ps1` has no upload mode and was
+not run), a real Linux desktop or Wayland, the XDG portal's file dialog,
+any real provider, a duplicate-key selection (the GTK dialog picks from one
+folder, so two files cannot share a name; covered by Rust tests), a
+cancel in the exact gap between two files (too short to hit from the UI;
+Rust tests cover it), key-too-long and too-large skips, a hang of the abort
+at quit (the 35 s bound).
+
 ### Cloud Storage: upload UI (2026-11-12)
 
 Uncommitted tree on `e7ae326`, WSL2 Ubuntu 24.04.1, Node 24.22.0, Rust
