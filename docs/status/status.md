@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (one single-file download from the real Backblaze B2 test bucket through the app's download code: [details](#one-download-from-backblaze-2026-11-12)). Update this file whenever
+Last updated: 2026-11-12 (one real Backblaze B2 download through the native Windows 11 dashboard and save dialog: [details](#real-backblaze-download-through-the-windows-dashboard-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -58,7 +58,11 @@ Single-file downloads passed on 2026-11-12 against the local object server
 through the UI and the native save dialog on both platforms, and once
 against **real Backblaze B2** through the Rust download code (WSL2, no UI):
 `Content-Length` and the stored SHA-256 arrived, the file was verified
-([details](#one-download-from-backblaze-2026-11-12)).
+([details](#one-download-from-backblaze-2026-11-12)). The same day one file
+from Backblaze was downloaded through the **complete native Windows 11 flow**
+(dashboard, browser, native save dialog, real Credential Manager) and
+verified byte for byte; the object was deleted again by its version id
+([details](#real-backblaze-download-through-the-windows-dashboard-2026-11-12)).
 
 ## Implemented
 
@@ -118,6 +122,85 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Real Backblaze download through the Windows dashboard (2026-11-12)
+
+Tree: uncommitted, on `fc76109` (test code only: `windows-cloud-ui.ps1
+-Mode b2-download` and the opt-in tests `backblaze_b2_download_ui_prepare` /
+`_cleanup` in `cloud/integration/download.rs`; no application change).
+Environment: **native Windows 11 Home 25H2, build 26200.9711, the real,
+unlocked desktop** (not a private desktop, not WSL2 or a virtual display),
+release binary built from that tree in a fresh copy `C:\dev\sotyware-dlui`
+(Rust 1.99.1, Node 24.14.1), driven from WSL2 through `powershell.exe`. The
+dashboard was driven with UI Automation, the common item dialog by control id
+and window messages (no mouse, no keystrokes). Provider **Backblaze B2**,
+`https://s3.eu-central-003.backblazeb2.com`, the dedicated test bucket.
+[testing.md](../development/testing.md#downloading-through-the-windows-dashboard-at-backblaze).
+
+**Result: 35/35, one run** (run id `1794449850614005000-36480`):
+
+- Prepare (write key): endpoint and bucket as configured, read-only key
+  different from the write key; `ListObjectVersions` of
+  `sotyware-it/download-ui-validation/1794449850614005000-36480/` → none;
+  generated 16,777,219 bytes (16 MiB + 3), SHA-256
+  `ff94cdeeab8f48567823bfeff8f15cf487ceb2fe342fb4272d883fe70e9c5009`
+  computed locally before the upload; one `PutObject` of `größe test.bin`
+  (single part) → version
+  `4_zdd327be63254c7b0a71e0912_f1015a9a0a26512a9_d20261112_m021731_c003_v0312048_t0019_u01794449851601`.
+- Dashboard (read-only key, added through the form; real Credential
+  Manager): Check connection → Connected; Open bucket → root with
+  `sotyware-it`; `sotyware-it` → `download-ui-validation` → the run folder,
+  exactly one row `größe test.bin | 16 MiB`; Download → the **native Windows
+  save dialog** with `größe test.bin` suggested unchanged; saved into a new
+  folder under `%TEMP%` (outside the repository).
+- Progress: the page showed "0% · 0 B of 16 MiB" (total known, so
+  `GetObject` carried `Content-Length`) and a hidden `.sotyware-partial`
+  file existed; the final message came after 0.6 s, so only **one** progress
+  line was sampled: "never goes down" was trivially true here. Byte-level
+  monotonicity at Backblaze is shown only by the WSL2 Rust run below.
+- Final message: "Downloaded 16 MiB. The SHA-256 checksum stored with the
+  file matched." (`sha256-verified`: the `GetObject` response carried the
+  `sotyware-sha256` metadata). When it appeared, the file was already in
+  place at 16,777,219 bytes and no temporary file existed.
+- Saved file, checked outside the app: 16,777,219 bytes; SHA-256 (`Get-FileHash`)
+  equal to the value above; byte-for-byte equal to the generated original;
+  the folder held only that file. The ETag was not used.
+- Afterwards rename, key replacement and removal through the UI as in the
+  other modes; Credential Manager: 0 `com.sotyware.desktop` entries before
+  and after (checked again with `cmdkey` afterwards).
+- Cleanup (write key): `DeleteObject` with exactly that version id → 204;
+  `ListObjectVersions` of the run prefix → **0 versions or delete markers
+  left**. Local: downloaded file, generated original and both folders
+  removed; no `.sotyware-partial` anywhere under `%TEMP%` (checked again
+  from PowerShell); the user's `cloud-accounts.sqlite3` was moved aside and
+  put back unchanged (same size and time stamp).
+
+Remote requests of this run: write key 4 (2 listings of the run prefix, 1
+PUT, 1 versioned DELETE); read key through the app about 6 (`HeadBucket`, 4
+`ListObjectsV2` folder levels, 1 `GetObject`; the app's requests are not
+recorded). Nothing else in the bucket was listed or changed.
+
+**An earlier attempt failed in the test driver, not in the app** (same
+day, run id `1794449764897407200-35528`, 25/26): in PowerShell `$out`
+(the prepare test's output) and `$Out` (the download folder) are the same
+variable, so the driver failed building the destination path right after
+the save dialog had opened with the right name; the dialog was cancelled,
+**no `GetObject` was sent**. Its version
+(`4_zdd327be63254c7b0a71e0912_f1172e1b607c1d84c_d20261112_m021605_c003_v0312049_t0017_u01794449765844`)
+was deleted by id and the listing showed 0 left; its two local folders were
+removed by hand. The driver was fixed (and a second clash, `$a` with `$A`,
+found by reading) before the passing run, which uploaded one new object.
+
+Regression on this tree: WSL2 `cargo test` **238 passed, 14 ignored** (1
+new unit test, 2 new opt-in tests), frontend 93, fmt, clippy; native Windows
+11 `npm run check`, fmt, clippy, `test:headless` **228 + 93**, release build.
+No other desktop suite was rerun (no application change).
+
+**Not verified:** more than one passing run; several progress lines from a
+real provider in the UI (the download finished within one sample); a
+download through the UI from Backblaze on Linux, on Windows 10 or by a
+person; multipart-uploaded or larger files; a missing or wrong checksum at a
+real provider; Hetzner.
 
 ### One download from Backblaze (2026-11-12)
 
@@ -1463,7 +1546,7 @@ tray icon was ever seen or clicked by a person.
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 | Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
 | The dataset test's provider walk of `many/` in pages of 336 at Backblaze | — (local listing server only, 2026-11-12; the pages of 7 it replaces passed at Backblaze: [details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)) |
-| Downloads through the UI and save dialog at a real provider (Windows 11 included); downloads at Hetzner | — (Backblaze once through the Rust download code on WSL2, 2026-11-12: [details](#one-download-from-backblaze-2026-11-12)) |
+| Downloads through the UI and save dialog at a real provider on Linux or Windows 10; more than one Windows 11 run; downloads at Hetzner | — (Backblaze: once through the Rust download code on WSL2, [details](#one-download-from-backblaze-2026-11-12); once through the native Windows 11 dashboard and save dialog, 35/35, [details](#real-backblaze-download-through-the-windows-dashboard-2026-11-12); both 2026-11-12) |
 | Bucket browsing at Hetzner; at Backblaze on a real Linux desktop or Windows 10; more than two pages through the UI | — (Backblaze with content verified 2026-11-11 on WSL2/Xvfb and Windows 11: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)) |
 
 To validate an environment, follow the manual checklist in

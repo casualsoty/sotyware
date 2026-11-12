@@ -612,6 +612,55 @@ the in-process server in every `cargo test`. Locally the 16 MiB arrive
 within the 250 ms progress interval, so there are only the two "active"
 messages with 0 bytes.
 
+### Downloading through the Windows dashboard at Backblaze
+
+`windows-cloud-ui.ps1 -Mode b2-download` (see the
+[UI end-to-end test](#cloud-storage-ui-end-to-end-test)) downloads one file
+from the real B2 test bucket through the release binary's dashboard and the
+native Windows save dialog. Two opt-in Rust tests in
+`cloud/integration/download.rs` do the provider side, with the write key
+(`b2.xml`), one attempt per request:
+
+- `backblaze_b2_download_ui_prepare`: checks that the account is Backblaze's
+  own endpoint and that the read-only key differs from the write key, makes
+  a new run id, lists the versions of
+  `sotyware-it/download-ui-validation/<run id>/` (must be none: no object,
+  version or delete marker), generates 16 MiB + 3 bytes into
+  `SOTYWARE_IT_B2_DOWNLOAD_UI_DIR` (a new, empty folder under `%TEMP%`),
+  computes their SHA-256, uploads them as `größe test.bin` with the
+  `sotyware-sha256` metadata, prints the run id and version id at once and
+  writes `manifest.json` (key, size, SHA-256, version id). The object is
+  kept for the dashboard. Requests: `ListObjectVersions`, `PutObject`.
+- `backblaze_b2_download_ui_cleanup`: `DeleteObject` of exactly
+  `SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION` (never without a version id), then
+  one `ListObjectVersions` of the run prefix, which must be empty. If the
+  delete is refused (for example by the daily transaction cap) it sends
+  nothing more and fails with the run id and version id.
+
+The script adds the account with the **read-only key** (`b2-read.xml`) through
+the form, checks the connection, opens the bucket, goes `sotyware-it` →
+`download-ui-validation` → the run folder (which must show exactly one row,
+`größe test.bin`, 16 MiB), presses Download, checks that the save dialog
+suggests the name unchanged, saves into a second new folder under `%TEMP%`,
+and samples the page's progress line until the final message. It checks:
+every progress line says "of 16 MiB" (the total from `Content-Length`) and
+never goes down (percent and the shown size; the exact byte counts stay in
+the channel, so they are checked only by the Rust test above); the final
+message is "Downloaded 16 MiB. The SHA-256 checksum stored with the file
+matched." (`sha256-verified`: the `GetObject` response carried the
+`sotyware-sha256` metadata, equal to the received bytes' hash); at the moment
+it appears the file is already in place at full size (opened with sharing,
+since NTFS directory entries lag) and no `.sotyware-partial` exists; the saved
+file's size, its SHA-256 (`Get-FileHash`) and every byte equal the generated
+original's. Then the usual tail (rename, replace key, remove; Credential
+Manager as before). Always, also after a failed check: the cleanup test, and
+both local folders removed. No fingerprint of `sotyware-it/` is taken, so the
+rest of the bucket is not listed. Requests per run: write key 4 (above), read
+key about 6 through the app (`HeadBucket`, `ListObjectsV2` of the root,
+`sotyware-it/`, `download-ui-validation/` and the run folder, one
+`GetObject`; not recorded, the app's own client). It needs the Rust
+toolchain (the two tests are compiled on the first run).
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a
@@ -639,6 +688,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `download`, Windows `-Mode download` | — (Windows: **Connected**) | downloads through the **native save dialog** from the in-process object server (`cargo test … serve_objects_for_ui -- --ignored`, made-up key; it writes the objects' sizes and SHA-256 next to its endpoint file): every file row has Download; the dialog opens with the key's last segment suggested, and cancelling it starts nothing; Save → "Downloaded …" with the SHA-256 matched and the file's SHA-256 equal to the server's; an existing file → the dialog's own replace question (GTK: "already exists" + Replace; Windows: "Confirm Save As" + Yes), the old file untouched until then, replaced afterwards; `docs/Bericht 2024 ü & co.pdf` (3 MiB) suggested unchanged and verified; a file without a stored SHA-256 → completed, "could not be verified"; a slow 16 MiB file → percent and "of 16 MiB", a hidden `.large.bin.*.sotyware-partial`, Cancel → "Download cancelled. Nothing was saved.", no file left; a connection cut after 256 KiB → failed with the network text, Try download again (no dialog) fails the same way; content that does not match its SHA-256 → integrity failure, nothing saved; at the end the download folder holds exactly the completed files. Linux only: closing the window during a download (dashboard-only mode quits) → exit 0 and no temporary file. Files go to a folder in the throwaway HOME (Linux) or a new folder under `%TEMP%` (Windows, removed afterwards). The server fails the phase if anything but `GetObject`, `ListObjectsV2` or `HeadBucket` reached it. On Linux the GTK dialog's name field is found through AT-SPI and the path typed with XTest (ASCII paths only); on Windows the common item dialog's File name box, Save and Cancel are not in its UI Automation tree (Windows 11 25H2), so they are found as child windows by control id (Edit `1001`, Button `1`, `2`) and driven with `WM_SETTEXT` / `BM_CLICK`, and the Yes of "Confirm Save As" with `TDM_CLICK_BUTTON`; any script error in this mode is a failed check and the account is still removed |
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
 | Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
+| Windows `-Mode b2-download` | **Connected** for the read-only key | one real download through the dashboard and the native save dialog, [described above](#downloading-through-the-windows-dashboard-at-backblaze) |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -677,7 +727,7 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|b2|b2-browse]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|b2|b2-browse|b2-download]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
 on the desktop; it is driven through UI Automation too, not clicked). The existing `cloud-accounts.sqlite3`
@@ -692,6 +742,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode browse
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode download
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-download
 ```
 
 `browse` and `download` (and the same phases of `cloud-ui.sh`) compile and
@@ -711,7 +762,8 @@ script passes `(Get-UICulture).Name` to the same `toLocaleString` call.
 
 Not covered by either: an unlock prompt answered by a person, KWallet,
 Windows 10, the connection check against Hetzner, browsing at Hetzner,
-downloading from any real provider, the XDG desktop portal's save dialog,
+downloading from a real provider on Linux (the UI) or from Hetzner, a
+checksum mismatch at a real provider, the XDG desktop portal's save dialog,
 quitting through the tray during a download (Windows).
 
 ## Frontend tests

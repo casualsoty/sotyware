@@ -82,7 +82,7 @@ Where things are. Generated and ignored paths are listed in
         ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, feature preferences across restarts, Cloud Storage navigation and empty state, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
         ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches, feature preferences across restarts, Cloud Storage navigation and empty state
-        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation, real Credential Manager; -Mode local, browse (local listing server), download (local object server, Windows save dialog), b2 (real Backblaze) or b2-browse (temporary dataset at Backblaze, read-only key)
+        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation, real Credential Manager; -Mode local, browse (local listing server), download (local object server, Windows save dialog), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key) or b2-download (one temporary file downloaded from Backblaze through the dashboard and the save dialog)
         └── windows-isolated.ps1  Unattended Windows test on a private desktop: window, hide button, close, launches (no tray)
 ```
 

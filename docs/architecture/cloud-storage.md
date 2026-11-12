@@ -572,11 +572,14 @@ Rust tests and the release binary's UI with the real native save dialog: GTK
 under Xvfb (WSL2, a virtual display) and the common item dialog on the real
 Windows 11 desktop (2026-11-12,
 [status.md](../status/status.md#cloud-storage-single-file-downloads-2026-11-12)).
-At a real provider once, without the UI: a 16 MiB file at Backblaze B2
-through `CloudDownloads` (WSL2, 2026-11-12); its `GetObject` carried
+At a real provider (Backblaze B2, a 16 MiB file, 2026-11-12): once without
+the UI through `CloudDownloads` (WSL2); its `GetObject` carried
 `Content-Length` and the stored `sotyware-sha256`, and the download was
 SHA-256 verified
-([status.md](../status/status.md#one-download-from-backblaze-2026-11-12)).
+([status.md](../status/status.md#one-download-from-backblaze-2026-11-12));
+and once through the native Windows 11 dashboard and save dialog, verified
+byte for byte
+([status.md](../status/status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12)).
 
 ## Not built (deliberately)
 

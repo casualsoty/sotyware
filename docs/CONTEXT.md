@@ -162,6 +162,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Real Backblaze download through the **native Windows 11 dashboard**
+  (2026-11-12, uncommitted tree on `fc76109`, test code only):
+  `windows-cloud-ui.ps1 -Mode b2-download` on the real, unlocked Windows 11
+  25H2 desktop, release binary: prepare test checks the run prefix
+  `sotyware-it/download-ui-validation/<run>/` is empty and uploads one
+  generated 16 MiB + 3 `größe test.bin` (SHA-256 first); the dashboard
+  (read-only key, real Credential Manager) browses to it, Download opens the
+  **native save dialog** with the name unchanged, saves to `%TEMP%`; final
+  "Downloaded 16 MiB. The SHA-256 checksum stored with the file matched.",
+  the file in place at full size when shown, SHA-256 and bytes equal the
+  original; only one progress line seen (0.6 s); version deleted by id, 0
+  left; local files removed; **35/35, one run** (an earlier attempt failed
+  in the driver, no GET; its object was deleted too). WSL2 `cargo test` 238
+  + 14 ignored, Windows 228 + 93.
+  [status.md](status/status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12).
 - One download from **real Backblaze B2** (2026-11-12, uncommitted tree on
   `d95978d`, test code only): `backblaze_b2_download_file` uploaded one
   generated 16 MiB + 3 file (SHA-256 computed locally first) to
@@ -395,9 +410,9 @@ at Backblaze with a temporary 1,040-object dataset (WSL2/Xvfb and Windows 11),
 never at Hetzner; Backblaze answers a continuation token it never issued with
 the first page instead of an error; a key limited to a file name prefix cannot
 browse (Backblaze refuses the root); no total count, no cache. Downloads
-are verified through the UI only against the local object server; at a real
-provider only once, at Backblaze through the Rust code without the UI; one
-at a time, without resume; a killed process leaves its hidden
+are verified at Backblaze once through the Rust code (WSL2) and once through
+the native Windows 11 dashboard and save dialog; through the UI on Linux
+only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
 Full list: [limitations.md](status/limitations.md).
@@ -410,7 +425,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (a download through the UI from a real provider, then uploads and deletes with their own confirmation design): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (uploads and deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

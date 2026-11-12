@@ -395,3 +395,184 @@ async fn download_through_app_against_the_test_server() {
     let dest = dest_dir.path(FILE_NAME);
     download_through_app(input, &server.credentials(), &key, &dest, &expected).await;
 }
+
+/// Where the Windows dashboard download test's objects live
+/// (`tests/desktop/windows-cloud-ui.ps1 -Mode b2-download`), one run each.
+const UI_ROOT: &str = "sotyware-it/download-ui-validation/";
+
+/// The run prefix of a dashboard download run; the run id comes from the
+/// environment for the cleanup, so it may not leave the download root.
+fn ui_run_prefix(run: &str) -> String {
+    assert!(
+        !run.is_empty()
+            && run
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+        "a run id is letters, digits, '-' and '_' only"
+    );
+    format!("{UI_ROOT}{run}/")
+}
+
+/// Prints the requests each key sent, the bucket segment hidden.
+fn show_requests(bucket: &str, sent: &[(&str, Vec<String>)]) {
+    for (name, sent) in sent {
+        let shown: Vec<String> = sent
+            .iter()
+            .map(|r| r.replacen(&format!("/{bucket}/"), "/<bucket>/", 1))
+            .collect();
+        println!("{name}: {} requests {shown:?}", shown.len());
+    }
+}
+
+/// First half of the Windows dashboard download test: checks the account
+/// and that the new run prefix holds no version or delete marker, generates
+/// the file into `SOTYWARE_IT_B2_DOWNLOAD_UI_DIR` (`source.bin`, SHA-256
+/// computed before the upload), uploads it with the write key and writes
+/// `manifest.json` next to it. The object is kept for the dashboard; the
+/// driver deletes it with `backblaze_b2_download_ui_cleanup`.
+///
+/// Remote requests: one `ListObjectVersions` of the run prefix and one
+/// `PutObject`, both with the write key, one attempt each.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "opt-in: uploads one file to the Backblaze B2 test bucket and keeps it"]
+async fn backblaze_b2_download_ui_prepare() {
+    let dir = PathBuf::from(
+        std::env::var("SOTYWARE_IT_B2_DOWNLOAD_UI_DIR")
+            .expect("set SOTYWARE_IT_B2_DOWNLOAD_UI_DIR to an empty local folder"),
+    );
+    assert!(
+        fs::read_dir(&dir)
+            .expect("the local folder")
+            .next()
+            .is_none(),
+        "{dir:?} is not empty"
+    );
+    let (t, resolved, write_creds, _) = b2_store();
+    assert_eq!(resolved.profile.id, "backblaze-b2");
+    assert_eq!(
+        resolved.endpoint_url,
+        format!("https://s3.{}.backblazeb2.com", resolved.region),
+        "the configured endpoint must be Backblaze's own"
+    );
+    let read_creds = EnvCredentials::from_process()
+        .credentials("it-b2-read")
+        .expect("the read-only key (SOTYWARE_CLOUD_IT_B2_READ_*)");
+    assert_ne!(
+        read_creds.access_key_id, write_creds.access_key_id,
+        "the dashboard must download with the read-only key, not the write key"
+    );
+    let writes = Requests::default();
+    let write =
+        S3Store::new(resolved.clone(), write_creds, one_attempt()).with_interceptor(writes.clone());
+    let run = format!(
+        "{}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        std::process::id()
+    );
+    let prefix = ui_run_prefix(&run);
+    let key = format!("{prefix}{FILE_NAME}");
+    println!(
+        "provider {}, region {}, endpoint {}, run prefix {prefix}",
+        resolved.profile.id, resolved.region, resolved.endpoint_url
+    );
+    let before = versions(&write, &t.bucket, &prefix).await;
+    assert!(
+        before.is_empty(),
+        "the run prefix is not empty, nothing uploaded: {before:?}"
+    );
+    println!("run prefix: no objects, versions or delete markers");
+
+    let generated = TempDir::new("b2-download-ui");
+    let source = dir.join("source.bin");
+    fs::copy(generated.file("source.bin", SIZE, 7), &source).expect("copy the generated file");
+    drop(generated);
+    let sha256 = sha256_of(&source);
+    println!("generated: {SIZE} bytes, SHA-256 {sha256} (computed locally before the upload)");
+
+    let up = write.upload_file(&t.bucket, &key, &source).await;
+    show_requests(&t.bucket, &[("write key", writes.take())]);
+    let up = up.unwrap_or_else(|e| panic!("upload: {e}"));
+    let Some(version) = up.version_id.clone() else {
+        panic!("NOT CLEANED UP: {key:?} has no version id; delete it by hand");
+    };
+    // The driver reads the run id and version from this line even if a later
+    // step fails, so the cleanup always gets them.
+    println!("download-ui object kept; run id {run} version {version}");
+    println!(
+        "upload: {} bytes, {} part(s), SHA-256 {} (sent as the sotyware SHA-256 metadata)",
+        up.size, up.parts, up.sha256
+    );
+    assert_eq!(up.parts, 1);
+    assert_eq!(
+        (up.size, up.sha256.as_str()),
+        (SIZE as u64, sha256.as_str())
+    );
+    let manifest = serde_json::json!({
+        "run": run,
+        "prefix": prefix,
+        "key": key,
+        "fileName": FILE_NAME,
+        "size": up.size,
+        "sha256": sha256,
+        "versionId": version,
+    });
+    fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .expect("write the manifest");
+    println!("manifest written; clean up with backblaze_b2_download_ui_cleanup");
+}
+
+/// Second half: deletes exactly the version a prepare run created
+/// (`SOTYWARE_IT_B2_DOWNLOAD_UI_RUN`, `SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION`),
+/// never without a version id, then lists the run prefix's versions once and
+/// fails unless none is left. If the delete is refused (for example by the
+/// daily transaction cap), nothing more is sent.
+///
+/// Remote requests: one `DeleteObject` with the version id and one
+/// `ListObjectVersions` of the run prefix, write key, one attempt each.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "opt-in: deletes one download-ui-validation version from the Backblaze B2 test bucket"]
+async fn backblaze_b2_download_ui_cleanup() {
+    let run = std::env::var("SOTYWARE_IT_B2_DOWNLOAD_UI_RUN")
+        .expect("set SOTYWARE_IT_B2_DOWNLOAD_UI_RUN to the run id");
+    let version = std::env::var("SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION")
+        .expect("set SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION to the version id");
+    assert!(!version.is_empty(), "never delete without a version id");
+    let prefix = ui_run_prefix(&run);
+    let key = format!("{prefix}{FILE_NAME}");
+    let (t, resolved, write_creds, _) = b2_store();
+    let writes = Requests::default();
+    let write = S3Store::new(resolved, write_creds, one_attempt()).with_interceptor(writes.clone());
+    println!("cleaning up run {run}: deleting version {version} of {key:?}");
+    let deleted = write.delete_object(&t.bucket, &key, Some(&version)).await;
+    if let Err(e) = deleted {
+        show_requests(&t.bucket, &[("write key", writes.take())]);
+        panic!("CLEANUP FAILED for {key:?} version {version}: {e}; nothing more was sent");
+    }
+    let left = versions(&write, &t.bucket, &prefix).await;
+    show_requests(&t.bucket, &[("write key", writes.take())]);
+    println!(
+        "cleanup: {} versions/delete markers left under {prefix}",
+        left.len()
+    );
+    assert!(left.is_empty(), "left under {prefix}: {left:?}");
+}
+
+#[test]
+fn ui_run_prefix_stays_under_the_download_ui_root() {
+    assert_eq!(
+        ui_run_prefix("123-45"),
+        "sotyware-it/download-ui-validation/123-45/"
+    );
+    for bad in ["", "..", "a/b", "../browse-validation", "a b"] {
+        assert!(
+            std::panic::catch_unwind(|| ui_run_prefix(bad)).is_err(),
+            "{bad:?}"
+        );
+    }
+}

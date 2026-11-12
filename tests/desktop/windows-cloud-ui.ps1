@@ -5,7 +5,7 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|download] [-Exe <path>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download] [-Exe <path>]
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -39,6 +39,19 @@
 #   (name, size, date) with the provider's listing, and always deletes exactly
 #   that run's versions afterwards (backblaze_b2_browse_cleanup). Needs node
 #   on PATH (the page's date format is reproduced with the same Intl call).
+# -Mode b2-download: one real download from the Backblaze test bucket through
+#   the dashboard and the native save dialog. The opt-in Rust test
+#   backblaze_b2_download_ui_prepare (b2.xml key) checks that a new run prefix
+#   sotyware-it/download-ui-validation/<run id>/ holds no version, generates
+#   one 16 MiB + 3 file (SHA-256 computed first) into a new folder under
+#   %TEMP% and uploads it as "gr\u00f6\u00dfe test.bin" (a space, two
+#   non-ASCII letters); the app then browses to it and
+#   downloads it with the read-only key (b2-read.xml) into another new folder
+#   under %TEMP%, sampling the progress shown; the saved file is compared with
+#   the generated one (size, SHA-256, every byte). Afterwards
+#   backblaze_b2_download_ui_cleanup deletes exactly that version and lists
+#   the run prefix once (none may be left), and both local folders are
+#   removed. No fingerprint of the rest of the bucket is taken.
 #
 # The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
 # is moved aside first and put back at the end, as in windows.ps1; secret values
@@ -47,7 +60,7 @@
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003"
 )
@@ -116,6 +129,23 @@ public static class CloudUiW {
       return eq ? 1 : 0;
     } finally { CredFree(p); }
   }
+  // Size of a file another process may still hold open (the directory entry
+  // can lag behind on NTFS); -1 if it does not exist.
+  public static long Length(string path) {
+    try { using (var f = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete)) { return f.Length; } }
+    catch (System.IO.FileNotFoundException) { return -1; }
+  }
+  public static bool SameBytes(string a, string b) {
+    using (var x = System.IO.File.OpenRead(a)) using (var y = System.IO.File.OpenRead(b)) {
+      if (x.Length != y.Length) return false;
+      var bx = new byte[1 << 16]; var by = new byte[1 << 16];
+      while (true) {
+        int n = x.Read(bx, 0, bx.Length); if (n == 0) return true;
+        int m = 0; while (m < n) { int k = y.Read(by, m, n - m); if (k == 0) return false; m += k; }
+        for (int i = 0; i < n; i++) if (bx[i] != by[i]) return false;
+      }
+    }
+  }
 }
 "@
 $ErrorActionPreference = "Continue"
@@ -136,6 +166,7 @@ function WaitFor([scriptblock]$pred, [double]$timeout = 10) {
   while ((Get-Date) -lt $end) { if (& $pred) { return $true }; Start-Sleep -Milliseconds 150 }
   return [bool](& $pred)
 }
+function Sha($path) { (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() }
 function Procs { @(Get-Process sotyware -EA SilentlyContinue | Where-Object { $_.Path -eq $Exe }) }
 function Dash {
   $p = [uint32[]]@((Procs).Id); if ($p.Count -eq 0) { return $null }
@@ -208,7 +239,7 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
 
 $run = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff")
-if ($Mode -eq "b2-browse") {
+if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $dir = Join-Path $env:USERPROFILE ".sotyware-it"
   foreach ($f in "b2.xml", "b2-read.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; exit 2 } }
   $w = Import-Clixml "$dir\b2.xml"; $WriteKey = $w.UserName; $WriteSecret = $w.GetNetworkCredential().Password; $w = $null
@@ -255,7 +286,7 @@ if ($Mode -eq "b2-browse") {
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
 }
 $script:redact = @(@($Secret1, "<secret>"), @($Secret2, "<secret2>"), @($Key1, "<keyID>"), @($Key2, "<keyID2>"), @($Bucket, "<bucket>"))
-if ($Mode -eq "b2-browse") { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
+if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
 
 # Runs the opt-in Rust test that fingerprints the B2 bucket; the variables are
 # set for that child only and removed again.
@@ -263,7 +294,7 @@ if ($Mode -eq "b2-browse") { $script:redact += , @($WriteSecret, "<write-secret>
 # (removed again afterwards); returns its output lines.
 function CargoIt($test, $extra = @{}) {
   $vars = @{ SOTYWARE_IT_B2_BUCKET = $Bucket; SOTYWARE_IT_B2_REGION = $Region }
-  if ($Mode -eq "b2-browse") {
+  if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
     $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $WriteKey; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $WriteSecret
     $vars.SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID = $Key1; $vars.SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY = $Secret1
   } else {
@@ -294,6 +325,18 @@ function BrowseCleanup {
   if ($script:cargoExit -eq 0) { $script:browseRun = $null }
 }
 
+# b2-download: the run id and version id of the kept object, once uploaded.
+$script:dlRun = $null; $script:dlVersion = $null
+# Deletes exactly that version and lists the run prefix once; never retried
+# (a refusal, such as the daily transaction cap, is reported, not repeated).
+function DownloadCleanup {
+  if (-not $script:dlRun) { return }
+  $out = CargoIt "cloud::integration::download::backblaze_b2_download_ui_cleanup" @{ SOTYWARE_IT_B2_DOWNLOAD_UI_RUN = $script:dlRun; SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION = $script:dlVersion }
+  $out | Where-Object { $_ -match '^(cleaning up|cleanup:|write key:|CLEANUP|thread .* panicked)' } | ForEach-Object { "  $(Redact $_)" }
+  Check "b2-download: cleanup deleted version $script:dlVersion of run $script:dlRun and listed 0 versions left" ($script:cargoExit -eq 0)
+  if ($script:cargoExit -eq 0) { $script:dlRun = $null } else { "  NOT CLEANED UP: run $script:dlRun, version $script:dlVersion, key sotyware-it/download-ui-validation/$script:dlRun/<file>; not retried" }
+}
+
 $CloudDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\cloud-accounts.sqlite3"
 $CloudBackup = "$CloudDb.cloud-ui-test-backup"
 if (Test-Path $CloudBackup) { "ABORT: $CloudBackup exists (left by an interrupted run?); restore or remove it first"; exit 2 }
@@ -306,6 +349,31 @@ if ($Mode -eq "b2" -or $Mode -eq "b2-browse") {
   $fpBefore = Fingerprint
   Check "b2: bucket fingerprinted before the run" ($null -ne $fpBefore)
   if ($fpBefore) { "  before: $($fpBefore -replace '^sotyware-it fingerprint ', '')" }
+}
+
+if ($Mode -eq "b2-download") {
+  $DlName = "gr$([char]0xF6)$([char]0xDF)e test.bin"
+  $SrcDir = Join-Path $env:TEMP "sotyware-b2-download-source-$run"
+  $Out = Join-Path $env:TEMP "sotyware-b2-download-dest-$run"
+  New-Item -ItemType Directory $SrcDir, $Out | Out-Null
+  # Not $out: names ignore case, and $Out is the download folder.
+  $prep = CargoIt "cloud::integration::download::backblaze_b2_download_ui_prepare" @{ SOTYWARE_IT_B2_DOWNLOAD_UI_DIR = $SrcDir }
+  $prepExit = $script:cargoExit
+  $m = [regex]::Match(($prep -join "`n"), 'download-ui object kept; run id ([0-9A-Za-z_-]+) version (\S+)')
+  if ($m.Success) { $script:dlRun = $m.Groups[1].Value; $script:dlVersion = $m.Groups[2].Value }
+  $prep | Where-Object { $_ -match '^(provider|run prefix|generated|upload|write key|download-ui|manifest|thread .* panicked)' } | ForEach-Object { "  $(Redact $_)" }
+  $ManFile = Join-Path $SrcDir "manifest.json"
+  Check "b2-download: account checked, run prefix empty, file generated and uploaded (run $script:dlRun)" (($prepExit -eq 0) -and $script:dlRun -and (Test-Path $ManFile))
+  if (-not (Test-Path $ManFile)) {
+    DownloadCleanup
+    Remove-Item -Recurse -Force $SrcDir, $Out -EA SilentlyContinue
+    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    "summary: $script:pass passed, $script:fail failed"; exit 1
+  }
+  $Dl = Get-Content $ManFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Source = Join-Path $SrcDir "source.bin"
+  Check "b2-download: manifest names $DlName, $($Dl.size) bytes, and the generated file has that SHA-256 (checked here again)" (($Dl.fileName -eq $DlName) -and ([long]$Dl.size -eq (Get-Item $Source).Length) -and (Sha $Source) -eq $Dl.sha256 -and $Dl.versionId -eq $script:dlVersion -and $Dl.key -eq "sotyware-it/download-ui-validation/$($Dl.run)/$DlName")
+  "  object: sotyware-it/download-ui-validation/$($Dl.run)/<$DlName>, $($Dl.size) bytes, SHA-256 $($Dl.sha256), version $($Dl.versionId)"
 }
 
 if ($Mode -eq "b2-browse") {
@@ -429,7 +497,6 @@ function SaveAs($dlg, $path) {
   [CloudUiW]::Click($save)
 }
 function Saved { @(Get-ChildItem -Force $Out | ForEach-Object { $_.Name } | Sort-Object) }
-function Sha($path) { (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() }
 function Says([string[]]$parts, [double]$timeout = 60) { WaitFor { $t = PageText; foreach ($x in $parts) { if (-not $t.Contains($x)) { return $false } }; $true } $timeout }
 
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
@@ -578,6 +645,66 @@ try {
     $d = DialogNamed "Save download as"; if ($d) { CancelDialog $d }
     $null = Press "Dismiss"
    }
+  } elseif ($Mode -eq "b2-download") {
+   try {
+    $R = $Dl.run
+    Check "Open bucket lists the bucket's root, with the sotyware-it folder" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+    $ok = (PressFolder "sotyware-it") -and (WaitFor { (PageText) -like "*download-ui-validation*" } 60)
+    $ok = $ok -and (PressFolder "download-ui-validation") -and (WaitFor { (PageText) -like "*$R*" } 60)
+    $ok = $ok -and (PressFolder $R) -and (WaitFor { ((PageText) -like "*| sotyware-it/download-ui-validation/$R/ |*") -and ((PageText) -notlike "*Loading*") } 60)
+    Check "navigate sotyware-it, download-ui-validation, this run's folder" $ok (PageText)
+    $rows = TableRows
+    Check "the run folder shows exactly one row: '$DlName', 16 MiB" ($rows.Count -eq 1 -and $rows[0] -like "$DlName | 16 MiB | *") "$($rows -join ' || ')"
+    $dlg = OpenSave $DlName
+    Check "Download opens the native Windows save dialog, '$DlName' suggested unchanged" ($null -ne $dlg -and (Suggested $dlg) -eq $DlName) "$(if ($dlg) { Suggested $dlg } else { 'no dialog' }) | $(PageText)"
+    $dest = Join-Path $Out $DlName
+    $saved = $dlg -and (SaveAs $dlg $dest)
+    Check "save into a new folder outside the repository ($Out)" ([bool]$saved)
+    # Samples the progress line until the final message; the page shows
+    # percent and rounded sizes (the exact byte counts stay in the channel).
+    $samples = New-Object System.Collections.Generic.List[string]
+    $final = $null; $atFinal = $null; $partialSeen = $false
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    while ($saved -and $sw.Elapsed.TotalSeconds -lt 600) {
+      $t = PageText
+      $m = [regex]::Match($t, '(\d+)% \u00b7 ([\d.]+ (?:B|KiB|MiB)) of ([\d.]+ (?:B|KiB|MiB))')
+      if ($m.Success -and ($samples.Count -eq 0 -or $samples[$samples.Count - 1] -ne $m.Value)) { $samples.Add($m.Value) }
+      if (-not $partialSeen) { $partialSeen = @(Saved | Where-Object { $_ -like ".*.sotyware-partial" }).Count -gt 0 }
+      if ($t -cmatch 'Downloaded \d' -or $t -like "*Download failed*" -or $t -like "*Download cancelled*") {
+        # Taken at once: the file must already be in place at full size.
+        $atFinal = @{ len = [CloudUiW]::Length($dest); names = (Saved) -join "|" }
+        $final = $t; break
+      }
+      Start-Sleep -Milliseconds 40
+    }
+    $secs = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+    "  progress lines seen ($($samples.Count), $secs s until the final message): $($samples -join ' ; ')"
+    "  temporary file seen while downloading: $partialSeen"
+    if ($final) { "  final: $([regex]::Match($final, '(Downloaded \d|Download failed|Download cancelled)[^|]*(\| [^|]*)?').Value.Trim())" }
+    Check "progress was shown with the total size (Content-Length): '... of 16 MiB'" ($samples.Count -ge 1 -and @($samples | Where-Object { $_ -notlike "* of 16 MiB" }).Count -eq 0) "$($samples -join ' ; ')"
+    function ToBytes([string]$v) { $n, $u = $v.Split(" "); [double]::Parse($n, [Globalization.CultureInfo]::InvariantCulture) * @{ "B" = 1; "KiB" = 1024; "MiB" = 1048576 }[$u] }
+    $mono = $true
+    for ($i = 1; $i -lt $samples.Count; $i++) {
+      # Not $a: names ignore case, and $A is the AutomationElement type.
+      $prev = [regex]::Match($samples[$i - 1], '^(\d+)% \u00b7 (.+?) of'); $next = [regex]::Match($samples[$i], '^(\d+)% \u00b7 (.+?) of')
+      if ([int]$next.Groups[1].Value -lt [int]$prev.Groups[1].Value -or (ToBytes $next.Groups[2].Value) -lt (ToBytes $prev.Groups[2].Value)) { $mono = $false }
+    }
+    Check "progress never went down (percent and bytes shown)" $mono "$($samples -join ' ; ')"
+    Check "final message: Downloaded 16 MiB, the SHA-256 stored with the file matched (sha256-verified)" ($final -and $final.Contains("Downloaded 16 MiB.") -and $final.Contains("The SHA-256 checksum stored with the file matched.")) "$final"
+    Check "when completion was shown, the file was already in place at $($Dl.size) bytes and no temporary file was left" ($atFinal -and $atFinal.len -eq [long]$Dl.size -and $atFinal.names -eq $DlName) "$(if ($atFinal) { "len=$($atFinal.len) files=$($atFinal.names)" })"
+    $null = Press "Dismiss"
+    $len = [CloudUiW]::Length($dest)
+    $h = if ($len -ge 0) { Sha $dest } else { "" }
+    "  saved file: $len bytes, SHA-256 $h"
+    Check "saved file: exactly $($Dl.size) bytes" ($len -eq [long]$Dl.size)
+    Check "saved file: SHA-256 equals the one computed before the upload" ($h -eq $Dl.sha256) $h
+    Check "saved file: byte-for-byte equal to the generated original" ($len -ge 0 -and [CloudUiW]::SameBytes($dest, $Source))
+    Check "the destination folder holds only the file (no .sotyware-partial)" (((Saved) -join "|") -eq $DlName) "$(Saved)"
+   } catch {
+    Check "b2-download steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    $d = DialogNamed "Save download as"; if ($d) { CancelDialog $d }
+    $null = Press "Cancel download"; $null = Press "Dismiss"
+   }
   } elseif ($Mode -eq "b2") {
     $outcome = if ($t -like "*the provider refused this request*") { "access denied" } elseif ($t -like "*Could not load this folder.*") { "error" } else { "listed" }
     "  Open bucket at the root: $outcome"
@@ -659,6 +786,12 @@ try {
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
   if ($Mode -eq "download" -and (Test-Path $Out)) { Remove-Item -Recurse -Force $Out }
+  if ($Mode -eq "b2-download") {
+    DownloadCleanup
+    $partials = @(Get-ChildItem -Force -Recurse -Path @($Out, $SrcDir) -EA SilentlyContinue | Where-Object { $_.Name -like "*.sotyware-partial" })
+    Remove-Item -Recurse -Force -Path @($Out, $SrcDir) -EA SilentlyContinue
+    Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
+  }
 }
 if ($Mode -eq "browse" -or $Mode -eq "download") {
   $srvLog = (Get-Content $SrvOut -Raw -EA SilentlyContinue)

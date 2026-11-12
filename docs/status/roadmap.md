@@ -92,9 +92,10 @@ order:
    - a download from a real provider: done once at Backblaze on 2026-11-12
      (WSL2, Rust download path without the dialog, a temporary file;
      `GetObject` returned `Content-Length` and the stored `sotyware-sha256`;
-     [status.md](status.md#one-download-from-backblaze-2026-11-12)); still
-     open: the app's UI and save dialog against a real provider (native
-     Windows 11 first), and Hetzner;
+     [status.md](status.md#one-download-from-backblaze-2026-11-12)), and once
+     through the native Windows 11 dashboard and save dialog on 2026-11-12
+     ([status.md](status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12));
+     still open: the UI against a real provider on Linux, and Hetzner;
    - a person's run with the dialogs on a real Linux desktop (GNOME/KDE,
      possibly the XDG portal instead of GTK's own dialog) and Windows 10;
    - decide whether stale `.sotyware-partial` files left by a killed process

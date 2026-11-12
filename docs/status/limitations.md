@@ -252,16 +252,21 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   move, delete or create anything, download folders or several files at
   once, and has no transfer queue, download history, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
-- **Downloads at a real provider: one Backblaze run, in Rust only**
-  (2026-11-12, WSL2). One temporary 16 MiB file was downloaded through the
-  app's download code (`CloudDownloads`, no save dialog, no UI); Backblaze's
-  `GetObject` returned `Content-Length` and the stored `sotyware-sha256`, and
-  the file was SHA-256 verified
-  ([status.md](status.md#one-download-from-backblaze-2026-11-12)). Not run:
-  a download through the UI and the native save dialog at a real provider
-  (Windows 11 included), more than one run, larger or multipart-uploaded
-  files, a checksum mismatch or a missing checksum at the provider, Hetzner.
-  The UI and dialog are verified only against the in-process object server
+- **Downloads at a real provider: two single Backblaze runs** (2026-11-12).
+  One through the app's download code in Rust (WSL2, no UI): `GetObject`
+  returned `Content-Length` and the stored `sotyware-sha256`, the file was
+  SHA-256 verified, and the progress bytes never went down
+  ([status.md](status.md#one-download-from-backblaze-2026-11-12)). One
+  through the complete native Windows 11 flow (dashboard, browser, native
+  save dialog, real Credential Manager): `sha256-verified`, byte-for-byte
+  equal, completion only after the file was in place
+  ([status.md](status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12));
+  there the 16 MiB arrived within 0.6 s, so the UI showed only one progress
+  line ("0% · 0 B of 16 MiB"). Not run: more than one run of each, a
+  download through the UI from a real provider on Linux or Windows 10 or by
+  a person, larger or multipart-uploaded files, a checksum mismatch or a
+  missing checksum at the provider, Hetzner. On Linux the UI and dialog are
+  verified only against the in-process object server
   ([status.md](status.md#cloud-storage-single-file-downloads-2026-11-12)).
 - **Download limits:** one at a time; no resume (a failed or cancelled
   download starts over); no retries inside a download (the SDK retries only
