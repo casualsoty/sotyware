@@ -71,6 +71,7 @@ export const ERROR_KINDS = [
   "destination-unavailable",
   "destination-exists",
   "local-file",
+  "file-changed",
   "other",
 ] as const;
 

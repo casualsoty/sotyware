@@ -17,8 +17,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   instance) and the foundation for built-in features (registry, lifecycle,
   enable/disable from the dashboard, one example feature), and cloud storage
   in the dashboard: account management (add, edit, check, remove), read-only
-  bucket browsing and downloading one file at a time (no uploads or other
-  changes). No other product features exist yet. Current milestone and status:
+  bucket browsing and downloading one file at a time, plus the backend and
+  commands for upload batches (no upload control in the page yet; no other
+  changes to objects). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -134,8 +135,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   Windows Credential Manager, Linux Secret Service; no fallback; environment
   variables only in test builds), and one S3 adapter (`S3Store`,
   `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account.
-  Its upload (`S3Store::upload` in `cloud/s3/upload.rs`, backend only, not
-  reachable from the app) refuses an existing key, re-hashes what it sends,
+  Its upload (`S3Store::upload` in `cloud/s3/upload.rs`) refuses an existing key, re-hashes what it sends,
   has one commit point for cancellation, aborts failed multipart uploads,
   verifies by `HeadObject` and times out on stalls instead of the read
   timeout ([ADR-021](docs/architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)).
@@ -148,21 +148,33 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   configured bucket goes through `cloud/browser.rs` (`list_cloud_folder`:
   one `ListObjectsV2` page of one folder level, delimiter `/`; the
   provider's continuation token stays in Rust behind a cursor tied to the
-  account, bucket and prefix). No command uploads, downloads, changes
-  objects or returns a credential. One file at a time can be downloaded
+  account, bucket and prefix). No command deletes or otherwise changes
+  objects, or returns a credential. One file at a time can be downloaded
   through `cloud/download.rs` (`download_cloud_file`, `cancel_cloud_download`,
   `retry_cloud_download`; `CloudDownloads` managed state, one slot): Rust
   opens the native save dialog (`tauri-plugin-dialog`; the frontend never
   sends a path), `S3Store::download` streams into a temporary file next to
   the destination, verifies size and stored SHA-256, then moves it into
   place; progress goes over a Tauri `Channel` passed with the command;
-  quitting cancels a running download
+  quitting cancels a running download. Upload batches go through
+  `cloud/upload.rs` (`upload_cloud_files`, `cancel_cloud_upload`,
+  `retry_cloud_upload`; `CloudUploads` managed state, its own slot, one
+  batch at a time beside one download): Rust opens the native multi-file
+  dialog (the page sends only the destination folder and never receives a
+  path), checks up to 100 files before sending anything (invalid ones are
+  skipped with a reason), then uploads them one after another through
+  `S3Store::upload` after a `HeadObject` that skips existing objects; events
+  with `seq` and one final summary go over a per-batch `Channel`; retry
+  takes only eligible files; multipart ids whose abort failed are kept in
+  memory and aborted again on retry and on quit (bounded wait). No page
+  calls these commands yet
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
   [ADR-018](docs/architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands),
   [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust),
-  [ADR-020](docs/architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
+  [ADR-020](docs/architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel),
+  [ADR-022](docs/architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
   (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`). Its only
@@ -170,15 +182,17 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
   `update_cloud_account`, `remove_cloud_account`, `check_cloud_account`,
-  `list_cloud_folder`, `download_cloud_file`, `cancel_cloud_download` and
-  `retry_cloud_download`
+  `list_cloud_folder`, `download_cloud_file`, `cancel_cloud_download`,
+  `retry_cloud_download`, `upload_cloud_files`, `cancel_cloud_upload` and
+  `retry_cloud_upload`
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
-  and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  and `src/cloud.ts`, none yet for the three upload commands, which the
+  page does not call) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events (download progress
-  uses a per-call Tauri channel, not an event), no `dialog:` or `fs:`
-  permission.
+  and upload events use per-call Tauri channels, not events), no `dialog:` or
+  `fs:` permission.
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
@@ -186,11 +200,12 @@ persistence other than the feature enabled/disabled choices and the cloud
 storage accounts, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
 tray fallback, file operations in the cloud browser other than downloading
-one file at a time (no upload, folder or multiple downloads, rename, delete
-or folder creation), transfer queue UI or download history, credential
+one file at a time (no upload UI, folder or multiple downloads, rename, delete
+or folder creation), transfer queue UI or download history, persistent
+record of incomplete multipart uploads, credential
 import or any credential fallback outside the OS store, backups
 or restic integration, cost estimator, custom event, or custom command besides
-the thirteen listed above. Never describe these as existing.
+the sixteen listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -298,6 +313,7 @@ Every coding agent must:
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
    `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
+   `CloudUploads`,
    the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.

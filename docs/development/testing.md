@@ -318,6 +318,44 @@ layers, the first two in every `cargo test`:
   (s3s answers before reading it, so a refused part reaches the client as
   403 or as a broken pipe), and socket buffers of a real slow link (the
   relay runs on loopback).
+- **Upload batches** (`cloud/upload/tests.rs`, `CloudUploads`, ADR-022),
+  against the same in-process server (`TestServer::start`, s3s-fs, real
+  multipart), with test hooks on `CloudUploads` (`before_file(index)`,
+  `file_control(index, control)` to reach each file's `TransferControl`
+  hooks) and the dialog's answer passed straight to `begin_upload` (no
+  dialog is opened). Pure rules: the selection checks (a file, a folder, a
+  missing file, Unicode and `+ & ? # %` kept, control characters incl. DEL
+  and C1, a non-UTF-8 name on Unix and an unpaired surrogate on Windows,
+  keys of exactly 1,024 and 1,025 bytes, provider size limits, duplicate
+  keys from two folders with case kept), prefixes, the sorting of every
+  error into skip / file failed / stop batch / cancelled and sotyware's own
+  messages without local paths, and the JSON shape of events. Through
+  whole batches: a cancelled and an empty dialog (nothing started, no
+  request), 101 files refused and 100 uploaded, no valid file (no batch),
+  skipped invalid and duplicate files beside an uploaded one, an existing
+  object skipped before hashing (one HEAD, theirs untouched), a conflict
+  created during hashing found by the upload's own check (skipped);
+  one file at a time across a multipart, a small and an empty file (never
+  two in flight, operations never interleaved) with a second batch and
+  dialog refused (`busy`) meanwhile; a download completing while a batch is
+  uploading; cancel during hashing, during a single PUT, during multipart
+  part 2 (aborted, nothing left), between files, after the commit point
+  (`finishing`, that file completes, no other starts), idempotent and only
+  for its own id; a changed file failing alone while the next completes;
+  access denied stopping the batch, then a retry rechecking a destination
+  created meanwhile; a retry of only the eligible files; `NeedsInspection`
+  (verification refused after the commit point) shown, not deleted, never
+  retried; `IncompleteParts` (abort refused) kept, cleaned up on retry with
+  a `cleanup` event and never retried, a cleanup that fails again keeping
+  the id; missing credentials failing the batch before any request, then a
+  retry; a stale batch id cancelling or retrying nothing; and shutdown
+  waiting for a slow multipart abort, aborting known incomplete uploads,
+  returning within its limit when aborts hang (the id kept), and refusing a
+  batch whose dialog was open. Every batch test also checks the rules each
+  batch keeps: the slot is free when `finished` arrives, `finished` comes
+  exactly once and last, `seq` counts 1, 2, 3, …, progress never goes
+  backwards, files never overlap, every file ends final, and no result or
+  event contains the test folder's path.
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
 - **The real OS credential store**, opt-in only:
   [below](#os-credential-store-test).

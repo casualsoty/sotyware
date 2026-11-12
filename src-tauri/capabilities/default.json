@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Dashboard window: may read the operating mode, list built-in features and enable or disable them, list, add, change, remove and check cloud storage accounts (never reading credentials back), list the folders and files of an account's bucket, and download one file at a time to a path the user picks in a save dialog that Rust opens (the window gets no dialog or file system permission). Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
+  "description": "Dashboard window: may read the operating mode, list built-in features and enable or disable them, list, add, change, remove and check cloud storage accounts (never reading credentials back), list the folders and files of an account's bucket, download one file at a time to a path the user picks in a save dialog that Rust opens, and upload up to 100 files the user picks in a file dialog that Rust opens, without ever receiving their paths (the window gets no dialog or file system permission). Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
   "windows": [
     "main"
   ],
@@ -18,6 +18,9 @@
     "allow-list-cloud-folder",
     "allow-download-cloud-file",
     "allow-cancel-cloud-download",
-    "allow-retry-cloud-download"
+    "allow-retry-cloud-download",
+    "allow-upload-cloud-files",
+    "allow-cancel-cloud-upload",
+    "allow-retry-cloud-upload"
   ]
 }

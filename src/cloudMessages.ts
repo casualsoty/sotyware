@@ -64,6 +64,7 @@ const ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "destination-exists":
     "A file with this name appeared while downloading. It was not replaced; download again and choose to replace it. Details:",
   "local-file": "The file could not be written. Details:",
+  "file-changed": "The file changed while it was being uploaded, so it was not stored. Try again once it is saved. Details:",
   other: "Something went wrong:",
 };
 

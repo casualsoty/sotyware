@@ -51,7 +51,7 @@ use super::provider::{SdkChecksums, TransferLimits};
 
 mod upload;
 
-pub use upload::{RemoteOutcome, UploadError, UploadProgress, UploadStage};
+pub use upload::{AbortOutcome, RemoteOutcome, UploadError, UploadProgress, UploadStage};
 
 /// User metadata key holding the hex SHA-256 of the object's content.
 pub const SHA256_METADATA: &str = "sotyware-sha256";
@@ -472,6 +472,10 @@ pub struct TransferControl {
     /// The temporary file while it exists, so it can be removed at shutdown
     /// even if the transfer cannot clean up in time.
     partial: Mutex<Option<PathBuf>>,
+    /// An upload's multipart upload id from `CreateMultipartUpload` until it
+    /// is completed or aborted, so it is never lost while an abort may still
+    /// be needed (ADR-021).
+    multipart: Mutex<Option<String>>,
     #[cfg(test)]
     fail_write_after: Mutex<Option<u64>>,
     #[cfg(test)]
@@ -506,6 +510,7 @@ impl TransferControl {
         Self {
             phase: watch::Sender::new(Phase::Running),
             partial: Mutex::new(None),
+            multipart: Mutex::new(None),
             #[cfg(test)]
             fail_write_after: Mutex::new(None),
             #[cfg(test)]
@@ -602,6 +607,19 @@ impl TransferControl {
     /// The temporary file of the running download, if there is one now.
     pub fn partial_file(&self) -> Option<PathBuf> {
         self.lock_partial().clone()
+    }
+
+    /// The multipart upload id of the running upload while it is neither
+    /// completed nor aborted (also after an abort that failed).
+    pub fn open_multipart(&self) -> Option<String> {
+        self.multipart
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set_multipart(&self, upload_id: Option<String>) {
+        *self.multipart.lock().unwrap_or_else(|e| e.into_inner()) = upload_id;
     }
 
     /// Makes the next download fail like a full disk once it has written

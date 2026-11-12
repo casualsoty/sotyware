@@ -10,18 +10,22 @@ and lists each account's bucket one folder and one page at a time, read-only
 From the browser one file at a time can be downloaded to a place the user
 picks in the native save dialog ([Downloading a file](#downloading-a-file),
 [ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
-Uploads, any change to objects and the transfer queue are not reachable
-from the app: no command exposes them. The backend's upload lifecycle
-(commit point, cancellation, re-hashing, verification, stall timeout) is
-built and tested against the in-process server only
-([Uploads and integrity](#uploads-and-integrity),
-[ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)). Decision and rationale of
+Uploads of up to 100 picked files into one folder, one file after another,
+have three commands ([Uploading files](#uploading-files),
+[ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust))
+but **no control in the page yet**; deletes, renames and every other change
+to objects are not reachable from the app. Each file goes through the
+backend's upload lifecycle (commit point, cancellation, re-hashing,
+verification, stall timeout;
+[Uploads and integrity](#uploads-and-integrity),
+[ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)).
+Both are tested against the in-process server only. Decision and rationale of
 the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs` with `s3/upload.rs`, `dashboard.rs`, `browser.rs`, `download.rs`) and `SqliteAccountStore` in
+`keyring.rs`, `s3.rs` with `s3/upload.rs`, `dashboard.rs`, `browser.rs`, `download.rs`, `upload.rs`) and `SqliteAccountStore` in
 `src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
 `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` and
 `src/cloudMessages.ts`.
@@ -92,7 +96,7 @@ core logic would not change.
 `S3Store::upload(bucket, key, path, control, progress)` in
 `src-tauri/src/cloud/s3/upload.rs`; decision and rejected alternatives:
 [ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration).
-Not reachable from the app.
+Called once per file by upload batches ([Uploading files](#uploading-files)).
 
 1. **Checks** without a request: bucket configured for the account, key 1 to
    1,024 bytes; a transfer already cancelled stops here. Then a slot in the
@@ -140,9 +144,14 @@ Not reachable from the app.
 **Multipart abort:** `AbortMultipartUpload` runs in its own task, so it
 finishes even if the caller drops the upload, and is given at most
 `abort_timeout` (30 s) including retries. If it fails or times out, the
-error says that parts may remain (and are billed) at the provider. A process
-that ends during a multipart upload aborts nothing; a bucket lifecycle rule
-that removes unfinished multipart uploads is the only cleanup then.
+error says that parts may remain (and are billed) at the provider. From
+`CreateMultipartUpload` until completion or a successful abort, the upload
+id is also held by the `TransferControl` (`open_multipart()`), so the
+caller never loses it; upload batches keep failed ids in memory and abort
+them again later (`S3Store::abort_incomplete_upload`, same timeout; see
+[Uploading files](#uploading-files)). A process that ends before an abort
+succeeded forgets the id; a bucket lifecycle rule that removes unfinished
+multipart uploads is the only cleanup then.
 `CreateMultipartUpload` is never dropped in flight, so no upload id can exist
 that sotyware did not learn.
 
@@ -655,6 +664,143 @@ SHA-256 verified
 and once through the native Windows 11 dashboard and save dialog, verified
 byte for byte
 ([status.md](../status/status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12)).
+
+## Uploading files
+
+Decision: [ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust).
+Code: `src-tauri/src/cloud/upload.rs` (`CloudUploads`, managed state). The
+commands exist and are permitted, but **the page has no upload control
+yet**: nothing below is reachable by a user until the UI is built. The
+typed wrappers in `src/cloud.ts` come with that UI.
+
+```
+page ── upload_cloud_files(id, bucket, prefix, onEvent) ──▶ validate prefix; reserve the upload slot (else busy)
+  ▲                                                        │ spawn_blocking: bucket still the account's? provider limits
+  │                                                        │ native multi-file dialog (Rust)
+  │                                                        │   cancelled / empty → null, nothing started
+  │                                                        │   > 100 files → invalid-input, nothing started
+  │                                                        │ spawn_blocking: check every file (no reading)
+  │  { batch | null, prefix, files[] } ◀───────────────────┤ start (or batch: null if no file can go)
+  │                                                        ▼
+  │  Channel: UploadEvent ◀── CloudUploads::run ── [retry: abort known incomplete uploads → cleanup events]
+  │   file (state, stage, bytes) …                  spawn_blocking: credentials (OS store), once
+  │   finished (summary), once, after the slot      for each file, in order:
+  │   is free                                         HeadObject → exists: skipped
+  │                                                   S3Store::upload (ADR-021) → completed / failed / cancelled
+  └── cancel_cloud_upload(batch) ──▶ current file cancelled (or "finishing"), no further file starts
+      retry_cloud_upload(batch, onEvent) ──▶ a new batch with what is left
+```
+
+**Destination.** `prefix` + file name in the account's configured bucket.
+The page passes the folder it shows when it asks for the dialog (`""` for
+the top level, otherwise a prefix ending in `/`, as the listing returned
+it); that folder is the batch's, whatever the page shows later. `bucket`
+must still be the account's configured bucket (`outdated-page`).
+
+**Selection.** The native dialog ("Choose files to upload", several files)
+returns paths to Rust only. A cancelled or empty dialog returns `null`. More
+than 100 files (`MAX_FILES`) are refused as a whole. Every file is checked
+before anything is sent, without reading its content (`check_selection`):
+
+| Check | Skip reason |
+| --- | --- |
+| A regular file (a link to one is followed) | `not-a-file` |
+| Its size can be read | `unreadable` |
+| The name is valid UTF-8 | `invalid-name` |
+| No control characters in the name | `control-characters` |
+| `prefix` + name ≤ 1,024 bytes | `key-too-long` |
+| Size within the provider's limits (`plan_upload`) | `too-large` |
+| No other selected file has the same key (all of them are skipped) | `duplicate-key` |
+| (before its turn) no object at the key | `destination-exists` |
+
+The command returns the batch id (or `null` if no file can go: then no batch
+exists and the slot is free) and every file as `pending` or `skipped` with
+its reason and a sentence. Skipped files are never uploaded.
+
+**One file after another.** The batch loads the account's credentials once
+(blocking pool), then takes the files in order. Before each one a
+`HeadObject` on its key: an existing object skips the file before it is
+read (nothing is ever overwritten). Then `S3Store::upload` does the rest
+(its own destination checks, hashing, sending, verification). One batch at
+a time; a second batch or dialog is `busy`. Uploads have their own slot, so
+one download can run beside a batch; both still wait for the account's
+transfer queue (four transfers by default).
+
+**What stops what.**
+
+| A file ends with | The file | The batch |
+| --- | --- | --- |
+| verified upload | `completed` | goes on |
+| an existing object (our check or the upload's) | `skipped` (`destination-exists`) | goes on |
+| `file-changed`, a local read error, `integrity`, `too large`, a non-transient provider refusal (4xx) | `failed` | goes on |
+| `invalid-credentials`, `access-denied`, `bucket-unavailable`, `invalid-configuration`, `network`, `timeout`, provider 5xx/429 | `failed` | stops: `failed`, with that error |
+| a cancel | `cancelled` | stops: `cancelled` |
+
+Files the batch never reached end as `cancelled` with `started: false`. A
+batch is `completed` only when every file ended as completed, skipped or
+failed. Failing to load the credentials fails the batch before any file.
+
+**States and events.** File states: `pending`, `hashing`, `sending`,
+`verifying` (the stages of `S3Store::upload`), then `completed`, `skipped`,
+`failed` or `cancelled`. Every file carries `index`, `name` (not its
+folder), `key`, `size`, `state`, `stage` (the last reached), `bytes`,
+`total`, `started`, `skip`, `error`, `remote` (`nothing-stored`,
+`incomplete-parts`, `needs-inspection`) and `retryable`. Events on the
+channel passed with the command: `{ batch, seq, kind: "file", count, file }`
+for every state change and for progress (as throttled by `S3Store::upload`:
+at most one per 250 ms within a stage, first and last of each stage always;
+never backwards), `{ kind: "cleanup", key, outcome }` on a retry, and
+exactly one `{ kind: "finished", summary }` with the batch state, counts
+(`completed`, `skipped`, `failed`, `cancelled`, `notStarted`, `retryable`,
+`needsAttention`), the stopping error and every file in its final state.
+`finished` comes last and after the slot is free. `seq` counts from 1 per
+batch; batch ids (`upload-<n>`) are never reused, and each batch has its own
+channel, so nothing from an earlier batch can reach a later one.
+
+**Cancel** (`cancel_cloud_upload`) acts only on the running batch with that
+id; any other id or a finished batch is `not-active`, a repeat gives the
+same answer. It cancels the current file (waiting for credentials, our
+`HeadObject`, hashing, sending; a multipart upload is aborted) and keeps
+the rest from starting. If the current file has passed its commit point the
+answer is `finishing`: that file completes, no other starts, and the batch
+ends `cancelled`. Leaving the browser is to cancel a running batch, as for
+downloads (the page's job, with the UI); hiding or minimising the dashboard
+does not.
+
+**Retry** (`retry_cloud_upload`) works on the last finished batch only and
+starts a new batch (new id) into the same folder with its files that are
+`retryable`: failed or cancelled with `nothing-stored`, or never started.
+They are checked again like a new selection, and the destination again
+before each file. Completed and skipped files are never retried, nor any
+with `needs-inspection` (the provider may hold the object: check it in the
+bucket) or `incomplete-parts`. Starting any new batch drops the old retry.
+
+**Incomplete multipart uploads.** When `S3Store::upload` cannot abort a
+multipart upload (`incomplete-parts`), the batch keeps its account, bucket,
+key and upload id, with the store that created it, in memory. A retry of a
+batch of that account aborts each one again first and reports a `cleanup`
+event (`removed` or `failed`); a retry may consist of only this. Quitting
+aborts every one. An id is forgotten only when the provider says the upload
+is gone; a failed attempt is never reported as removed. Nothing is written
+to disk: after sotyware ends (or crashes) the parts can only be removed by
+a bucket lifecycle rule for unfinished multipart uploads, which sotyware
+does not configure.
+
+**Shutdown** (`RunEvent::Exit`, after the downloads' shutdown): no new batch
+starts (also not one whose dialog was still open), the running batch is
+cancelled, and every known incomplete upload is aborted, concurrently. The
+wait is bounded: 35 s (`SHUTDOWN_WAIT`: the 30 s abort timeout plus 5 s), in
+practice the time of one abort request. What is not done by then is logged
+("parts may remain"), and the process ends.
+
+**Privacy.** No command result or event contains a local path: file names
+only, and sotyware's own sentences for local errors (their messages name
+the path and are only logged). Provider text is never shown.
+
+**Verified against:** the in-process S3 server only (WSL2, 2026-11-12,
+[status.md](../status/status.md#upload-batches-backend-and-commands-2026-11-12)).
+Not at Backblaze or Hetzner, not on native Windows, not through a UI (there
+is none).
 
 ## Not built (deliberately)
 

@@ -540,12 +540,19 @@ enum Step<T> {
 }
 
 /// How an `AbortMultipartUpload` went.
-enum Abort {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AbortOutcome {
+    /// The provider removed the upload and its parts.
     Aborted,
-    /// The provider no longer knows the upload id.
+    /// The provider no longer knows the upload id (aborted or completed
+    /// before).
     Gone,
+    /// The abort failed or did not answer within the abort timeout: the
+    /// parts may remain.
     Failed,
 }
+
+use AbortOutcome as Abort;
 
 impl S3Store {
     /// Uploads `path` to `bucket/key` (the key exactly as given; single PUT
@@ -927,6 +934,7 @@ impl S3Store {
                 })
             })?
             .to_owned();
+        control.set_multipart(Some(upload_id.clone()));
         let staged = async {
             let parts = self
                 .send_parts(
@@ -951,7 +959,10 @@ impl S3Store {
             Ok(parts) => parts,
             Err(error) => {
                 let remote = match self.abort(bucket, key, &upload_id).await {
-                    Abort::Aborted | Abort::Gone => RemoteOutcome::NothingStored,
+                    Abort::Aborted | Abort::Gone => {
+                        control.set_multipart(None);
+                        RemoteOutcome::NothingStored
+                    }
                     Abort::Failed => RemoteOutcome::IncompleteParts { upload_id },
                 };
                 return Err(UploadError { error, remote });
@@ -972,7 +983,10 @@ impl S3Store {
             .send()
             .await;
         match completed {
-            Ok(out) => Ok(out.version_id().map(str::to_owned)),
+            Ok(out) => {
+                control.set_multipart(None);
+                Ok(out.version_id().map(str::to_owned))
+            }
             Err(e) => {
                 let error = classify("complete multipart upload", e);
                 // The completion may have taken effect even though it failed
@@ -982,6 +996,9 @@ impl S3Store {
                     Abort::Gone => RemoteOutcome::NeedsInspection,
                     Abort::Failed => RemoteOutcome::IncompleteParts { upload_id },
                 };
+                if !matches!(remote, RemoteOutcome::IncompleteParts { .. }) {
+                    control.set_multipart(None);
+                }
                 Err(UploadError { error, remote })
             }
         }
@@ -1051,6 +1068,22 @@ impl S3Store {
             offset += len;
         }
         Ok(completed)
+    }
+
+    /// Aborts a multipart upload an earlier [`Self::upload`] could not abort
+    /// ([`RemoteOutcome::IncompleteParts`]): one `AbortMultipartUpload`, in
+    /// its own task, bounded by `abort_timeout`. Best effort; the outcome
+    /// says whether the parts are gone.
+    pub async fn abort_incomplete_upload(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+    ) -> AbortOutcome {
+        if self.check_target(bucket, Some(key)).is_err() {
+            return Abort::Failed;
+        }
+        self.abort(bucket, key, upload_id).await
     }
 
     /// Sends `AbortMultipartUpload` in its own task, so it finishes even if

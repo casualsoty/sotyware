@@ -816,6 +816,13 @@ Status: Accepted (2026-11-12). Backend only: `S3Store::upload` in
 `src-tauri/src/cloud/s3/upload.rs`. No command, dialog or page reaches it
 yet; the planned multi-file uploads will call it once per file, one after
 another.
+Amended by [ADR-022](#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)
+(2026-11-12): the upload batch commands call it once per file, one after
+another; `TransferControl` also holds the open multipart upload id from
+`CreateMultipartUpload` until it is completed or aborted
+(`open_multipart()`), and `S3Store::abort_incomplete_upload` aborts an id
+an earlier upload could not abort (`AbortOutcome`), bounded by
+`abort_timeout`. The lifecycle below is unchanged.
 
 - **Context:** the proof-of-concept `upload_file` (ADR-016) hashed the file,
   sent it, and afterwards compared the file's size and modification time,
@@ -922,3 +929,112 @@ another.
   system's socket buffer, which can run ahead of the network by a few MiB;
   touching a file (new modification time, same content) during an upload
   fails it. Details: [cloud-storage.md](cloud-storage.md#uploads-and-integrity).
+
+## ADR-022: Upload batches run one file after another in their own slot, with paths kept in Rust
+
+Status: Accepted (2026-11-12). Backend and commands
+(`src-tauri/src/cloud/upload.rs`); the dashboard has no upload control yet,
+so nothing in the page calls them.
+
+- **Context:** ADR-021 made one file's upload safe (commit point,
+  re-hashing, multipart abort, verification, stall timeout), but nothing
+  could start one. Users pick several files at once; a batch must not turn
+  one bad file into a failed batch, must not overwrite anything, must be
+  cancellable as a whole, and must not hand the page local paths or the
+  ability to read arbitrary files. Downloads (ADR-020) already showed the
+  pattern: Rust opens the native dialog, one slot, progress on a per-call
+  channel.
+- **Decision:**
+  - **Three commands**, one permission each:
+    `upload_cloud_files(id, bucket, prefix, onEvent)` →
+    `UploadSelection | null`, `cancel_cloud_upload(batch)` →
+    `cancelling | finishing | not-active`, and
+    `retry_cloud_upload(batch, onEvent)` → `UploadSelection`. The page sends
+    the folder it shows (`prefix`, as the listing returned it; `""` or
+    ending in `/`) when it asks for the dialog: that is the batch's
+    destination, whatever the page does afterwards. `bucket` is only
+    compared with the account's configured bucket (`outdated-page`).
+  - **Rust opens the native multi-file dialog** (`tauri-plugin-dialog`'s
+    `pick_files`, parented to the dashboard). The page gets no `dialog:` or
+    `fs:` permission and never sends or receives a local path: it gets file
+    names, object keys, sizes and states. Messages of local errors (which
+    name the path) are only logged; the page gets sotyware's own sentence.
+    A cancelled or empty dialog returns `null` and starts nothing.
+  - **Selection:** at most 100 files; more are refused as a whole
+    (`invalid-input`), nothing starts. Every file is checked before anything
+    is sent, without reading its content: a regular file (links followed),
+    a UTF-8 name without control characters, `prefix + name` at most 1,024
+    bytes, a size `plan_upload` accepts for the provider, and no other
+    selected file with the same key (all of them are skipped then). A file
+    that fails is `skipped` with a `SkipReason`; the rest go ahead. With
+    nothing left, no batch starts (`batch: null`) and the slot is free.
+  - **One file after another, one batch at a time,** in a slot of its own
+    (`CloudUploads`, managed state): a download can run meanwhile; both
+    still wait for the account's transfer queue. A second batch or dialog
+    is `busy`. Batch ids are `upload-<n>`.
+  - **Never overwrite:** right before each file a `HeadObject` on its key;
+    an existing object skips it (`destination-exists`) before it is read.
+    `S3Store::upload` checks again before sending (and before completing a
+    multipart upload); a conflict found there skips the file too.
+  - **Errors by effect** (`disposition`): `FileChanged`, local read errors,
+    `Integrity`, `TooLarge` and non-transient provider refusals fail that
+    file and the batch goes on; invalid credentials, access denied, a
+    missing bucket, configuration refusals, network errors, timeouts and
+    provider 5xx/429 fail the file and stop the batch (`failed`, with the
+    error). Credentials are loaded once per batch, on the blocking pool; a
+    failure there fails the batch before any file.
+  - **States:** batch `active` → `completed` (every file final),
+    `cancelled` or `failed`. File `pending` → `hashing` → `sending` →
+    `verifying` → `completed`, or `skipped`, `failed`, `cancelled` (also
+    for files the batch never reached, `started: false`). A file's
+    `remote` says what a failed or cancelled upload may have left:
+    `nothing-stored`, `incomplete-parts` or `needs-inspection`.
+  - **Events on a Tauri `Channel`** passed with the command (no global
+    event): `{ batch, seq, kind, … }` with `kind` `file` (state changes, and
+    progress as `S3Store::upload` reports it: at most one per 250 ms within
+    a stage, first and last of each stage always, never backwards),
+    `cleanup` (retry only) and exactly one `finished` with the summary
+    (counts and every file in its final state), sent after the slot is
+    free. `seq` counts from 1 per batch, so a page can drop anything stale
+    or out of order; ids are never reused.
+  - **Cancel** acts only on its batch id and is idempotent: it cancels the
+    current file (up to its commit point; after it the answer is
+    `finishing` and that file completes) and no further file starts. Leaving
+    the browser will cancel (the page's job, as for downloads); hiding or
+    minimising the dashboard does not.
+  - **Retry** starts a new batch with the last finished batch's files that
+    failed with `nothing-stored`, were cancelled with `nothing-stored`, or
+    never started, checked again like a new selection, into the same folder.
+    Completed and skipped files and anything `needs-inspection` or
+    `incomplete-parts` are never retried. Starting any new batch drops the
+    old retry.
+  - **Multipart cleanup in memory only:** an upload id whose abort failed is
+    kept (account, bucket, key, id, and the store with the credentials that
+    created it) while sotyware runs; a retry of that account's batch aborts
+    it again first (a `cleanup` event: `removed` or `failed`), and quitting
+    aborts every one; it is forgotten only when the provider confirms it is
+    gone. No SQLite table; no lifecycle rule is configured.
+  - **Shutdown** (`RunEvent::Exit`, after the downloads): refuses new
+    batches (also one whose dialog was open), cancels the running batch,
+    aborts every known incomplete upload concurrently, and waits at most
+    35 s for all of it (the 30 s abort timeout plus 5 s); what is not done
+    by then is logged as "parts may remain".
+  - Rejected: a frontend file dialog (`dialog:allow-open` would let the page
+    choose any file to send through a later command); parallel files (more
+    to cancel and clean up at once, no need yet); sharing the download slot
+    (an upload of hours would block every download); failing the whole
+    selection for one bad file; overwrite or rename on conflict (needs its
+    own confirmation design); a persistent registry of incomplete uploads
+    (needs a migration and recovery UI; a bucket lifecycle rule is the
+    documented fallback); retrying `needs-inspection` or `incomplete-parts`
+    automatically (could duplicate an object or hide parts that still cost
+    money).
+- **Consequences:** the frontend's permissions grow to sixteen commands
+  (`lib.rs` test); `ErrorKind` gains `file-changed`. Every file costs at
+  least two `HeadObject` before sending and one after (billed class B
+  transactions at Backblaze), plus the upload requests. Incomplete
+  multipart uploads are forgotten when sotyware ends (also after a crash);
+  only a bucket lifecycle rule removes them then. The 100-file limit and
+  the one-at-a-time order make large selections slow but simple. A quit
+  with an unreachable provider can take up to 35 s. Details:
+  [cloud-storage.md](cloud-storage.md#uploading-files).

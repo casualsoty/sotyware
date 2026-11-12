@@ -455,6 +455,11 @@ impl Accounts {
         Ok(())
     }
 
+    /// The client settings every account's store is built with.
+    pub fn options(&self) -> &ClientOptions {
+        &self.options
+    }
+
     /// The account's store, connected with its own credentials from the
     /// credential store. No request is sent here: a wrong key or an
     /// unreachable endpoint shows on first use.

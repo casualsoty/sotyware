@@ -272,6 +272,8 @@ pub enum ErrorKind {
     DestinationExists,
     /// Any other local file error.
     LocalFile,
+    /// A file changed while it was being uploaded; nothing was stored.
+    FileChanged,
     /// Anything else.
     Other,
 }
@@ -738,6 +740,34 @@ impl CloudAccounts {
     /// The blocking half of a download: checks the bucket again and loads
     /// the credentials (OS credential store). Sends no request.
     pub(super) fn prepare_download(
+        &self,
+        id: &str,
+        bucket: &str,
+    ) -> Result<Arc<super::s3::S3Store>, CommandError> {
+        self.check_download_source(id, bucket)?;
+        self.connect(id)
+    }
+
+    /// What an upload to the account's configured bucket (which must still
+    /// be `bucket`) may send: the provider's limits and the client settings
+    /// that choose single PUT or multipart. Does not touch the credential
+    /// store.
+    pub(super) fn upload_limits(
+        &self,
+        id: &str,
+        bucket: &str,
+    ) -> Result<(super::provider::TransferLimits, ClientOptions), CommandError> {
+        self.check_download_source(id, bucket)?;
+        let resolved = self
+            .find(id)?
+            .resolve()
+            .map_err(|e| CommandError::new(ErrorKind::InvalidConfiguration, e.to_string()))?;
+        Ok((resolved.profile.limits, self.accounts()?.options().clone()))
+    }
+
+    /// The blocking half of an upload batch: checks the bucket again and
+    /// loads the credentials (OS credential store). Sends no request.
+    pub(super) fn prepare_upload(
         &self,
         id: &str,
         bucket: &str,

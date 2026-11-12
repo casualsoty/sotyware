@@ -23,7 +23,9 @@
 //! the same point, from their own SQLite database; the OS credential store is
 //! not touched until the user acts on an account in the dashboard. A cloud
 //! download that is still running when the process exits is cancelled and its
-//! temporary file removed (`cloud::download::CloudDownloads::shutdown`).
+//! temporary file removed (`cloud::download::CloudDownloads::shutdown`); a
+//! running upload batch is cancelled and incomplete multipart uploads are
+//! aborted, within a bounded wait (`cloud::upload::CloudUploads::shutdown`).
 //!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
@@ -242,6 +244,8 @@ pub fn run() {
         .manage(features::FeatureRegistry::with_features(features::builtin()))
         // Holds no file or connection until a download starts.
         .manage(Arc::new(cloud::download::CloudDownloads::new()))
+        // Its own slot: one upload batch can run beside one download.
+        .manage(Arc::new(cloud::upload::CloudUploads::new()))
         .invoke_handler(tauri::generate_handler![
             operating_mode,
             features::list_features,
@@ -255,7 +259,10 @@ pub fn run() {
             cloud::browser::list_cloud_folder,
             cloud::download::download_cloud_file,
             cloud::download::cancel_cloud_download,
-            cloud::download::retry_cloud_download
+            cloud::download::retry_cloud_download,
+            cloud::upload::upload_cloud_files,
+            cloud::upload::cancel_cloud_upload,
+            cloud::upload::retry_cloud_upload
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -357,6 +364,11 @@ pub fn run() {
             // before the process ends (bounded wait, ADR-020).
             if let Some(downloads) = app.try_state::<Arc<cloud::download::CloudDownloads>>() {
                 downloads.shutdown(cloud::download::SHUTDOWN_WAIT);
+            }
+            // A running upload batch is cancelled and incomplete multipart
+            // uploads are aborted (bounded wait, ADR-022).
+            if let Some(uploads) = app.try_state::<Arc<cloud::upload::CloudUploads>>() {
+                uploads.shutdown(cloud::upload::SHUTDOWN_WAIT);
             }
         }
         _ => {}
@@ -594,7 +606,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -611,7 +623,10 @@ mod tests {
                 "allow-list-cloud-folder",
                 "allow-download-cloud-file",
                 "allow-cancel-cloud-download",
-                "allow-retry-cloud-download"
+                "allow-retry-cloud-download",
+                "allow-upload-cloud-files",
+                "allow-cancel-cloud-upload",
+                "allow-retry-cloud-upload"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

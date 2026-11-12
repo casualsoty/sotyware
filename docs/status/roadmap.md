@@ -100,8 +100,17 @@ order:
      possibly the XDG portal instead of GTK's own dialog) and Windows 10;
    - decide whether stale `.sotyware-partial` files left by a killed process
      should be found and offered for removal.
-7. **Next:** uploads, deletes and folder creation, each with its own
-   confirmation design.
+7. Uploads: the backend lifecycle (ADR-021) and the batch commands
+   (ADR-022: up to 100 picked files, one after another, never overwriting,
+   cancel, retry, multipart cleanup in memory) are done, in-process server
+   only ([status.md](status.md#upload-batches-backend-and-commands-2026-11-12)).
+   **Next:** the upload UI in the bucket browser (an Upload action in the
+   current folder, per-file rows with progress, Cancel, Try again, skip and
+   "needs inspection" explanations; leaving the browser cancels; typed
+   wrappers in `src/cloud.ts`), then runs at Backblaze and on native
+   Windows. Later: deletes and folder creation, each with its own
+   confirmation design; whether incomplete multipart uploads need a
+   persistent registry or a documented lifecycle rule.
 8. restic orchestration (child process, `--json`, exit codes), tried first
    against the B2 test bucket.
 9. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).

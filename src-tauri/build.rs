@@ -16,6 +16,9 @@ fn main() {
             "download_cloud_file",
             "cancel_cloud_download",
             "retry_cloud_download",
+            "upload_cloud_files",
+            "cancel_cloud_upload",
+            "retry_cloud_upload",
         ]),
     ))
     .expect("failed to run tauri-build");

@@ -248,7 +248,8 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 
 - **Accounts, browsing and single-file downloads only.** The dashboard
   manages accounts, checks their connection, lists their buckets one folder
-  at a time and downloads one file at a time; it cannot upload, rename,
+  at a time and downloads one file at a time; it cannot upload (the upload
+  batch commands exist, the page has no control for them yet), rename,
   move, delete or create anything, download folders or several files at
   once, and has no transfer queue, download history, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
@@ -401,9 +402,13 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   visible in Credential Manager or Seahorse under `com.sotyware.desktop`.
 - **Environment-variable credentials exist only in test builds** (the opt-in
   provider tests); the app cannot use them, and nothing imports them.
-- **Uploads (backend only, ADR-021):** not reachable from the app, and
+- **Uploads (ADR-021, ADR-022):** commands exist but no page control, and
   tested only against the in-process server: **never at Backblaze or
-  Hetzner**, never on native Windows. The file is read twice (the first
+  Hetzner**, never on native Windows, the native multi-file dialog never
+  opened by a test. At most 100 files per batch, one batch at a time, the
+  files one after another; a skipped file (existing object, duplicate name,
+  invalid name) has to be renamed or moved by the user, nothing is
+  overwritten or renamed automatically. The file is read twice (the first
   hashing pass, then while sending); the parts of one file are sent one
   after another, not in parallel; an interrupted upload starts again from
   the beginning (no resume).
@@ -418,8 +423,17 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   multipart upload is aborted; if the abort fails or does not answer within
   30 s, the error says that parts may remain, and they stay stored (and
   billed) until a bucket lifecycle rule removes them. A process killed or
-  crashing during a multipart upload aborts nothing. sotyware does not list
-  or clean up old multipart uploads.
+  crashing during a multipart upload aborts nothing. Upload batches keep
+  the ids whose abort failed **in memory only** and abort them again on a
+  retry of that account's batch and when quitting (at most 35 s); after
+  sotyware ends, or if the provider still refuses, they are forgotten.
+  sotyware does not list old multipart uploads at the provider and does
+  not configure a lifecycle rule.
+- **Quitting during an upload can take up to 35 s** if the provider does
+  not answer the multipart abort; normally it takes one request.
+- **A file whose upload "needs inspection" stays as it is.** It is not
+  retried or deleted; the user has to check the object in the bucket (or
+  upload the file again under another name).
 - **Upload stall detection sees the local socket, not the network.** Bytes
   in the operating system's send buffer count as sent, for progress and for
   the 60 s stall timeout. After the last byte is handed over, the response

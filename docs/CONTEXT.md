@@ -14,8 +14,9 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 ## What works today
 
 The desktop runtime, the foundation for built-in features, cloud storage
-account management, bucket browsing and single-file downloads; **no uploads,
-other changes to objects, backups or other product features exist**.
+account management, bucket browsing and single-file downloads, and the
+backend and commands for upload batches; **no upload control in the page,
+no other changes to objects, backups or other product features exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -87,8 +88,25 @@ other changes to objects, backups or other product features exist**.
   move began (`finishing`); Try download again reuses the destination;
   leaving the browser or quitting cancels. Backend underneath: provider
   profiles as data, one S3 adapter on `aws-sdk-s3` with end-to-end SHA-256,
-  multipart and a transfer queue per account; uploads are **not reachable
-  from the app**. Their backend lifecycle (`S3Store::upload`,
+  multipart and a transfer queue per account. **Upload batches**
+  (`cloud/upload.rs`, `upload_cloud_files`, `cancel_cloud_upload`,
+  `retry_cloud_upload`, `CloudUploads`,
+  [ADR-022](architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust);
+  **no page calls them yet**): Rust opens the native multi-file dialog
+  (paths never reach the page), up to 100 files checked before anything is
+  sent (not a file, non-UTF-8 or control-character name, key > 1,024 bytes,
+  too large, duplicate key → skipped with a reason), destination folder
+  fixed when the dialog opens, one batch at a time in its own slot (a
+  download can run beside it), files one after another, `HeadObject` before
+  each (existing → skipped, never overwritten); per-file errors continue,
+  credential/access/bucket/configuration/connection errors stop the batch;
+  events `file`/`cleanup`/`finished` with `seq` on a per-batch channel, one
+  final summary after the slot is free; cancel idempotent (current file up
+  to its commit point, no further file); retry only failed/cancelled with
+  nothing stored or not started, never `needs-inspection` or
+  `incomplete-parts`; multipart ids whose abort failed kept in memory,
+  aborted again on retry and on quit (≤ 35 s). Each file's backend
+  lifecycle (`S3Store::upload`,
   [ADR-021](architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)):
   existing key refused (HEAD; race documented), cancellable until one commit
   point (a PUT's held-back last chunk; before `CompleteMultipartUpload`),
@@ -105,7 +123,7 @@ other changes to objects, backups or other product features exist**.
 src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), cloud.ts, cloudMessages.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs, dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands); tests.rs, browser/tests.rs, download/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
@@ -129,12 +147,13 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `set_feature_enabled`, `list_cloud_providers`, `list_cloud_accounts`,
   `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`,
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
-  `cancel_cloud_download` and `retry_cloud_download` (one `allow-<command>`
+  `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
+  `cancel_cloud_upload` and `retry_cloud_upload` (one `allow-<command>`
   permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
   runtime). No other custom command, no custom events (download progress
-  uses a per-call channel). No command returns a stored credential or
-  accepts a local path.
+  and upload events use per-call channels). No command returns a stored
+  credential or a local path, or accepts a local path.
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line
   in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
   ([how to add one](architecture/features.md#adding-a-built-in-feature))
@@ -169,6 +188,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Upload batches, backend and commands (2026-11-12, uncommitted on
+  `241de11`, WSL2, in-process server only): `cargo test` **308 passed, 15
+  ignored**, 3 runs (36 new in `cloud/upload/tests.rs`: dialog cancel and
+  empty, 100/101 files, every skip reason, existing objects, one file at a
+  time, one batch at a time, upload beside a download, cancel at every
+  stage, retry, stop-the-batch errors, `NeedsInspection`, `IncompleteParts`
+  cleanup, shutdown, stale ids, no paths in any event); download tests
+  unchanged and passing; frontend 93. **No real provider, no native
+  Windows, no UI, the dialog never opened.**
+  [status.md](status/status.md#upload-batches-backend-and-commands-2026-11-12).
 - Backend upload lifecycle (2026-11-12, uncommitted on `7b11ecf`, WSL2,
   in-process server only): `cargo test` **272 passed, 15 ignored**, 3 runs
   (34 new: cancellation at every stage, multipart abort and its failure,
@@ -447,6 +476,10 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
+Uploads have no UI and were never run at a real provider or on native
+Windows; incomplete multipart uploads whose abort failed are remembered
+only while sotyware runs (afterwards only a bucket lifecycle rule removes
+them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
@@ -457,7 +490,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (uploads and deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (the upload UI on top of the batch commands, then uploads at Backblaze and on native Windows; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

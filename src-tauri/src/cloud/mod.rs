@@ -17,7 +17,12 @@
 //!   and one page at a time (ADR-019).
 //! - [`download`]: downloading one file at a time from the browser to a path
 //!   chosen in the native save dialog, with progress and cancellation
-//!   (ADR-020). Uploads, deletes and backups are not reachable from the app.
+//!   (ADR-020).
+//! - [`upload`]: uploading a batch of up to 100 picked files, one after
+//!   another, into one folder, never overwriting, with progress,
+//!   cancellation and retry (ADR-022). Backend and commands only; the
+//!   dashboard has no upload control yet. Deletes and backups are not
+//!   reachable from the app.
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
@@ -29,6 +34,7 @@ pub mod download;
 pub mod keyring;
 pub mod provider;
 pub mod s3;
+pub mod upload;
 
 /// The SQLite account store lives with the other SQLite code in `storage.rs`.
 pub use crate::storage::{ACCOUNTS_FILE_NAME, SqliteAccountStore};

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (backend upload lifecycle, in-process server only: [details](#backend-upload-lifecycle-2026-11-12)). Update this file whenever
+Last updated: 2026-11-12 (upload batches, backend and commands, in-process server only: [details](#upload-batches-backend-and-commands-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -79,14 +79,15 @@ verified byte for byte; the object was deleted again by its version id
 | Cloud Storage section in the dashboard (navigation link; account list with empty state, add/edit form with provider presets, connection check, removal with confirmation; keys in two password inputs, sent only to Rust and never returned) and its six commands `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` (safe DTOs, structured errors, `spawn_blocking` for SQLite and the credential store); connection check `S3Store::check_bucket` (`HeadBucket`, one-key `ListObjectsV2` only after a refused HEAD, never `ListBuckets`) | `src/App.svelte`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/dashboard.rs`, `check_bucket` in `cloud/s3.rs`, `run()` in `lib.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#dashboard), [ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)) |
 | Read-only bucket browser in the Cloud Storage section ("Open bucket" per account: folders, files, sizes, dates, breadcrumbs, Up, Refresh, Load more, back to the accounts) and the command `list_cloud_folder` (one `ListObjectsV2` page of one folder level of the account's configured bucket, delimiter `/`; folder prefixes kept exactly, marker objects hidden; continuation tokens kept in Rust behind cursors tied to account, bucket and prefix; structured errors) | `src/CloudBrowser.svelte`, `src/CloudStorage.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/browser.rs`, cursors in `cloud/dashboard.rs`, `list_folder` in `cloud/s3.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket), [ADR-019](../architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)) |
 | Single-file downloads from the bucket browser (Download per file; native save dialog opened by Rust, the page never sends a path; one at a time; progress with percent and bytes over a per-call Tauri channel; Cancel; Try download again to the same destination; completed / cancelled / failed with what was verified) and the commands `download_cloud_file`, `cancel_cloud_download`, `retry_cloud_download`; `S3Store::download` streams into a hidden temporary file next to the destination, verifies size and the stored SHA-256, then hard-links or renames it into place; `TransferControl` settles cancel against completion; quitting cancels and cleans up | `src/CloudBrowser.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/download.rs`, `download` in `cloud/s3.rs`, `prepare_download` in `cloud/dashboard.rs`, `run()` in `lib.rs` (dialog plugin, managed state, shutdown), `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file), [ADR-020](../architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)) |
-| Cloud storage backend (uploads and changes to objects not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account; the upload lifecycle `S3Store::upload` (existing key refused, cancellable until one commit point, bytes re-hashed while sent, multipart aborted on failure, `HeadObject` verification, stall timeout instead of the read timeout, throttled progress by stage) | `src-tauri/src/cloud/`, `cloud/s3/upload.rs`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store), [ADR-021](../architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)) |
+| Upload batches, backend and commands only (no control in the page yet): `upload_cloud_files` (native multi-file dialog opened by Rust, at most 100 files, every file checked before anything is sent and skipped with a reason if unusable, destination folder fixed when the dialog opens), `cancel_cloud_upload`, `retry_cloud_upload`; one file after another, one batch at a time in its own slot (a download can run meanwhile), `HeadObject` before each file so nothing is overwritten, per-file failures continue while credential, access, configuration and connection failures stop the batch, events with `seq` on a per-batch Tauri channel and one final summary, retry of eligible files only, incomplete multipart uploads kept in memory and aborted again on retry and on quit (bounded) | `src-tauri/src/cloud/upload.rs`, `upload_limits`/`prepare_upload` in `cloud/dashboard.rs`, `open_multipart`/`abort_incomplete_upload` in `cloud/s3.rs` and `cloud/s3/upload.rs`, `run()` in `lib.rs` (managed state, shutdown), `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#uploading-files), [ADR-022](../architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)) |
+| Cloud storage backend (changes to objects other than upload batches not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account; the upload lifecycle `S3Store::upload` (existing key refused, cancellable until one commit point, bytes re-hashed while sent, multipart aborted on failure, `HeadObject` verification, stall timeout instead of the read timeout, throttled progress by stage) | `src-tauri/src/cloud/`, `cloud/s3/upload.rs`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store), [ADR-021](../architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
-| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, `allow-list-cloud-folder` and the three download permissions; no `dialog:` or `fs:` permission; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, `allow-list-cloud-folder`, the three download and the three upload permissions; no `dialog:` or `fs:` permission; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -100,11 +101,13 @@ Nothing else exists: no product features (only the example feature and
 cloud storage accounts, browsing and single-file downloads), no settings, no
 persistence other than the feature choices and the cloud storage accounts,
 no file operations in the bucket browser other than downloading one file at a
-time (no upload, folder or multiple downloads, rename or delete), no transfer
+time (no upload control, folder or multiple downloads, rename or delete; the
+upload batch commands exist but no page calls them), no transfer
 queue UI or download history, no backups, no sync, no custom Tauri events,
 no feature-management UI, no third-party plugins, and no custom command other
 than `operating_mode`, `list_features`, `set_feature_enabled`, the six cloud
-account commands, `list_cloud_folder` and the three download commands.
+account commands, `list_cloud_folder`, the three download commands and the
+three upload commands.
 
 ## Validation matrix
 
@@ -122,6 +125,34 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Upload batches: backend and commands (2026-11-12)
+
+Uncommitted tree on `241de11`, WSL2 Ubuntu 24.04.1, Rust 1.99.1, Node
+24.22.0. `cloud/upload.rs` (`upload_cloud_files`, `cancel_cloud_upload`,
+`retry_cloud_upload`, `CloudUploads`;
+[ADR-022](../architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust))
+and two small additions to the Phase 1 upload (the open multipart id on
+`TransferControl`, `abort_incomplete_upload`). No page calls the commands.
+
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`: pass.
+- `cargo test`: **308 passed, 15 ignored**, three runs in a row (before:
+  272 + 15). 36 new tests in `cloud/upload/tests.rs` (list:
+  [testing.md](../development/testing.md#rust-unit-tests)), all against the
+  in-process server or pure; the upload batch tests alone passed three
+  more times. The 25 download tests (`cloud::download`) and the 34
+  `S3Store::upload` tests pass unchanged; no download file was modified.
+- `npm run check`: 0 errors, 0 warnings; Vitest **93 passed** (unchanged;
+  only `file-changed` was added to `ERROR_KINDS` and its summary sentence).
+- Found while testing: a `PutObject` refused after its whole (small) body
+  was handed over is past the commit point, so Phase 1 rightly reports
+  `NeedsInspection`, not "nothing stored"; the stop-the-batch test uses a
+  refused `HeadObject` instead.
+
+Not run: any real provider (Backblaze, Hetzner), native Windows, any
+desktop or UI test (there is no upload UI; the native multi-file dialog was
+never opened: tests pass the dialog's answer directly), a crash during a
+multipart upload.
 
 ### Backend upload lifecycle (2026-11-12)
 
