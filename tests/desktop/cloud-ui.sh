@@ -5,7 +5,7 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse b2 (default: local hang browse)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse b2 b2-browse (default: local hang browse)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
 #                            (dpkg -x), if gnome-keyring-daemon is not installed
@@ -21,6 +21,15 @@
 #        read from the environment only; never printed. Before and after, the
 #        opt-in Rust test backblaze_b2_fingerprint hashes every object version
 #        under sotyware-it/; the phase fails if they differ.
+# b2-browse: writes a temporary dataset to the Backblaze test bucket (opt-in
+#        Rust test backblaze_b2_browse_dataset, kept, under
+#        sotyware-it/browse-validation/<run id>/ only), browses it through the
+#        UI with a second, read-only key without a file name prefix
+#        (SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID, ..._SECRET_ACCESS_KEY),
+#        compares every row with the provider's listing, and always deletes
+#        exactly that run's versions afterwards (backblaze_b2_browse_cleanup,
+#        also when interrupted). The fingerprint of sotyware-it/ must be the
+#        same before and after the UI, and before and after the whole phase.
 #
 # Exit code: 0 every check passed, 1 a check failed, 2 a dependency or
 # variable is missing, 3 Xvfb, openbox or the Secret Service did not start.
@@ -51,6 +60,11 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
         done ;;
+      b2-browse)
+        for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY \
+                 SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY; do
+          [ -n "${!v:-}" ] || { echo "the b2-browse phase needs $v (see testing.md)" >&2; exit 2; }
+        done ;;
       *) echo "unknown phase: $phase" >&2; exit 2 ;;
     esac
   done
@@ -63,8 +77,24 @@ BIN=$SOTYWARE_CLOUD_UI_BIN GK_BIN=$SOTYWARE_CLOUD_UI_GK
 ORIG_HOME=$HOME
 # Short: Unix socket paths must stay under 108 bytes.
 WORK=$(mktemp -d /tmp/sotyware-cloud-ui.XXXXXX) || exit 3
-XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" rc=0
+XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" BROWSE_RUN="" rc=0
+# Deletes exactly the versions of the kept browse dataset of this run, and
+# lists again; prints the result lines of the Rust test.
+b2_browse_cleanup() {
+  [ -n "$BROWSE_RUN" ] || return 0
+  (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_IT_B2_BROWSE_RUN=$BROWSE_RUN cargo test --quiet --lib \
+    cloud::integration::browse::backblaze_b2_browse_cleanup -- --ignored --nocapture >"$WORK/browse-cleanup.log" 2>&1)
+  local crc=$?
+  grep -E '^(cleaning up|cleanup:|CLEANUP)' "$WORK/browse-cleanup.log" | sed 's/^/  /'
+  if [ $crc -eq 0 ]; then
+    echo "[PASS] b2-browse: cleanup deleted this run's versions by id and found none left"
+    BROWSE_RUN=""
+  else
+    echo "[FAIL] b2-browse: CLEANUP INCOMPLETE for run $BROWSE_RUN (see the lines above)"; rc=1
+  fi
+}
 cleanup() {
+  b2_browse_cleanup
   rm -f -- "$WORK/browse-endpoint"
   for p in $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
   pkill -f -- "^$GK_BIN " 2>/dev/null
@@ -155,6 +185,41 @@ for phase in "${PHASES[@]}"; do
         echo "[PASS] b2: every object version under sotyware-it/ is unchanged"
       else
         echo "[FAIL] b2: the bucket changed or could not be read after the run"; rc=1
+      fi ;;
+    b2-browse)
+      before=$(fingerprint)
+      [ -n "$before" ] || { echo "[FAIL] b2-browse: could not fingerprint the bucket before the run"; rc=1; continue; }
+      echo "  before the dataset: ${before#sotyware-it fingerprint }"
+      MANIFEST=$WORK/browse-manifest.json
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_IT_B2_BROWSE_KEEP=1 SOTYWARE_IT_B2_BROWSE_MANIFEST=$MANIFEST \
+        cargo test --quiet --lib cloud::integration::browse::backblaze_b2_browse_dataset -- --ignored --nocapture \
+        >"$WORK/browse-create.log" 2>&1)
+      crc=$?
+      BROWSE_RUN=$(grep -oE 'dataset kept; run id [0-9]+-[0-9]+' "$WORK/browse-create.log" | awk '{print $NF}')
+      grep -E '^(provider|run prefix|permissions|dataset:|stored:|read-only UI key|local server|checks:|manifest:|FAIL)' \
+        "$WORK/browse-create.log" | sed 's/^/  /'
+      if [ $crc -ne 0 ] || [ ! -s "$MANIFEST" ]; then
+        echo "[FAIL] b2-browse: creating or checking the dataset failed:"; tail -20 "$WORK/browse-create.log"; rc=1
+        b2_browse_cleanup; continue
+      fi
+      echo "[PASS] b2-browse: dataset created and checked through the Rust listing (run $BROWSE_RUN)"
+      mid=$(fingerprint)
+      start_keyring
+      SOTYWARE_UI_MANIFEST=$MANIFEST python3 "$H/cloud_ui.py" b2-browse "$BIN" || rc=1
+      stop_keyring
+      mid2=$(fingerprint)
+      if [ -n "$mid" ] && [ "$mid" = "$mid2" ]; then
+        echo "[PASS] b2-browse: browsing changed no object version (${mid#sotyware-it fingerprint })"
+      else
+        echo "[FAIL] b2-browse: the bucket changed while browsing, or could not be read"; rc=1
+      fi
+      b2_browse_cleanup
+      after=$(fingerprint)
+      echo "  after cleanup: ${after#sotyware-it fingerprint }"
+      if [ -n "$after" ] && [ "$before" = "$after" ]; then
+        echo "[PASS] b2-browse: sotyware-it/ is exactly as before the dataset"
+      else
+        echo "[FAIL] b2-browse: sotyware-it/ differs from before the dataset"; rc=1
       fi ;;
   esac
 done

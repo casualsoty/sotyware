@@ -21,6 +21,14 @@
 #   to eu-central-003. Nothing is printed. Before and after, the opt-in Rust
 #   test backblaze_b2_fingerprint (cargo, in this checkout's src-tauri) hashes
 #   every object version under sotyware-it/; the run fails if they differ.
+# -Mode b2-browse: writes a temporary dataset to the Backblaze test bucket
+#   (opt-in Rust test backblaze_b2_browse_dataset with the b2.xml key, kept,
+#   under sotyware-it/browse-validation/<run id>/ only), browses it in the
+#   app with a second, read-only key without a file name prefix
+#   ($env:USERPROFILE\.sotyware-it\b2-read.xml, same form), compares every row
+#   (name, size, date) with the provider's listing, and always deletes exactly
+#   that run's versions afterwards (backblaze_b2_browse_cleanup). Needs node
+#   on PATH (the page's date format is reproduced with the same Intl call).
 #
 # The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
 # is moved aside first and put back at the end, as in windows.ps1; secret values
@@ -29,7 +37,7 @@
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing.
 param(
-  [ValidateSet("local", "b2", "browse")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003"
 )
@@ -162,7 +170,17 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
 
 $run = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff")
-if ($Mode -eq "b2") {
+if ($Mode -eq "b2-browse") {
+  $dir = Join-Path $env:USERPROFILE ".sotyware-it"
+  foreach ($f in "b2.xml", "b2-read.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; exit 2 } }
+  $w = Import-Clixml "$dir\b2.xml"; $WriteKey = $w.UserName; $WriteSecret = $w.GetNetworkCredential().Password; $w = $null
+  $c = Import-Clixml "$dir\b2-read.xml"
+  $Key1 = $c.UserName; $Secret1 = $c.GetNetworkCredential().Password
+  $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
+  # Replacing the key only stores it (no request); made-up values.
+  $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
+  $Endpoint = ""
+} elseif ($Mode -eq "b2") {
   $dir = Join-Path $env:USERPROFILE ".sotyware-it"
   if (-not (Test-Path "$dir\b2.xml") -or -not (Test-Path "$dir\b2-bucket.txt")) { "ABORT: $dir\b2.xml or b2-bucket.txt missing (see testing.md)"; exit 2 }
   $c = Import-Clixml "$dir\b2.xml"
@@ -191,20 +209,43 @@ if ($Mode -eq "b2") {
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
 }
 $script:redact = @(@($Secret1, "<secret>"), @($Secret2, "<secret2>"), @($Key1, "<keyID>"), @($Key2, "<keyID2>"), @($Bucket, "<bucket>"))
+if ($Mode -eq "b2-browse") { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
 
 # Runs the opt-in Rust test that fingerprints the B2 bucket; the variables are
 # set for that child only and removed again.
-function Fingerprint {
-  $env:SOTYWARE_IT_B2_BUCKET = $Bucket; $env:SOTYWARE_IT_B2_REGION = $Region
-  $env:SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $Key1; $env:SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $Secret1
+# Runs one opt-in Rust test with the B2 variables set for that child only
+# (removed again afterwards); returns its output lines.
+function CargoIt($test, $extra = @{}) {
+  $vars = @{ SOTYWARE_IT_B2_BUCKET = $Bucket; SOTYWARE_IT_B2_REGION = $Region }
+  if ($Mode -eq "b2-browse") {
+    $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $WriteKey; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $WriteSecret
+    $vars.SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID = $Key1; $vars.SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY = $Secret1
+  } else {
+    $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $Key1; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $Secret1
+  }
+  foreach ($k in $extra.Keys) { $vars[$k] = $extra[$k] }
+  foreach ($k in $vars.Keys) { Set-Item "Env:$k" $vars[$k] }
   try {
     Push-Location (Join-Path $PSScriptRoot "..\..\src-tauri")
-    $out = & cargo test --quiet --lib cloud::integration::backblaze_b2_fingerprint -- --ignored --nocapture 2>$null
+    $out = & cargo test --quiet --lib $test -- --ignored --nocapture 2>$null
+    $script:cargoExit = $LASTEXITCODE
     Pop-Location
   } finally {
-    foreach ($v in "SOTYWARE_IT_B2_BUCKET", "SOTYWARE_IT_B2_REGION", "SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID", "SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY") { Remove-Item "Env:$v" -EA SilentlyContinue }
+    foreach ($k in $vars.Keys) { Remove-Item "Env:$k" -EA SilentlyContinue }
   }
-  @($out | Where-Object { $_ -match '^sotyware-it fingerprint [0-9a-f]{64} versions \d+$' })[0]
+  @($out)
+}
+function Fingerprint {
+  @(CargoIt "cloud::integration::backblaze_b2_fingerprint" | Where-Object { $_ -match '^sotyware-it fingerprint [0-9a-f]{64} versions \d+$' })[0]
+}
+$script:browseRun = $null
+# Deletes exactly the versions of this run's kept dataset and lists again.
+function BrowseCleanup {
+  if (-not $script:browseRun) { return }
+  $out = CargoIt "cloud::integration::browse::backblaze_b2_browse_cleanup" @{ SOTYWARE_IT_B2_BROWSE_RUN = $script:browseRun }
+  $out | Where-Object { $_ -match '^(cleaning up|cleanup:|CLEANUP)' } | ForEach-Object { "  $(Redact $_)" }
+  Check "b2-browse: cleanup deleted this run's versions by id and found none left (run $script:browseRun)" ($script:cargoExit -eq 0)
+  if ($script:cargoExit -eq 0) { $script:browseRun = $null }
 }
 
 $CloudDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\cloud-accounts.sqlite3"
@@ -215,11 +256,95 @@ if (Test-Path $CloudBackup) { "cloud accounts: existing database moved to $Cloud
 $before = CmdkeyLines
 "credential manager: $($before.Count) com.sotyware.desktop line(s) before the run"
 
-if ($Mode -eq "b2") {
+if ($Mode -eq "b2" -or $Mode -eq "b2-browse") {
   $fpBefore = Fingerprint
   Check "b2: bucket fingerprinted before the run" ($null -ne $fpBefore)
   if ($fpBefore) { "  before: $($fpBefore -replace '^sotyware-it fingerprint ', '')" }
 }
+
+if ($Mode -eq "b2-browse") {
+  $ManFile = Join-Path $env:TEMP "sotyware-browse-manifest-$run.json"
+  $out = CargoIt "cloud::integration::browse::backblaze_b2_browse_dataset" @{ SOTYWARE_IT_B2_BROWSE_KEEP = "1"; SOTYWARE_IT_B2_BROWSE_MANIFEST = $ManFile }
+  $createExit = $script:cargoExit
+  $m = [regex]::Match(($out -join "`n"), 'dataset kept; run id (\d+-\d+)')
+  if ($m.Success) { $script:browseRun = $m.Groups[1].Value }
+  $out | Where-Object { $_ -match '^(provider|run prefix|permissions|dataset:|stored:|read-only UI key|local server|checks:|manifest:|FAIL)' } | ForEach-Object { "  $(Redact $_)" }
+  Check "b2-browse: dataset created and checked through the Rust listing (run $script:browseRun)" (($createExit -eq 0) -and (Test-Path $ManFile))
+  if (-not (Test-Path $ManFile)) { BrowseCleanup; "summary: $script:pass passed, $script:fail failed"; exit 1 }
+  $Manifest = Get-Content $ManFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  $script:mf = @{}; foreach ($f in $Manifest.folders) { $script:mf[[string]$f.path] = $f }
+  $fpMid = Fingerprint
+}
+
+function FormatSize([long]$n) {
+  if ($n -lt 1024) { return "$n B" }
+  $v = $n / 1024.0; $u = 0; $units = "KiB", "MiB", "GiB", "TiB", "PiB"
+  while ($v -ge 1024 -and $u -lt 4) { $v /= 1024; $u++ }
+  $digits = if ($v -lt 10) { 1 } else { 0 }
+  "{0} {1}" -f $v.ToString("F$digits", [Globalization.CultureInfo]::InvariantCulture), $units[$u]
+}
+# The page's formatDate for each RFC 3339 string, by the same Intl call in
+# node, in the same time zone. WebView2's default locale is the Windows display
+# language, while node's is the regional format (they can differ: en-US vs
+# fr-FR seen 2026-11-11), so the display language is passed explicitly.
+function FormatDates($dates) {
+  $locale = (Get-UICulture).Name
+  $js = "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString(['$locale'],{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).replace(/[\u202f\u00a0]/g,' '))))"
+  $f = Join-Path $env:TEMP "sotyware-dates-$run.js"; Set-Content $f $js -Encoding ASCII
+  $out = (ConvertTo-Json @($dates) -Compress) | & node $f
+  Remove-Item $f
+  $list = $out | ConvertFrom-Json
+  $map = @{}; for ($i = 0; $i -lt $dates.Count; $i++) { $map[$dates[$i]] = $list[$i] }
+  $map
+}
+function SameText([string]$t) { (($t -replace '[\u202f\u00a0]', ' ') -replace [string][char]::ConvertFromUtf32(0x1F4C1), ' ' -replace '\s+', ' ').Trim() }
+function ExpectedRows($rel, [bool]$firstPage = $false) {
+  $f = $script:mf[$rel]; $files = @($f.files); $folders = @($f.folders)
+  if ($firstPage) { $folders = @(); $files = @($files | Select-Object -First 1000) }
+  $dates = FormatDates @($files | ForEach-Object { $_.lastModified } | Select-Object -Unique)
+  $rows = @()
+  foreach ($n in $folders) { $rows += , ((SameText $(if ($n -eq "") { "(no name)" } else { $n })) + " | Folder | " + [char]0x2014) }
+  foreach ($x in $files) { $rows += , ((SameText $x.name) + " | " + (FormatSize $x.size) + " | " + (SameText $dates[$x.lastModified])) }
+  , $rows
+}
+# The table's body rows as "name | size | date", through the Grid pattern.
+function TableRows {
+  $d = Dash; if (-not $d) { return , @() }
+  $tab = $d.FindFirst($S::Descendants, (PCT $CT::Table)); if (-not $tab) { return , @() }
+  $grid = $tab.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern)
+  $rows = @()
+  for ($r = 0; $r -lt $grid.Current.RowCount; $r++) {
+    $cells = @()
+    for ($c = 0; $c -lt 3; $c++) {
+      $cell = $grid.GetItem($r, $c)
+      $t = $cell.Current.Name
+      if (-not $t) { $t = (@($cell.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) | Select-Object -First 1) }
+      $cells += , (SameText "$t")
+    }
+    $row = $cells -join " | "
+    if ($row -ne "Name | Size | Last modified") { $rows += , $row }
+  }
+  , $rows
+}
+# Waits until folder $rel of the run is shown with every row as listed.
+function Shows($rel, [bool]$firstPage = $false) {
+  $want = ExpectedRows $rel $firstPage
+  $path = $Manifest.prefix + $rel
+  $script:lastRows = @()
+  $ok = WaitFor {
+    $t = PageText
+    if (-not $t.Contains("| $path |") -or $t.Contains("Loading")) { return $false }
+    if ($want.Count -eq 0) { return $t -like "*This folder is empty.*" }
+    $script:lastRows = TableRows
+    ($script:lastRows -join "`n") -eq ($want -join "`n")
+  } 120
+  if (-not $ok) {
+    $diff = @(); for ($i = 0; $i -lt [Math]::Max($want.Count, $script:lastRows.Count) -and $diff.Count -lt 4; $i++) { if ($script:lastRows[$i] -ne $want[$i]) { $diff += "#${i}: shown [$($script:lastRows[$i])] expected [$($want[$i])]" } }
+    $script:why = "$path : $($script:lastRows.Count) rows shown, $($want.Count) expected; $($diff -join '; ')"
+  } else { $script:why = "" }
+  $ok
+}
+function Go($folder, $rel, [bool]$firstPage = $false) { (PressFolder $folder) -and (Shows $rel $firstPage) }
 
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
@@ -254,6 +379,41 @@ try {
   $t = PageText
   if ($Mode -eq "local") {
     Check "Open bucket: the network error with Try again" ($ok -and ($t -like "*The provider could not be reached*") -and $null -ne (Named "Try again" $CT::Button)) $t
+  } elseif ($Mode -eq "b2-browse") {
+    $R = $Manifest.run
+    Check "Open bucket lists the bucket's root, with the sotyware-it folder" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+    $ok = (PressFolder "sotyware-it") -and (WaitFor { (PageText) -like "*browse-validation*" } 60)
+    $ok = $ok -and (PressFolder "browse-validation") -and (WaitFor { (PageText) -like "*$R*" } 60)
+    Check "navigate sotyware-it, browse-validation, this run's folder" ($ok -and (PressFolder $R))
+    Check "run root: exactly its immediate folders and files, names, sizes and dates as listed" (Shows "") $script:why
+    $rel = ""
+    foreach ($f in "docs", "2024", "q1", "deep", "er") { $rel += "$f/"; Check "open ${rel}: only its own entries" (Go $f $rel) $script:why }
+    Check "breadcrumb 2024 opens docs/2024/" (Go "2024" "docs/2024/") $script:why
+    Check "Up one folder opens docs/" ((Press "Up one folder") -and (Shows "docs/")) $script:why
+    Check "docs/empty-nested/ (marker only) opens as empty" (Go "empty-nested" "docs/empty-nested/") $script:why
+    foreach ($pair in @(@("marker-only", "marker-only/: empty"), @("photos", "photos/: the marker is not a file"), @("special", "special/: + & ? # % exactly"))) {
+      $ok = Go $R ""
+      Check "open $($pair[1])" ($ok -and (Go $pair[0] "$($pair[0])/")) $script:why
+    }
+    Check "open special/f+o&l?d#e%r/" (Go "f+o&l?d#e%r" "special/f+o&l?d#e%r/") $script:why
+    $uni = "$([char]0xFC)n$([char]0xEF)c$([char]0xF8)d$([char]0xE9)"
+    $priv = -join ([char[]](0x43F, 0x440, 0x438, 0x432, 0x435, 0x442))
+    $ok = (Go $R "") -and (Go $uni "$uni/") -and (Go $priv "$uni/$priv/")
+    Check "Unicode folders open and show their files exactly" $ok $script:why
+    $ok = (Go $R "") -and (Go "dots" "dots/") -and (Go ".." "dots/../")
+    Check "dots/ shows '..' and '.' as names; '..' opens dots/../ (escape.txt), not the run root" ($ok -and ((PageText) -like "*escape.txt*")) $script:why
+    Check "Up one folder from dots/../ goes to dots/" ((Press "Up one folder") -and (Shows "dots/")) $script:why
+    $ok = (Go $R "") -and (Go "double" "double/") -and (Go "(no name)" "double//") -and (Go "(no name)" "double///")
+    Check "double/, (no name), (no name): repeated separators kept" $ok $script:why
+    $ok = (Go $R "") -and (Go "many" "many/" $true)
+    Check "many/: the first 1,000 entries, with Load more" ($ok -and ((PageText) -like "*1000 items shown; more are available*") -and $null -ne (Named "Load more" $CT::Button)) $script:why
+    $ok = (Press "Load more") -and (Shows "many/")
+    Check "Load more: all 1,010 entries, every row as listed, no Load more after" ($ok -and ((PageText) -like "*1010 items shown.*") -and $null -eq (Named "Load more" $CT::Button)) $script:why
+    $ok = (Press "Refresh") -and (Shows "many/" $true)
+    Check "Refresh starts again at the first page" ($ok -and ((PageText) -like "*1000 items shown; more*")) $script:why
+    $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
+    $ok = $ok -and (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Root of the bucket*") -and ($t -notlike "*Loading*") } 60)
+    Check "Back to accounts, then Open bucket again starts at the bucket's root" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
   } elseif ($Mode -eq "b2") {
     $outcome = if ($t -like "*the provider refused this request*") { "access denied" } elseif ($t -like "*Could not load this folder.*") { "error" } else { "listed" }
     "  Open bucket at the root: $outcome"
@@ -324,6 +484,12 @@ try {
   foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
   foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
   if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
+  if ($Mode -eq "b2-browse") {
+    $fpMid2 = Fingerprint
+    Check "b2-browse: browsing changed no object version" (($null -ne $fpMid) -and $fpMid -eq $fpMid2)
+    BrowseCleanup
+    Remove-Item $ManFile -EA SilentlyContinue
+  }
   if ($Mode -eq "browse") {
     Remove-Item $SrvFile -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
@@ -337,12 +503,12 @@ if ($Mode -eq "browse") {
 }
 $after = CmdkeyLines
 Check "Credential Manager: same com.sotyware.desktop lines as before the run" (($after -join "|") -eq ($before -join "|")) "before=$($before.Count) after=$($after.Count)"
-if ($Mode -eq "b2") {
+if ($Mode -eq "b2" -or $Mode -eq "b2-browse") {
   $fpAfter = Fingerprint
   if ($fpAfter) { "  after:  $($fpAfter -replace '^sotyware-it fingerprint ', '')" }
-  Check "b2: every object version under sotyware-it/ is unchanged" (($null -ne $fpAfter) -and $fpAfter -eq $fpBefore)
+  Check "${Mode}: every object version under sotyware-it/ is as before the run" (($null -ne $fpAfter) -and $fpAfter -eq $fpBefore)
 }
-$Secret1 = $null; $Secret2 = $null; $c = $null
+$Secret1 = $null; $Secret2 = $null; $c = $null; $WriteSecret = $null
 ""
 "summary: $script:pass passed, $script:fail failed"
 if ($script:fail -gt 0) { exit 1 } else { exit 0 }

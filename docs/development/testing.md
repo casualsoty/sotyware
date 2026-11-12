@@ -362,7 +362,9 @@ listing server in every `cargo test`.
 
 ```bash
 cargo test --lib cloud::integration::backblaze_b2_folder_listing -- --ignored --nocapture
-``` `backblaze_b2_fingerprint` only prints that hash
+```
+
+`backblaze_b2_fingerprint` only prints that hash
 (`sotyware-it fingerprint <sha256> versions <n>`), for the UI tests below.
 
 ```bash
@@ -442,6 +444,79 @@ the secret, `$env:NAME = Read-Host` keeps it out of the shell history. Record
 results in [status.md](../status/status.md) with the date, platform and
 provider; a test that was not run is not a pass.
 
+### Browsing a temporary dataset at Backblaze
+
+`backblaze_b2_browse_dataset` (`cloud/integration/browse.rs`, `#[ignore]`d)
+is the only browsing test that **writes**: it creates a small dataset in the
+B2 test bucket, browses it with the dashboard's own code
+(`browser::list_folder` through `CloudAccounts`, in-memory credential store)
+and deletes it again. Rules it enforces:
+
+- Every write is one `PutObject` of a dataset key under
+  `sotyware-it/browse-validation/<unix nanos>-<pid>/` (new for every run).
+  Before the first write it checks the provider (`backblaze-b2`), that the
+  endpoint is `https://s3.<region>.backblazeb2.com`, the connection check,
+  and that the run prefix has no object, version or delete marker; then one
+  probe object proves write, read and delete-by-version-id inside the prefix
+  (and is deleted).
+- The dataset (1,040 objects, about 50 kB, contents derived from the key,
+  SHA-256 stored as metadata): files at the run root (a space, an emoji,
+  `café` in NFC and in NFD), folders 1 to 5 levels deep, a folder with a
+  marker object and content, two marker-only (empty) folders, Unicode folder
+  and file names (Latin, Cyrillic, Arabic, Japanese), `+ & ? # %` and a
+  literal `%20` in file and folder names, `double//` and `double///`,
+  `dots/../escape.txt`, `dots/..`, `dots/./here.txt`, and `many/` with 1,005
+  files and 5 subfolders (two pages of the browser's 1,000). Keys a provider
+  may refuse (repeated separators, `.`/`..`) are recorded, not failed.
+- The checks run in their own task, so a failed check (or a panic) cannot
+  skip the cleanup. Cleanup lists every version and delete marker under the
+  run prefix, deletes by version id **only those whose key is a dataset key
+  of this run**, reports (never deletes) anything else, lists again and
+  fails unless nothing is left. The fingerprint of `sotyware-it/` must be
+  the same before and after.
+
+What it checks (each line printed as `PASS`/`FAIL`): every folder, opened
+only by prefixes the listing returned, shows exactly its immediate
+subfolders and its own files with their sizes and a date from this run,
+nothing twice; every folder implied by the keys is reachable; marker objects
+are not files; `..` is a folder named `..` whose parent is `dots/`;
+`double/` holds one folder without a name; `many/` comes in two pages
+(1,000 + 10); a used cursor and a cursor of another folder are refused as
+`outdated-page`; Refresh gives the same first page with a new cursor; the
+provider's own pages of 4, 7 and 1,000 give the same entries, none twice;
+every request is a delimited `ListObjectsV2`; HEAD of every key outside
+`many/` returns the uploaded size and SHA-256. The same folders are listed
+from the in-process listing server holding the same keys and every
+difference is printed (a comparison, not a failure); a made-up continuation
+token is printed, not judged. `browse_checks_pass_against_the_test_server`
+runs all these checks against the in-process server in every `cargo test`.
+
+```bash
+cargo test --lib cloud::integration::browse::backblaze_b2_browse_dataset -- --ignored --nocapture
+```
+
+With `SOTYWARE_IT_B2_BROWSE_KEEP=1` the dataset is kept (for the UI tests
+below), `SOTYWARE_IT_B2_BROWSE_MANIFEST=<file>` receives the listing of every
+folder as JSON, and the run id is printed. `backblaze_b2_browse_cleanup` with
+`SOTYWARE_IT_B2_BROWSE_RUN=<run id>` then deletes that run exactly as above;
+use it also after an interrupted run (the run id is the last path part of the
+printed run prefix).
+
+**The read-only key for the UI.** The test key is limited to the file name
+prefix `sotyware-it/`, and Backblaze refuses such a key the root listing;
+the browser always opens at the root, so the UI can reach the dataset only
+with a second key: Application Keys → Add a New Application Key, the test
+bucket only, **Read Only**, **no** file name prefix, "list all bucket names"
+off, a short expiry. Its variables are `SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID`
+and `SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY` (WSL2 run of 2026-11-11: a
+second 0600 file `~/.config/sotyware-it/b2-read.env`; Windows:
+`Get-Credential | Export-Clixml $env:USERPROFILE\.sotyware-it\b2-read.xml`).
+When they are set, `backblaze_b2_browse_dataset` also checks that this key
+lists the root and the run but is **refused a write** (a `PutObject` of
+`read-key-probe.txt` in the run prefix; were it accepted, that version would
+be deleted at once and the test would fail). All writes stay with the
+prefix-restricted key.
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a
@@ -467,6 +542,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Overview link and the example feature's switch still work, the process keeps running |
 | Linux `browse`, Windows `-Mode browse` | — (Windows: **Connected**) | the bucket browser against the in-process listing server (`cargo test … serve_listing_for_ui -- --ignored`, started by the script in this checkout's `src-tauri`, made-up key): Open bucket → the root's folders and files with size; a folder with spaces and Unicode; the bucket breadcrumb; `photos/` without its marker or nested file; `photos/2024/` with a MiB size; Up one folder; a marker-only folder → "This folder is empty."; a folder of 1,005 entries → "1000 items shown; more are available", Load more → 1,005, no Load more; Refresh → 1,000 again; ← Back to accounts; remove. The server fails the phase if anything but `ListObjectsV2` (or `HeadBucket`) reached it |
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
+| Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -474,7 +550,7 @@ folder." with the network error and Try again; in `b2` it is pressed at the
 root once and must show a listing or Access denied (the test key is limited
 to `sotyware-it/`), then ← Back to accounts.
 
-**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [b2]`, default `local
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [b2] [b2-browse]`, default `local
 hang browse`): Xvfb + openbox and a private `dbus-run-session`, a real
 `gnome-keyring-daemon --unlock` with a throwaway login keyring in a
 throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
@@ -505,7 +581,7 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|b2]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|b2|b2-browse]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session. The existing `cloud-accounts.sqlite3`
 is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
@@ -523,9 +599,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 `browse` (and `cloud-ui.sh browse`) compiles and runs the test build the
 first time, so it needs the Rust toolchain, like `b2`.
 
+`b2-browse` needs the variables of `b2` plus the read-only key's two (Linux;
+Windows reads `b2.xml`, `b2-read.xml` and `b2-bucket.txt`), the Rust
+toolchain, and `node` on `PATH` (for the date format); it takes about four
+minutes, most of it creating the 1,040 objects. Run one Backblaze test at a time
+(on one machine or two): the fingerprint covers all of `sotyware-it/`, so a
+second run's dataset makes the before/after checks fail (seen 2026-11-11 when
+a Linux and a Windows run overlapped; each run's own cleanup was still
+complete). On Windows the page's dates follow the Windows display language
+(WebView2), not the regional format that `node` would use by default, so the
+script passes `(Get-UICulture).Name` to the same `toLocaleString` call.
+
 Not covered by either: an unlock prompt answered by a person, KWallet,
-Windows 10, the connection check against Hetzner, browsing a non-empty
-bucket at a real provider.
+Windows 10, the connection check against Hetzner, browsing at Hetzner.
 
 ## Frontend tests
 

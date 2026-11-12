@@ -440,10 +440,14 @@ own; the provider's error text goes only to the log.
 real continuation tokens, refused operations), through Rust tests and the
 release binary's UI on Linux and Windows; and Backblaze B2, read-only
 (2026-11-11): the test key, limited to `sotyware-it/`, is refused the root
-(`AccessDenied`, "not entitled"), lists `sotyware-it/` (empty in the test
-bucket), and a made-up continuation token was accepted there (an empty
-answer). Pagination and non-empty folders have **not** been seen at a real
-provider ([status.md](../status/status.md#cloud-storage-bucket-browsing-2026-11-11)).
+(`AccessDenied`, "not entitled"). With a temporary 1,040-object dataset
+(nested and marker-only folders, odd and Unicode names, `//` and `..` in
+keys, 1,010 entries in one folder) every rule above held at Backblaze,
+through Rust and through the UI on Linux and Windows, and the listings
+equalled the local server's; the one difference: Backblaze answers a
+continuation token it never issued with the first page, not an error
+([status.md](../status/status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+Not seen at Hetzner.
 
 ## Not built (deliberately)
 

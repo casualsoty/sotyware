@@ -146,6 +146,23 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Browsing a temporary dataset at **real Backblaze** (2026-11-11, uncommitted
+  tree on `8641c1a`, test code only): `backblaze_b2_browse_dataset` writes
+  1,040 objects (nested and marker-only folders, Unicode, `+ & ? # %`, `//`,
+  `..`, 1,010 entries in `many/`) under
+  `sotyware-it/browse-validation/<run>/`, lists them through
+  `browser::list_folder` (133/133: WSL2 3 runs, Windows 1, plus each UI
+  run's creation) and deletes exactly its versions. UI (`b2-browse`, read-only
+  key without a name prefix, every row compared with the provider): Linux
+  30/30 (runs 1, 3, 4), Windows 46/46 (runs 2–4). Same listings as the local
+  server except: Backblaze answers a made-up continuation token with the
+  first page. Cleanup verified (0 left) in all 13 runs; the 13th only on
+  2026-11-12 (Backblaze's daily transaction cap had refused its version
+  listing; afterwards `sotyware-it/` held 0 versions). WSL2 regression: `cargo test` 209 + 10
+  ignored, frontend 81, virtual display 119/0/0 (3), `cloud-ui.sh` local
+  16/16, hang 8/8, browse 17/17 (3); Windows 11: 200 + 81, private desktop
+  56/0 (3), cloud UI local 19/19 and browse 29/29 (3); `windows.ps1` not run.
+  [status.md](status/status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11).
 - Cloud Storage bucket browsing (2026-11-11, uncommitted tree on `ad014e7`):
   WSL2 `cargo test` 208 passed, 8 ignored (19 new), frontend 81 (18 new);
   Windows 11 199 + 81. Against the local listing server through the release
@@ -317,9 +334,11 @@ credential store: Linux without a Secret Service (WSL2, minimal window
 managers) cannot store any, by design. The connection check is verified at Backblaze by one
 opt-in run and one UI run each on Linux and Windows, never at Hetzner; while one credential-store call waits (an unlock
 prompt), the other account calls wait behind it. The bucket browser is verified
-at a real provider only for a refused root and an empty folder; a key limited
-to a file name prefix cannot browse (Backblaze refuses the root); no total
-count, no cache, no file operations. Full list: [limitations.md](status/limitations.md).
+at Backblaze with a temporary 1,040-object dataset (WSL2/Xvfb and Windows 11),
+never at Hetzner; Backblaze answers a continuation token it never issued with
+the first page instead of an error; a key limited to a file name prefix cannot
+browse (Backblaze refuses the root); no total count, no cache, no file
+operations. Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
 
@@ -329,8 +348,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next steps (browsing a real bucket with content, then
-downloads from the browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (downloads from the browser): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

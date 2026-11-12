@@ -19,6 +19,7 @@ Phases:
 """
 import ctypes
 import ctypes.util
+import json
 import os
 import sqlite3
 import subprocess
@@ -136,6 +137,22 @@ if PHASE == "b2":
     REGION = need("SOTYWARE_IT_B2_REGION")
     # A wrong secret for the same key id: shows that a replaced key is the one used.
     KEY2, SECRET2 = KEY1, "sotywareE2eWrongSecret0123456789abcdef"
+elif PHASE == "b2-browse":
+    def need(name):
+        v = os.environ.get(name, "")
+        if not v:
+            raise SystemExit(f"set {name} for the b2-browse phase")
+        return v
+
+    # The read-only key (no file name prefix), so the root can be listed.
+    KEY1 = need("SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID")
+    SECRET1 = need("SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY")
+    KEY2, SECRET2 = "", ""
+    BUCKET = need("SOTYWARE_IT_B2_BUCKET")
+    REGION = need("SOTYWARE_IT_B2_REGION")
+    with open(need("SOTYWARE_UI_MANIFEST"), encoding="utf-8") as mf:
+        MANIFEST = json.load(mf)
+    MANIFEST["folders"] = {f["path"]: f for f in MANIFEST["folders"]}
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -415,6 +432,97 @@ def remove(label):
     return bool(ok), confirm, bool(removed)
 
 
+# ---- the bucket browser's table, read through AT-SPI ----
+def cell_text(cell):
+    parts = []
+
+    def walk(n):
+        try:
+            if n.get_text_iface() is not None:
+                parts.append(Atspi.Text.get_text(n, 0, Atspi.Text.get_character_count(n)).replace("\ufffc", " "))
+            elif n.get_name():
+                parts.append(n.get_name())
+            for j in range(n.get_child_count()):
+                c = n.get_child_at_index(j)
+                if c is not None:
+                    walk(c)
+        except GLib.Error:
+            pass
+
+    walk(cell)
+    return " ".join(" ".join(parts).replace("📁", " ").split())
+
+
+def table_rows(pid):
+    """The browser table's body rows, each as [name, size, date] texts."""
+    out = []
+    for role, _, _, node in nodes(pid):
+        if role != Atspi.Role.TABLE_ROW:
+            continue
+        cells = [cell_text(node.get_child_at_index(j)) for j in range(node.get_child_count())]
+        if cells != ["Name", "Size", "Last modified"]:
+            out.append(cells)
+    return out
+
+
+def format_size(n):
+    if n < 1024:
+        return f"{n} B"
+    value, unit = n / 1024, 0
+    while value >= 1024 and unit < 4:
+        value, unit = value / 1024, unit + 1
+    return f"{value:.{1 if value < 10 else 0}f} {['KiB', 'MiB', 'GiB', 'TiB', 'PiB'][unit]}"
+
+
+def format_dates(dates):
+    """The page's formatDate for each RFC 3339 string, by the same Intl call
+    in Node (same locale and time zone as the app's environment)."""
+    js = ("const a=JSON.parse(require('fs').readFileSync(0,'utf8'));"
+          "console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString([],{year:'numeric',month:'short',"
+          "day:'numeric',hour:'2-digit',minute:'2-digit'}).replace(/[\\u202f\\u00a0]/g,' '))))")
+    out = subprocess.run(["node", "-e", js], input=json.dumps(dates), capture_output=True, text=True, check=True)
+    return dict(zip(dates, json.loads(out.stdout)))
+
+
+def same_text(a):
+    return " ".join(a.replace("\u202f", " ").replace("\u00a0", " ").split())
+
+
+def expected_rows(rel, first_page=False):
+    f = MANIFEST["folders"][rel]
+    files = f["files"]
+    folders = f["folders"]
+    if first_page:  # the provider's first page: the first 1000 entries in key order
+        folders, files = [], files[:1000]
+    dates = format_dates([x["lastModified"] for x in files])
+    return ([[n if n else "(no name)", "Folder", "—"] for n in folders]
+            + [[x["name"], format_size(x["size"]), dates[x["lastModified"]]] for x in files])
+
+
+def shows(rel, first_page=False):
+    """Waits until the browser shows folder `rel` of the run (all of it, or
+    its first page) with every row as the provider listed it: name, size
+    and date, in order. Returns (ok, what differs)."""
+    want = expected_rows(rel, first_page)
+    path = MANIFEST["prefix"] + rel
+    norm = lambda rows: [[same_text(c) for c in r] for r in rows]  # noqa: E731
+    last = []
+
+    def ready():
+        ns = nodes(pid)
+        if not any(path in (n, t.strip()) for _, n, t, _ in ns) or any("Loading" in t for _, _, t, _ in ns):
+            return None
+        if not want:
+            return "This folder is empty." in text(pid)
+        last[:] = norm(table_rows(pid))
+        return last == norm(want)
+
+    if wait_for(ready, 120):
+        return True, ""
+    diff = [(i, g, w) for i, (g, w) in enumerate(zip(last, norm(want))) if g != w][:5]
+    return False, f"{path!r}: {len(last)} rows shown, {len(want)} expected; first differences {diff}"
+
+
 try:
     ready = wait_for(lambda: "Welcome" in text(pid), 30)
     check("dashboard is up (dashboard-only mode, no tray host here)", bool(ready))
@@ -586,6 +694,81 @@ try:
               ok and "are not deleted or changed" in confirm and BUCKET in confirm, confirm)
         check("remove: account gone from page, database and keyring",
               removed and rows() == [] and keyring_items(account)[:2] == ([], []), str(rows()))
+
+    elif PHASE == "b2-browse":
+        run = MANIFEST["run"]
+        label = f"sotyware e2e browse {RUN}"
+        ok = add(label, BUCKET, KEY1, SECRET1, None)
+        check("add a Backblaze B2 account with the read-only key",
+              bool(ok and wait_for(lambda: f"Added {label}" in text(pid))), text(pid))
+        status = run_check()
+        check("Check connection: Connected", status == "Connected", f"{status}: {text(pid)}")
+        ok = press(pid, "Open bucket") and wait_for(
+            lambda: "Root of the bucket" in text(pid) and "Loading" not in text(pid), 60)
+        root = table_rows(pid) if ok else []
+        check("Open bucket lists the bucket's root, with the sotyware-it folder",
+              ["sotyware-it", "Folder", "—"] in root, str(root)[:400])
+        ok = press(pid, "sotyware-it") and wait_for(lambda: "browse-validation" in text(pid), 60)
+        ok = ok and press(pid, "browse-validation") and wait_for(lambda: run in text(pid), 60)
+        check("navigate sotyware-it → browse-validation → this run's folder",
+              bool(ok and press(pid, run)))
+        ok, why = shows("")
+        check("run root: exactly its immediate folders and files, names, sizes and dates as listed", ok, why)
+        for path in ["docs", "2024", "q1", "deep", "er"]:
+            pressed = press(pid, path)
+            rel = "/".join(["docs", "2024", "q1", "deep", "er"][:["docs", "2024", "q1", "deep", "er"].index(path) + 1]) + "/"
+            ok, why = shows(rel)
+            check(f"open {rel}: only its own entries", pressed and ok, why)
+        ok, why = (press(pid, "2024") and shows("docs/2024/")) or (False, "breadcrumb 2024 missing")
+        check("breadcrumb 2024 opens docs/2024/", ok, why)
+        ok, why = (press(pid, "Up one folder") and shows("docs/")) or (False, "")
+        check("Up one folder opens docs/", ok, why)
+        ok, why = (press(pid, "empty-nested") and shows("docs/empty-nested/")) or (False, "")
+        check("docs/empty-nested/ (marker only) opens as empty", ok, why)
+        for folder, rel in [("marker-only", "marker-only/"), ("photos", "photos/"), ("special", "special/")]:
+            ok = press(pid, run) and shows("")[0]
+            ok2, why = (press(pid, folder) and shows(rel)) or (False, "")
+            check(f"open {rel}" + (": the marker is not a file" if folder == "photos" else
+                                   ": empty" if folder == "marker-only" else ": + & ? # % exactly"), ok and ok2, why)
+        ok, why = (press(pid, "f+o&l?d#e%r") and shows("special/f+o&l?d#e%r/")) or (False, "")
+        check("open special/f+o&l?d#e%r/", ok, why)
+        uni = "ünïcødé"
+        ok = press(pid, run) and shows("")[0]
+        ok2, why = (press(pid, uni) and shows(uni + "/")) or (False, "")
+        ok3, why3 = (press(pid, "привет") and shows(uni + "/привет/")) or (False, "")
+        check("Unicode folders open and show their files exactly", ok and ok2 and ok3, why + why3)
+        ok = press(pid, run) and shows("")[0]
+        ok2, why = (press(pid, "dots") and shows("dots/")) or (False, "")
+        ok3, why3 = (press(pid, "..") and shows("dots/../")) or (False, "")
+        check("dots/ shows '..' and '.' as names; '..' opens dots/../ (escape.txt), not the run root",
+              ok and ok2 and ok3 and "escape.txt" in text(pid), why + why3)
+        ok, why = (press(pid, "Up one folder") and shows("dots/")) or (False, "")
+        check("Up one folder from dots/../ goes to dots/", ok, why)
+        ok = press(pid, run) and shows("")[0]
+        ok2, why = (press(pid, "double") and shows("double/")) or (False, "")
+        ok3, why3 = (press(pid, "(no name)") and shows("double//")) or (False, "")
+        ok4, why4 = (press(pid, "(no name)") and shows("double///")) or (False, "")
+        check("double/ → (no name) → (no name): repeated separators kept", ok and ok2 and ok3 and ok4,
+              why + why3 + why4)
+        ok = press(pid, run) and shows("")[0]
+        ok2, why = (press(pid, "many") and shows("many/", first_page=True)) or (False, "")
+        check("many/: the first 1,000 entries, with Load more",
+              ok and ok2 and "1000 items shown; more are available" in text(pid) and "Load more" in buttons(pid), why)
+        ok, why = (press(pid, "Load more") and shows("many/")) or (False, "")
+        check("Load more: all 1,010 entries, every row as listed, no Load more after",
+              ok and "1010 items shown." in text(pid) and "Load more" not in buttons(pid), why)
+        ok, why = (press(pid, "Refresh") and shows("many/", first_page=True)) or (False, "")
+        check("Refresh starts again at the first page", ok and "1000 items shown; more" in text(pid), why)
+        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        check("Back to accounts", bool(ok), str(buttons(pid)))
+        ok = press(pid, "Open bucket") and wait_for(
+            lambda: "Root of the bucket" in text(pid) and "Loading" not in text(pid), 60)
+        check("Open bucket again starts at the bucket's root",
+              bool(ok) and ["sotyware-it", "Folder", "—"] in table_rows(pid), text(pid)[-300:])
+        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        ok2, _, removed = remove(label)
+        check("remove the account: gone from page, database and keyring",
+              bool(ok) and removed and rows() == [], str(rows()))
 
     else:  # hang
         ok = add("Photos", BUCKET, KEY1, SECRET1, "http://127.0.0.1:9")

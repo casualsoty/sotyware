@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-11 (Cloud Storage bucket browsing: read-only folder listing in the app; headless, desktop and Cloud Storage UI suites on WSL2 and native Windows 11, read-only listing against real Backblaze B2). Update this file whenever
+Last updated: 2026-11-12 (Cloud Storage browsing of a temporary dataset at real Backblaze B2, through Rust and the UI on WSL2 and native Windows 11; every run's dataset deleted again, the last one on 2026-11-12: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -44,7 +44,12 @@ Read-only bucket browsing passed on 2026-11-11 against the local listing
 server through the UI on both platforms (Linux 17/17, Windows 29/29, several
 runs) and read-only against Backblaze B2, where the prefix-restricted test key
 is refused the root and its own prefix is empty
-([details](#cloud-storage-bucket-browsing-2026-11-11)).
+([details](#cloud-storage-bucket-browsing-2026-11-11)). With a temporary
+1,040-object dataset at Backblaze, browsing passed through Rust (133/133)
+and through the UI (Linux 30/30, Windows 46/46, several runs); every
+run's dataset was deleted again (one only on 2026-11-12, after Backblaze's
+daily transaction cap had refused its cleanup)
+([details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
 
 ## Implemented
 
@@ -102,6 +107,142 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud Storage: browsing a temporary dataset at Backblaze (2026-11-11)
+
+Tested as an uncommitted working tree on top of `8641c1a` (the tree was clean
+before; nothing committed). Test code only, no app code changed: the opt-in
+`backblaze_b2_browse_dataset` and `backblaze_b2_browse_cleanup`
+(`src-tauri/src/cloud/integration/browse.rs`), the always-run
+`browse_checks_pass_against_the_test_server`, and a `b2-browse` phase /
+`-Mode b2-browse` in the Cloud Storage UI tests
+([how](../development/testing.md#browsing-a-temporary-dataset-at-backblaze)).
+No dependency added.
+
+**Bucket and keys.** The dedicated B2 test bucket in `eu-central-003`
+(endpoint `https://s3.eu-central-003.backblazeb2.com`, checked by every run).
+Every write used the existing key (that bucket only, file name prefix
+`sotyware-it/`). The UI used a second key the user created for this:
+Read Only, the same bucket, **no** file name prefix (Backblaze refuses the
+root to a prefix-restricted key, and the browser always opens at the root).
+Every run showed that this key lists the root and the run but is refused a
+`PutObject`. Keys came from the user's files outside the repository
+(`~/.config/sotyware-it/b2.env` and `b2-read.env`, mode 600; on Windows the
+DPAPI files `b2.xml`, `b2-read.xml`); key ids, secrets and the bucket name
+were removed from all output.
+
+**Dataset**, under `sotyware-it/browse-validation/<unix nanos>-<pid>/`, new
+for every run: 1,040 objects, 49,515 bytes, contents derived from the key,
+SHA-256 recorded locally and as metadata. Categories: files at the run root
+(a space, an emoji, `café` in NFC and in NFD); folders 1 to 5 levels deep;
+`photos/` with a marker object and content; two marker-only (empty) folders;
+Latin-with-diacritics, Cyrillic, Arabic and Japanese folder and file names;
+`+ & ? # %` and a literal `%20` in file names and in a folder name;
+`double//inner.txt`, `double///triple.txt`; `dots/../escape.txt`, `dots/..`,
+`dots/./here.txt`, `dots/..name.txt`; `many/` with 1,005 files and 5
+subfolders. **Backblaze accepted and stored every key exactly as sent**,
+including `//`, `.` and `..` (the version listing showed the same 1,040 keys).
+
+**Through the Rust listing** (`browser::list_folder`, the dashboard's own
+path; WSL2 3 runs, native Windows 11 1 run, plus the creating step of every
+UI run below): **133/133 checks every time.** Verified at Backblaze:
+
+| Behaviour | Result |
+| --- | --- |
+| bucket root, prefix-restricted key | `AccessDenied` ("not entitled") |
+| `sotyware-it/browse-validation/` | only the run's folder, no files |
+| each of the 26 folders | exactly its immediate subfolders and files, sizes as uploaded, every date from this run (RFC 3339, `Z`), nothing listed twice; every folder reachable by navigation, none extra |
+| nested folders | appear only as their top folder; deeper levels need their own listing |
+| marker objects | `photos/` lists 1 file (not its marker); `marker-only/` and `docs/empty-nested/` open empty, one page |
+| special characters, Unicode | `+ & ? # %`, `%20`, NFC and NFD `café` (two files), emoji, Cyrillic/Arabic/Japanese preserved byte for byte; the folder `f+o&l?d#e%r` opens by its returned prefix |
+| `..` and `.` | `dots/` holds folders `..` and `.` and files `..`, `..name.txt`; `dots/../` lists `escape.txt` and its parent is `dots/`; `escape.txt` never at the run root |
+| repeated separators | `double/` holds one folder without a name (`double//`), which holds `inner.txt` and another such folder |
+| pagination (`many/`, 1,010 entries) | 2 pages: 1,000 files, then 5 files + 5 folders (key order); all entries, none twice, no further page |
+| cursors | a used cursor → `outdated-page`; a cursor of `many/` used for `docs/` → `outdated-page`; Refresh → the same first page, new cursor; `docs/` after `many/` opens at its first page |
+| the provider's own pages of 4, 7 and 1,000 | the same entries, none twice |
+| requests | only `GET ?list-type=2&delimiter=%2F…` for listings (never recursive, no `ListBuckets`) |
+| HEAD of every key outside `many/` | the uploaded size and SHA-256 (30 keys) |
+
+**Differences from the in-process listing server** (the same keys loaded into
+it, every folder compared, including order, page splits, parents and
+breadcrumbs): **none**, except one: a continuation token Backblaze never
+issued is **accepted** and answered with the folder's first page (1,000
+entries, "more": true); the local server answers 400, which sotyware shows
+as an out-of-date page. The app sends only tokens the provider issued, and
+Load more drops rows it already shows; an expired real token was not tried.
+
+**Through the desktop UI** (the release binary, read-only key; every row of
+every visited folder compared with the provider's listing: name, size as the
+page formats it, date formatted by the page's own `toLocaleString` call;
+navigation as listed in [testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test)):
+
+| Platform | Runs | Result |
+| --- | --- | --- |
+| WSL2: Xvfb + openbox, private D-Bus, real GNOME Keyring (not a real desktop) | 5 | ✅ 30/30 UI checks and all 4 script checks in runs 1, 3 and 4. Run 2: 30/30 UI, but ❌ "`sotyware-it/` as before the dataset": a Windows run's dataset existed at the same time (the fingerprint covers all of `sotyware-it/`; its own cleanup was complete). Run 3 overlapped the same Windows run, which existed before and after it. Run 5: ❌ **Backblaze's daily transaction cap** (below) |
+| Native Windows 11, UI Automation, real Credential Manager | 4 | Run 1: ❌ 26 passed, 20 failed: every name and size matched, but the script formatted dates in the regional format (fr-FR, `11 nov. 2026, 20:30`) while WebView2 shows the display language (en-US, `Nov 11, 2026, 08:30 PM`), a script bug, fixed (`Get-UICulture`); the failed checks also delayed later steps, and its fingerprints overlapped a Linux run. Runs 2–4 (alone): ✅ **46/46** each |
+
+Checked in each passing UI run: the read-only key **Connected**; Open bucket at
+the root lists `sotyware-it`; navigation to the run; the run root and every
+visited folder with every row equal to Backblaze's listing (`docs/` five
+levels down, the `2024` breadcrumb, Up one folder, both marker-only folders
+empty, `photos/` without its marker, `special/` and `f+o&l?d#e%r/`, both
+Unicode folders, `dots/` → `..` → `escape.txt` → Up to `dots/`, `double/` →
+(no name) → (no name)); `many/` 1,000 rows with Load more, Load more → 1,010
+rows, no Load more, Refresh → 1,000; Back to accounts and Open bucket again
+→ root; the account removed from page, database and credential store; no
+key in sotyware's output; the fingerprint after creating = after browsing
+(the UI wrote nothing).
+
+**Cleanup.** 13 runs created a dataset (Rust only: 3 on WSL2, 1 on Windows;
+UI: 5 on WSL2, 4 on Windows). In **12** of them every version and delete
+marker under the run prefix was listed, each matched a dataset key of that
+run, each was deleted by version id (1,040 versions, no delete markers: only
+`PutObject` was used), and the prefix was listed again: **0 left**. Nothing
+outside the run prefixes was touched (fingerprint of `sotyware-it/` 0
+versions before and after every run that did not overlap another).
+
+**The 13th run (WSL2 UI run 5) was cleaned up only the next day.** It created all 1,040
+objects under `sotyware-it/browse-validation/1794428166750019532-401942/`
+(the version listing right after creation showed 1,040 versions, one per
+dataset key). Its checks then failed with Backblaze's `AccessDenied`
+"Transaction cap exceeded, see the Caps & Alerts page to increase your
+cap": the account's daily cap for the listing transactions was reached
+(about 20:15 UTC), and the cleanup's version listing is one of those
+transactions, so it was refused twice (in the test and in the script's exit
+handler). Nothing of that run was deleted. Its version ids could not be
+listed then; the keys are the 1,040 dataset keys under that prefix (no
+probe object: the read-only key's write was refused, "not entitled").
+✅ **Cleaned up 2026-11-12, 00:05 UTC** (WSL2, first attempt after the cap
+reset): `backblaze_b2_browse_cleanup` with
+`SOTYWARE_IT_B2_BROWSE_RUN=1794428166750019532-401942` listed 1,040
+versions and 0 delete markers under the run prefix, all 1,040 belonging to
+this run and 0 that did not; deleted all 1,040 by version id, 0 deletes
+failed; the listing again showed **0 left**. `backblaze_b2_fingerprint`
+right after: `sotyware-it/` **0 versions** (the empty fingerprint, as before
+the first dataset). So all 13 runs are cleaned up. Each run lists a lot:
+about 200 listing transactions for the Rust checks (most from walking
+`many/` in pages of 7) plus about 50 for a UI run.
+
+**Regression** (the tree with these changes):
+
+| Check | WSL2 (Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0) | Native Windows 11 (Home 25H2, build 26200.9711; copy in `C:\dev\sotyware-b2browse`) |
+| --- | --- | --- |
+| fmt, clippy, `npm run check`, `npm run build`, release build | ✅ | ✅ |
+| `cargo test` / `npm run test:headless` | ✅ 209 passed, 10 ignored (1 new, 2 new ignored) | ✅ 200 passed, 10 ignored |
+| Frontend (Vitest) | ✅ 81 | ✅ 81 |
+| `npm run test:desktop:virtual` | ✅ 119/0/0, 3 runs | — |
+| `cloud-ui.sh local hang browse` | ✅ 16/16, 8/8, 17/17, 3 runs | — |
+| `windows-isolated.ps1` | — | ✅ 56/0, 3 runs (it again left an empty `cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop`; it holds 0 accounts; deleting it was left to the user) |
+| `windows-cloud-ui.ps1` local / `-Mode browse` | — | ✅ 19/19 / 29/29, 3 runs each |
+| `windows.ps1` (real desktop, moves the mouse) | — | — not run this time (it moves the user's mouse) |
+
+WSL2 is not a real Linux desktop: the Linux UI runs are Xvfb + openbox with a
+private D-Bus session and a throwaway GNOME Keyring.
+
+Not verified: Hetzner; an expired (rather than made-up) continuation token;
+folders with more than 1,010 entries or more than two pages through the UI;
+keys that are not valid XML text; the browser on a real Linux desktop, on
+Windows 10, or with a screen reader.
 
 ### Cloud Storage UI test: locked keyring with a system prompter (2026-11-11)
 
@@ -1115,7 +1256,7 @@ tray icon was ever seen or clicked by a person.
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 | Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
-| Bucket browsing at a real provider with objects: non-empty folders, subfolders, markers, odd keys, pagination, a key without a name prefix; Hetzner | — (Backblaze seen only refusing the root and listing an empty prefix, 2026-11-11; [details](#cloud-storage-bucket-browsing-2026-11-11)) |
+| Bucket browsing at Hetzner; at Backblaze on a real Linux desktop or Windows 10; more than two pages through the UI | — (Backblaze with content verified 2026-11-11 on WSL2/Xvfb and Windows 11: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)) |
 
 To validate an environment, follow the manual checklist in
 [testing.md](../development/testing.md#manual-check-real-desktop-linux-or-windows)

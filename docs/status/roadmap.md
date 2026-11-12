@@ -68,14 +68,21 @@ order:
      unlock prompt) and on Windows 10.
 5. Read-only bucket browsing: done 2026-11-11 (ADR-019, `list_cloud_folder`,
    [status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)). Open:
-   - seeing it at a real provider with content: a test prefix with a few
-     folders, a marker, odd names and more than 1,000 objects, written once
-     by a separate, explicitly approved setup step (the listing test itself
-     must not write), then `backblaze_b2_folder_listing` and `cloud-ui.sh b2`
-     again; Hetzner for the first time;
+   - seen at Backblaze with content on 2026-11-11: a temporary dataset of
+     1,040 objects (nested and marker-only folders, odd names, 1,010 entries
+     in one folder) created, browsed through the Rust listing and through the
+     UI on WSL2 and Windows 11, and deleted by version id
+     ([status.md](status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11));
+     still open: Hetzner for the first time, and a person's look at a real
+     bucket on a real Linux desktop;
    - keys restricted to a file name prefix cannot reach their prefix in the
      UI ([limitations.md](limitations.md#cloud-storage)): decide whether the
-     browser should start at a configured folder.
+     browser should start at a configured folder (the UI test needed a
+     second, read-only key without a prefix);
+   - Backblaze answers a continuation token it never issued with its first
+     page instead of an error (seen with a made-up token; an expired one was
+     not tried): decide whether Load more should detect a page that starts
+     over (today the page only drops the repeated rows).
 6. **Next: downloads from the browser**, one file at a time into a folder the
    user picks, through the existing verified `S3Store::download_file` and the
    per-account transfer queue, with progress reporting (the first custom

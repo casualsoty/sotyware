@@ -62,7 +62,9 @@ Where things are. Generated and ignored paths are listed in
 │       │   ├── browser.rs    list_cloud_folder: folder/file DTOs, prefix and breadcrumb rules, error mapping (tests in browser/tests.rs)
 │       │   ├── tests.rs      Storage operations against the in-process S3 server
 │       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs, or an in-memory listing backend with exact keys and continuation tokens; can refuse chosen operations, records them), temp-file helpers, the UI tests' listing server (serve_listing_for_ui), tests only
-│       │   └── integration.rs  Opt-in (#[ignore]) tests against real Backblaze B2 / Hetzner accounts (round trip, B2 connection check and B2 folder listing with recorded requests, B2 bucket fingerprint) + the same check and listing cases against the test server
+│       │   ├── integration.rs  Opt-in (#[ignore]) tests against real Backblaze B2 / Hetzner accounts (round trip, B2 connection check and B2 folder listing with recorded requests, B2 bucket fingerprint) + the same check and listing cases against the test server
+│       │   └── integration/
+│       │       └── browse.rs  Opt-in B2 browse test on a temporary dataset (create under sotyware-it/browse-validation/<run>/, browse through list_folder, version-exact cleanup; kept for the UI tests with a manifest; cleanup by run id) + the same checks against the test server
 │       └── features/         Built-in features
 │           ├── mod.rs        Feature trait, metadata, state, builtin() list, the two feature commands (FeatureList, FeatureChange) + tests
 │           ├── preferences.rs  FeaturePreferences, PreferenceStore trait: startup choice, save after a switch, failure policy + tests
@@ -70,7 +72,7 @@ Where things are. Generated and ignored paths are listed in
 │           └── example.rs    The example feature + tests
 └── tests/
     └── desktop/              Desktop tests of the release binary
-        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), b2 (real Backblaze)
+        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
         ├── cloud_ui.py       Its driver: add, check, open bucket, browse, rename, replace key, remove through AT-SPI + XTest; keyring and database checked from outside
         ├── fake_secret_service.py  A Secret Service that never answers (cloud-ui.sh hang phase)
         ├── run.sh            Linux/X11 simulated test: private D-Bus session, runtime dir and data dir (XDG_DATA_HOME)
@@ -78,7 +80,7 @@ Where things are. Generated and ignored paths are listed in
         ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, feature preferences across restarts, Cloud Storage navigation and empty state, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
         ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches, feature preferences across restarts, Cloud Storage navigation and empty state
-        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation, real Credential Manager; -Mode local, browse (local listing server) or b2 (real Backblaze)
+        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation, real Credential Manager; -Mode local, browse (local listing server), b2 (real Backblaze) or b2-browse (temporary dataset at Backblaze, read-only key)
         └── windows-isolated.ps1  Unattended Windows test on a private desktop: window, hide button, close, launches (no tray)
 ```
 
@@ -100,5 +102,5 @@ Where things are. Generated and ignored paths are listed in
 | Where are frontend permissions? | `src-tauri/capabilities/default.json` (static); the runtime capability `tray-mode` in `setup` in `lib.rs` |
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
-| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules (cloud storage: also `cloud/tests.rs`, `cloud/browser/tests.rs`, opt-in `cloud/integration.rs`); frontend tests in `src/*.test.ts` (`App.test.ts`, `Features.test.ts`, `CloudStorage.test.ts`, `CloudBrowser.test.ts`); desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows; opt-in Cloud Storage end-to-end: `cloud-ui.sh`, `windows-cloud-ui.ps1`); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
+| Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules (cloud storage: also `cloud/tests.rs`, `cloud/browser/tests.rs`, opt-in `cloud/integration.rs` and `cloud/integration/browse.rs`); frontend tests in `src/*.test.ts` (`App.test.ts`, `Features.test.ts`, `CloudStorage.test.ts`, `CloudBrowser.test.ts`); desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows; opt-in Cloud Storage end-to-end: `cloud-ui.sh`, `windows-cloud-ui.ps1`); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

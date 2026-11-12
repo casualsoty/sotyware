@@ -256,14 +256,24 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   entitled", 2026-11-11), and the browser always starts at the root, so it
   shows Access denied and the key's own prefix cannot be reached through the
   UI. There is no start-folder setting.
-- **Browsing is verified at a real provider only for a refusal and an empty
-  folder.** Against Backblaze (2026-11-11, WSL2 and Windows) the test key was
-  refused the root and listed its empty prefix; a made-up continuation token
-  was accepted there without an error. Non-empty folders, subfolders, marker
-  objects, real odd keys, pagination over 1,000 entries, Backblaze's dates
-  and a key without a prefix restriction were seen only against the local
-  test server; Hetzner never
-  ([status.md](status.md#cloud-storage-bucket-browsing-2026-11-11)).
+- **Browsing is verified at one real provider, Backblaze B2, with a
+  temporary dataset; never at Hetzner.** On 2026-11-11 a 1,040-object
+  dataset (nested and marker-only folders, Unicode, `+ & ? # %`, `//`, `..`,
+  1,010 entries in one folder) was listed correctly through the Rust code
+  and through the UI on WSL2 (Xvfb, not a real desktop) and Windows 11, and
+  deleted again
+  ([status.md](status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+  Only two pages (1,010 entries) were seen through the UI. The dataset test
+  is heavy on billed listing transactions (about 250 per UI run); on
+  2026-11-11 the account's daily cap was reached and one run's 1,040 test
+  objects could only be cleaned up the next day, after the cap reset
+  ([status.md](status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+- **Backblaze accepts a continuation token it never issued** and answers with
+  the folder's first page instead of an error (made-up token, 2026-11-11;
+  an expired real token was not tried). sotyware sends only tokens Backblaze
+  issued, and "Load more" drops rows it already shows; if Backblaze ever
+  restarted a listing this way, "Load more" would add nothing and could
+  keep offering more.
 - **Browser limits:** no total item count (S3 gives none); folders first,
   then files, each in the provider's order (binary key order), no sorting or
   filtering; no cache, so every folder opened, refresh and "Load more" is one
