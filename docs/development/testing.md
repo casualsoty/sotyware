@@ -564,6 +564,54 @@ lists the root and the run but is **refused a write** (a `PutObject` of
 be deleted at once and the test would fail). All writes stay with the
 prefix-restricted key.
 
+### One download from Backblaze
+
+`backblaze_b2_download_file` (`cloud/integration/download.rs`, `#[ignore]`d)
+checks one download from the real B2 test bucket through the code behind
+`download_cloud_file`: `CloudDownloads` with an in-memory `CloudAccounts`
+and credential store, a recorder in place of the page's channel, and a
+path in a temporary folder in place of the save dialog. The bucket has no
+permanent test object (every test deletes what it created), so the test
+makes its own:
+
+1. Generates 16 MiB + 3 bytes (deterministic pattern) in a temporary folder
+   and computes their SHA-256 **locally, before the upload**: the
+   independent expectation.
+2. Write key: one `PutObject` of `sotyware-it/download-validation/<unix
+   nanos>-<pid>/größe test.bin` (a space and non-ASCII letters, so the key
+   must come back exactly), with the `sotyware-sha256` metadata as the app's
+   uploader sets it. It must return a version id, or the test stops and asks
+   for manual cleanup.
+3. Read-only key: one `HeadObject`; size and `sotyware-sha256` must equal
+   the local values.
+4. Read-only key: one `GetObject` through `CloudDownloads` to a new
+   destination in another temporary folder. The final message must be
+   `completed` with integrity `sha256-verified` and bytes = total = the
+   size; every "active" message after the first must carry the
+   `Content-Length` as total, with bytes never going down; when the final
+   message is sent the destination must have the full size and no
+   `.sotyware-partial` file may exist; the file's SHA-256 must equal the
+   local one and its bytes the generated file's.
+5. Write key, also after a failed check: `DeleteObject` of exactly that
+   version id, then one `ListObjectVersions` of the run prefix, which must be
+   empty.
+
+Five remote requests per run; every client makes one attempt, so nothing is
+retried against the daily transaction cap. Requests from the write key and
+the `HeadObject` are recorded and printed (bucket as `<bucket>`; the
+`GetObject` goes through the app's own client, without the recorder). It
+needs both keys' variables:
+
+```bash
+set -a; . ~/.config/sotyware-it/b2.env; . ~/.config/sotyware-it/b2-read.env; set +a
+cd src-tauri && cargo test cloud::integration::download::backblaze_b2_download_file -- --ignored --nocapture
+```
+
+`download_through_app_against_the_test_server` runs step 4's checks against
+the in-process server in every `cargo test`. Locally the 16 MiB arrive
+within the 250 ms progress interval, so there are only the two "active"
+messages with 0 bytes.
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a

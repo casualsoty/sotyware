@@ -836,3 +836,4 @@ async fn folder_listing_cases_against_the_test_server() {
     );
 }
 mod browse;
+mod download;

@@ -89,12 +89,12 @@ order:
    retry, one at a time;
    [status.md](status.md#cloud-storage-single-file-downloads-2026-11-12)).
    Open:
-   - a download from a real provider (only the in-process object server so
-     far): one small object from the Backblaze test bucket would confirm that
-     `GetObject` returns the stored `sotyware-sha256` metadata and a
-     `Content-Length` there (a billed class B transaction and a few bytes of
-     egress; no write needed if an existing object of the test prefix is
-     used);
+   - a download from a real provider: done once at Backblaze on 2026-11-12
+     (WSL2, Rust download path without the dialog, a temporary file;
+     `GetObject` returned `Content-Length` and the stored `sotyware-sha256`;
+     [status.md](status.md#one-download-from-backblaze-2026-11-12)); still
+     open: the app's UI and save dialog against a real provider (native
+     Windows 11 first), and Hetzner;
    - a person's run with the dialogs on a real Linux desktop (GNOME/KDE,
      possibly the XDG portal instead of GTK's own dialog) and Windows 10;
    - decide whether stale `.sotyware-partial` files left by a killed process

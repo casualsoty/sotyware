@@ -162,6 +162,19 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- One download from **real Backblaze B2** (2026-11-12, uncommitted tree on
+  `d95978d`, test code only): `backblaze_b2_download_file` uploaded one
+  generated 16 MiB + 3 file (SHA-256 computed locally first) to
+  `sotyware-it/download-validation/<run>/größe test.bin`, downloaded it
+  once with the read-only key through `CloudDownloads` (the code behind
+  `download_cloud_file`; **no UI, no save dialog, WSL2 only**), and deleted
+  exactly its version (0 left). 5 requests: PUT, HEAD, GET, DELETE, one
+  version listing. `GetObject` carried `Content-Length` and the stored
+  `sotyware-sha256`; final message `sha256-verified` after the file was in
+  place; local SHA-256 and bytes equal; no partial file. `cargo test` 237
+  passed, 12 ignored. **Not run:** the UI/dialog at a real provider,
+  native Windows, Hetzner.
+  [status.md](status/status.md#one-download-from-backblaze-2026-11-12).
 - Cloud Storage single-file downloads (2026-11-12, uncommitted tree on
   `8e23fd4`): WSL2 `cargo test` **236 passed, 11 ignored** (27 new), frontend
   **93** (12 new); Windows 11 226 + 93. Through the release binary with the
@@ -382,8 +395,9 @@ at Backblaze with a temporary 1,040-object dataset (WSL2/Xvfb and Windows 11),
 never at Hetzner; Backblaze answers a continuation token it never issued with
 the first page instead of an error; a key limited to a file name prefix cannot
 browse (Backblaze refuses the root); no total count, no cache. Downloads
-are verified only against the local object server (never a real provider),
-one at a time, without resume; a killed process leaves its hidden
+are verified through the UI only against the local object server; at a real
+provider only once, at Backblaze through the Rust code without the UI; one
+at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
 Full list: [limitations.md](status/limitations.md).
@@ -396,7 +410,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (a download from a real provider, then uploads and deletes with their own confirmation design): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (a download through the UI from a real provider, then uploads and deletes with their own confirmation design): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

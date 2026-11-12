@@ -571,8 +571,12 @@ are slow, stall or break off, wrong checksums, no announced size), through
 Rust tests and the release binary's UI with the real native save dialog: GTK
 under Xvfb (WSL2, a virtual display) and the common item dialog on the real
 Windows 11 desktop (2026-11-12,
-[status.md](../status/status.md#cloud-storage-single-file-downloads-2026-11-12));
-never against a real provider.
+[status.md](../status/status.md#cloud-storage-single-file-downloads-2026-11-12)).
+At a real provider once, without the UI: a 16 MiB file at Backblaze B2
+through `CloudDownloads` (WSL2, 2026-11-12); its `GetObject` carried
+`Content-Length` and the stored `sotyware-sha256`, and the download was
+SHA-256 verified
+([status.md](../status/status.md#one-download-from-backblaze-2026-11-12)).
 
 ## Not built (deliberately)
 

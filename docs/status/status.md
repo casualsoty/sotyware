@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (real-desktop Windows test of the current tree, and the dataset test's provider walk through `many/` in pages of 336 instead of 7: [details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)). Update this file whenever
+Last updated: 2026-11-12 (one single-file download from the real Backblaze B2 test bucket through the app's download code: [details](#one-download-from-backblaze-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -54,6 +54,11 @@ On 2026-11-12 the real-desktop Windows test (`windows.ps1`) passed 103/0
 three times on the tree with bucket browsing, and the dataset test lists
 `many/` with far fewer billed requests
 ([details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)).
+Single-file downloads passed on 2026-11-12 against the local object server
+through the UI and the native save dialog on both platforms, and once
+against **real Backblaze B2** through the Rust download code (WSL2, no UI):
+`Content-Length` and the stored SHA-256 arrived, the file was verified
+([details](#one-download-from-backblaze-2026-11-12)).
 
 ## Implemented
 
@@ -113,6 +118,57 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### One download from Backblaze (2026-11-12)
+
+Tree: uncommitted, on `d95978d` (new test file
+`cloud/integration/download.rs`, test code only; no application change).
+Environment: WSL2 (Ubuntu 24.04.1, Rust 1.99.1), one run, the user's
+agreement for one temporary upload. Provider **Backblaze B2**, endpoint
+`https://s3.eu-central-003.backblazeb2.com`, the dedicated test bucket.
+Test: `backblaze_b2_download_file`
+([testing.md](../development/testing.md#one-download-from-backblaze)).
+**Not the app's UI and not native Windows:** the download ran through
+`CloudDownloads` (the code behind `download_cloud_file`) with a temporary
+path instead of the save dialog and a recorder instead of the page.
+
+No existing object could be used: the bucket holds no permanent test object
+(every Backblaze test deletes what it created; `sotyware-it/` had 0 versions
+after the last recorded cleanup) and no SHA-256 of a provider object was
+recorded anywhere. So the test generated one file and computed its SHA-256
+locally before uploading it.
+
+| What | Result |
+| --- | --- |
+| Object | key `sotyware-it/download-validation/1794448986685823938-585899/größe test.bin`, 16,777,219 bytes (16 MiB + 3), one `PutObject` with the write key (prefix-restricted), version `4_zdd327be63254c7b0a71e0912_f1189661b41b38ff4_d20261112_m020309_c003_v0312001_t0012_u01794448989942` |
+| Expected SHA-256 (computed locally from the generated file, before the upload) | `ff94cdeeab8f48567823bfeff8f15cf487ceb2fe342fb4272d883fe70e9c5009` |
+| `HeadObject` (read-only key) | 200; size 16,777,219; `sotyware-sha256` metadata **present**, equal to the expected value |
+| `GetObject` through `CloudDownloads` (read-only key, account's configured bucket, exact key) | ✅ completed in 0.47 s; the key with the space and `ö`/`ß` reached Backblaze and came back unchanged (URL-encoded in the recorded requests) |
+| `Content-Length` on `GetObject` | **present**: every "active" message after the first carried total 16,777,219 |
+| `sotyware-sha256` on `GetObject` | **present and matching**: the final message said `sha256-verified`, which the code gives only when the response's metadata equals the hash of the received bytes |
+| Progress | 3 "active" messages: (0 bytes, no total) before the request, (0, 16,777,219) at the response, (14,469,279, 16,777,219) during the body; bytes never decreased; then one `completed` with bytes = total = 16,777,219 |
+| Completion after the file was in place | ✅ when `completed` was sent the destination had its full size and no `.sotyware-partial` file existed |
+| Downloaded file | 16,777,219 bytes; SHA-256 computed locally `ff94cdee…5009` = expected; **byte-for-byte equal** to the generated file |
+| Local cleanup | no `.sotyware-partial` left; the destination folder (under the session's temporary folder, outside the repository) removed; the temporary folder empty afterwards |
+| Remote cleanup | `DeleteObject` of exactly that version id → 204; `ListObjectVersions` of the run prefix → 200, **0 versions or delete markers left** |
+| Credentials | read from the two 0600 env files into the test process only; none of the four values appears in the saved test output (checked with `grep -F`) |
+
+Remote requests, all one attempt: write key `PutObject` → 200,
+`DeleteObject` (with `versionId`) → 204, `ListObjectVersions` (run prefix
+only) → 200; read-only key `HeadObject` → 200, `GetObject` (through the
+app's client, not recorded; the completed, verified download shows it
+succeeded) — 5 in total. Whole test 5.9 s.
+
+Regression (WSL2): `cargo fmt --check`, clippy `-D warnings` ✅; `cargo test`
+✅ **237 passed, 12 ignored** (1 new: the same download against the
+in-process server; 1 new ignored: this test). Frontend and desktop tests not
+rerun (no application or frontend change).
+
+**Not verified:** the download through the dashboard's UI and native save
+dialog at a real provider (native Windows 11 included: it would control the
+desktop), a second run, a multipart-uploaded or larger object, a provider
+object without `sotyware-sha256` or with a wrong one (covered only by the
+in-process server), Hetzner. ETags were not used or compared.
 
 ### Cloud Storage: single-file downloads (2026-11-12)
 
@@ -181,7 +237,9 @@ Problems met and fixed during the runs (test code only):
   seven earlier test copies under `C:\dev` were deleted (about 57 GB).
 
 Not verified: any download from Backblaze or Hetzner (the opt-in tests were
-not extended; see [roadmap.md](roadmap.md#cloud-storage-after-the-proof-of-concept));
+not extended; see [roadmap.md](roadmap.md#cloud-storage-after-the-proof-of-concept);
+one Backblaze download through the Rust code followed the same day:
+[details](#one-download-from-backblaze-2026-11-12));
 quitting during a download on Windows through the tray (only the Rust test
 and the Linux window-close run); the XDG portal dialog; a person using the
 dialogs; Windows 10.
@@ -1405,6 +1463,7 @@ tray icon was ever seen or clicked by a person.
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 | Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
 | The dataset test's provider walk of `many/` in pages of 336 at Backblaze | — (local listing server only, 2026-11-12; the pages of 7 it replaces passed at Backblaze: [details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)) |
+| Downloads through the UI and save dialog at a real provider (Windows 11 included); downloads at Hetzner | — (Backblaze once through the Rust download code on WSL2, 2026-11-12: [details](#one-download-from-backblaze-2026-11-12)) |
 | Bucket browsing at Hetzner; at Backblaze on a real Linux desktop or Windows 10; more than two pages through the UI | — (Backblaze with content verified 2026-11-11 on WSL2/Xvfb and Windows 11: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)) |
 
 To validate an environment, follow the manual checklist in

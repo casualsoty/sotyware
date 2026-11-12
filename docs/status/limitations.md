@@ -252,11 +252,16 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   move, delete or create anything, download folders or several files at
   once, and has no transfer queue, download history, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
-- **Downloads are verified only against the in-process object server, never
-  at a real provider** (2026-11-12). Whether Backblaze or Hetzner return the
-  stored `sotyware-sha256` metadata and a `Content-Length` on `GetObject` is
-  assumed from the upload round trip of 2026-11-11, which ran through the
-  same adapter code before progress and cancellation were added
+- **Downloads at a real provider: one Backblaze run, in Rust only**
+  (2026-11-12, WSL2). One temporary 16 MiB file was downloaded through the
+  app's download code (`CloudDownloads`, no save dialog, no UI); Backblaze's
+  `GetObject` returned `Content-Length` and the stored `sotyware-sha256`, and
+  the file was SHA-256 verified
+  ([status.md](status.md#one-download-from-backblaze-2026-11-12)). Not run:
+  a download through the UI and the native save dialog at a real provider
+  (Windows 11 included), more than one run, larger or multipart-uploaded
+  files, a checksum mismatch or a missing checksum at the provider, Hetzner.
+  The UI and dialog are verified only against the in-process object server
   ([status.md](status.md#cloud-storage-single-file-downloads-2026-11-12)).
 - **Download limits:** one at a time; no resume (a failed or cancelled
   download starts over); no retries inside a download (the SDK retries only
