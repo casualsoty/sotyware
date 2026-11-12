@@ -483,13 +483,26 @@ are not files; `..` is a folder named `..` whose parent is `dots/`;
 `double/` holds one folder without a name; `many/` comes in two pages
 (1,000 + 10); a used cursor and a cursor of another folder are refused as
 `outdated-page`; Refresh gives the same first page with a new cursor; the
-provider's own pages of 4, 7 and 1,000 give the same entries, none twice;
-every request is a delimited `ListObjectsV2`; HEAD of every key outside
+provider's own pages of 4 (run root), 336 and 1,000 (`many/`) each give
+exactly the expected slice of the folder in key order, at least two pages
+(pages of 336 split `many/` as 336 files, 336, 333 + 3 subfolders, 2
+subfolders: boundaries inside the files, inside the subfolders and a page
+with both); one listing is sent per page and every request is a delimited
+`ListObjectsV2`; HEAD of every key outside
 `many/` returns the uploaded size and SHA-256. The same folders are listed
 from the in-process listing server holding the same keys and every
 difference is printed (a comparison, not a failure); a made-up continuation
 token is printed, not judged. `browse_checks_pass_against_the_test_server`
 runs all these checks against the in-process server in every `cargo test`.
+
+**Billed listings.** Every listing is a Backblaze class C transaction and
+counts against the account's daily cap (reached once on 2026-11-11). One
+dataset check sends about 44 listings: 34 from the dashboard path (the 26
+folders, `many/` in the browser's two pages, the cursor and Refresh checks;
+refused cursors never reach the provider) and 10 from the provider walk.
+Until 2026-11-12 that walk used pages of 7 for `many/` (145 listings, about
+185 in all); keep its page sizes large. A UI run adds about 50 listings of
+its own (the browser's page size, 1,000, is not changed for tests).
 
 ```bash
 cargo test --lib cloud::integration::browse::backblaze_b2_browse_dataset -- --ignored --nocapture

@@ -264,10 +264,14 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   deleted again
   ([status.md](status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
   Only two pages (1,010 entries) were seen through the UI. The dataset test
-  is heavy on billed listing transactions (about 250 per UI run); on
-  2026-11-11 the account's daily cap was reached and one run's 1,040 test
-  objects could only be cleaned up the next day, after the cap reset
+  uses billed listing transactions: about 250 per UI run on 2026-11-11, when
+  the account's daily cap was reached and one run's 1,040 test objects could
+  only be cleaned up the next day, after the cap reset
   ([status.md](status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+  Since 2026-11-12 its provider walk of `many/` uses pages of 336 instead of
+  7, about 95 listings per UI run (estimate); the cap can still be reached by
+  many runs in one day, and the new page size has not yet run at Backblaze
+  ([status.md](status.md#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)).
 - **Backblaze accepts a continuation token it never issued** and answers with
   the folder's first page instead of an error (made-up token, 2026-11-11;
   an expired real token was not tried). sotyware sends only tokens Backblaze

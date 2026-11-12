@@ -46,6 +46,13 @@ const BROWSE_ROOT: &str = "sotyware-it/browse-validation/";
 /// one page of `LIST_PAGE_SIZE`.
 const MANY_FILES: usize = 1005;
 const MANY_FOLDERS: usize = 5;
+/// The page size of the provider walk through `many/` besides the
+/// dashboard's own `LIST_PAGE_SIZE`. 336 gives four pages of the 1,010
+/// entries (336 files, 336 files, 333 files + 3 folders, 2 folders): page
+/// boundaries inside the files, inside the subfolders and a page holding
+/// both. It was 7 (145 billed listings per run); every listing counts
+/// against Backblaze's daily transaction cap.
+const MANY_PROVIDER_PAGE: i32 = 336;
 const UPLOADS_AT_ONCE: usize = 8;
 
 /// One object of the dataset.
@@ -386,6 +393,67 @@ fn expected(prefix: &str, objects: &BTreeMap<String, u64>) -> Expected {
         }
     }
     (folders, files)
+}
+
+/// The pages a correct provider returns for `prefix` in pages of `size`:
+/// the folder's entries (its marker object, files and subfolder prefixes)
+/// in binary key order, cut into slices of `size`; within a page sorted as
+/// `provider_pages` sorts them.
+fn expected_pages(
+    prefix: &str,
+    objects: &BTreeMap<String, u64>,
+    size: i32,
+) -> Vec<Vec<(String, bool)>> {
+    let (folders, files) = expected(prefix, objects);
+    let mut all: Vec<(String, bool)> = folders
+        .into_iter()
+        .map(|(_, p)| (p, true))
+        .chain(files.into_iter().map(|(_, k, _)| (k, false)))
+        .collect();
+    if objects.contains_key(prefix) {
+        all.push((prefix.to_owned(), false));
+    }
+    all.sort();
+    let size = usize::try_from(size).expect("page size");
+    all.chunks(size)
+        .map(|c| {
+            let mut page = c.to_vec();
+            page.sort();
+            page
+        })
+        .collect()
+}
+
+/// The provider's own pages of `prefix` in pages of `size` (prefixes as
+/// `(prefix, true)`, keys as `(key, false)`, each page sorted), at most 400.
+async fn provider_pages(
+    store: &S3Store,
+    bucket: &str,
+    prefix: &str,
+    size: i32,
+) -> Vec<Vec<(String, bool)>> {
+    let mut pages = Vec::new();
+    let mut token: Option<String> = None;
+    while pages.len() < 400 {
+        let page = store
+            .list_folder(bucket, prefix, token.as_deref(), size)
+            .await
+            .unwrap_or_else(|e| panic!("listing a folder: {e}"));
+        super::assert_one_level(prefix, &page);
+        let mut entries: Vec<(String, bool)> = page
+            .prefixes
+            .iter()
+            .map(|p| (p.clone(), true))
+            .chain(page.objects.iter().map(|o| (o.key.clone(), false)))
+            .collect();
+        entries.sort();
+        pages.push(entries);
+        match page.next_token {
+            Some(next) => token = Some(next),
+            None => break,
+        }
+    }
+    pages
 }
 
 /// Every folder prefix the keys imply, `prefix` included.
@@ -887,32 +955,49 @@ async fn validate(run: Run) -> Report {
         Err(e) => r.check(false, format!("many/ first page: {e:?}")),
     }
 
-    // The provider itself, in small pages: the same set, no entry twice,
-    // only immediate children, only delimited ListObjectsV2.
+    // The provider itself, in pages of other sizes: each page exactly the
+    // next slice of the folder in key order (so no entry missing or twice,
+    // and the split across files and subfolders is the provider's), only
+    // immediate children, only delimited ListObjectsV2.
     let requests = Requests::default();
     let raw =
         S3Store::new(account, creds, ClientOptions::default()).with_interceptor(requests.clone());
-    for (folder, size) in [(prefix.clone(), 4), (many.clone(), 7), (many.clone(), 1000)] {
-        let (entries, pages) = super::walk_pages(&raw, &bucket, &folder, size, 400).await;
-        let unique: BTreeSet<_> = entries.iter().collect();
-        let (wf, wfiles) = expected(&folder, &objects);
-        let marker = objects.contains_key(&folder) as usize;
+    let mut walked_pages = 0;
+    for (folder, size) in [
+        (prefix.clone(), 4),
+        (many.clone(), MANY_PROVIDER_PAGE),
+        (many.clone(), 1000),
+    ] {
+        let got = provider_pages(&raw, &bucket, &folder, size).await;
+        walked_pages += got.len();
+        let want = expected_pages(&folder, &objects, size);
+        let entries: usize = got.iter().map(Vec::len).sum();
         r.check(
-            unique.len() == entries.len() && entries.len() == wf.len() + wfiles.len() + marker,
+            got.len() >= 2 && got == want,
             format!(
-                "provider pages of {size} in {:?}: {} entries in {pages} pages, none twice",
+                "provider pages of {size} in {:?}: {entries} entries in {} pages, each the expected slice in key order ({} pages expected)",
                 short(&prefix, &folder),
-                entries.len()
+                got.len(),
+                want.len()
             ),
         );
+        if got != want {
+            let sizes = |p: &[Vec<(String, bool)>]| p.iter().map(Vec::len).collect::<Vec<_>>();
+            println!(
+                "  page sizes: got {:?}, expected {:?}",
+                sizes(&got),
+                sizes(&want)
+            );
+        }
     }
     let sent = requests.take();
     r.check(
-        sent.iter().all(|q| {
-            q.starts_with("GET ") && q.contains("list-type=2") && q.contains("delimiter=%2F")
-        }),
+        sent.len() == walked_pages
+            && sent.iter().all(|q| {
+                q.starts_with("GET ") && q.contains("list-type=2") && q.contains("delimiter=%2F")
+            }),
         format!(
-            "{} provider listings, all delimited ListObjectsV2 (never recursive)",
+            "{} provider listings for {walked_pages} pages, all delimited ListObjectsV2 (never recursive)",
             sent.len()
         ),
     );

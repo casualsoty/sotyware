@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (Cloud Storage browsing of a temporary dataset at real Backblaze B2, through Rust and the UI on WSL2 and native Windows 11; every run's dataset deleted again, the last one on 2026-11-12: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)). Update this file whenever
+Last updated: 2026-11-12 (real-desktop Windows test of the current tree, and the dataset test's provider walk through `many/` in pages of 336 instead of 7: [details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -50,6 +50,10 @@ and through the UI (Linux 30/30, Windows 46/46, several runs); every
 run's dataset was deleted again (one only on 2026-11-12, after Backblaze's
 daily transaction cap had refused its cleanup)
 ([details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+On 2026-11-12 the real-desktop Windows test (`windows.ps1`) passed 103/0
+three times on the tree with bucket browsing, and the dataset test lists
+`many/` with far fewer billed requests
+([details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)).
 
 ## Implemented
 
@@ -107,6 +111,76 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Real Windows desktop and fewer Backblaze listings (2026-11-12)
+
+Tree: `f304019` plus the uncommitted change to
+`src-tauri/src/cloud/integration/browse.rs` below (test code only; the
+application is that of `f304019`).
+
+**Real-desktop Windows test.** `windows.ps1` had not been run since bucket
+browsing was added. Run from WSL2 on the unlocked, interactive desktop of the
+native Windows 11 machine (Home 25H2, build 26200.9711), with the user's
+agreement and hands off, against the release binary built in a fresh copy
+`C:\dev\sotyware-winval` (`npm run tauri build -- --no-bundle`):
+`powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1`
+→ ✅ **103 passed, 0 failed, 3 runs** (the script has no skips). It moved the
+existing `preferences.sqlite3` and `cloud-accounts.sqlite3` aside and put
+them back; afterwards both had the size and modification time from before
+and no backup file was left. This is a real desktop, unlike the private
+desktop and virtual display rows below.
+
+**Fewer listings in the Backblaze dataset test.** The page size of 7 was not
+in the UI: the UI tests page with the browser's own 1,000 (`LIST_PAGE_SIZE`,
+unchanged). It was in `validate()` of `backblaze_b2_browse_dataset`, which
+every Backblaze UI run also calls to create its dataset: besides the
+dashboard's listings it walked the provider's own `ListObjectsV2` pages of
+the run root in pages of 4, `many/` (1,010 entries) in pages of 7 and
+`many/` in pages of 1,000: 4 + 145 + 2 = 151 billed listings, of about 185
+in the whole check (the other 34: bucket root, `browse-validation/`, the 26
+folders with two pages for `many/`, five cursor and Refresh listings;
+refused cursors never reach the provider). Now `many/` is walked in pages of
+**336** (`MANY_PROVIDER_PAGE`): 4 + 4 + 2 = **10** listings, so about **44
+instead of about 185** per dataset check (−76 %) and, with the UI's own
+listings (about 50, unchanged), about **95 instead of about 250 per UI run**
+(estimates from the code; no run at Backblaze was made for this change).
+The check is also stricter: each provider page must be **exactly the
+expected slice of the folder in key order** (before: only the total count
+and no duplicates), there must be at least 2 pages, and the number of
+listings sent must equal the number of pages. Pages of 336 split `many/` as
+336 files, 336 files, 333 files + 3 subfolders, 2 subfolders: boundaries
+inside the files, inside the subfolders, and one page holding both.
+
+Against the in-process listing server (`browse_checks_pass_against_the_test_server`,
+part of every `cargo test`; contacts no provider):
+
+| Check | WSL2 | Native Windows 11 |
+| --- | --- | --- |
+| provider pages of 4 at the run root: 13 entries, 4 pages, each the expected slice | ✅ | ✅ |
+| provider pages of 336 in `many/`: 1,010 entries, 4 pages, each the expected slice | ✅ | ✅ |
+| provider pages of 1,000 in `many/`: 1,010 entries, 2 pages, each the expected slice | ✅ | ✅ |
+| 10 provider listings for 10 pages, all delimited `ListObjectsV2` | ✅ | ✅ |
+| dashboard pages of `many/` (1,000 + 10), cursor used twice and across folders refused, Refresh resets, every folder and special name | ✅ (unchanged checks) | ✅ |
+| mutant: expected pages cut one entry larger | ❌ all three page checks fail, as they must (WSL2 only, reverted) | — |
+
+**Regression** (WSL2: Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0; Windows:
+the copy above, Rust 1.99.1, Node 24.14.1):
+
+| Check | WSL2 | Native Windows 11 |
+| --- | --- | --- |
+| fmt, clippy, `npm run check`, `npm run build`, release build | ✅ | ✅ |
+| `cargo test` | ✅ 209 passed, 10 ignored | ✅ 200 passed, 10 ignored |
+| Frontend (Vitest) | ✅ 81 | ✅ 81 |
+| `npm run test:desktop:virtual` (virtual display, not a real desktop) | ✅ 119/0/0, 3 runs | — |
+| `cloud-ui.sh local hang browse` (Xvfb, not a real desktop) | ✅ 16/16, 8/8, 17/17, 3 runs | — |
+| `windows-isolated.ps1` (private desktop, not the real one) | — | ✅ 56/0, 3 runs |
+| `windows-cloud-ui.ps1` local / `-Mode browse` | — | ✅ 19/19 / 29/29, 3 runs each |
+| `windows.ps1` (**real desktop**) | — | ✅ 103/0, 3 runs |
+
+Not run: the Backblaze tests (`backblaze_b2_browse_dataset`, `cloud-ui.sh
+b2-browse`, `-Mode b2-browse`): nothing was written to, read from or deleted
+at Backblaze for this change, so the new page size has been seen only
+against the local listing server.
 
 ### Cloud Storage: browsing a temporary dataset at Backblaze (2026-11-11)
 
@@ -234,7 +308,7 @@ about 200 listing transactions for the Rust checks (most from walking
 | `cloud-ui.sh local hang browse` | ✅ 16/16, 8/8, 17/17, 3 runs | — |
 | `windows-isolated.ps1` | — | ✅ 56/0, 3 runs (it again left an empty `cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop`; it holds 0 accounts; deleting it was left to the user) |
 | `windows-cloud-ui.ps1` local / `-Mode browse` | — | ✅ 19/19 / 29/29, 3 runs each |
-| `windows.ps1` (real desktop, moves the mouse) | — | — not run this time (it moves the user's mouse) |
+| `windows.ps1` (real desktop, moves the mouse) | — | — not run this time (it moves the user's mouse); run on 2026-11-12, 103/0 three times ([details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)) |
 
 WSL2 is not a real Linux desktop: the Linux UI runs are Xvfb + openbox with a
 private D-Bus session and a throwaway GNOME Keyring.
@@ -1256,6 +1330,7 @@ tray icon was ever seen or clicked by a person.
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
 | Feature preferences on Windows 10, real Linux desktops, installed copies; corrupt database on the real Windows binary | — (unit tests and the 2026-11-11 desktop runs only) |
+| The dataset test's provider walk of `many/` in pages of 336 at Backblaze | — (local listing server only, 2026-11-12; the pages of 7 it replaces passed at Backblaze: [details](#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12)) |
 | Bucket browsing at Hetzner; at Backblaze on a real Linux desktop or Windows 10; more than two pages through the UI | — (Backblaze with content verified 2026-11-11 on WSL2/Xvfb and Windows 11: [details](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)) |
 
 To validate an environment, follow the manual checklist in

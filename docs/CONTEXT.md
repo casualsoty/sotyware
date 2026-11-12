@@ -146,6 +146,18 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Real Windows desktop and fewer Backblaze listings (2026-11-12, tree
+  `f304019` + test-only change): `windows.ps1` on the **real** Windows 11
+  desktop, release binary, **103/0, 3 runs** (user data put back unchanged).
+  The dataset test's provider walk of `many/` now uses pages of **336
+  instead of 7** (4 listings instead of 145; about 44 instead of 185 per
+  dataset check, about 95 instead of 250 per Backblaze UI run, estimated) and
+  checks every page against the expected key-order slice; local listing
+  server only, no Backblaze run. Regression: WSL2 `cargo test` 209 + 10
+  ignored, frontend 81, virtual display 119/0/0 (3), `cloud-ui.sh` 16/16,
+  8/8, 17/17 (3); Windows 11 200 + 81, private desktop 56/0 (3), cloud UI
+  local 19/19 and browse 29/29 (3).
+  [status.md](status/status.md#real-windows-desktop-and-fewer-backblaze-listings-2026-11-12).
 - Browsing a temporary dataset at **real Backblaze** (2026-11-11, uncommitted
   tree on `8641c1a`, test code only): `backblaze_b2_browse_dataset` writes
   1,040 objects (nested and marker-only folders, Unicode, `+ & ? # %`, `//`,
@@ -161,7 +173,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   listing; afterwards `sotyware-it/` held 0 versions). WSL2 regression: `cargo test` 209 + 10
   ignored, frontend 81, virtual display 119/0/0 (3), `cloud-ui.sh` local
   16/16, hang 8/8, browse 17/17 (3); Windows 11: 200 + 81, private desktop
-  56/0 (3), cloud UI local 19/19 and browse 29/29 (3); `windows.ps1` not run.
+  56/0 (3), cloud UI local 19/19 and browse 29/29 (3); `windows.ps1` not run
+  then (run 2026-11-12, above).
   [status.md](status/status.md#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11).
 - Cloud Storage bucket browsing (2026-11-11, uncommitted tree on `ad014e7`):
   WSL2 `cargo test` 208 passed, 8 ignored (19 new), frontend 81 (18 new);
