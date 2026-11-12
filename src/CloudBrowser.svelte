@@ -14,14 +14,17 @@
     type FolderEntry,
     type IntegrityCheck,
   } from "./cloud";
+  import CloudUpload from "./CloudUpload.svelte";
   import { FIXED_BY_EDITING, describeError } from "./cloudMessages";
+  import { formatSize, shownName } from "./format";
 
   // Browser of one account's bucket, one folder level and one page at a
   // time. Folder prefixes are only ever ones Rust returned (or "" for the
   // root): the page never joins names into a prefix, so keys are kept
   // exactly. Files can be downloaded one at a time: Rust opens the save
-  // dialog, so the page never names a local path. Nothing here uploads,
-  // renames or deletes.
+  // dialog, so the page never names a local path. Files can be uploaded
+  // into the folder shown (CloudUpload.svelte: Rust opens the file dialog
+  // and keeps the paths). Nothing here renames or deletes.
 
   interface Props {
     account: AccountInfo;
@@ -44,6 +47,8 @@
   let loading = $state<"folder" | "more" | null>(null);
   let error = $state<{ during: "folder" | "more"; cause: unknown } | null>(null);
   let heading: HTMLHeadingElement | undefined = $state();
+  let uploader: CloudUpload | undefined = $state();
+  let uploadBusy = $state(false);
 
   // Bumped by every navigation and refresh: a response for an older one is
   // dropped, so a slow folder can never overwrite a newer one.
@@ -344,25 +349,6 @@
       : "The size matched. This file has no SHA-256 checksum stored by sotyware, so its content could not be verified.";
   }
 
-  function shownName(name: string): string {
-    return name === "" ? "(no name)" : name;
-  }
-
-  const UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB"];
-
-  function formatSize(bytes: number): string {
-    if (bytes < 1024) {
-      return `${bytes} B`;
-    }
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < UNITS.length - 1) {
-      value /= 1024;
-      unit++;
-    }
-    return `${value.toFixed(value < 10 ? 1 : 0)} ${UNITS[unit]}`;
-  }
-
   function formatDate(rfc3339: string | null): string {
     if (rfc3339 === null) {
       return "—";
@@ -422,7 +408,23 @@
   <div class="actions">
     <button type="button" disabled={parentCrumbs === null} onclick={goUp}>Up one folder</button>
     <button type="button" onclick={refresh}>Refresh</button>
+    <button
+      type="button"
+      class="upload-action"
+      disabled={uploadBusy || uploader === undefined}
+      title={uploadBusy ? "An upload is running" : "Upload files into this folder"}
+      onclick={() => uploader?.start(bucket, prefix, crumbs)}>Upload files…</button
+    >
   </div>
+
+  <CloudUpload
+    bind:this={uploader}
+    bind:busy={uploadBusy}
+    {account}
+    {onclose}
+    {onedit}
+    onshowfolder={(target, path) => void open(target, path)}
+  />
 
   {#if download !== null}
     <div

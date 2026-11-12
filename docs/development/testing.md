@@ -1000,6 +1000,41 @@ own one accepted before the command's reply; a refused start (`busy`) asking
 again through the dialog; Edit account for a missing key; and leaving the
 browser cancelling the running download.
 
+`src/CloudUpload.test.ts` (42 tests) opens the browser the same way and
+mocks `upload_cloud_files`, `cancel_cloud_upload` and `retry_cloud_upload`;
+the test feeds each call's channel with events in the Rust shape
+(`upload.rs`). It does **not** open the native file dialog or upload
+anything: what the dialog and the backend do is tested in Rust. It checks:
+Upload files… beside Up one folder and Refresh, sending only the account,
+the browsed bucket and the folder's exact prefix; a cancelled or empty
+dialog showing nothing and no error (and keeping the previous result); one
+batch at a time; refused starts (`credentials-missing` with Edit account,
+more than 100 files, `busy`, a removed account closing the browser); every
+skip reason in the reply, and a selection with nothing to upload; stage,
+bytes, percentage and "File *i* of *m*" for files one after another, no
+percentage for a total of 0, nothing complete before its `completed` event;
+older events (lower `seq`) never applied, also when they arrive late or
+before the reply; the final summary with counts, conflicts, errors and
+"not started"; network, timeout and integrity texts; 100 files in the
+scrolling list; an event without the Rust shape reported without its
+content; Cancel sent once by batch id, the batch shown as cancelled only
+after `finished`, started-and-cancelled versus never started, `finishing`
+and `not-active`, a failed cancel request, cancelling between files; Try
+again offered only for `retryable` files, as a new batch id, ignoring the
+old channel (also while the retry's reply is pending) and other batch ids;
+no Try again for `needs-inspection` and `incomplete-parts` and no "try
+again" in their notes; cleanup events listed apart from the files, without
+claiming completion, not twice; a refused retry keeping or closing the
+button by error kind; leaving the browser cancelling a running batch (also
+one whose reply arrives later), not a finished one, and not on
+`visibilitychange`/`blur`; the destination unchanged while browsing
+elsewhere; another account's browser starting fresh; nothing applied after
+unmount; an upload beside a download; and no local path in the text, alerts,
+labels or titles. `parseUploadSelection` and `parseUploadEvent` are tested
+against the Rust shapes and malformed values. A few mutations of the panel
+(no stale-start check, retry by `failed` instead of `retryable`, no `seq`
+check) each made tests fail.
+
 It does **not** show that the OS window hides: no webview, no Rust, no
 capability check runs. That is the job of the virtual-display test (scenario 12)
 and the [Windows desktop test](#windows-desktop-test).

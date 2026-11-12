@@ -104,10 +104,14 @@ order:
    (ADR-022: up to 100 picked files, one after another, never overwriting,
    cancel, retry, multipart cleanup in memory) are done, in-process server
    only ([status.md](status.md#upload-batches-backend-and-commands-2026-11-12)).
-   **Next:** the upload UI in the bucket browser (an Upload action in the
-   current folder, per-file rows with progress, Cancel, Try again, skip and
-   "needs inspection" explanations; leaving the browser cancels; typed
-   wrappers in `src/cloud.ts`), then runs at Backblaze and on native
+   The upload UI in the bucket browser (Upload files… in the current
+   folder, per-file rows with progress, Cancel, Try again, skip and "needs
+   inspection" explanations; leaving the browser cancels) is done too,
+   tested with mocked commands only
+   ([status.md](status.md#cloud-storage-upload-ui-2026-11-12)).
+   **Next:** desktop UI tests of uploads through the release binary against
+   the in-process server (Linux virtual display, Windows real desktop, with
+   the native multi-file dialog), then runs at Backblaze and on native
    Windows. Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.

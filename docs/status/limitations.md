@@ -246,12 +246,13 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
 Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 [cloud-providers.md](../architecture/cloud-providers.md).
 
-- **Accounts, browsing and single-file downloads only.** The dashboard
-  manages accounts, checks their connection, lists their buckets one folder
-  at a time and downloads one file at a time; it cannot upload (the upload
-  batch commands exist, the page has no control for them yet), rename,
-  move, delete or create anything, download folders or several files at
-  once, and has no transfer queue, download history, backups or sync
+- **Accounts, browsing, single-file downloads and upload batches only.** The
+  dashboard manages accounts, checks their connection, lists their buckets
+  one folder at a time, downloads one file at a time and uploads up to 100
+  picked files into the folder shown; it cannot overwrite, upload folders
+  or by drag and drop, rename, move, delete or create anything, download
+  folders or several files at once, and has no transfer queue, upload or
+  download history, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
 - **Downloads at a real provider: three single Backblaze runs** (2026-11-12).
   One through the app's download code in Rust (WSL2, no UI): `GetObject`
@@ -402,10 +403,11 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   visible in Credential Manager or Seahorse under `com.sotyware.desktop`.
 - **Environment-variable credentials exist only in test builds** (the opt-in
   provider tests); the app cannot use them, and nothing imports them.
-- **Uploads (ADR-021, ADR-022):** commands exist but no page control, and
-  tested only against the in-process server: **never at Backblaze or
-  Hetzner**, never on native Windows, the native multi-file dialog never
-  opened by a test. At most 100 files per batch, one batch at a time, the
+- **Uploads (ADR-021, ADR-022):** the backend is tested only against the
+  in-process server and the upload panel only with mocked commands
+  (Vitest): **never at Backblaze or Hetzner**, never on native Windows,
+  never through the release binary on any desktop, the native multi-file
+  dialog never opened by a test. At most 100 files per batch, one batch at a time, the
   files one after another; a skipped file (existing object, duplicate name,
   invalid name) has to be renamed or moved by the user, nothing is
   overwritten or renamed automatically. The file is read twice (the first
@@ -429,6 +431,14 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   sotyware ends, or if the provider still refuses, they are forgotten.
   sotyware does not list old multipart uploads at the provider and does
   not configure a lifecycle rule.
+- **The upload panel shows one batch and forgets it.** Leaving the browser
+  cancels a running batch and drops its result; there is no upload history.
+  Its progress bar counts finished files, not bytes. Leftover multipart
+  parts of a batch whose only failures are `incomplete-parts` or
+  `needs-inspection` get no Try again (by design), so the page cannot ask
+  for their cleanup; it happens on the next retry of that account or when
+  sotyware quits. A file whose name is taken (`destination-exists`) has to
+  be renamed by the user; there is no overwrite or "keep both".
 - **Quitting during an upload can take up to 35 s** if the provider does
   not answer the multipart abort; normally it takes one request.
 - **A file whose upload "needs inspection" stays as it is.** It is not

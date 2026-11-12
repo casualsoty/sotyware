@@ -17,8 +17,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   instance) and the foundation for built-in features (registry, lifecycle,
   enable/disable from the dashboard, one example feature), and cloud storage
   in the dashboard: account management (add, edit, check, remove), read-only
-  bucket browsing and downloading one file at a time, plus the backend and
-  commands for upload batches (no upload control in the page yet; no other
+  bucket browsing, downloading one file at a time and uploading batches of
+  up to 100 files into the folder shown (never overwriting; no other
   changes to objects). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
@@ -166,8 +166,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `S3Store::upload` after a `HeadObject` that skips existing objects; events
   with `seq` and one final summary go over a per-batch `Channel`; retry
   takes only eligible files; multipart ids whose abort failed are kept in
-  memory and aborted again on retry and on quit (bounded wait). No page
-  calls these commands yet
+  memory and aborted again on retry and on quit (bounded wait). The
+  browser's upload panel (`src/CloudUpload.svelte`) calls them and only
+  shows what the events say
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
@@ -177,7 +178,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   [ADR-022](docs/architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
-  (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`). Its only
+  (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`,
+  `src/CloudUpload.svelte`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
@@ -187,8 +189,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `retry_cloud_upload`
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
-  and `src/cloud.ts`, none yet for the three upload commands, which the
-  page does not call) and, in tray mode only, `getCurrentWindow().hide()`
+  and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events (download progress
   and upload events use per-call Tauri channels, not events), no `dialog:` or
@@ -200,7 +201,8 @@ persistence other than the feature enabled/disabled choices and the cloud
 storage accounts, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
 tray fallback, file operations in the cloud browser other than downloading
-one file at a time (no upload UI, folder or multiple downloads, rename, delete
+one file at a time and uploading batches into the folder shown (no overwrite,
+parallel uploads, folder uploads, folder or multiple downloads, rename, delete
 or folder creation), transfer queue UI or download history, persistent
 record of incomplete multipart uploads, credential
 import or any credential fallback outside the OS store, backups

@@ -16,6 +16,14 @@
 // opens the native save dialog, so the page never sends a local path, only
 // the account, the bucket it browsed and the object key exactly as listed.
 // Progress arrives on a Tauri channel created for that one download.
+//
+// `uploadFiles` uploads a batch (src-tauri/src/cloud/upload.rs): Rust opens
+// the native multi-file dialog and keeps the paths; the page sends only the
+// account, the bucket it browsed and the folder prefix it shows, and gets
+// back file names, keys, sizes and states. Each batch's events arrive on a
+// channel created for that one call (also for a retry, which is a new batch).
+// Validation, conflicts, hashing, verification and cleanup are Rust's; the
+// page shows what the events say.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 export const LIST_CLOUD_PROVIDERS = "list_cloud_providers";
@@ -28,6 +36,9 @@ export const LIST_CLOUD_FOLDER = "list_cloud_folder";
 export const DOWNLOAD_CLOUD_FILE = "download_cloud_file";
 export const CANCEL_CLOUD_DOWNLOAD = "cancel_cloud_download";
 export const RETRY_CLOUD_DOWNLOAD = "retry_cloud_download";
+export const UPLOAD_CLOUD_FILES = "upload_cloud_files";
+export const CANCEL_CLOUD_UPLOAD = "cancel_cloud_upload";
+export const RETRY_CLOUD_UPLOAD = "retry_cloud_upload";
 
 // `CheckStatus` in dashboard.rs, serialized in kebab-case.
 export const CHECK_STATUSES = [
@@ -192,6 +203,125 @@ export interface DownloadStarted {
   transfer: string;
   /** The chosen file's name (not its folder). */
   fileName: string;
+}
+
+// `BatchState`, `FileState`, `Stage`, `SkipReason`, `RemoteState` and
+// `CleanupOutcome` in upload.rs, serialized in kebab-case.
+export const BATCH_STATES = ["active", "completed", "cancelled", "failed"] as const;
+export type BatchState = (typeof BATCH_STATES)[number];
+
+export const FILE_STATES = [
+  "pending",
+  "hashing",
+  "sending",
+  "verifying",
+  "completed",
+  "skipped",
+  "failed",
+  "cancelled",
+] as const;
+export type FileState = (typeof FILE_STATES)[number];
+
+/** The states after which a file never changes again. */
+export const FINAL_FILE_STATES: ReadonlySet<FileState> = new Set<FileState>([
+  "completed",
+  "skipped",
+  "failed",
+  "cancelled",
+]);
+
+export const UPLOAD_STAGES = ["hashing", "sending", "verifying"] as const;
+export type UploadStage = (typeof UPLOAD_STAGES)[number];
+
+export const SKIP_REASONS = [
+  "not-a-file",
+  "unreadable",
+  "invalid-name",
+  "control-characters",
+  "key-too-long",
+  "too-large",
+  "duplicate-key",
+  "destination-exists",
+] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];
+
+export const REMOTE_STATES = ["nothing-stored", "incomplete-parts", "needs-inspection"] as const;
+export type RemoteState = (typeof REMOTE_STATES)[number];
+
+export const CLEANUP_OUTCOMES = ["removed", "failed"] as const;
+export type CleanupOutcome = (typeof CLEANUP_OUTCOMES)[number];
+
+/** A batch id (`upload-<n>`), never reused. */
+export type UploadBatchId = string;
+
+// `Skip` in upload.rs.
+export interface UploadSkip {
+  reason: SkipReason;
+  /** sotyware's own sentence. */
+  message: string;
+}
+
+// `UploadFile` in upload.rs. Never carries a local path.
+export interface UploadFile {
+  /** Position in the batch, from 0. */
+  index: number;
+  /** The file's name, not its folder. */
+  name: string;
+  /** The object key; `null` if the name cannot become one. */
+  key: string | null;
+  /** The size when the file was picked, if it could be read. */
+  size: number | null;
+  state: FileState;
+  /** The last stage the upload reached. */
+  stage: UploadStage | null;
+  /** Hashed, sent or verified bytes of `stage`; never decreases within it. */
+  bytes: number;
+  total: number;
+  /** Whether its upload began (false for skipped and never-reached files). */
+  started: boolean;
+  /** Only for "skipped". */
+  skip: UploadSkip | null;
+  /** Only for "failed". */
+  error: TransferError | null;
+  /** For "failed" and "cancelled". */
+  remote: RemoteState | null;
+  /** Whether `retryUpload` would upload it again. */
+  retryable: boolean;
+}
+
+// `BatchSummary` in upload.rs.
+export interface UploadSummary {
+  state: BatchState;
+  count: number;
+  completed: number;
+  skipped: number;
+  failed: number;
+  /** Cancelled while running or never started. */
+  cancelled: number;
+  /** Of those, never started. */
+  notStarted: number;
+  retryable: number;
+  /** Files whose remote outcome needs inspection or cleanup. */
+  needsAttention: number;
+  /** The error that stopped the batch (only for "failed"). */
+  error: TransferError | null;
+  files: UploadFile[];
+}
+
+// `UploadEvent` (with its flattened `EventBody`) in upload.rs.
+export type UploadEvent =
+  | { batch: UploadBatchId; seq: number; kind: "file"; count: number; file: UploadFile }
+  | { batch: UploadBatchId; seq: number; kind: "cleanup"; key: string; outcome: CleanupOutcome }
+  | { batch: UploadBatchId; seq: number; kind: "finished"; summary: UploadSummary };
+
+// `UploadSelection` in upload.rs.
+export interface UploadSelection {
+  /** `null` if no file can be uploaded: no batch started. */
+  batch: UploadBatchId | null;
+  /** The destination folder ("" for the top level). */
+  prefix: string;
+  /** Every selected file: pending, or skipped with its reason. */
+  files: UploadFile[];
 }
 
 // `AccountInput` in dashboard.rs: the non-secret part of the form.
@@ -399,6 +529,135 @@ export function parseDownloadEvent(value: unknown): DownloadEvent {
   };
 }
 
+function parseError(what: string, value: unknown): TransferError | null {
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value) || !oneOf(ERROR_KINDS, value["kind"]) || typeof value["message"] !== "string") {
+    throw invalid(what, value);
+  }
+  return { kind: value["kind"], message: value["message"] };
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function parseUploadFile(value: unknown): UploadFile {
+  if (!isRecord(value)) {
+    throw invalid("upload file", value);
+  }
+  const { index, name, key, size, state, stage, bytes, total, started, skip, error, remote, retryable } = value;
+  if (
+    !isCount(index) ||
+    typeof name !== "string" ||
+    !isNullableString(key) ||
+    !(size === null || isCount(size)) ||
+    !oneOf(FILE_STATES, state) ||
+    !(stage === null || oneOf(UPLOAD_STAGES, stage)) ||
+    !isCount(bytes) ||
+    !isCount(total) ||
+    typeof started !== "boolean" ||
+    !(remote === null || oneOf(REMOTE_STATES, remote)) ||
+    typeof retryable !== "boolean"
+  ) {
+    throw invalid("upload file", value);
+  }
+  let parsedSkip: UploadSkip | null = null;
+  if (skip !== null) {
+    if (!isRecord(skip) || !oneOf(SKIP_REASONS, skip["reason"]) || typeof skip["message"] !== "string") {
+      throw invalid("upload file", value);
+    }
+    parsedSkip = { reason: skip["reason"], message: skip["message"] };
+  }
+  return {
+    index,
+    name,
+    key,
+    size,
+    state,
+    stage,
+    bytes,
+    total,
+    started,
+    skip: parsedSkip,
+    error: parseError("upload file", error),
+    remote,
+    retryable,
+  };
+}
+
+export function parseUploadSummary(value: unknown): UploadSummary {
+  if (!isRecord(value)) {
+    throw invalid("upload summary", value);
+  }
+  const { state, count, completed, skipped, failed, cancelled, notStarted, retryable, needsAttention, error, files } =
+    value;
+  if (
+    !oneOf(BATCH_STATES, state) ||
+    !isCount(count) ||
+    !isCount(completed) ||
+    !isCount(skipped) ||
+    !isCount(failed) ||
+    !isCount(cancelled) ||
+    !isCount(notStarted) ||
+    !isCount(retryable) ||
+    !isCount(needsAttention) ||
+    !Array.isArray(files)
+  ) {
+    throw invalid("upload summary", value);
+  }
+  return {
+    state,
+    count,
+    completed,
+    skipped,
+    failed,
+    cancelled,
+    notStarted,
+    retryable,
+    needsAttention,
+    error: parseError("upload summary", error),
+    files: files.map(parseUploadFile),
+  };
+}
+
+export function parseUploadEvent(value: unknown): UploadEvent {
+  if (!isRecord(value) || typeof value["batch"] !== "string" || !isCount(value["seq"])) {
+    throw invalid("upload event", value);
+  }
+  const batch = value["batch"];
+  const seq = value["seq"];
+  switch (value["kind"]) {
+    case "file":
+      if (!isCount(value["count"])) {
+        throw invalid("upload event", value);
+      }
+      return { batch, seq, kind: "file", count: value["count"], file: parseUploadFile(value["file"]) };
+    case "cleanup":
+      if (typeof value["key"] !== "string" || !oneOf(CLEANUP_OUTCOMES, value["outcome"])) {
+        throw invalid("upload event", value);
+      }
+      return { batch, seq, kind: "cleanup", key: value["key"], outcome: value["outcome"] };
+    case "finished":
+      return { batch, seq, kind: "finished", summary: parseUploadSummary(value["summary"]) };
+    default:
+      throw invalid("upload event", value);
+  }
+}
+
+export function parseUploadSelection(value: unknown): UploadSelection {
+  if (
+    !isRecord(value) ||
+    !isNullableString(value["batch"]) ||
+    typeof value["prefix"] !== "string" ||
+    !Array.isArray(value["files"])
+  ) {
+    throw invalid("upload selection", value);
+  }
+  return { batch: value["batch"], prefix: value["prefix"], files: value["files"].map(parseUploadFile) };
+}
+
 export function parseDownloadStarted(value: unknown): DownloadStarted {
   if (!isRecord(value) || typeof value["transfer"] !== "string" || typeof value["fileName"] !== "string") {
     throw invalid("download start", value);
@@ -506,6 +765,57 @@ export async function retryDownload(
 /** Cancels the running download `transfer`; never affects another one. */
 export async function cancelDownload(transfer: string): Promise<CancelOutcome> {
   const value = await call(CANCEL_CLOUD_DOWNLOAD, { transfer });
+  if (!oneOf(CANCEL_OUTCOMES, value)) {
+    throw invalid("cancel outcome", value);
+  }
+  return value;
+}
+
+function uploadChannel(onEvent: (event: UploadEvent) => void, onInvalid: (e: Error) => void): Channel<unknown> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (message: unknown): void => {
+    let event: UploadEvent;
+    try {
+      event = parseUploadEvent(message);
+    } catch (e) {
+      onInvalid(e instanceof Error ? e : new Error(String(e)));
+      return;
+    }
+    onEvent(event);
+  };
+  return channel;
+}
+
+/** Asks for files in the native file dialog (opened by Rust) and uploads
+ * them one after another into folder `prefix` of the account's bucket,
+ * which must still be `bucket`. Resolves with `null` if the dialog was
+ * cancelled or returned nothing (nothing started). Every event of the batch
+ * goes to `onEvent`, possibly also before this resolves; an event that does
+ * not have the Rust shape goes to `onInvalid` instead. */
+export async function uploadFiles(
+  id: string,
+  bucket: string,
+  prefix: string,
+  onEvent: (event: UploadEvent) => void,
+  onInvalid: (e: Error) => void,
+): Promise<UploadSelection | null> {
+  const value = await call(UPLOAD_CLOUD_FILES, { id, bucket, prefix, onEvent: uploadChannel(onEvent, onInvalid) });
+  return value === null ? null : parseUploadSelection(value);
+}
+
+/** Starts the retryable files of the finished batch `batch` again, without
+ * a dialog, as a new batch with a new id. */
+export async function retryUpload(
+  batch: UploadBatchId,
+  onEvent: (event: UploadEvent) => void,
+  onInvalid: (e: Error) => void,
+): Promise<UploadSelection> {
+  return parseUploadSelection(await call(RETRY_CLOUD_UPLOAD, { batch, onEvent: uploadChannel(onEvent, onInvalid) }));
+}
+
+/** Cancels the running batch `batch`; never affects another one. */
+export async function cancelUpload(batch: UploadBatchId): Promise<CancelOutcome> {
+  const value = await call(CANCEL_CLOUD_UPLOAD, { batch });
   if (!oneOf(CANCEL_OUTCOMES, value)) {
     throw invalid("cancel outcome", value);
   }

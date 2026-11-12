@@ -364,8 +364,10 @@ backup format of its own. Findings (restic 0.19.1, docs and the experiment in
 
 The **Cloud Storage** section of the dashboard (decision:
 [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)).
-It manages accounts and opens each one's bucket in a read-only browser
-([below](#browsing-a-bucket)).
+It manages accounts and opens each one's bucket in a browser
+([below](#browsing-a-bucket)) that lists folders, downloads one file at a
+time and uploads files into the folder shown ([the upload
+panel](#the-upload-panel)); nothing in it renames or deletes.
 
 ```
 CloudStorage.svelte ── cloud.ts ──invoke──▶ cloud::dashboard (commands)
@@ -465,7 +467,9 @@ place and shows the account's name, its bucket, the current folder, a
 breadcrumb trail (bucket → folders), **Up one folder**, **Refresh** and
 **← Back to accounts**; then a table of folders (first) and files with size
 (binary units, exact bytes on hover) and last-modified date where the
-provider gives one. Read-only: it opens folders and nothing else.
+provider gives one. Listing is read-only; the browser's only actions that
+touch objects are Download ([below](#downloading-a-file)) and **Upload
+files…** ([below](#the-upload-panel)).
 
 ```
 CloudBrowser.svelte ── listFolder(id, prefix, page) ──▶ browser::list_folder
@@ -668,10 +672,10 @@ byte for byte
 ## Uploading files
 
 Decision: [ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust).
-Code: `src-tauri/src/cloud/upload.rs` (`CloudUploads`, managed state). The
-commands exist and are permitted, but **the page has no upload control
-yet**: nothing below is reachable by a user until the UI is built. The
-typed wrappers in `src/cloud.ts` come with that UI.
+Code: `src-tauri/src/cloud/upload.rs` (`CloudUploads`, managed state);
+typed wrappers `uploadFiles`, `cancelUpload`, `retryUpload` and checked
+parsers in `src/cloud.ts`; the page in `src/CloudUpload.svelte`
+([below](#the-upload-panel)).
 
 ```
 page ── upload_cloud_files(id, bucket, prefix, onEvent) ──▶ validate prefix; reserve the upload slot (else busy)
@@ -763,9 +767,9 @@ same answer. It cancels the current file (waiting for credentials, our
 `HeadObject`, hashing, sending; a multipart upload is aborted) and keeps
 the rest from starting. If the current file has passed its commit point the
 answer is `finishing`: that file completes, no other starts, and the batch
-ends `cancelled`. Leaving the browser is to cancel a running batch, as for
-downloads (the page's job, with the UI); hiding or minimising the dashboard
-does not.
+ends `cancelled`. Leaving the browser cancels a running batch, as for
+downloads ([the upload panel](#the-upload-panel)); hiding or minimising the
+dashboard does not.
 
 **Retry** (`retry_cloud_upload`) works on the last finished batch only and
 starts a new batch (new id) into the same folder with its files that are
@@ -799,12 +803,116 @@ the path and are only logged). Provider text is never shown.
 
 **Verified against:** the in-process S3 server only (WSL2, 2026-11-12,
 [status.md](../status/status.md#upload-batches-backend-and-commands-2026-11-12)).
-Not at Backblaze or Hetzner, not on native Windows, not through a UI (there
-is none).
+Not at Backblaze or Hetzner, not on native Windows.
+
+### The upload panel
+
+`src/CloudUpload.svelte`, inside the bucket browser (`CloudBrowser.svelte`),
+both modes. It shows one batch, the latest, exactly as the events describe
+it; it never decides a file's state, its progress, a conflict or whether it
+can be retried.
+
+**Workflow.**
+
+1. In any folder, **Upload files…** (beside Up one folder and Refresh) calls
+   `upload_cloud_files` with the account, the bucket the browser shows and
+   the folder's prefix as Rust listed it (`""` at the top). The panel shows
+   "Choose the files to upload…" and the button is disabled.
+2. Rust opens the native multi-file dialog. Cancelled or empty: the panel
+   goes back to what it showed before (nothing, or the previous result), no
+   error. Refused (`busy`, more than 100 files, missing key, …): "The
+   upload did not start", with the reason (and Edit account where that fixes
+   it). An account removed meanwhile closes the browser, as for downloads.
+3. The reply lists every chosen file: `Waiting`, or `Skipped:` with the
+   reason (not a file, could not be read, name cannot be an object key,
+   control characters, name too long for this folder, too large for this
+   provider, same name as another selected file) and Rust's sentence. If no
+   file can go: "None of the chosen files can be uploaded, so nothing was
+   sent."
+4. While the batch runs: "*n* of *m* files finished" with a progress bar by
+   finished files (skipped ones count as finished), and for the file being
+   uploaded "File *i* of *m*: name", its stage (Computing the SHA-256
+   checksum / Sending / Verifying the stored object), bytes of total, and a
+   percentage only when the total is above 0. Every file has a row with its
+   status (Waiting, its stage, Uploaded and verified, Skipped: …, Failed,
+   Cancelled during its upload, Not started: …) and notes below. A file is
+   shown as uploaded only after its `completed` event. The list scrolls
+   (at most about 15 lines high), so a batch of 100 does not push the folder
+   out of view.
+5. At the end the `finished` summary replaces the files' states: "Upload
+   finished / cancelled / stopped after an error. *m* files: *x* uploaded,
+   *y* skipped, *z* failed, … not started.", the stopping error, and "*k*
+   files need attention" for `needs-inspection` or `incomplete-parts`. Then
+   **Try *n* files again** (only if the summary's `retryable` is above 0),
+   **Show destination folder** (if anything was uploaded: opens the batch's
+   folder, which also lists it again), and **Dismiss**.
+
+The destination ("Upload to bucket / prefix") is shown from the values
+captured at step 1 (the reply's `prefix` replaces it); browsing to other
+folders meanwhile changes nothing for the batch.
+
+**Messages** (`cloudMessages.ts`: `SKIP_LABELS`, `REMOTE_NOTES`,
+`describeUploadError`), chosen by the structured reason, error kind and
+remote state, with Rust's sentence as the detail. No sentence says "try
+again" by itself: a retry is offered only where the backend set
+`retryable`. Per remote state: `nothing-stored` "Nothing was stored for this
+file."; `needs-inspection` "The provider may have stored this file, but
+sotyware could not verify it. Check the object in the bucket …; sotyware
+does not retry or delete it."; `incomplete-parts` "parts of it may remain at
+the provider (and may be billed) …, tried again when this account's upload
+is retried and when sotyware quits; otherwise only a lifecycle rule on the
+bucket removes them". Upload errors have their own summaries (access denied
+mentions write permission and a key limited to a prefix; `file-changed`,
+`integrity`, `network`, `timeout`, `local-file` each say what happened).
+Nothing shown contains a local path (Rust sends none); an event without the
+Rust shape is reported as "an upload message it does not understand",
+without its content.
+
+**Cancel upload** is enabled while the batch runs and its id is known, once:
+the first click disables it. `cancelling` shows "Cancelling…";
+`finishing` "The current file is already being completed at the provider
+and will finish; no further file starts."; `not-active` "The upload already
+ended; its result follows." A note says beforehand that the current file
+may finish. The batch is shown as cancelled only when the `finished` event
+says so; files are told apart by `started`: "Cancelled during its upload"
+(with its remote note) versus "Not started: the upload was cancelled" (or
+"… stopped after an error" when the batch failed). A failed cancel request
+is shown and the button is enabled again.
+
+**Try again** calls `retry_cloud_upload` with the finished batch's id (no
+dialog) and shows the new batch ("Retrying upload to …") with only the files
+Rust took. `cleanup` events are listed apart from the files: "The
+incomplete parts left by an earlier failed upload of *key* were removed.
+That earlier upload was not completed." or "… could still not be removed".
+A refused retry shows the earlier result again with the reason; for
+`invalid-input` (Rust no longer holds that batch, or nothing is left) the
+button is removed, otherwise it stays. Files with `needs-inspection` or
+`incomplete-parts` are never retried (Rust does not mark them `retryable`),
+and a batch whose only failures are of these kinds offers no Try again.
+
+**Stale events and lifecycle.** Every start and retry gets a new local
+number and a new channel; an event or reply is applied only while that
+number is the one shown, only for its batch id (learnt from the reply or
+the first event, whichever comes first), and never after `finished`. Within
+a batch, a file's event is applied only if its `seq` is above the last one
+applied to that file, so progress never goes back and the reply's
+`pending` never overwrites an earlier event. Leaving the browser (Back to
+accounts, Edit account, another section, another account's bucket: the
+browser is keyed by account) unmounts the panel; a running batch is then
+cancelled by its id, and a reply that arrives after unmount (the dialog was
+still open) is cancelled on arrival. After unmount nothing is applied.
+Hiding or minimising the dashboard does not unmount anything, so uploads go
+on. A download can run beside a batch; neither affects the other.
+
+**Verified against:** frontend tests only (`src/CloudUpload.test.ts`,
+Vitest with Tauri's IPC mocks, 2026-11-12,
+[status.md](../status/status.md#cloud-storage-upload-ui-2026-11-12)); no
+desktop run, the native dialog was never opened, no real provider.
 
 ## Not built (deliberately)
 
-No upload UI, folder downloads, several downloads at once, download history,
+No overwriting uploads, parallel uploads, folder uploads, drag and drop,
+folder downloads, several downloads at once, upload or download history,
 file operations in the browser (rename, delete, create folder, move),
 transfer queue UI, custom event or feature; no synchronisation, folder watching,
 scheduled backups, retention, restic integration, client-side encryption,

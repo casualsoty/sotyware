@@ -1,7 +1,14 @@
 // What the Cloud Storage page says about check results and command errors.
 // Chosen by the structured `status` / `kind` from Rust, never by parsing
 // message text; Rust's message is shown as the detail.
-import { CloudCommandError, type CheckStatus, type ErrorKind } from "./cloud";
+import {
+  CloudCommandError,
+  type CheckStatus,
+  type ErrorKind,
+  type RemoteState,
+  type SkipReason,
+  type TransferError,
+} from "./cloud";
 
 export const CHECK_LABELS: Record<CheckStatus, string> = {
   connected: "Connected",
@@ -81,4 +88,76 @@ export function describeError(e: unknown): string {
     return `${ERROR_SUMMARIES[e.kind]} ${e.message}`;
   }
   return e instanceof Error ? e.message : String(e);
+}
+
+// Uploads (src-tauri/src/cloud/upload.rs). Chosen by the structured skip
+// reason, error kind and remote state; Rust's sentence is the detail. None of
+// these says "try again" by itself: whether a retry is possible is decided by
+// the backend (`retryable`) and said next to the Try again button.
+
+/** Why a file was not uploaded, by `SkipReason`. */
+export const SKIP_LABELS: Record<SkipReason, string> = {
+  "not-a-file": "Skipped: not a file",
+  unreadable: "Skipped: could not be read",
+  "invalid-name": "Skipped: name cannot be an object key",
+  "control-characters": "Skipped: name contains control characters",
+  "key-too-long": "Skipped: name too long for this folder",
+  "too-large": "Skipped: too large for this provider",
+  "duplicate-key": "Skipped: another selected file has the same name",
+  "destination-exists": "Skipped: already in this folder",
+};
+
+/** What a failed or cancelled upload may have left at the provider. */
+export const REMOTE_NOTES: Record<RemoteState, string> = {
+  "nothing-stored": "Nothing was stored for this file.",
+  "incomplete-parts":
+    "The incomplete upload could not be removed, so parts of it may remain at the provider (and may be billed). sotyware tries to remove them again when this account's upload is retried and when sotyware quits; otherwise only a lifecycle rule on the bucket removes them.",
+  "needs-inspection":
+    "The provider may have stored this file, but sotyware could not verify it. Check the object in the bucket before uploading it again; sotyware does not retry or delete it.",
+};
+
+const UPLOAD_ERROR_SUMMARIES: Record<ErrorKind, string> = {
+  "invalid-input": "The upload could not be started:",
+  "unknown-account": "This account no longer exists:",
+  storage: "The account database could not be used:",
+  "credential-store-unavailable":
+    "Your system's credential store is not available, so the account's key could not be read. Details:",
+  "credential-store-locked": "The credential store refused access. Unlock it (or accept its prompt). Details:",
+  "credential-store": "The credential store failed:",
+  partial: "Only part of the change was made:",
+  "credentials-missing": "No key is stored for this account on this computer. Edit the account and enter its key. Details:",
+  "invalid-credentials":
+    "The provider does not accept this account's key ID or secret. Edit the account and enter the key again. Details:",
+  "access-denied":
+    "The key is valid, but the provider refused to store files with it. Check that the key may write to this bucket (and to this folder, if it is limited to a file name prefix). Details:",
+  "bucket-unavailable":
+    "The bucket could not be found with this account's settings, or this key may not use it. Details:",
+  network: "The provider could not be reached, or the connection broke off. Check your internet connection. Details:",
+  timeout: "The provider stopped taking data or did not answer in time. Details:",
+  "invalid-configuration": "The account's settings cannot be used for uploading. Edit the account to fix them. Details:",
+  provider: "The provider refused the upload:",
+  "outdated-page": "This account's bucket changed since the folder was listed. Refresh, then choose the files again. Details:",
+  busy: "Another upload is running. Wait for it to finish or cancel it first. Details:",
+  "object-not-found": "The object could not be found:",
+  integrity: "The stored object did not match the file's size or SHA-256 checksum. Details:",
+  "disk-full": "The local drive is full:",
+  "local-permission": "sotyware may not read this file:",
+  "destination-unavailable": "The file's folder is not available:",
+  "destination-exists": "An object with this name is already in the folder; it was left as it is. Details:",
+  "local-file": "The file could not be read on this computer. Details:",
+  "file-changed": "The file changed while it was being uploaded, so its upload was stopped. Details:",
+  other: "Something went wrong:",
+};
+
+/** A sentence for an upload command's rejection or a file's error. */
+export function describeUploadError(e: unknown): string {
+  if (e instanceof CloudCommandError) {
+    return `${UPLOAD_ERROR_SUMMARIES[e.kind]} ${e.message}`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** The same for an error that came inside an upload event. */
+export function describeUploadFailure(error: TransferError): string {
+  return `${UPLOAD_ERROR_SUMMARIES[error.kind]} ${error.message}`;
 }

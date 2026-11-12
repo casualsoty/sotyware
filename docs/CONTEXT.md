@@ -14,9 +14,10 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 ## What works today
 
 The desktop runtime, the foundation for built-in features, cloud storage
-account management, bucket browsing and single-file downloads, and the
-backend and commands for upload batches; **no upload control in the page,
-no other changes to objects, backups or other product features exist**.
+account management, bucket browsing, single-file downloads and upload
+batches into the folder shown (UI tested with mocked commands only); **no
+overwrite, no other changes to objects, backups or other product features
+exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -92,7 +93,13 @@ no other changes to objects, backups or other product features exist**.
   (`cloud/upload.rs`, `upload_cloud_files`, `cancel_cloud_upload`,
   `retry_cloud_upload`, `CloudUploads`,
   [ADR-022](architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust);
-  **no page calls them yet**): Rust opens the native multi-file dialog
+  called by the browser's **Upload files…** and its panel
+  `CloudUpload.svelte`, [cloud-storage.md](architecture/cloud-storage.md#the-upload-panel):
+  destination captured at the click, per-file rows with stage, bytes and
+  skip/error/remote notes, Cancel by batch id, Try again only for
+  `retryable` files as a new batch, cleanup shown apart, final summary;
+  stale events dropped by start, batch id and per-file `seq`; leaving the
+  browser cancels, hiding does not): Rust opens the native multi-file dialog
   (paths never reach the page), up to 100 files checked before anything is
   sent (not a file, non-UTF-8 or control-character name, key > 1,024 bytes,
   too large, duplicate key → skipped with a reason), destination folder
@@ -120,7 +127,7 @@ no other changes to objects, backups or other product features exist**.
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), cloud.ts, cloudMessages.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), CloudUpload.svelte (upload panel), cloud.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
@@ -188,6 +195,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Upload UI (2026-11-12, uncommitted on `e7ae326`, WSL2, frontend only):
+  Vitest **135 passed** (42 new in `src/CloudUpload.test.ts`, mocked upload
+  commands and channels; the 93 existing, including the download tests,
+  unchanged); `npm run check` clean; `cargo test` 308 + 15 ignored
+  (unchanged). **No desktop run, no native dialog, no native Windows, no
+  real provider.**
+  [status.md](status/status.md#cloud-storage-upload-ui-2026-11-12).
 - Upload batches, backend and commands (2026-11-12, uncommitted on
   `241de11`, WSL2, in-process server only): `cargo test` **308 passed, 15
   ignored**, 3 runs (36 new in `cloud/upload/tests.rs`: dialog cancel and
@@ -476,8 +490,8 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads have no UI and were never run at a real provider or on native
-Windows; incomplete multipart uploads whose abort failed are remembered
+Uploads (backend and UI) were never run at a real provider, on native
+Windows or through the release binary (the UI only with mocked commands); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
@@ -490,7 +504,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (the upload UI on top of the batch commands, then uploads at Backblaze and on native Windows; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (desktop UI tests of uploads with the native dialog, then uploads at Backblaze and on native Windows; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

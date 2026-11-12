@@ -933,8 +933,10 @@ an earlier upload could not abort (`AbortOutcome`), bounded by
 ## ADR-022: Upload batches run one file after another in their own slot, with paths kept in Rust
 
 Status: Accepted (2026-11-12). Backend and commands
-(`src-tauri/src/cloud/upload.rs`); the dashboard has no upload control yet,
-so nothing in the page calls them.
+(`src-tauri/src/cloud/upload.rs`); since the same day the bucket browser's
+upload panel (`src/CloudUpload.svelte`) calls them
+([cloud-storage.md](cloud-storage.md#the-upload-panel)). The page follows
+the backend's states and `retryable` flags; it decides nothing itself.
 
 - **Context:** ADR-021 made one file's upload safe (commit point,
   re-hashing, multipart abort, verification, stall timeout), but nothing
@@ -1000,8 +1002,8 @@ so nothing in the page calls them.
   - **Cancel** acts only on its batch id and is idempotent: it cancels the
     current file (up to its commit point; after it the answer is
     `finishing` and that file completes) and no further file starts. Leaving
-    the browser will cancel (the page's job, as for downloads); hiding or
-    minimising the dashboard does not.
+    the browser cancels (the upload panel does it when it is unmounted, as
+    for downloads); hiding or minimising the dashboard does not.
   - **Retry** starts a new batch with the last finished batch's files that
     failed with `nothing-stored`, were cancelled with `nothing-stored`, or
     never started, checked again like a new selection, into the same folder.
