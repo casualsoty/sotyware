@@ -123,6 +123,63 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hardened Backblaze download test on the Windows dashboard (2026-11-12)
+
+Tree: `bb8c178`, committed and clean (no uncommitted change); it adds the
+hardening from the [review below](#review-of-the-download-tests-2026-11-12)
+to the flow that [passed before](#real-backblaze-download-through-the-windows-dashboard-2026-11-12).
+Environment: as in that run: **native Windows 11 Home 25H2, build
+26200.9711, the real, unlocked desktop**, release binary built in a fresh
+copy `C:\dev\sotyware-dlreval` (Rust 1.99.1, Node 24.14.1), driven from WSL2
+through `powershell.exe`; UI Automation and the dialog's control ids, no
+mouse, no keystrokes. Provider **Backblaze B2**,
+`https://s3.eu-central-003.backblazeb2.com`, the dedicated test bucket.
+
+Offline checks first, with no `SOTYWARE_*` variable set: WSL2
+`check-ps-variables.ps1` PASS on the three Windows scripts, `cargo fmt
+--check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` **238
+passed, 14 ignored** (all three download opt-in tests among the ignored);
+Windows `npm ci`, `npm run check` 0/0, fmt, clippy, `test:headless` **228 +
+14 ignored, 93 frontend**, release build, `check-ps-variables.ps1` PASS.
+
+**Result: `windows-cloud-ui.ps1 -Mode b2-download` 35/35, one run, first
+attempt** (run id `1794451082434055600-36332`):
+
+- Prepare: endpoint checked; `ListObjectVersions` of
+  `sotyware-it/download-ui-validation/1794451082434055600-36332/` → none;
+  generated 16,777,219 bytes, SHA-256
+  `ff94cdeeab8f48567823bfeff8f15cf487ceb2fe342fb4272d883fe70e9c5009`
+  computed before the upload; one `PutObject` of `größe test.bin` with the
+  `sotyware-sha256` metadata → version
+  `4_zdd327be63254c7b0a71e0912_f10683753345deaa7_d20261112_m023803_c003_v0312048_t0055_u01794451083415`.
+- **New manifest check passed** before the app started: the manifest's run,
+  version id, file name, size, SHA-256 and key equal what the upload line
+  printed, and the generated file has that SHA-256.
+- Dashboard (read-only key, real Credential Manager): Connected; the run
+  folder with exactly one row `größe test.bin | 16 MiB`; the native save
+  dialog suggested the name unchanged; saved into a new folder under
+  `%TEMP%`. Two progress lines this time ("0% · 0 B of 16 MiB", "63% · 10 MiB
+  of 16 MiB"), never going down; a `.sotyware-partial` file seen meanwhile;
+  final message after 0.6 s: "Downloaded 16 MiB. The SHA-256 checksum stored
+  with the file matched.", with the file already in place at full size and
+  no temporary file left. Saved file: 16,777,219 bytes, same SHA-256,
+  byte-for-byte equal to the original.
+- Cleanup: `DeleteObject` with exactly that version id → 204 (no delete
+  without a version id); `ListObjectVersions` of the run prefix → **0
+  versions or delete markers left**. Both local folders removed, no
+  `.sotyware-partial` under `%TEMP%`.
+- Checked from PowerShell before and after: `cloud-accounts.sqlite3` and
+  `preferences.sqlite3` with the same SHA-256, 0 sotyware entries in
+  Credential Manager, no sotyware process left.
+
+Remote requests: write key 4 (2 listings, 1 PUT, 1 versioned DELETE); read
+key about 6 through the app (not recorded).
+
+**Not verified:** the hardened `backblaze_b2_download_file` (Rust only, WSL2)
+was not run against Backblaze; a failing prepare, manifest mismatch or
+failing cleanup at the real provider (those paths are only read, not
+exercised); everything listed as not verified in the earlier run.
+
 ### Review of the download tests (2026-11-12)
 
 Tree: uncommitted, on `5a7453a`; test code and docs only, **no application

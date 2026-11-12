@@ -162,6 +162,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Hardened Backblaze download test, **native Windows 11 dashboard**
+  (2026-11-12, `bb8c178`, no change): offline checks first (variable check
+  PASS; WSL2 `cargo test` 238 + 14 ignored, Windows 228 + 93); then
+  `windows-cloud-ui.ps1 -Mode b2-download` **35/35, one run, first attempt**
+  on the real desktop: prefix empty, manifest matched the uploaded run and
+  version, native save dialog, `sha256-verified`, size, SHA-256 and bytes
+  equal; exactly that version deleted, 0 left; account database, Credential
+  Manager and `%TEMP%` unchanged. The Rust-only `backblaze_b2_download_file`
+  was not rerun.
+  [status.md](status/status.md#hardened-backblaze-download-test-on-the-windows-dashboard-2026-11-12).
 - Review of the download tests (2026-11-12, uncommitted on `5a7453a`,
   test code and docs only; no remote request, no desktop interaction): no
   production defect found; new static check
@@ -418,7 +428,7 @@ at Backblaze with a temporary 1,040-object dataset (WSL2/Xvfb and Windows 11),
 never at Hetzner; Backblaze answers a continuation token it never issued with
 the first page instead of an error; a key limited to a file name prefix cannot
 browse (Backblaze refuses the root); no total count, no cache. Downloads
-are verified at Backblaze once through the Rust code (WSL2) and once through
+are verified at Backblaze once through the Rust code (WSL2) and twice through
 the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file

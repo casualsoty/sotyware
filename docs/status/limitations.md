@@ -252,7 +252,7 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   move, delete or create anything, download folders or several files at
   once, and has no transfer queue, download history, backups or sync
   ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
-- **Downloads at a real provider: two single Backblaze runs** (2026-11-12).
+- **Downloads at a real provider: three single Backblaze runs** (2026-11-12).
   One through the app's download code in Rust (WSL2, no UI): `GetObject`
   returned `Content-Length` and the stored `sotyware-sha256`, the file was
   SHA-256 verified, and the progress bytes never went down
@@ -262,7 +262,10 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   equal, completion only after the file was in place
   ([status.md](status.md#real-backblaze-download-through-the-windows-dashboard-2026-11-12));
   there the 16 MiB arrived within 0.6 s, so the UI showed only one progress
-  line ("0% · 0 B of 16 MiB"). Not run: more than one run of each, a
+  line ("0% · 0 B of 16 MiB"). The Windows flow passed again with the
+  hardened test driver at `bb8c178`, showing two progress lines
+  ([status.md](status.md#hardened-backblaze-download-test-on-the-windows-dashboard-2026-11-12)).
+  Not run: more than one run of the Rust-only test, a
   download through the UI from a real provider on Linux or Windows 10 or by
   a person, larger or multipart-uploaded files, a checksum mismatch or a
   missing checksum at the provider, Hetzner. On Linux the UI and dialog are
