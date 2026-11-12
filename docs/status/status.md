@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (upload batches, backend and commands, in-process server only: [details](#upload-batches-backend-and-commands-2026-11-12)). Update this file whenever
+Last updated: 2026-11-12 (uploads on the native Windows 11 desktop, local server only: [details](#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -126,6 +126,125 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Cloud Storage: uploads on the native Windows 11 desktop (2026-11-12)
+
+Uncommitted tree on `695e089` (test code and docs only: new `-Mode upload`
+in `tests/desktop/windows-cloud-ui.ps1`; `ui_upload_state` in
+`src-tauri/src/cloud/test_server.rs` now builds object keys with `/` also
+on Windows, where it had joined them with `\`; no production file
+changed). **Native Windows 11 Home 25H2, build 26200.9711**, Rust 1.99.1,
+Node 24.14.1, a fresh copy in `C:\dev\sotyware-upwin`. **Real, unlocked
+desktop** (the user agreed to keep hands off). **Release binary**
+`src-tauri\target\release\sotyware.exe` built there by
+`npm run tauri build -- --no-bundle` (06:31, 9,734,144 bytes, SHA-256
+`a760184320d7cf9527b0f05fbea9b644dd9baba62add2a36ccb816558204f07c`, the
+same file in every run below); nothing listened on the dev-server port
+1420 and the window driven belonged to the started process. Accounts in the
+**real Windows Credential Manager** (entry checked with `CredRead` and
+`cmdkey`). **Local s3s-fs server** in the test process
+(`serve_uploads_for_ui`, a new temporary bucket per run, made-up key)
+behind a link taking **2 MiB/s**; no provider contacted, no real
+credential used. **The native Windows multi-file dialog was used**
+("Choose files to upload", common item dialog of sotyware's process): the
+folder opened through its File name box and Open, the files selected in
+its file list through UI Automation (batch 1) or typed as quoted names
+into File name (the others), then Open; Cancel once. Local paths never
+appeared on the page. The tray Quit used the real mouse.
+([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test))
+
+- `windows-cloud-ui.ps1 -Mode upload`: **74 passed, 1 failed, 3
+  consecutive runs** (08:20, 08:26, 08:31; about 5 minutes each) with the
+  final script. The one failure is the defect below; it is the same in each
+  run. Every batch's objects were read on the server:
+  - the dialog cancelled: no panel, Upload files… enabled again, no upload
+    request.
+  - into `inbox/`, chosen in the dialog's list: `Grüße Ünïcödé 日本.txt`,
+    `empty.txt` (0 bytes, `e3b0…`), `report 2024 (final) + notes & more
+    #1.txt`, a 12 MiB file → uploaded and verified under their exact keys
+    (content, size, `HeadObject` size and SHA-256 metadata);
+    `existing.txt` → skipped, the object unchanged; **`locked.txt`, held
+    open by another process without sharing** (Windows only) → "Failed",
+    "The file could not be read on this computer", nothing stored, the
+    batch went on; summary "6 files: 4 uploaded, 1 skipped, 1 failed.";
+    once released, Try 1 file again uploaded it. The browser was moved to
+    the bucket root while the dialog was open; the panel kept `inbox/`.
+    While the 12 MiB file showed "Sending · n%" the server had no object
+    for it.
+  - cancel during a 40 MiB PUT → 1 uploaded, 1 cancelled (nothing
+    stored), 1 not started; Try 2 files again uploaded exactly those.
+  - cancel during a 72 MiB multipart upload → aborted, no parts left.
+  - abort refused (injected) → "parts may remain", parts on the server,
+    no retry for it; Try 1 file again removed them (cleanup shown) and
+    uploaded the other file.
+  - verification refused (injected) → stopped, needs inspection, the
+    object really stored and not deleted, no retry offered for it.
+  - a file appended to while sent (sotyware's read handle lets other
+    programs write) → failed, nothing stored; the retry stored the new
+    content.
+  - a 24 MiB download through the native save dialog completed (SHA-256
+    matched) while an upload in `downloads/` was sending; the upload
+    finished too.
+  - ← Back to accounts during a batch → neither file stored, no parts,
+    Upload files… enabled afterwards.
+  - close (`SC_CLOSE`, as the title bar's X) during an upload → hidden,
+    process running; a second launch exited 0 and showed the same batch,
+    which finished.
+  - **tray Quit (real mouse) during a 72 MiB multipart upload → exit 0
+    after 1.1 s**, no object, parts aborted. After a relaunch the account
+    and its key still worked.
+  - per run the app sent 17 PUT, 3 create, 6 parts, 4 aborts, 56 HEAD, 13
+    lists, 1 GET, 1 `HeadBucket` (no other operation). Keys created and
+    then deleted by exact key: `downloads/a-alongside.bin`, `inbox/` +
+    `a-changing.bin`, `a-first.txt`, `a-hidden.bin`, `a-inspect.txt`,
+    `b-after.txt`, `b-big.bin`, `b-next.txt`, `c-third.txt`, `empty.txt`,
+    `Grüße Ünïcödé 日本.txt`, `locked.txt`, `medium.bin`, `report 2024
+    (final) + notes & more #1.txt`, plus the 3 seeded objects. Three
+    multipart uploads per run (`a-multi.bin`, `a-parts.bin`,
+    `a-quit.bin`), all aborted. Each run ended with 0 objects and no
+    multipart files; `%LOCALAPPDATA%\com.sotyware.desktop` (hashes),
+    Credential Manager (0 sotyware entries) and `%TEMP%` were as before.
+- **Defect found (not fixed):** a file whose name holds an unpaired
+  surrogate (NTFS allows it), chosen in the dialog with a valid file,
+  **ends sotyware with `0xC0000409`** at once: seen in each of the five
+  attempts whose output was kept (2, 3 and the final three; attempt 4's log
+  was overwritten, and in attempt 1 the step reached the wrong process). Cause: rfd 0.17.2 decodes each path with
+  `String::from_utf16(..).unwrap()`, and the release profile has
+  `panic = "abort"`. Nothing was stored, and the relaunched app worked.
+  Proposed fix, for a decision: patch rfd to decode lossless
+  (`OsString::from_wide`, upstream or as a `[patch]`); sotyware's
+  `invalid-name` skip then applies. Switching to `panic = "unwind"` alone
+  would not help: rfd's dialog thread would still die and the dialog
+  would never answer
+  ([limitations](limitations.md#cloud-storage)).
+- Regression on the same binary, native Windows 11: `windows-cloud-ui.ps1
+  -Mode download` **35/35, 3 runs**, `-Mode local` 19/19 and `-Mode
+  browse` 29/29 (once each; accounts, Credential Manager, browsing);
+  `npm run test:headless`: frontend 135 passed; Rust **297 passed, 1
+  failed**, 16 ignored. The failure is a **Windows-incompatible unit test**,
+  present since `e7ae326` and not touched here:
+  `cloud::upload::tests::a_selection_is_checked_file_by_file_without_failing_as_a_whole`
+  writes a file named `größe test+&?#%.bin`, and Windows refuses `?` in a
+  file name, so the test helper's `fs::write` panics
+  (`test_server.rs:854`). The upload tests had not run on native Windows
+  before. Not changed. WSL2: `cargo test` 308 passed, 16 ignored; `cargo
+  fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (the
+  Linux `cloud-ui.sh upload` phase was not rerun after the helper change,
+  which only affects `\` separators). `windows.ps1` (real desktop, tray
+  lifecycle) was not run; the tray menu and Quit were exercised by the
+  upload run only.
+- Driver, not app: the first four attempts failed in the driver (keys
+  joined with `\` by the helper on Windows; whole-tree UI Automation
+  searches too slow for a 40 MiB PUT at 6 MiB/s; a literal `·` in a regex
+  that Windows PowerShell 5.1 read as `Â·`, so the Sending percentage was
+  never matched; a relaunch that only handed over to the still-running
+  app). Their server-side results agreed with the panel each time.
+
+Not run: Windows 10; a person selecting files with the mouse or Ctrl+A in
+the dialog; a cancel between two files; names Windows refuses (control
+characters, `< > : " | ? *`) or that cannot be selected from one folder
+(duplicate keys); key-too-long and too-large skips; an abort that hangs at
+quit; any real provider.
 
 ### Cloud Storage: uploads through the release binary on a virtual display (2026-11-12)
 

@@ -798,6 +798,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `browse`, Windows `-Mode browse` | — (Windows: **Connected**) | the bucket browser against the in-process listing server (`cargo test … serve_listing_for_ui -- --ignored`, started by the script in this checkout's `src-tauri`, made-up key): Open bucket → the root's folders and files with size; a folder with spaces and Unicode; the bucket breadcrumb; `photos/` without its marker or nested file; `photos/2024/` with a MiB size; Up one folder; a marker-only folder → "This folder is empty."; a folder of 1,005 entries → "1000 items shown; more are available", Load more → 1,005, no Load more; Refresh → 1,000 again; ← Back to accounts; remove. The server fails the phase if anything but `ListObjectsV2` (or `HeadBucket`) reached it |
 | Linux `download`, Windows `-Mode download` | — (Windows: **Connected**) | downloads through the **native save dialog** from the in-process object server (`cargo test … serve_objects_for_ui -- --ignored`, made-up key; it writes the objects' sizes and SHA-256 next to its endpoint file): every file row has Download; the dialog opens with the key's last segment suggested, and cancelling it starts nothing; Save → "Downloaded …" with the SHA-256 matched and the file's SHA-256 equal to the server's; an existing file → the dialog's own replace question (GTK: "already exists" + Replace; Windows: "Confirm Save As" + Yes), the old file untouched until then, replaced afterwards; `docs/Bericht 2024 ü & co.pdf` (3 MiB) suggested unchanged and verified; a file without a stored SHA-256 → completed, "could not be verified"; a slow 16 MiB file → percent and "of 16 MiB", a hidden `.large.bin.*.sotyware-partial`, Cancel → "Download cancelled. Nothing was saved.", no file left; a connection cut after 256 KiB → failed with the network text, Try download again (no dialog) fails the same way; content that does not match its SHA-256 → integrity failure, nothing saved; at the end the download folder holds exactly the completed files. Linux only: closing the window during a download (dashboard-only mode quits) → exit 0 and no temporary file. Files go to a folder in the throwaway HOME (Linux) or a new folder under `%TEMP%` (Windows, removed afterwards). The server fails the phase if anything but `GetObject`, `ListObjectsV2` or `HeadBucket` reached it. On Linux the GTK dialog's name field is found through AT-SPI and the path typed with XTest (ASCII paths only); on Windows the common item dialog's File name box, Save and Cancel are not in its UI Automation tree (Windows 11 25H2), so they are found as child windows by control id (Edit `1001`, Button `1`, `2`) and driven with `WM_SETTEXT` / `BM_CLICK`, and the Yes of "Confirm Save As" with `TDM_CLICK_BUTTON`; any script error in this mode is a failed check and the account is still removed |
 | Linux `upload` | — | upload batches through the **native GTK multi-file dialog** into the in-process **s3s-fs** server (`cargo test … serve_uploads_for_ui -- --ignored`, made-up key) behind a `ThrottledLink` taking 6 MiB/s towards the server, with the stub tray watcher of `virtual.sh` (**tray mode**). The server is seeded through `S3Store::upload` with `inbox/existing.txt`, `other/readme.txt` and a 24 MiB `downloads/big.bin`. The helper takes commands from `<endpoint file>.ctl` (`dump` → `.state.json` with every object's content SHA-256, size, `HeadObject` size and SHA-256 metadata, the open multipart files and the operations; `verify-denied`; `abort-denied`; `delete <key>`) and fails the phase if the app sent anything but listing, reads and upload requests. The dialog is driven by Ctrl+L, the folder path typed with XTest, Return, Ctrl+A in its `Files` table and its Open button pressed through AT-SPI. Ten batches ([results](../status/status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12)): odd names, empty file, existing object and the Rust skip reasons, destination fixed while the browser moves; cancel during a PUT and Try again; cancel during multipart (aborted); refused abort (parts kept, retry cleans them); refused verification (needs inspection, no retry for it); a file changed while sent; a download beside an upload; ← Back to accounts during a batch; close (hide) and a second launch during a batch; tray Quit during multipart. Ends by deleting exactly the known keys and checking the bucket is empty. The phase is in `cloud_ui_upload.py`, run by `cloud_ui.py` |
+| Windows `-Mode upload` | **Connected** | the same server, seed and state reading as Linux `upload` (`serve_uploads_for_ui`, a new temporary bucket per run; the script talks to the helper through the same `.ctl`/`.state.json` files), with the link set to **2 MiB/s** (`SOTYWARE_UI_UPLOAD_RATE`: UI Automation reads the page far more slowly than AT-SPI, and at 6 MiB/s a 40 MiB PUT ended before the first poll), through the **native Windows multi-file dialog** ("Choose files to upload", the common item dialog `#32770`): the folder is opened by putting its path into File name (Edit `1148`) and pressing Open (Button `1`), and the address bar (ToolbarWindow32 `1001`) must then name it; files are chosen in its file list through UI Automation (`UIItem`, SelectionItem `Select`/`AddToSelection`; the dialog then shows them as quoted names in File name) or by putting their quoted names into File name; Cancel is Button `2`. Batches: the dialog cancelled (no panel, nothing sent); odd names (Unicode, spaces, `+ & # ( )`), the empty file, an existing object, and **a file another process holds open without sharing** (Failed, "could not be read on this computer", nothing stored; Try again uploads it once released), with the browser moved to the root while the dialog is open; cancel during a single PUT and Try again; cancel during multipart; refused abort; refused verification (needs inspection, no retry for it); a file appended to while it is sent; a download through the save dialog beside an upload; ← Back to accounts during a batch; close (`WM_SYSCOMMAND SC_CLOSE`, as the title bar's X: hide in tray mode) and a second launch during a batch; **tray Quit during multipart with the real mouse** (right click on the tray icon in the "Show Hidden Icons" flyout, click on Quit, as `windows.ps1`); relaunch (the account still works); then **a file name with an unpaired surrogate** (NTFS allows it) chosen with a valid one: the check requires sotyware to keep running. Every batch's server state is checked; the end deletes exactly the known keys and checks the bucket is empty. Also checked: the window driven belongs to the started binary, nothing listens on the dev-server port 1420. Needs the unlocked interactive desktop with a taskbar (exit 3 otherwise) |
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
 | Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
 | Windows `-Mode b2-download` | **Connected** for the read-only key | one real download through the dashboard and the native save dialog, [described above](#downloading-through-the-windows-dashboard-at-backblaze) |
@@ -839,10 +840,14 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|b2|b2-browse|b2-download]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
-on the desktop; it is driven through UI Automation too, not clicked). The existing `cloud-accounts.sqlite3`
+on the desktop; it is driven through UI Automation too, not clicked).
+**Exception: `-Mode upload` moves the mouse** (one right click on the tray
+icon and one click on Quit, after opening the "Show Hidden Icons" flyout;
+it may press Esc once to close the flyout) and needs the unlocked desktop;
+do not use the mouse or keyboard while it runs (about 15 minutes). The existing `cloud-accounts.sqlite3`
 is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
 from `%USERPROFILE%\.sotyware-it\b2.xml` (`Get-Credential | Export-Clixml`:
 keyID as user name, applicationKey as password, DPAPI-encrypted for your
@@ -855,6 +860,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode download
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-download
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode upload
 ```
 
 Before running a changed Windows script, check it statically (it parses
@@ -870,6 +876,12 @@ variable; that clash broke a `b2-download` attempt after its upload on
 2026-11-12. The check fails when one scope (the script, or one function)
 spells a variable two ways, and on a parse error. Without arguments it
 checks `windows.ps1`, `windows-isolated.ps1` and `windows-cloud-ui.ps1`.
+
+Keep the Windows scripts **ASCII only**, comments included; write other
+characters as `[char]0x…` or as a regex escape (`\u00b7`). Windows
+PowerShell 5.1 reads a script without a byte order mark as ANSI, so a
+literal `·` in a regex became `Â·` and never matched (seen 2026-11-12 in the
+first `-Mode upload` runs).
 
 `browse`, `download` and `upload` (and the same phases of `cloud-ui.sh`) compile and
 run the test build the first time, so they need the Rust toolchain, like
@@ -890,10 +902,13 @@ Not covered by either: an unlock prompt answered by a person, KWallet,
 Windows 10, the connection check against Hetzner, browsing at Hetzner,
 downloading from a real provider on Linux (the UI) or from Hetzner, a
 checksum mismatch at a real provider, the XDG desktop portal's save dialog,
-quitting through the tray during a download (Windows), uploads on Windows
-(no upload mode in `windows-cloud-ui.ps1`) or at any real provider,
-uploads through the XDG portal's file dialog, a duplicate-key selection (the
-GTK dialog selects within one folder), a cancel exactly between two files,
+quitting through the tray during a download (Windows), uploads at any
+real provider or on Windows 10, uploads through the XDG portal's file
+dialog, a person selecting files in the Windows dialog with the mouse or
+Ctrl+A (the driver selects through UI Automation or the File name box), a
+duplicate-key selection (both dialogs select within one folder, which
+holds each name once), names Windows itself refuses (control
+characters, `< > : " | ? *`), a cancel exactly between two files,
 key-too-long and too-large skips, an abort that hangs at quit, and the
 hashing and verifying stages in the panel (too short to be sampled; only
 "Sending" is seen).

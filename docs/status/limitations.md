@@ -406,9 +406,10 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 - **Uploads (ADR-021, ADR-022):** tested against the in-process server
   only: in Rust, with mocked commands (Vitest), and through the release
   binary and the native GTK multi-file dialog on a **virtual display under
-  WSL2** (`cloud-ui.sh upload`, 2026-11-12). **Never at Backblaze or
-  Hetzner**, never on native Windows (no upload mode in
-  `windows-cloud-ui.ps1`), never on a real Linux desktop, Wayland or with
+  WSL2** (`cloud-ui.sh upload`, 2026-11-12) and on the **native Windows 11
+  desktop** with the native Windows multi-file dialog
+  (`windows-cloud-ui.ps1 -Mode upload`, 2026-11-12). **Never at Backblaze
+  or Hetzner**, never on Windows 10, a real Linux desktop, Wayland or with
   the XDG portal's dialog. At most 100 files per batch, one batch at a time, the
   files one after another; a skipped file (existing object, duplicate name,
   invalid name) has to be renamed or moved by the user, nothing is
@@ -421,8 +422,28 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   selected, but rfd 0.17.2 drops every path that is not valid UTF-8 from the
   dialog's answer (`get_results` in its GTK 3 backend), so it never reaches
   sotyware's `invalid-name` check: the panel lists the other files and says
-  nothing about it. Seen 2026-11-12 on the virtual display; Windows not
-  checked.
+  nothing about it. Seen 2026-11-12 on the virtual display. Windows differs
+  (next item).
+- **On Windows a file name with an unpaired surrogate ends sotyware.**
+  NTFS allows such names (UTF-16 that is not valid Unicode). When one is
+  chosen in the Windows file dialog ("Choose files to upload"), rfd 0.17.2
+  decodes the dialog's answer with `String::from_utf16(..).unwrap()`
+  (`read_to_string` in `backend/win_cid/file_dialog/com.rs`); the panic, under
+  the release profile's `panic = "abort"`, ends the process with
+  `0xC0000409` before sotyware sees any path, so its own `invalid-name` skip
+  is never reached. A running download or upload is cut off (nothing is
+  aborted at the provider; a multipart upload in progress would leave its
+  parts) and the dashboard disappears; accounts and keys are kept. Seen
+  2026-11-12 on native Windows 11 in every `-Mode upload` run (the check
+  fails on purpose). The save dialog decodes its answer the same way, so a
+  save name with such a character is expected to do the same (not tested).
+  Not changed: the fix belongs in rfd (decode with `OsString::from_wide`);
+  see the
+  [status entry](status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12).
+- **The Windows upload test does not select files the way a person does.**
+  It selects them in the dialog's file list through UI Automation or types
+  their quoted names into File name; the dialog returns the same items
+  either way, but mouse clicks and Ctrl+A in the list were not reproduced.
 - **Upload conflicts are checked, not prevented.** The destination is
   checked by `HeadObject` before any data is sent (and before completing a
   multipart upload); another client that creates the same key in between is

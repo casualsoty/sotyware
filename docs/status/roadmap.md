@@ -112,8 +112,13 @@ order:
    The release binary's upload workflow with the native GTK multi-file
    dialog passed against the in-process server on the Linux virtual display
    ([status.md](status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12)).
-   **Next:** the same on the Windows real desktop (an upload mode for
-   `windows-cloud-ui.ps1`), then runs at Backblaze. Later: deletes and folder creation, each with its own
+   The same workflow passed on the native Windows 11 desktop with the
+   Windows multi-file dialog, except one defect
+   ([status.md](status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)).
+   **Next:** decide the fix for that defect (a file name with an unpaired
+   surrogate chosen in the Windows dialog ends sotyware: rfd 0.17.2
+   `unwrap`s the UTF-16 decoding under `panic = "abort"`; proposed: decode
+   lossless in a patched rfd), then runs at Backblaze. Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.
 8. restic orchestration (child process, `--json`, exit codes), tried first

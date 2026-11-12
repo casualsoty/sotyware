@@ -134,7 +134,7 @@ src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs,
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
-tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing and downloads: cloud-ui.sh, windows-cloud-ui.ps1)
+tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing, downloads and uploads: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
 
@@ -195,6 +195,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Uploads on the **native Windows 11 desktop** (2026-11-12, uncommitted
+  test code on `695e089`; 25H2 build 26200.9711, release binary SHA-256
+  `a7601843…f07c`): `windows-cloud-ui.ps1 -Mode upload` **74 passed, 1
+  failed, 3 consecutive runs**, native **Windows multi-file dialog**, real
+  Credential Manager, local s3s-fs server at 2 MiB/s; real mouse only for
+  tray Quit. Same batches as Linux plus a dialog cancel and a file another
+  process holds open (failed, then retried); bucket empty afterwards. The
+  failure is a **defect**: an unpaired-surrogate file name chosen in the
+  dialog ends sotyware (`0xC0000409`, rfd's `unwrap` under `panic =
+  "abort"`; not fixed). Regression: `-Mode download` 35/35 (3 runs),
+  `local` 19/19, `browse` 29/29; Windows `test:headless` 135 + Rust 297
+  passed, **1 failed** (an existing unit test writes a file name with `?`,
+  which Windows refuses; not changed); WSL2 `cargo test` 308 + 16 ignored.
+  **No real provider, no Windows 10.**
+  [status.md](status/status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12).
 - Uploads through the **release binary** on the **WSL2 virtual display**
   (2026-11-12, uncommitted test code on `f9026f5`): `cloud-ui.sh upload`
   **51/51, 3 runs**, native **GTK multi-file dialog**, local s3s-fs server
@@ -499,10 +514,13 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads were never run at a real provider, on native Windows or on a real
-Linux desktop (the release binary and the GTK dialog only on the WSL2
-virtual display against the local server); on Linux a non-UTF-8 file name
-silently drops out of the dialog's selection (rfd); incomplete multipart uploads whose abort failed are remembered
+Uploads were never run at a real provider, on Windows 10 or on a real
+Linux desktop (the release binary only against the local server: on the
+WSL2 virtual display with the GTK dialog and on the native Windows 11
+desktop with the Windows dialog); on Linux a non-UTF-8 file name
+silently drops out of the dialog's selection (rfd); on Windows a file name
+with an unpaired surrogate chosen in the dialog ends sotyware (rfd panics,
+`panic = "abort"`); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
@@ -515,7 +533,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (desktop UI test of uploads on native Windows, then uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (decide the fix for the Windows unpaired-surrogate abort in rfd, then uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.
