@@ -1035,7 +1035,10 @@ async fn ui_upload_state(server: &TestServer, store: &super::s3::S3Store) -> ser
             if p.is_dir() {
                 walk(&p, base, out);
             } else if let Ok(rel) = p.strip_prefix(base) {
-                out.push(rel.to_string_lossy().into_owned());
+                // Object keys use `/`, also on Windows (where the path
+                // separator would be `\`).
+                let parts: Vec<_> = rel.iter().map(|c| c.to_string_lossy()).collect();
+                out.push(parts.join("/"));
             }
         }
     }

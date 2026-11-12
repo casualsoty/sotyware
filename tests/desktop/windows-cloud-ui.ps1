@@ -5,7 +5,7 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download] [-Exe <path>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload] [-Exe <path>]
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -24,6 +24,24 @@
 #   file's SHA-256 against the server's. Files go to a new folder under
 #   %TEMP%, removed afterwards. Contacts no provider. The dialog is a real
 #   window on the desktop (it is not moved or clicked with the mouse).
+# -Mode upload: upload batches through the native Windows multi-file dialog
+#   (the common item dialog "Choose files to upload": a folder is opened by
+#   typing its path into File name and pressing Open, files are selected in
+#   its file list through UI Automation (SelectionItem) or by typing their
+#   quoted names into File name, then Open) into the in-process s3s-fs server
+#   of the Rust tests (serve_uploads_for_ui; made-up key; a new temporary
+#   bucket per run, seeded with inbox/existing.txt, other/readme.txt and
+#   downloads/big.bin), behind a link that takes 6 MiB/s. After each batch
+#   the server's state is read (every object's content, size and SHA-256
+#   metadata, the open multipart files); at the end exactly the known keys
+#   are deleted and the bucket must be empty. Local files go to a new folder
+#   under %TEMP%, removed afterwards. Contacts no provider. Unlike the other
+#   modes this one needs the unlocked, interactive desktop with a taskbar
+#   (exit 3 otherwise): for "tray Quit during a multipart upload" it MOVES THE
+#   MOUSE and clicks (right click on the tray icon, a click on Quit, as
+#   windows.ps1 does), opens the "Show Hidden Icons" flyout and may press Esc
+#   once to close it. Everything else goes through UI Automation and window
+#   messages. Do not use the mouse or keyboard while it runs.
 # -Mode b2: the real Backblaze B2 test bucket. The key comes from
 #   $env:USERPROFILE\.sotyware-it\b2.xml (Get-Credential | Export-Clixml: keyID
 #   as user name, applicationKey as password, DPAPI-encrypted for this Windows
@@ -56,11 +74,11 @@
 # The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
 # is moved aside first and put back at the end, as in windows.ps1; secret values
 # are only compared, never shown. Needs a logged-in session (the WebView2 window
-# must be created); it does not move the mouse.
+# must be created); it does not move the mouse (except -Mode upload, above).
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
-# or b2 credentials missing.
+# or b2 credentials missing, 3 (upload) no interactive desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003"
 )
@@ -135,6 +153,57 @@ public static class CloudUiW {
     try { using (var f = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete)) { return f.Length; } }
     catch (System.IO.FileNotFoundException) { return -1; }
   }
+  // ---- upload mode ----
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  // The window manager's close (the title bar's X) without the mouse:
+  // WM_SYSCOMMAND SC_CLOSE, which DefWindowProc turns into WM_CLOSE.
+  public static bool SysClose(IntPtr h) { return PostMessage(h, 0x0112, (IntPtr)0xF060, IntPtr.Zero); }
+  // A file of `size` bytes that does not compress and differs per seed.
+  public static void WriteBlob(string path, long size, int seed) {
+    using (var sha = System.Security.Cryptography.SHA256.Create())
+    using (var f = new System.IO.FileStream(path, System.IO.FileMode.CreateNew)) {
+      var block = sha.ComputeHash(new byte[] { (byte)seed }); var buf = new byte[32 * 64];
+      for (long left = size; left > 0; ) {
+        block = sha.ComputeHash(block);
+        for (int i = 0; i < 64; i++) Buffer.BlockCopy(block, 0, buf, i * 32, 32);
+        int n = (int)Math.Min(left, buf.Length); f.Write(buf, 0, n); left -= n;
+      }
+    }
+  }
+  // Tray menu (as in windows.ps1): the real mouse and the Win32 menu handle.
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
+  [DllImport("user32.dll")] static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+  public static void MouseClick(int x, int y, bool right) {
+    SetCursorPos(x, y); System.Threading.Thread.Sleep(80);
+    uint dn = right ? 0x0008u : 0x0002u, up = right ? 0x0010u : 0x0004u;
+    mouse_event(dn, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(50); mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+  }
+  public static void Esc() { keybd_event(0x1B, 0, 0, UIntPtr.Zero); keybd_event(0x1B, 0, 2, UIntPtr.Zero); }
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  // MN_GETHMENU of an open popup menu window (#32768).
+  public static IntPtr MenuOf(IntPtr h) { return SendMessage(h, 0x01E1, IntPtr.Zero, IntPtr.Zero); }
+  [DllImport("user32.dll")] static extern int GetMenuItemCount(IntPtr m);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetMenuString(IntPtr m, uint id, System.Text.StringBuilder s, int max, uint flag);
+  public static string[] MenuStrings(IntPtr hm) {
+    int n = GetMenuItemCount(hm); var r = new string[Math.Max(n, 0)];
+    for (int i = 0; i < n; i++) { var sb = new System.Text.StringBuilder(256); GetMenuString(hm, (uint)i, sb, 256, 0x400); r[i] = sb.ToString(); }
+    return r;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr h, IntPtr m, uint i, out RECT r);
+  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string n);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint f, bool inherit, uint access);
+  [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint tid);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool GetUserObjectInformation(IntPtr h, int i, System.Text.StringBuilder b, int n, out int need);
+  public static string DesktopName(IntPtr h) {
+    if (h == IntPtr.Zero) return ""; var b = new System.Text.StringBuilder(256); int n;
+    return GetUserObjectInformation(h, 2, b, 512, out n) ? b.ToString() : "";
+  }
+  public static string ClassOf(IntPtr h) { var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
   public static bool SameBytes(string a, string b) {
     using (var x = System.IO.File.OpenRead(a)) using (var y = System.IO.File.OpenRead(b)) {
       if (x.Length != y.Length) return false;
@@ -237,6 +306,17 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 "os: $((Get-CimInstance Win32_OperatingSystem).Caption) $($cv.DisplayVersion) build $($cv.CurrentBuild).$($cv.UBR)"
 "binary: $Exe"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
+if ($Mode -eq "upload") {
+  # The tray Quit needs real clicks, which reach only the input desktop with
+  # a taskbar (as in windows.ps1); stop before starting anything otherwise.
+  $inputDesk = [CloudUiW]::DesktopName([CloudUiW]::OpenInputDesktop(0, $false, 0x0001))
+  $ownDesk = [CloudUiW]::DesktopName([CloudUiW]::GetThreadDesktop([CloudUiW]::GetCurrentThreadId()))
+  if ($inputDesk -eq "" -or $inputDesk -ne $ownDesk) { "ABORT: not on the interactive input desktop (this desktop: '$ownDesk', input desktop: '$inputDesk')"; exit 3 }
+  if ([CloudUiW]::FindWindow("Shell_TrayWnd", $null) -eq [IntPtr]::Zero) { "ABORT: no taskbar (Shell_TrayWnd) on this desktop"; exit 3 }
+  [void][CloudUiW]::SetProcessDPIAware()
+  "binary SHA-256: $(Sha $Exe), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
+  "this test moves the mouse once (tray Quit); do not use the mouse or keyboard while it runs"
+}
 
 $run = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff")
 if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
@@ -257,10 +337,13 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
   $Key2 = $Key1; $Secret2 = "sotywareE2eWrongSecret0123456789abcdef"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download") {
-  # The made-up keys of serve_listing_for_ui / serve_objects_for_ui (src-tauri/src/cloud/test_server.rs).
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+  # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
+  # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs).
   if ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
+  } elseif ($Mode -eq "upload") {
+    $Key1 = "e2eUploadKey0000000001"; $Secret1 = "e2e-Upload-Secret-0123456789"; $Bucket = "upload-bucket"; $Helper = "serve_uploads_for_ui"
   } else {
     $Key1 = "e2eDownloadKey00000001"; $Secret1 = "e2e-Download-Secret-0123456789"; $Bucket = "download-bucket"; $Helper = "serve_objects_for_ui"
   }
@@ -268,17 +351,29 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $SrvFile = Join-Path $env:TEMP "sotyware-$Mode-endpoint-$run.txt"
   $SrvOut = Join-Path $env:TEMP "sotyware-$Mode-server-$run.log"
   $env:SOTYWARE_UI_SERVER_FILE = $SrvFile
+  # upload: the link takes 2 MiB/s (the helper's default is 6 MiB/s), so that
+  # UI Automation, much slower to read than AT-SPI, still sees a 40 MiB PUT
+  # in progress and can cancel it.
+  if ($Mode -eq "upload") { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
   $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::$Helper", "--", "--ignored", "--nocapture" `
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
   Remove-Item Env:SOTYWARE_UI_SERVER_FILE
+  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE -EA SilentlyContinue
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
-  if ($Mode -eq "download") {
+  if ($Mode -eq "upload") { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
+  if ($Mode -eq "download" -or $Mode -eq "upload") {
+    # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
     $Out = Join-Path $env:TEMP "sotyware-downloads-$run"
     New-Item -ItemType Directory $Out | Out-Null
+  }
+  if ($Mode -eq "upload") {
+    $UpSrc = Join-Path $env:TEMP "sotyware-upload-src-$run"
+    New-Item -ItemType Directory $UpSrc | Out-Null
+    "upload test: a new temporary bucket '$Bucket' for this run (run id $run), local files in $UpSrc"
   }
 } else {
   $Key1 = "e2eKeyIdOne000000000001"; $Secret1 = "e2e-Secret-One-0123456789abcdef"
@@ -509,10 +604,246 @@ function SaveAs($dlg, $path) {
 function Saved { @(Get-ChildItem -Force $Out | ForEach-Object { $_.Name } | Sort-Object) }
 function Says([string[]]$parts, [double]$timeout = 60) { WaitFor { $t = PageText; foreach ($x in $parts) { if (-not $t.Contains($x)) { return $false } }; $true } $timeout }
 
+# ---- upload mode: local files, the server's state, the panel, the dialog ----
+$MiB = 1048576
+function UpSha([string]$path) { (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() }
+function Utf8([string]$s) { , [System.Text.Encoding]::UTF8.GetBytes($s) }
+function UpFolder([string]$batch) { $f = Join-Path $UpSrc $batch; if (-not (Test-Path -LiteralPath $f)) { New-Item -ItemType Directory $f | Out-Null }; $f }
+# Writes a local test file through .NET, so any name NTFS allows works
+# (also an unpaired surrogate, which PowerShell's own cmdlets may not pass).
+function UpFile([string]$batch, [string]$name, [byte[]]$data) {
+  $f = Join-Path (UpFolder $batch) $name; [System.IO.File]::WriteAllBytes($f, $data); $f
+}
+function UpBlob([string]$batch, [string]$name, [long]$size, [int]$seed) {
+  $f = Join-Path (UpFolder $batch) $name; [CloudUiW]::WriteBlob($f, $size, $seed); $f
+}
+# Ordinal (case-sensitive) string sets: object keys and file names.
+function NewSet { New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal) }
+$script:created = NewSet  # every key an upload of this mode may have created
+$script:mpSeen = NewSet   # every multipart file s3s-fs showed during the run
+# The helper's control file (serve_uploads_for_ui): commands, one per line,
+# UTF-8 without BOM, written under another name and renamed into place.
+function Ctl([string[]]$cmds) {
+  $tmp = "$SrvFile.ctl.tmp"
+  [System.IO.File]::WriteAllText($tmp, (($cmds -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+  [System.IO.File]::Move($tmp, "$SrvFile.ctl")
+  WaitFor { -not (Test-Path -LiteralPath "$SrvFile.ctl") } 30
+}
+# The server's state: Objects (key -> object, case-sensitive), Multipart, Ops.
+function State {
+  $f = "$SrvFile.state.json"
+  if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f }
+  if (-not (Ctl @("dump")) -or -not (WaitFor { Test-Path -LiteralPath $f } 10)) { throw "the upload server did not answer dump" }
+  $j = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  Remove-Item -LiteralPath $f
+  $objs = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+  foreach ($o in @($j.objects)) { if ($o) { $objs[[string]$o.key] = $o } }
+  $mp = @($j.multipart | Where-Object { $_ }); foreach ($x in $mp) { [void]$script:mpSeen.Add([string]$x) }
+  [pscustomobject]@{ Objects = $objs; Multipart = $mp; Ops = @($j.ops) }
+}
+function Obj($st, [string]$key) { if ($st.Objects.ContainsKey($key)) { $st.Objects[$key] } else { $null } }
+function KeysUnder($st, [string]$prefix) { @($st.Objects.Keys | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) } | Sort-Object) -join "|" }
+function SortedKeys($list) { @($list | Sort-Object) -join "|" }
+# The object holds exactly the local file's bytes, HEAD says so, and its
+# SHA-256 metadata is the one sotyware writes. Sizes compared as text, so a
+# missing HEAD size never equals 0.
+function StoredOk($o, [string]$path) {
+  if ($null -eq $o) { return $false }
+  $len = "$((Get-Item -LiteralPath $path).Length)"; $h = UpSha $path
+  ("$($o.size)" -eq $len) -and ($o.sha256 -eq $h) -and ("$($o.headSize)" -eq $len) -and ($o.sha256Metadata -eq $h)
+}
+# Upload requests the server saw so far (PutObject, multipart).
+function UploadOps($st) { @($st.Ops | Where-Object { $_ -match '^(PutObject|CreateMultipartUpload|UploadPart|CompleteMultipartUpload)' }).Count }
+
+# The panel (CloudUpload.svelte, a region named "Upload") and its file rows.
+function AllNames($el) { @($el.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join " | " }
+# Searching WebView2's whole tree takes long (a 40 MiB PUT at 6 MiB/s ended
+# before one FindAll-based poll), so the region is found with one FindFirst
+# and everything else is read inside it.
+$UpRegionCond = [System.Windows.Automation.AndCondition]::new((PCN "Upload"),
+  [System.Windows.Automation.NotCondition]::new((PCT $CT::Text)), [System.Windows.Automation.NotCondition]::new((PCT $CT::Button)))
+$UpListCond = [System.Windows.Automation.AndCondition]::new((PCN "Files in this upload"), [System.Windows.Automation.NotCondition]::new((PCT $CT::ListItem)))
+function UpRegion { $d = Dash; if (-not $d) { return $null }; try { $d.FindFirst($S::Descendants, $UpRegionCond) } catch { $null } }
+function UpPanel { $r = UpRegion; if (-not $r) { return "" }; try { AllNames $r } catch { "" } }
+# One text per file row: WebView2 names a list item after all its text
+# ("a.txt12 BUploaded and verified...").
+function UpRows {
+  $r = UpRegion; if (-not $r) { return , @() }
+  try {
+    $list = $r.FindFirst($S::Descendants, $UpListCond)
+    if (-not $list) { return , @() }
+    $res = @(); foreach ($it in @($list.FindAll($S::Children, (PCT $CT::ListItem)))) { $res += , [string]$it.Current.Name }
+    , $res
+  } catch { , @() }
+}
+function UpRow([string]$name) { foreach ($x in (UpRows)) { if ($x.StartsWith($name, [StringComparison]::Ordinal)) { return $x } }; "" }
+$script:seen = New-Object System.Collections.Generic.List[string]
+# Waits for $cond (a block taking the panel text), keeping every panel text
+# seen meanwhile; the text that matched, or $null. (Not named $pred: WaitFor's
+# parameter of that name would be seen inside the block instead.)
+$script:polls = 0; $script:pollTime = [Diagnostics.Stopwatch]::new()
+function Until([scriptblock]$cond, [double]$timeout = 60) {
+  $script:untilCond = $cond; $script:untilText = $null
+  $ok = WaitFor {
+    $script:pollTime.Start(); $t = UpPanel; $script:pollTime.Stop(); $script:polls++
+    if ($script:seen.Count -eq 0 -or $script:seen[$script:seen.Count - 1] -ne $t) { $script:seen.Add($t) }
+    $script:untilText = $t
+    [bool](& $script:untilCond $t)
+  } $timeout
+  if (-not $ok) {
+    # Diagnosis: the last panel text, non-ASCII characters as <hex>.
+    $e = -join ("$script:untilText".ToCharArray() | ForEach-Object { if ([int]$_ -ge 32 -and [int]$_ -lt 127) { $_ } else { "<{0:X}>" -f [int]$_ } })
+    Write-Host "  (wait timed out after $timeout s; last panel text: $($e.Substring([Math]::Max(0, $e.Length - 400))))"
+    $sx = @($script:seen | Where-Object { $_.Contains("Sending") }); if ($sx.Count -gt 0) {
+      $e = -join ($sx[$sx.Count - 1].ToCharArray() | ForEach-Object { if ([int]$_ -ge 32 -and [int]$_ -lt 127) { $_ } else { "<{0:X}>" -f [int]$_ } })
+      Write-Host "  (last text with Sending: $e)"
+    }
+  }
+  if ($ok) { $script:untilText } else { $null }
+}
+function Finished([string]$t) { $t.Contains("Upload finished.") -or $t.Contains("Upload cancelled.") -or $t.Contains("Upload stopped after an error.") }
+# "Retrying upload" is two texts to UI Automation ("Retrying upload", " to ").
+function Retried([string]$t) { $t.Contains("Retrying upload") -and (Finished $t) }
+# Whether panel text $t shows file $name's row as "Sending <U+00B7> n%" with
+# n >= $least (the row is one text, the panel's texts are joined by " | ").
+function SendingIn([string]$t, [string]$name, [int]$least = 0) {
+  $m = [regex]::Match($t, '(?:^| \| )' + [regex]::Escape($name) + '[^|]*?Sending \u00b7 (\d+)%')
+  $m.Success -and [int]$m.Groups[1].Value -ge $least
+}
+function Btn([string]$name) { $null -ne (Named $name $CT::Button) }
+function UpDismiss { $null = Press "Dismiss"; WaitFor { (UpPanel) -eq "" } 5 | Out-Null }
+$UploadButton = "Upload files$([char]0x2026)"
+function UploadEnabled { $b = Named $UploadButton $CT::Button; ($null -ne $b) -and $b.Current.IsEnabled }
+# Opens folder $folder of the bucket's root through its folder button.
+function UpGo([string]$folder, [string]$marker) {
+  if (-not (PageText).Contains("Root of the bucket")) { $null = PressFolder $Bucket }
+  (WaitFor { (PageText).Contains("Root of the bucket") } 20) -and (PressFolder $folder) -and (WaitFor { (PageText).Contains($marker) } 20)
+}
+
+# The native Windows Open dialog (common item dialog, as rfd shows it): its
+# File name box (Edit, control id 1148), Open (1) and Cancel (2) are classic
+# child windows, the address bar's text (ToolbarWindow32 1001) says which
+# folder it shows, and its file list is in the UI Automation tree
+# ("Items View", one UIItem per file, SelectionItem pattern).
+$OpenTitle = "Choose files to upload"
+function OpenNameBox($dlg) { $h = [CloudUiW]::ChildById((Hwnd $dlg), 1148, "Edit"); if ($h -eq [IntPtr]::Zero) { $null } else { $h } }
+function DialogFolder($dlg) { $h = [CloudUiW]::ChildById((Hwnd $dlg), 1001, "ToolbarWindow32"); if ($h -eq [IntPtr]::Zero) { "" } else { [CloudUiW]::GetText($h) } }
+function DialogItems($dlg) { @($dlg.FindAll($S::Descendants, [System.Windows.Automation.PropertyCondition]::new($A::ClassNameProperty, "UIItem"))) }
+$SelItem = [System.Windows.Automation.SelectionItemPattern]::Pattern
+# Presses "Upload files...", opens $folder in the dialog, chooses files and
+# presses Open. $how: "list" selects $names in the file list (UI Automation:
+# Select, then AddToSelection), "all" selects every item of the folder (there
+# must be $names.Count), "names" types the quoted names into File name.
+# $before runs while the dialog is open, just before Open.
+function Pick([string]$folder, [string[]]$names, [string]$how = "names", [scriptblock]$before = $null) {
+  if (-not (Press $UploadButton)) { Write-Host "  no '$UploadButton' button"; return $false }
+  $script:odlg = $null
+  if (-not (WaitFor { $script:odlg = DialogNamed $OpenTitle; ($null -ne $script:odlg) -and ($null -ne (OpenNameBox $script:odlg)) } 20)) { Write-Host "  no file dialog"; return $false }
+  $dlg = $script:odlg; $box = OpenNameBox $dlg; $open = DialogButton $dlg 1
+  [CloudUiW]::SetText($box, $folder); [void][CloudUiW]::Click($open)
+  if (-not (WaitFor { (DialogFolder $script:odlg) -eq "Address: $folder" } 10)) { Write-Host "  the dialog shows '$(DialogFolder $dlg)'"; CancelDialog $dlg; return $false }
+  $want = NewSet; foreach ($n in $names) { [void]$want.Add($n) }
+  $script:listed = @()
+  $ok = WaitFor {
+    $script:listed = @(DialogItems $script:odlg)
+    if ($how -eq "all") { return $script:listed.Count -eq $names.Count }
+    $have = NewSet; foreach ($i in $script:listed) { [void]$have.Add($i.Current.Name) }
+    $want.IsSubsetOf($have)
+  } 10
+  if (-not $ok) { Write-Host "  the dialog lists: $(@($script:listed | ForEach-Object { $_.Current.Name }) -join ' | ')"; CancelDialog $dlg; return $false }
+  if ($how -eq "names") {
+    [CloudUiW]::SetText($box, (@($names | ForEach-Object { '"' + $_ + '"' }) -join " "))
+  } else {
+    $first = $true
+    foreach ($i in $script:listed) {
+      if ($how -eq "all" -or $want.Contains($i.Current.Name)) {
+        $sp = $i.GetCurrentPattern($SelItem)
+        if ($first) { $sp.Select(); $first = $false } else { $sp.AddToSelection() }
+      }
+    }
+    # The dialog writes the selection into File name, each name quoted.
+    $quotes = 2 * $names.Count
+    if ($names.Count -gt 1 -and -not (WaitFor { ([CloudUiW]::GetText($box).ToCharArray() | Where-Object { $_ -eq '"' }).Count -eq $quotes } 5)) {
+      Write-Host "  File name after the selection: '$([CloudUiW]::GetText($box))'"; CancelDialog $dlg; return $false
+    }
+  }
+  if ($before) { & $before }
+  [void][CloudUiW]::Click($open)
+  WaitFor { $null -eq (DialogNamed $OpenTitle) } 15
+}
+
+# The tray (as in windows.ps1): the icon sits in the "Show Hidden Icons"
+# flyout on Windows 11; its context menu is not in the UI Automation tree,
+# so it is opened with a real right click and read through MN_GETHMENU.
+$root = $A::RootElement
+$OverflowClass = "TopLevelWindowForOverflowXamlIsland"
+function OverflowShown { $o = $root.FindFirst($S::Children, [System.Windows.Automation.PropertyCondition]::new($A::ClassNameProperty, $OverflowClass)); ($null -ne $o) -and -not $o.Current.BoundingRectangle.IsEmpty }
+function OverflowOpen { (OverflowShown) -and [CloudUiW]::ClassOf([CloudUiW]::GetForegroundWindow()) -eq $OverflowClass }
+function TrayIcons {
+  @($root.FindAll($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCA "NotifyItemIcon"), (PCN "sotyware"))) |
+    Where-Object { $r = $_.Current.BoundingRectangle; -not $r.IsEmpty -and -not [double]::IsNaN($r.X) })
+}
+function OpenOverflow {
+  if (OverflowOpen) { return }
+  if (OverflowShown) { WaitFor { -not (OverflowShown) } 3 | Out-Null }
+  if ((TrayIcons).Count -ge 1) { return }
+  $chev = $root.FindFirst($S::Descendants, (PCN "Show Hidden Icons"))
+  if ($chev) { $chev.GetCurrentPattern($Invoke).Invoke(); WaitFor { OverflowOpen } 3 | Out-Null; Start-Sleep -Milliseconds 400 }
+}
+# Right-clicks the tray icon and clicks "Quit" in its menu, both with the
+# real mouse. $true once the click on Quit was sent.
+function TrayQuit {
+  $script:icon = $null
+  WaitFor { OpenOverflow; $script:icon = @(TrayIcons)[0]; $null -ne $script:icon } 8 | Out-Null
+  if (-not $script:icon) { $script:why = "tray icon not found"; return $false }
+  $r = $script:icon.Current.BoundingRectangle
+  [CloudUiW]::MouseClick([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2), $true)
+  $script:menuWnd = [IntPtr]::Zero
+  WaitFor { $mw = @([CloudUiW]::Find("#32768", [uint32[]]@((Procs).Id))); if ($mw.Count -ge 1) { $script:menuWnd = $mw[0] }; $script:menuWnd -ne [IntPtr]::Zero } 4 | Out-Null
+  if ($script:menuWnd -eq [IntPtr]::Zero) { $script:why = "context menu did not open"; return $false }
+  $hm = [CloudUiW]::MenuOf($script:menuWnd)
+  $idx = [array]::IndexOf([CloudUiW]::MenuStrings($hm), "Quit")
+  if ($idx -lt 0) { $script:why = "no Quit in the menu: $([CloudUiW]::MenuStrings($hm) -join '|')"; [CloudUiW]::Esc(); return $false }
+  $rc = New-Object CloudUiW+RECT
+  if (-not [CloudUiW]::GetMenuItemRect([IntPtr]::Zero, $hm, [uint32]$idx, [ref]$rc)) { $script:why = "GetMenuItemRect failed"; [CloudUiW]::Esc(); return $false }
+  [CloudUiW]::MouseClick([int](($rc.L + $rc.R) / 2), [int](($rc.T + $rc.B) / 2), $false)
+  $true
+}
+function DashVisible { $d = Dash; ($null -ne $d) -and [CloudUiW]::IsWindowVisible((Hwnd $d)) }
+# Starts the app and opens the bucket's root in the browser.
+# Refuses while one still runs: that start would only hand over and exit.
+function LaunchToBucket {
+  $script:app = $null
+  if ((Procs).Count -gt 0) { Write-Host "  sotyware still runs; not started again"; return $false }
+  $script:app = Start-Process $Exe -PassThru; $null = $script:app.Handle
+  (WaitFor { $null -ne (Dash) } 20) -and (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { Btn "Open bucket" } 15) -and
+    (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("inbox") } 30)
+}
+# Deletes exactly the keys this mode may have created and the seed (never an
+# unknown key: those are reported), then checks the bucket is empty.
+function UpCleanup {
+  $st = State
+  $known = NewSet; foreach ($k in $script:created) { [void]$known.Add($k) }; foreach ($k in $script:objects.Keys) { [void]$known.Add($k) }
+  $unknown = @($st.Objects.Keys | Where-Object { -not $known.Contains($_) })
+  Check "upload: the server holds no object this run does not know about" ($unknown.Count -eq 0) ($unknown -join "|")
+  "  keys created by uploads and still stored: $(@($st.Objects.Keys | Where-Object { $script:created.Contains($_) } | Sort-Object) -join ' | ')"
+  "  multipart uploads seen during the run (s3s-fs files): $(@($script:mpSeen) -join ' | ')"
+  $del = @($st.Objects.Keys | Where-Object { $known.Contains($_) } | Sort-Object | ForEach-Object { "delete $_" })
+  if ($del.Count -gt 0) { $null = Ctl $del }
+  $st = State
+  Check "upload cleanup by exact key: the bucket is empty, no multipart upload left" ($st.Objects.Count -eq 0 -and $st.Multipart.Count -eq 0) "$(SortedKeys $st.Objects.Keys) $($st.Multipart -join ',')"
+}
+
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
-  $p = Start-Process $Exe -PassThru
+  $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
   Check "startup: dashboard window" (WaitFor { $null -ne (Dash) } 20)
+  if ($Mode -eq "upload") {
+    $wpid = [uint32]0; [void][CloudUiW]::GetWindowThreadProcessId((Hwnd (Dash)), [ref]$wpid)
+    Check "the dashboard driven is the window of the started release binary (pid $($p.Id), $Exe)" ($wpid -eq $p.Id -and (Procs).Count -eq 1)
+    $listen = @(Get-NetTCPConnection -State Listen -LocalPort 1420 -EA SilentlyContinue)
+    Check "the page is the bundled frontend: nothing listens on the dev server port 1420" ($listen.Count -eq 0) "$($listen.Count) listener(s)"
+  }
   Check "Cloud Storage link opens the empty page" ((WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { (PageText) -like "*No storage accounts yet*" } 10)) (PageText)
   Check "no entry for this run's id in Credential Manager yet" ([CloudUiW]::Matches((Target $id), "") -eq -1)
 
@@ -655,6 +986,273 @@ try {
     $d = DialogNamed "Save download as"; if ($d) { CancelDialog $d }
     $null = Press "Dismiss"
    }
+  } elseif ($Mode -eq "upload") {
+   $locker = $null
+   try {
+    $ok = $ok -and (WaitFor { $t = PageText; $t.Contains("inbox") -and $t.Contains("downloads") } 30)
+    Check "Open bucket lists the seeded folders" $ok (PageText)
+    $st = State
+    $seedOk = (SortedKeys $st.Objects.Keys) -eq (SortedKeys $script:objects.Keys)
+    foreach ($k in $script:objects.Keys) { $seedOk = $seedOk -and (Obj $st $k) -and (Obj $st $k).sha256Metadata -eq $script:objects[$k].sha256 }
+    Check "before any upload the server holds exactly the three seeded objects, sotyware's SHA-256 with each" ($seedOk -and $st.Multipart.Count -eq 0) "$(SortedKeys $st.Objects.Keys) $($st.Multipart -join ',')"
+    $opsBefore = UploadOps $st
+
+    # 0. The dialog cancelled: nothing starts.
+    Check "open inbox/" (UpGo "inbox" "existing.txt") (PageText)
+    $script:odlg = $null
+    $shown = (Press $UploadButton) -and (WaitFor { $script:odlg = DialogNamed $OpenTitle; ($null -ne $script:odlg) -and ($null -ne (OpenNameBox $script:odlg)) } 20)
+    $isOpen = $shown -and $script:odlg.Current.ClassName -eq "#32770" -and $null -ne (DialogButton $script:odlg 1)
+    Check "Upload files$([char]0x2026) opens the native Windows dialog '$OpenTitle' (common item dialog #32770 of sotyware's process, File name box and Open)" $isOpen (PageText)
+    Check "while it is open, the panel says to choose the files" ((UpPanel).Contains("Choose the files to upload")) (UpPanel)
+    if ($script:odlg) { CancelDialog $script:odlg }
+    $gone = WaitFor { ($null -eq (DialogNamed $OpenTitle)) -and ((UpPanel) -eq "") } 10
+    $st = State
+    Check "Cancel in the dialog: no panel, Upload files$([char]0x2026) enabled, nothing sent (server unchanged)" ($gone -and (UploadEnabled) -and (SortedKeys $st.Objects.Keys) -eq (SortedKeys $script:objects.Keys) -and (UploadOps $st) -eq $opsBefore) "$(UpPanel) | $(SortedKeys $st.Objects.Keys)"
+
+    # 1. Odd names, the empty file, an existing object, a file another
+    #    process holds open without sharing; sequential uploads, progress, and
+    #    the destination fixed when the dialog opened.
+    $UniName = "Gr$([char]0xFC)$([char]0xDF)e $([char]0xDC)n$([char]0xEF)c$([char]0xF6)d$([char]0xE9) $([char]0x65E5)$([char]0x672C).txt"
+    $SpecialName = "report 2024 (final) + notes & more #1.txt"
+    $b1 = @{}
+    $b1[$UniName] = UpFile "batch1" $UniName (Utf8 "Unicode name")
+    $b1["empty.txt"] = UpFile "batch1" "empty.txt" ([byte[]]@())
+    $b1[$SpecialName] = UpFile "batch1" $SpecialName (Utf8 "spaces, parentheses, plus, ampersand and hash")
+    $b1["existing.txt"] = UpFile "batch1" "existing.txt" (Utf8 "mine, not the bucket's")
+    $b1["medium.bin"] = UpBlob "batch1" "medium.bin" (12 * $MiB) 1
+    $b1["locked.txt"] = UpFile "batch1" "locked.txt" (Utf8 "held open without sharing")
+    $B1Names = @($UniName, "empty.txt", $SpecialName, "existing.txt", "medium.bin", "locked.txt")
+    # Another process (this script) holds locked.txt open with no sharing.
+    $locker = [System.IO.File]::Open($b1["locked.txt"], "Open", "Read", "None")
+    $script:nav = $null; $script:seen.Clear()
+    $ok = Pick (UpFolder "batch1") $B1Names "list" { $script:nav = (PressFolder $Bucket) -and (WaitFor { (PageText).Contains("Root of the bucket") } 10) }
+    Check "native dialog: folder opened through File name + Open, 6 files selected in its file list (UI Automation), Open" $ok
+    Check "while the dialog was open the browser moved to the bucket root" ($script:nav -eq $true) "$script:nav"
+    # "Upload", " to " and the destination are separate texts to UI Automation.
+    $t = Until { param($x) $x.Contains("$Bucket / ") } 15
+    Check "the panel names the folder captured when the dialog opened, not the one shown now" ($t -and $t.Contains("$Bucket / inbox/") -and (PageText).Contains("Root of the bucket")) "$t"
+    $mid = Until { param($x) SendingIn $x "medium.bin" } 60
+    $st = State
+    Check "while medium.bin is being sent, the server has no object inbox/medium.bin yet" ($mid -and -not $st.Objects.ContainsKey("inbox/medium.bin")) "$mid $(KeysUnder $st 'inbox/')"
+    $done = Until { param($x) Finished $x } 120
+    $ur = UpRows
+    "  file rows: $($ur -join ' || ')"
+    Check "final summary: Upload finished. 6 files: 4 uploaded, 1 skipped, 1 failed." ($done -and $done.Contains("Upload finished. 6 files: 4 uploaded, 1 skipped, 1 failed.")) "$done"
+    $oneRowEach = $ur.Count -eq 6; foreach ($n in $B1Names) { $oneRowEach = $oneRowEach -and @($ur | Where-Object { $_.StartsWith($n, [StringComparison]::Ordinal) }).Count -eq 1 }
+    Check "6 rows, one per chosen file, names exactly as on disk (Unicode, spaces, + & # ( ))" $oneRowEach ($ur -join " || ")
+    Check "the empty file, the Unicode name, the special characters and medium.bin: Uploaded and verified" (@("empty.txt", $UniName, $SpecialName, "medium.bin" | Where-Object { -not (UpRow $_).Contains("Uploaded and verified") }).Count -eq 0) ($ur -join " || ")
+    Check "existing.txt: Skipped: already in this folder" ((UpRow "existing.txt").Contains("Skipped: already in this folder")) (UpRow "existing.txt")
+    $lr = UpRow "locked.txt"
+    Check "locked.txt (open in another process without sharing): Failed, could not be read on this computer, nothing stored" ($lr.Contains("Failed") -and ($lr.Contains("could not be read on this computer") -or $lr.Contains("may not read this file")) -and $lr.Contains("Nothing was stored for this file.")) $lr
+    $stages = @("Computing the SHA-256 checksum", "Sending $([char]0xB7) ", "Verifying the stored object", "Starting$([char]0x2026)" | Where-Object { $s1 = $_; @($script:seen | Where-Object { $_.Contains($s1) }).Count -gt 0 })
+    "  stages seen in the panel ($($script:seen.Count) distinct samples; $script:polls polls so far, $([Math]::Round($script:pollTime.Elapsed.TotalMilliseconds / [Math]::Max(1, $script:polls))) ms each): $($stages -join ', ')"
+    Check "progress: medium.bin was seen Sending with a percentage" ($stages -contains "Sending $([char]0xB7) ") ($stages -join ", ")
+    $st = State
+    foreach ($n in "empty.txt", $UniName, $SpecialName, "medium.bin", "locked.txt") { [void]$script:created.Add("inbox/$n") }
+    Check "server: inbox/ holds exactly existing.txt and the four uploaded files under their exact keys" ((KeysUnder $st "inbox/") -eq (SortedKeys @("inbox/existing.txt", "inbox/empty.txt", "inbox/$UniName", "inbox/$SpecialName", "inbox/medium.bin"))) (KeysUnder $st "inbox/")
+    $contentOk = (StoredOk (Obj $st "inbox/empty.txt") $b1["empty.txt"]) -and (Obj $st "inbox/empty.txt").sha256 -eq "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    foreach ($n in $UniName, $SpecialName, "medium.bin") { $contentOk = $contentOk -and (StoredOk (Obj $st "inbox/$n") $b1[$n]) }
+    Check "server: contents, sizes and SHA-256 metadata equal the local files (empty file: 0 bytes, e3b0...)" $contentOk
+    Check "server: the existing object was left as it was; nothing went to the root; no multipart upload open" ((Obj $st "inbox/existing.txt").sha256 -eq $script:objects["inbox/existing.txt"].sha256 -and @($st.Objects.Keys | Where-Object { -not $_.Contains("/") }).Count -eq 0 -and $st.Multipart.Count -eq 0)
+    Check "Try again offers exactly 1 file (locked.txt)" (Btn "Try 1 file again") (PageText)
+    $locker.Close(); $locker = $null
+    $null = Press "Try 1 file again"
+    $done = Until { param($x) Retried $x } 60
+    $st = State
+    Check "once the other process closed it, Try again uploads locked.txt: Upload finished. 1 file: 1 uploaded." ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "inbox/locked.txt") $b1["locked.txt"]) -and -not $done.Contains("medium.bin")) "$done"
+    UpDismiss
+
+    # 2. Cancel during a single PUT; the file before it stays, the one after
+    #    it is not started; Try again takes exactly the two eligible files.
+    $a2 = UpFile "batch2" "a-first.txt" (Utf8 "first")
+    $b2 = UpBlob "batch2" "b-big.bin" (40 * $MiB) 2
+    $c2 = UpFile "batch2" "c-third.txt" (Utf8 "third")
+    $ok = (UpGo "inbox" "existing.txt") -and (Pick (UpFolder "batch2") @("a-first.txt", "b-big.bin", "c-third.txt") "names")
+    $running = $ok -and (Until { param($x) SendingIn $x "b-big.bin" 10 } 60)
+    Check "batch 2 (names typed into File name): a-first.txt done, b-big.bin being sent (single PUT)" ($running -and (UpRow "a-first.txt").Contains("Uploaded and verified")) (UpPanel)
+    $null = Press "Cancel upload"
+    $done = Until { param($x) Finished $x } 60
+    Check "Cancel during b-big.bin: Upload cancelled. 3 files: 1 uploaded, 1 cancelled, 1 not started." ($done -and $done.Contains("Upload cancelled. 3 files: 1 uploaded, 1 cancelled, 1 not started.")) "$done"
+    Check "rows: cancelled during its upload with nothing stored; the next not started" ((UpRow "b-big.bin").Contains("Cancelled during its upload") -and (UpRow "b-big.bin").Contains("Nothing was stored for this file.") -and (UpRow "c-third.txt").Contains("Not started: the upload was cancelled")) ((UpRows) -join " || ")
+    $st = State
+    foreach ($n in "a-first.txt", "b-big.bin", "c-third.txt") { [void]$script:created.Add("inbox/$n") }
+    Check "server after the cancel: a-first.txt stored, no b-big.bin, no c-third.txt, no multipart" ((StoredOk (Obj $st "inbox/a-first.txt") $a2) -and -not $st.Objects.ContainsKey("inbox/b-big.bin") -and -not $st.Objects.ContainsKey("inbox/c-third.txt") -and $st.Multipart.Count -eq 0) "$(KeysUnder $st 'inbox/') $($st.Multipart -join ',')"
+    Check "Try again offers exactly the 2 eligible files" (Btn "Try 2 files again") (PageText)
+    $null = Press "Try 2 files again"
+    $done = Until { param($x) Retried $x } 90
+    $st = State
+    Check "retry: Upload finished. 2 files: 2 uploaded; a-first.txt not sent again" ($done -and $done.Contains("Upload finished. 2 files: 2 uploaded.") -and (StoredOk (Obj $st "inbox/b-big.bin") $b2) -and (StoredOk (Obj $st "inbox/c-third.txt") $c2) -and $st.Multipart.Count -eq 0) "$done"
+    UpDismiss
+
+    # 3. Cancel during a multipart upload: aborted, no parts left.
+    $null = UpBlob "batch3" "a-multi.bin" (72 * $MiB) 3
+    $ok = Pick (UpFolder "batch3") @("a-multi.bin") "names"
+    $running = $ok -and (Until { param($x) SendingIn $x "a-multi.bin" 25 } 60)
+    $st = State
+    Check "batch 3: a 72 MiB multipart upload in progress; the server holds its parts" ($running -and $st.Multipart.Count -gt 0) "$(UpPanel) $($st.Multipart -join ',')"
+    $null = Press "Cancel upload"
+    $done = Until { param($x) Finished $x } 60
+    $st = State
+    [void]$script:created.Add("inbox/a-multi.bin")
+    Check "multipart cancelled: Upload cancelled. 1 file: 0 uploaded, 1 cancelled.; nothing stored, aborted (no parts left)" ($done -and $done.Contains("Upload cancelled. 1 file: 0 uploaded, 1 cancelled.") -and (UpRow "a-multi.bin").Contains("Nothing was stored for this file.") -and -not $st.Objects.ContainsKey("inbox/a-multi.bin") -and $st.Multipart.Count -eq 0) "$done $($st.Multipart -join ',')"
+    UpDismiss
+
+    # 4. The abort is refused: parts may remain; not retryable itself; the
+    #    retry of the other file aborts the remembered upload again.
+    $null = UpBlob "batch4" "a-parts.bin" (72 * $MiB) 4
+    $b4 = UpFile "batch4" "b-next.txt" (Utf8 "next")
+    $ok = (Ctl @("abort-denied")) -and (Pick (UpFolder "batch4") @("a-parts.bin", "b-next.txt") "names")
+    $running = $ok -and (Until { param($x) SendingIn $x "a-parts.bin" 25 } 60)
+    $null = Press "Cancel upload"
+    $done = Until { param($x) Finished $x } 60
+    $st = State
+    foreach ($n in "a-parts.bin", "b-next.txt") { [void]$script:created.Add("inbox/$n") }
+    Check "abort refused: the row says parts may remain; nothing completed; the parts are still on the server" ($running -and $done -and (UpRow "a-parts.bin").Contains("may remain at the provider") -and -not $st.Objects.ContainsKey("inbox/a-parts.bin") -and $st.Multipart.Count -gt 0) "$done $(UpRow 'a-parts.bin') $($st.Multipart -join ',')"
+    Check "Try again offers only b-next.txt (1 file), never the file with incomplete parts" ((Btn "Try 1 file again") -and -not (Btn "Try 2 files again")) (PageText)
+    $null = Press "Try 1 file again"
+    $done = Until { param($x) Retried $x } 60
+    $st = State
+    Check "retry: the remembered upload was aborted (cleanup shown) and b-next.txt uploaded; no parts left" ($done -and $done.Contains("were removed") -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "inbox/b-next.txt") $b4) -and -not $st.Objects.ContainsKey("inbox/a-parts.bin") -and $st.Multipart.Count -eq 0) "$done $($st.Multipart -join ',')"
+    UpDismiss
+
+    # 5. Verification refused after the commit point: needs inspection, no
+    #    retry for that file, and the batch stops.
+    $a5 = UpFile "batch5" "a-inspect.txt" (Utf8 "inspect me")
+    $b5 = UpFile "batch5" "b-after.txt" (Utf8 "after")
+    $ok = (Ctl @("verify-denied")) -and (Pick (UpFolder "batch5") @("a-inspect.txt", "b-after.txt") "names")
+    $done = if ($ok) { Until { param($x) Finished $x } 60 } else { $null }
+    Check "verification refused: Upload stopped after an error. 2 files: 0 uploaded, 1 failed, 1 not started." ($ok -and $done -and $done.Contains("Upload stopped after an error. 2 files: 0 uploaded, 1 failed, 1 not started.")) "$done"
+    Check "the row says the provider may have stored it and sotyware does not retry or delete it" ((UpRow "a-inspect.txt").Contains("Failed") -and (UpRow "a-inspect.txt").Contains("may have stored this file") -and (UpRow "b-after.txt").Contains("Not started: the upload stopped after an error")) ((UpRows) -join " || ")
+    $st = State
+    foreach ($n in "a-inspect.txt", "b-after.txt") { [void]$script:created.Add("inbox/$n") }
+    Check "server: the ambiguous object really was stored, and was not deleted" ((StoredOk (Obj $st "inbox/a-inspect.txt") $a5) -and -not $st.Objects.ContainsKey("inbox/b-after.txt")) (KeysUnder $st "inbox/")
+    Check "no unsafe retry: Try again offers 1 file (b-after.txt), not the one that needs inspection" ((Btn "Try 1 file again") -and -not (Btn "Try 2 files again")) (PageText)
+    $null = Press "Try 1 file again"
+    $done = Until { param($x) Retried $x } 60
+    $st = State
+    Check "retry uploads only b-after.txt" ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "inbox/b-after.txt") $b5) -and -not $done.Contains("a-inspect")) "$done"
+    UpDismiss
+
+    # 6. A file that changes while it is sent fails with nothing stored; its
+    #    retry uploads the new content.
+    $a6 = UpBlob "batch6" "a-changing.bin" (30 * $MiB) 6
+    $ok = Pick (UpFolder "batch6") @("a-changing.bin") "names"
+    $running = $ok -and (Until { param($x) SendingIn $x "a-changing.bin" 20 } 60)
+    # sotyware opens the file with read, write and delete sharing, so another
+    # program can still append to it.
+    if ($running) { [System.IO.File]::AppendAllText($a6, "appended while sending") }
+    $done = Until { param($x) Finished $x } 60
+    $st = State
+    [void]$script:created.Add("inbox/a-changing.bin")
+    Check "changed while sent: Failed, the file changed, nothing stored, Try 1 file again" ($running -and $done -and (UpRow "a-changing.bin").Contains("Failed") -and (UpRow "a-changing.bin").Contains("changed while it was being uploaded") -and (UpRow "a-changing.bin").Contains("Nothing was stored for this file.") -and (Btn "Try 1 file again") -and -not $st.Objects.ContainsKey("inbox/a-changing.bin")) "$done | $(UpRow 'a-changing.bin')"
+    $null = Press "Try 1 file again"
+    $done = Until { param($x) Retried $x } 90
+    $st = State
+    Check "retry uploads the file as it is now (new size and SHA-256)" ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "inbox/a-changing.bin") $a6)) "$done"
+    UpDismiss
+
+    # 7. A download through the native save dialog beside an upload.
+    $a7 = UpBlob "batch7" "a-alongside.bin" (40 * $MiB) 7
+    $ok = (UpGo "downloads" "big.bin") -and (Pick (UpFolder "batch7") @("a-alongside.bin") "names")
+    $running = $ok -and (Until { param($x) SendingIn $x "a-alongside.bin" 5 } 60)
+    $dlg = if ($running) { OpenSave "big.bin" } else { $null }
+    $target = Join-Path $Out "big copy.bin"
+    $downloaded = $dlg -and (SaveAs $dlg $target) -and (Says @("Downloaded", "matched") 90)
+    $during = UpPanel
+    Check "while the upload is being sent, a download through the native save dialog completes and is verified" ($downloaded -and $during.Contains("Sending $([char]0xB7) ") -and (Btn "Cancel upload") -and (Test-Path -LiteralPath $target) -and (UpSha $target) -eq $script:objects["downloads/big.bin"].sha256) "$during | $(PageText)"
+    $done = Until { param($x) Finished $x } 90
+    $st = State
+    [void]$script:created.Add("downloads/a-alongside.bin")
+    Check "the upload beside it finishes too" ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "downloads/a-alongside.bin") $a7)) "$done"
+    $null = Press "Dismiss"
+    UpDismiss
+
+    # 8. Leaving the browser during a batch cancels it.
+    $null = UpBlob "batch8" "a-away.bin" (40 * $MiB) 8
+    $null = UpFile "batch8" "b-away.txt" (Utf8 "away")
+    $ok = (UpGo "inbox" "existing.txt") -and (Pick (UpFolder "batch8") @("a-away.bin", "b-away.txt") "names")
+    $running = $ok -and (Until { param($x) SendingIn $x "a-away.bin" 10 } 60)
+    $left = $running -and (Press "$([char]0x2190) Back to accounts") -and (WaitFor { Btn "Open bucket" } 10)
+    Start-Sleep 10  # longer than the rest of a-away.bin would take
+    $st = State
+    foreach ($n in "a-away.bin", "b-away.txt") { [void]$script:created.Add("inbox/$n") }
+    Check "Back to accounts during the batch: neither file stored afterwards (the batch was cancelled), no parts" ($left -and -not $st.Objects.ContainsKey("inbox/a-away.bin") -and -not $st.Objects.ContainsKey("inbox/b-away.txt") -and $st.Multipart.Count -eq 0) (KeysUnder $st "inbox/")
+    $ok = (Press "Open bucket") -and (WaitFor { (PageText).Contains("inbox") } 30)
+    Check "back in the browser: no panel, and Upload files$([char]0x2026) is enabled (the slot is free)" ($ok -and (UpPanel) -eq "" -and (UploadEnabled)) (UpPanel)
+
+    # 9. Close (the title bar's X; tray mode: hide) during a batch; a second
+    #    launch shows the dashboard again with the same batch.
+    $a9 = UpBlob "batch9" "a-hidden.bin" (40 * $MiB) 9
+    $ok = (UpGo "inbox" "existing.txt") -and (Pick (UpFolder "batch9") @("a-hidden.bin") "names")
+    $running = $ok -and (Until { param($x) SendingIn $x "a-hidden.bin" 5 } 60)
+    $hidden = $running -and [CloudUiW]::SysClose((Hwnd (Dash))) -and (WaitFor { -not (DashVisible) } 10)
+    Check "close (SC_CLOSE, as the title bar's X) during the upload hides the window; the process keeps running" ($hidden -and -not $p.HasExited -and (Procs).Count -eq 1)
+    Start-Sleep 3
+    $second = Start-Process $Exe -PassThru; $null = $second.Handle
+    $secondDone = $second.WaitForExit(30000)
+    $shown = WaitFor { DashVisible } 10
+    $t = UpPanel
+    Check "a second launch shows the dashboard again (exit 0); the panel still shows the same batch" ($secondDone -and $second.ExitCode -eq 0 -and $shown -and $t.Contains("a-hidden.bin") -and (Procs).Count -eq 1) "exit $($second.ExitCode) $t"
+    $done = Until { param($x) Finished $x } 90
+    $st = State
+    [void]$script:created.Add("inbox/a-hidden.bin")
+    Check "the batch finished while hidden and shown: uploaded and verified" ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and (StoredOk (Obj $st "inbox/a-hidden.bin") $a9)) "$done"
+    UpDismiss
+
+    # 10. Quit from the tray (real mouse) during a multipart upload.
+    $null = UpBlob "batch10" "a-quit.bin" (72 * $MiB) 10
+    $ok = Pick (UpFolder "batch10") @("a-quit.bin") "names"
+    $running = $ok -and (Until { param($x) SendingIn $x "a-quit.bin" 25 } 60)
+    $stMid = State
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $quitSent = $running -and (TrayQuit)
+    $exited = $quitSent -and $p.WaitForExit(45000)
+    $secs = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+    if (OverflowOpen) { [CloudUiW]::Esc() }
+    # If Quit did not end it, stop it here (the check below fails), so the
+    # relaunch starts a new process instead of handing over to this one.
+    if (-not $exited) { Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }; $null = WaitFor { (Procs).Count -eq 0 } 10 }
+    $st = State
+    [void]$script:created.Add("inbox/a-quit.bin")
+    "  tray Quit to exit: $secs s"
+    Check "tray Quit (real mouse) during a multipart upload: exit 0; no object, its parts aborted" ($running -and $stMid.Multipart.Count -gt 0 -and $exited -and $p.ExitCode -eq 0 -and -not $st.Objects.ContainsKey("inbox/a-quit.bin") -and $st.Multipart.Count -eq 0) "sent=$quitSent $script:why exit=$(if ($exited) { $p.ExitCode }) $($stMid.Multipart -join ',') -> $($st.Multipart -join ',')"
+
+    # Relaunch: the account (database and Credential Manager) is still there.
+    $ok = LaunchToBucket
+    if ($script:app) { $p = $script:app }
+    Check "relaunch: the account is still listed and its bucket opens (key read from Credential Manager)" $ok (PageText)
+
+    # 11. A file name with an unpaired surrogate (NTFS allows it; it is not
+    #     valid Unicode, so it cannot be an object key) chosen in the dialog
+    #     with a valid one: sotyware must keep running.
+    $LoneName = "lone-$([char]0xD800)-surrogate.txt"
+    $null = UpFile "batch11" $LoneName (Utf8 "lone surrogate")
+    $b11 = UpFile "batch11" "z-valid.txt" (Utf8 "valid")
+    [void]$script:created.Add("inbox/z-valid.txt")
+    $ok = (Procs).Count -eq 1 -and (Procs)[0].Id -eq $p.Id -and (UpGo "inbox" "existing.txt") -and (Pick (UpFolder "batch11") @($LoneName, "z-valid.txt") "all")
+    $died = WaitFor { $p.HasExited } 8
+    $code = if ($died) { $p.ExitCode } else { $null }
+    "  unpaired surrogate: dialog closed=$ok, process exited=$died$(if ($died) { ", exit code $code (0x{0:X8})" -f $code })"
+    $t = if ($died) { "" } else { Until { param($x) Finished $x } 30 }
+    Check "an unpaired-surrogate file name chosen in the dialog does not end sotyware" ($ok -and -not $died) "exit code $code"
+    if (-not $died) {
+      Check "it is skipped as 'name cannot be an object key' and the valid file is uploaded" ("$t".Contains("Upload finished. 2 files: 1 uploaded, 1 skipped.") -and (UpRow "lone-").Contains("Skipped: name cannot be an object key") -and (StoredOk (Obj (State) "inbox/z-valid.txt") $b11)) "$t"
+      UpDismiss
+    } else {
+      $st = State
+      Check "after the abort: nothing of batch 11 stored, no multipart upload" (-not $st.Objects.ContainsKey("inbox/z-valid.txt") -and $st.Multipart.Count -eq 0) (KeysUnder $st "inbox/")
+      $ok = LaunchToBucket
+      if ($script:app) { $p = $script:app }
+      Check "relaunch after the abort: the account is still there and its bucket opens" $ok (PageText)
+    }
+   } catch {
+    Check "upload steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    foreach ($title in $OpenTitle, "Save download as") { $d = DialogNamed $title; if ($d) { CancelDialog $d } }
+    $null = Press "Cancel upload"; $null = Press "Dismiss"
+   } finally {
+    if ($locker) { $locker.Close() }
+    try { UpCleanup } catch { Check "upload cleanup ran" $false "$($_.Exception.Message)" }
+   }
   } elseif ($Mode -eq "b2-download") {
    try {
     $R = $Dl.run
@@ -791,11 +1389,17 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download") {
-    Remove-Item $SrvFile, "$SrvFile.json" -EA SilentlyContinue
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+    # Removing the endpoint file stops the helper (and with it its temporary bucket).
+    Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
-  if ($Mode -eq "download" -and (Test-Path $Out)) { Remove-Item -Recurse -Force $Out }
+  if (($Mode -eq "download" -or $Mode -eq "upload") -and (Test-Path $Out)) { Remove-Item -Recurse -Force $Out }
+  if ($Mode -eq "upload" -and (Test-Path -LiteralPath $UpSrc)) {
+    # .NET, not Remove-Item: the folder holds a name with an unpaired surrogate.
+    [System.IO.Directory]::Delete($UpSrc, $true)
+    Check "upload: local test files removed ($UpSrc, $Out)" (-not (Test-Path -LiteralPath $UpSrc) -and -not (Test-Path -LiteralPath $Out))
+  }
   if ($Mode -eq "b2-download") {
     DownloadCleanup
     $partials = @(Get-ChildItem -Force -Recurse -Path @($Out, $SrcDir) -EA SilentlyContinue | Where-Object { $_.Name -like "*.sotyware-partial" })
@@ -803,10 +1407,12 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download") {
-  $srvLog = (Get-Content $SrvOut -Raw -EA SilentlyContinue)
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+  $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
-  Check "${Mode}: the test server saw only reads and the check ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
+  if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
+  $what = if ($Mode -eq "upload") { "only listing, reads and upload requests" } else { "only reads and the check" }
+  Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
 $after = CmdkeyLines
