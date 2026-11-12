@@ -5,8 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download b2 b2-browse
-#        (default: local hang browse download)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload b2 b2-browse
+#        (default: local hang browse download upload)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
 #                            (dpkg -x), if gnome-keyring-daemon is not installed
@@ -20,6 +20,12 @@
 #        object server of the Rust tests (serve_objects_for_ui), which fails if
 #        anything but listing, the connection check and GetObject reached it;
 #        contacts no provider. Ends by closing the window during a download.
+# upload: upload batches through the native GTK multi-file dialog into the
+#        in-process s3s-fs server of the Rust tests (serve_uploads_for_ui),
+#        behind a throttled link; with the stub tray watcher (tray mode, so
+#        Hide can be tested). Checks every object on the server, deletes
+#        exactly the objects the phase knows about, and fails if the app sent
+#        anything but listing, reads and upload requests; contacts no provider.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -42,7 +48,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/release/sotyware}")
@@ -60,7 +66,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse|download) ;;
+      local|hang|browse|download|upload) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -82,7 +88,7 @@ BIN=$SOTYWARE_CLOUD_UI_BIN GK_BIN=$SOTYWARE_CLOUD_UI_GK
 ORIG_HOME=$HOME
 # Short: Unix socket paths must stay under 108 bytes.
 WORK=$(mktemp -d /tmp/sotyware-cloud-ui.XXXXXX) || exit 3
-XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" BROWSE_RUN="" rc=0
+XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" SNI_PID="" BROWSE_RUN="" rc=0
 # Deletes exactly the versions of the kept browse dataset of this run, and
 # lists again; prints the result lines of the Rust test.
 b2_browse_cleanup() {
@@ -101,7 +107,7 @@ b2_browse_cleanup() {
 cleanup() {
   b2_browse_cleanup
   rm -f -- "$WORK/browse-endpoint"
-  for p in $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
+  for p in $SNI_PID $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
   pkill -f -- "^$GK_BIN " 2>/dev/null
   # Only the folder this run created (throwaway HOME and keyring).
   case $WORK in /tmp/sotyware-cloud-ui.??????) rm -rf -- "$WORK" ;; esac
@@ -194,6 +200,35 @@ for phase in "${PHASES[@]}"; do
       else
         echo "[FAIL] download: the object server failed:"; tail -20 "$WORK/download-server.log"; rc=1
       fi
+      SRV_PID="" ;;
+    upload)
+      SRV_FILE=$WORK/upload-endpoint
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+        cloud::test_server::serve_uploads_for_ui -- --ignored --nocapture >"$WORK/upload-server.log" 2>&1) &
+      SRV_PID=$!
+      for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
+      [ -s "$SRV_FILE" ] || { echo "upload server did not start:"; cat "$WORK/upload-server.log"; exit 3; }
+      grep -E '^serving' "$WORK/upload-server.log" | sed 's/^/  /'
+      # The stub tray watcher of the virtual-display test: tray mode, so the
+      # dashboard can be hidden and shown again during an upload.
+      python3 "$H/sni_watcher.py" "$WORK/sni-registrations" & SNI_PID=$!
+      for _ in $(seq 100); do
+        dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+          org.freedesktop.DBus.NameHasOwner string:org.kde.StatusNotifierWatcher 2>/dev/null | grep -q true && break
+        sleep 0.1
+      done
+      start_keyring
+      SOTYWARE_UI_ENDPOINT=$(cat "$SRV_FILE") SOTYWARE_UI_MANIFEST=$SRV_FILE.json SOTYWARE_UI_CONTROL=$SRV_FILE \
+        python3 "$H/cloud_ui.py" upload "$BIN" || rc=1
+      stop_keyring
+      kill "$SNI_PID" 2>/dev/null; SNI_PID=""
+      rm -f -- "$SRV_FILE" "$SRV_FILE.json" "$SRV_FILE.state.json"
+      if wait "$SRV_PID"; then
+        echo "[PASS] upload: the app sent only listing, reads and upload requests ($(grep -o 'operations: .*' "$WORK/upload-server.log"))"
+      else
+        echo "[FAIL] upload: the upload server failed:"; tail -20 "$WORK/upload-server.log"; rc=1
+      fi
+      grep -E '^(cleanup:|left at the end)' "$WORK/upload-server.log" | sed 's/^/  /'
       SRV_PID="" ;;
     b2)
       before=$(fingerprint)

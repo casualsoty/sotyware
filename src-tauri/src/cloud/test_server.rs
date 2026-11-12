@@ -1006,3 +1006,230 @@ async fn serve_objects_for_ui() {
         "downloading must only read: {ops:?}"
     );
 }
+
+pub const UI_UPLOAD_BUCKET: &str = "upload-bucket";
+
+/// What the upload phase of the Cloud Storage UI test finds in the bucket
+/// before it uploads (tests/desktop/cloud_ui.py, phase `upload`): an object
+/// the batch must skip, a folder to browse, and a file to download while an
+/// upload runs. Stored through `S3Store::upload`, so with the SHA-256
+/// metadata sotyware writes.
+pub fn ui_upload_seed() -> Vec<(&'static str, Vec<u8>)> {
+    vec![
+        ("inbox/existing.txt", b"already in the bucket".to_vec()),
+        ("other/readme.txt", b"another folder".to_vec()),
+        ("downloads/big.bin", pattern(24 * 1024 * 1024, 41)),
+    ]
+}
+
+/// The objects in the s3s-fs bucket folder as the test sees them: content
+/// on disk, and size and SHA-256 metadata through `HeadObject`; plus the
+/// multipart files s3s-fs keeps for uploads neither completed nor aborted.
+async fn ui_upload_state(server: &TestServer, store: &super::s3::S3Store) -> serde_json::Value {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, base, out);
+            } else if let Ok(rel) = p.strip_prefix(base) {
+                out.push(rel.to_string_lossy().into_owned());
+            }
+        }
+    }
+    let base = server.root().join(UI_UPLOAD_BUCKET);
+    let mut keys = Vec::new();
+    walk(&base, &base, &mut keys);
+    keys.sort();
+    let mut objects = Vec::new();
+    for key in keys {
+        let content = fs::read(base.join(&key)).unwrap_or_default();
+        let head = store.head_object(UI_UPLOAD_BUCKET, &key).await;
+        let (head_size, meta) = match &head {
+            Ok(Some(d)) => (Some(d.size), d.sha256.clone()),
+            _ => (None, None),
+        };
+        objects.push(serde_json::json!({
+            "key": key,
+            "size": content.len(),
+            "sha256": sha256_hex(&content),
+            "headSize": head_size,
+            "sha256Metadata": meta,
+            "head": format!("{:?}", head.as_ref().map(|h| h.is_some())),
+        }));
+    }
+    let other: Vec<String> = fs::read_dir(server.root())
+        .map(|r| {
+            r.flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| n != UI_UPLOAD_BUCKET)
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "objects": objects,
+        "multipart": server.open_multipart_files(),
+        "otherFiles": other,
+        "ops": server.ops(),
+    })
+}
+
+/// Not a test: serves an empty-but-for-[`ui_upload_seed`] s3s-fs bucket for
+/// the upload phase of the Cloud Storage UI test, behind a [`ThrottledLink`]
+/// (`SOTYWARE_UI_UPLOAD_RATE` bytes per second towards the server, default
+/// 6 MiB/s), so that cancelling during an upload and a download beside it
+/// can be seen. Writes the link's endpoint to `SOTYWARE_UI_SERVER_FILE`
+/// and the seed objects' sizes and SHA-256 to that name plus `.json`.
+/// Until the endpoint file is deleted it reads commands from that name
+/// plus `.ctl` (one per line), deletes the file when done, and answers
+/// `dump` in `.state.json`:
+///
+/// - `dump`: the bucket's objects, open multipart files and operations;
+/// - `verify-denied`: the next `HeadObject` after the next `PutObject` is
+///   refused (the upload's verification, after its commit point);
+/// - `abort-denied`: the next `AbortMultipartUpload` is refused;
+/// - `delete <key>`: deletes exactly that object (the test's cleanup).
+///
+/// At the end it fails if the app (before the first `delete`) sent anything
+/// but listing, the connection check, reads and upload requests. Started by
+/// tests/desktop/cloud-ui.sh (phase `upload`); the key is made up.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "helper for the Cloud Storage UI test, not a test"]
+async fn serve_uploads_for_ui() {
+    use super::s3::{ClientOptions, S3Store, TransferControl};
+    let file = std::env::var("SOTYWARE_UI_SERVER_FILE").expect("set SOTYWARE_UI_SERVER_FILE");
+    let rate: u64 = std::env::var("SOTYWARE_UI_UPLOAD_RATE")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(6 * 1024 * 1024);
+    let server = TestServer::start(
+        "e2eUploadKey0000000001",
+        "e2e-Upload-Secret-0123456789",
+        &[UI_UPLOAD_BUCKET],
+    )
+    .await;
+    let store = S3Store::new(
+        server.resolved("helper", &[UI_UPLOAD_BUCKET]),
+        server.credentials(),
+        ClientOptions::default(),
+    );
+    let dir = TempDir::new("ui-upload-seed");
+    let mut manifest = Vec::new();
+    for (i, (key, data)) in ui_upload_seed().into_iter().enumerate() {
+        let path = dir.path(&format!("seed-{i}"));
+        fs::write(&path, &data).unwrap();
+        store
+            .upload(
+                UI_UPLOAD_BUCKET,
+                key,
+                &path,
+                &Arc::new(TransferControl::new()),
+                &mut |_| {},
+            )
+            .await
+            .unwrap();
+        manifest
+            .push(serde_json::json!({"key": key, "size": data.len(), "sha256": sha256_hex(&data)}));
+    }
+    let seeded = server.ops().len();
+    fs::write(
+        format!("{file}.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+    let link = ThrottledLink::start(&server.endpoint, Pace::BytesPerSecond(rate)).await;
+    fs::write(&file, &link.endpoint).unwrap();
+    println!(
+        "serving {} at {} ({} bytes/s towards the server), seeded {} objects",
+        UI_UPLOAD_BUCKET,
+        link.endpoint,
+        rate,
+        manifest.len()
+    );
+    let ctl = PathBuf::from(format!("{file}.ctl"));
+    let mut app_ops: Option<Vec<String>> = None;
+    // `dump` sends one HeadObject per object; they are the test's, not the app's.
+    let mut own_heads = 0usize;
+    // A test helper, so a plain wait loop is fine here.
+    while Path::new(&file).exists() {
+        if let Ok(commands) = fs::read_to_string(&ctl) {
+            for line in commands.lines() {
+                match line.split_once(' ').unwrap_or((line, "")) {
+                    ("dump", _) => {
+                        let state = ui_upload_state(&server, &store).await;
+                        if app_ops.is_none() {
+                            own_heads += state["objects"].as_array().map_or(0, Vec::len);
+                        }
+                        let tmp = format!("{file}.state.json.tmp");
+                        fs::write(&tmp, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+                        fs::rename(&tmp, format!("{file}.state.json")).unwrap();
+                    }
+                    ("verify-denied", _) => {
+                        let injections = Arc::clone(&server.injections);
+                        server.inject(
+                            "PutObject",
+                            None,
+                            1,
+                            Inject::Run(Arc::new(move || {
+                                injections.lock().unwrap().push(Injection {
+                                    op: "HeadObject",
+                                    part: None,
+                                    times: 1,
+                                    action: Inject::Deny,
+                                });
+                            })),
+                        );
+                    }
+                    ("abort-denied", _) => {
+                        server.inject("AbortMultipartUpload", None, 1, Inject::Deny);
+                    }
+                    ("delete", key) if !key.is_empty() => {
+                        if app_ops.is_none() {
+                            app_ops = Some(server.ops()[seeded..].to_vec());
+                        }
+                        let r = store.delete_object(UI_UPLOAD_BUCKET, key, None).await;
+                        println!("cleanup: deleted {key:?}: {r:?}");
+                    }
+                    (other, _) => println!("unknown command {other:?}"),
+                }
+            }
+            let _ = fs::remove_file(&ctl);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let ops = app_ops.unwrap_or_else(|| server.ops()[seeded..].to_vec());
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for op in &ops {
+        let name = op.split('#').next().unwrap_or(op).to_owned();
+        *counts.entry(name).or_default() += 1;
+    }
+    if let Some(heads) = counts.get_mut("HeadObject") {
+        *heads -= own_heads.min(*heads);
+    }
+    counts.retain(|_, n| *n > 0);
+    println!("operations: {counts:?} (the test's own {own_heads} HeadObject left out)");
+    let left = ui_upload_state(&server, &store).await;
+    println!(
+        "left at the end: {} objects, multipart files {}",
+        left["objects"].as_array().map_or(0, Vec::len),
+        left["multipart"]
+    );
+    drop(link);
+    assert!(
+        counts.keys().all(|op| matches!(
+            op.as_str(),
+            "HeadBucket"
+                | "ListObjectsV2"
+                | "HeadObject"
+                | "GetObject"
+                | "PutObject"
+                | "CreateMultipartUpload"
+                | "UploadPart"
+                | "CompleteMultipartUpload"
+                | "AbortMultipartUpload"
+        )),
+        "the app must only list, read and upload: {counts:?}"
+    );
+}

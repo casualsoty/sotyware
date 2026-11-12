@@ -2,7 +2,7 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse|download <binary>   (run by cloud-ui.sh, which sets up
+usage: cloud_ui.py local|hang|b2|browse|download|upload <binary>   (run by cloud-ui.sh, which sets up
 Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
@@ -18,6 +18,9 @@ Phases:
          (cancel it, save, replace an existing file after its confirmation),
          progress, Cancel, failures with Try again, and quitting during a
          download; every saved file is compared with the server's SHA-256
+  upload a real GNOME Keyring, the stub tray watcher and the in-process
+         s3s-fs server of serve_uploads_for_ui: upload batches through the
+         native GTK multi-file dialog (cloud_ui_upload.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -207,6 +210,15 @@ elif PHASE == "download":
     ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
     with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
         OBJECTS = {o["key"]: o for o in json.load(mf)}
+elif PHASE == "upload":
+    # The made-up key of serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs).
+    KEY1, SECRET1 = "e2eUploadKey0000000001", "e2e-Upload-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "upload-bucket", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
+    CONTROL = os.environ["SOTYWARE_UI_CONTROL"]
+    with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
+        SEED = {o["key"]: o for o in json.load(mf)}
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -587,7 +599,8 @@ def shows(rel, first_page=False):
 
 try:
     ready = wait_for(lambda: "Welcome" in text(pid), 30)
-    check("dashboard is up (dashboard-only mode, no tray host here)", bool(ready))
+    check("dashboard is up (tray mode, stub watcher)" if PHASE == "upload"
+          else "dashboard is up (dashboard-only mode, no tray host here)", bool(ready))
     check("Cloud Storage link opens the empty page",
           link(pid, "Cloud Storage") and bool(wait_for(lambda: "No storage accounts yet" in text(pid))))
 
@@ -1005,6 +1018,13 @@ try:
         ok2, _, removed = remove(label)
         check("remove the account: gone from page, database and keyring",
               bool(ok) and removed and rows() == [], str(rows()))
+
+    elif PHASE == "upload":
+        try:
+            exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_ui_upload.py"),
+                      encoding="utf-8").read())
+        except RuntimeError as e:
+            print(f"  upload phase stopped: {e}", flush=True)
 
     else:  # hang
         ok = add("Photos", BUCKET, KEY1, SECRET1, "http://127.0.0.1:9")

@@ -82,8 +82,9 @@ Where things are. Generated and ignored paths are listed in
 └── tests/
     └── desktop/              Desktop tests of the release binary
         ├── check-ps-variables.ps1  Static check of the Windows test scripts (parses only, runs nothing): fails if one scope spells a variable two ways ($out/$Out are one variable in PowerShell)
-        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), download (local object server, GTK save dialog), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
+        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), download (local object server, GTK save dialog), upload (local s3s-fs server, GTK multi-file dialog, stub tray watcher), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
         ├── cloud_ui.py       Its driver: add, check, open bucket, browse, download through the save dialog, rename, replace key, remove through AT-SPI + XTest; keyring and database checked from outside
+        ├── cloud_ui_upload.py  Its upload phase (run by cloud_ui.py): batches through the GTK multi-file dialog, server state checked after each, exact-key cleanup
         ├── fake_secret_service.py  A Secret Service that never answers (cloud-ui.sh hang phase)
         ├── run.sh            Linux/X11 simulated test: private D-Bus session, runtime dir and data dir (XDG_DATA_HOME)
         ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher); --reject, --no-host
