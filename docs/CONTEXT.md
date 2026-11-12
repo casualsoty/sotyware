@@ -162,6 +162,14 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Review of the download tests (2026-11-12, uncommitted on `5a7453a`,
+  test code and docs only; no remote request, no desktop interaction): no
+  production defect found; new static check
+  `tests/desktop/check-ps-variables.ps1` (PowerShell variables ignore case;
+  it found a latent `$out`/`$Out` clash, now renamed); the opt-in download
+  tests check endpoint and empty prefix and print failure reasons on stdout
+  (**changed paths not yet run at Backblaze**). `cargo test` 238 + 14
+  ignored. [status.md](status/status.md#review-of-the-download-tests-2026-11-12).
 - Real Backblaze download through the **native Windows 11 dashboard**
   (2026-11-12, uncommitted tree on `fc76109`, test code only):
   `windows-cloud-ui.ps1 -Mode b2-download` on the real, unlocked Windows 11

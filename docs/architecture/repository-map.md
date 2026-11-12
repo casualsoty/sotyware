@@ -74,6 +74,7 @@ Where things are. Generated and ignored paths are listed in
 │           └── example.rs    The example feature + tests
 └── tests/
     └── desktop/              Desktop tests of the release binary
+        ├── check-ps-variables.ps1  Static check of the Windows test scripts (parses only, runs nothing): fails if one scope spells a variable two ways ($out/$Out are one variable in PowerShell)
         ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), download (local object server, GTK save dialog), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
         ├── cloud_ui.py       Its driver: add, check, open bucket, browse, download through the save dialog, rename, replace key, remove through AT-SPI + XTest; keyring and database checked from outside
         ├── fake_secret_service.py  A Secret Service that never answers (cloud-ui.sh hang phase)

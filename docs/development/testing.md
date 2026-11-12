@@ -574,9 +574,13 @@ path in a temporary folder in place of the save dialog. The bucket has no
 permanent test object (every test deletes what it created), so the test
 makes its own:
 
-1. Generates 16 MiB + 3 bytes (deterministic pattern) in a temporary folder
-   and computes their SHA-256 **locally, before the upload**: the
-   independent expectation.
+1. Checks that the account is Backblaze's own endpoint for the region and
+   that the read-only key differs from the write key; then, write key, one
+   `ListObjectVersions` of the new run prefix, which must hold no object,
+   version or delete marker (nothing is uploaded otherwise). Generates
+   16 MiB + 3 bytes (deterministic pattern) in a temporary folder and
+   computes their SHA-256 **locally, before the upload**: the independent
+   expectation.
 2. Write key: one `PutObject` of `sotyware-it/download-validation/<unix
    nanos>-<pid>/größe test.bin` (a space and non-ASCII letters, so the key
    must come back exactly), with the `sotyware-sha256` metadata as the app's
@@ -596,8 +600,10 @@ makes its own:
    version id, then one `ListObjectVersions` of the run prefix, which must be
    empty.
 
-Five remote requests per run; every client makes one attempt, so nothing is
-retried against the daily transaction cap. Requests from the write key and
+Six remote requests per run (five in the recorded run of 2026-11-12: the
+listing before the upload was added afterwards and has not run against
+Backblaze yet); every client makes one attempt, so nothing is retried
+against the daily transaction cap. Requests from the write key and
 the `HeadObject` are recorded and printed (bucket as `<bucket>`; the
 `GetObject` goes through the app's own client, without the recorder). It
 needs both keys' variables:
@@ -606,6 +612,13 @@ needs both keys' variables:
 set -a; . ~/.config/sotyware-it/b2.env; . ~/.config/sotyware-it/b2-read.env; set +a
 cd src-tauri && cargo test cloud::integration::download::backblaze_b2_download_file -- --ignored --nocapture
 ```
+
+**Costs.** Each request counts against the B2 account's daily transaction
+caps (`HeadObject`, `GetObject`: class B; `ListObjectVersions`: class C;
+upload and delete: class A); the run downloads 16 MiB, and the 16 MiB
+version is stored (and billed) only until the cleanup deletes it. A failed
+cleanup prints `CLEANUP FAILED` with the key and version id to delete by
+hand; nothing is retried.
 
 `download_through_app_against_the_test_server` runs step 4's checks against
 the in-process server in every `cargo test`. Locally the 16 MiB arrive
@@ -620,6 +633,9 @@ from the real B2 test bucket through the release binary's dashboard and the
 native Windows save dialog. Two opt-in Rust tests in
 `cloud/integration/download.rs` do the provider side, with the write key
 (`b2.xml`), one attempt per request:
+
+Both print a failure's reason on stdout as well as in the panic, because
+the driver keeps only stdout.
 
 - `backblaze_b2_download_ui_prepare`: checks that the account is Backblaze's
   own endpoint and that the read-only key differs from the write key, makes
@@ -636,6 +652,12 @@ native Windows save dialog. Two opt-in Rust tests in
   one `ListObjectVersions` of the run prefix, which must be empty. If the
   delete is refused (for example by the daily transaction cap) it sends
   nothing more and fails with the run id and version id.
+
+If the prepare step fails, or its manifest does not name the run and version
+the upload printed, the script stops before starting the app: it deletes
+only a version the upload reported (by id) and removes both local folders.
+The cleanup always uses the run and version id from the upload's own output
+line, never a listing.
 
 The script adds the account with the **read-only key** (`b2-read.xml`) through
 the form, checks the connection, opens the bucket, goes `sotyware-it` →
@@ -658,7 +680,8 @@ both local folders removed. No fingerprint of `sotyware-it/` is taken, so the
 rest of the bucket is not listed. Requests per run: write key 4 (above), read
 key about 6 through the app (`HeadBucket`, `ListObjectsV2` of the root,
 `sotyware-it/`, `download-ui-validation/` and the run folder, one
-`GetObject`; not recorded, the app's own client). It needs the Rust
+`GetObject`; not recorded, the app's own client). Costs as for the
+[Rust download test](#one-download-from-backblaze). It needs the Rust
 toolchain (the two tests are compiled on the first run).
 
 ## Cloud Storage UI end-to-end test
@@ -744,6 +767,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-download
 ```
+
+Before running a changed Windows script, check it statically (it parses
+the scripts, runs nothing and opens no window; it also runs from WSL2
+through `powershell.exe` with `wslpath -w` paths):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\check-ps-variables.ps1
+```
+
+PowerShell variable names ignore case, so `$out` and `$Out` are one
+variable; that clash broke a `b2-download` attempt after its upload on
+2026-11-12. The check fails when one scope (the script, or one function)
+spells a variable two ways, and on a parse error. Without arguments it
+checks `windows.ps1`, `windows-isolated.ps1` and `windows-cloud-ui.ps1`.
 
 `browse` and `download` (and the same phases of `cloud-ui.sh`) compile and
 run the test build the first time, so they need the Rust toolchain, like

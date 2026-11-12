@@ -363,26 +363,36 @@ if ($Mode -eq "b2-download") {
   if ($m.Success) { $script:dlRun = $m.Groups[1].Value; $script:dlVersion = $m.Groups[2].Value }
   $prep | Where-Object { $_ -match '^(provider|run prefix|generated|upload|write key|download-ui|manifest|thread .* panicked)' } | ForEach-Object { "  $(Redact $_)" }
   $ManFile = Join-Path $SrcDir "manifest.json"
-  Check "b2-download: account checked, run prefix empty, file generated and uploaded (run $script:dlRun)" (($prepExit -eq 0) -and $script:dlRun -and (Test-Path $ManFile))
-  if (-not (Test-Path $ManFile)) {
+  $prepOk = ($prepExit -eq 0) -and $script:dlRun -and (Test-Path $ManFile)
+  Check "b2-download: account checked, run prefix empty, file generated and uploaded (run $script:dlRun)" $prepOk
+  if (-not $script:dlRun -and $prepExit -ne 0) { "  no version id was reported: if the upload reached Backblaze anyway, look under the run prefix printed above and delete by version id" }
+  if ($prepOk) {
+    $Dl = Get-Content $ManFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $Source = Join-Path $SrcDir "source.bin"
+    # The page is driven to the manifest's run; the cleanup deletes the run
+    # and version printed by the upload: both must name the same object.
+    $prepOk = ($Dl.run -eq $script:dlRun) -and ($Dl.versionId -eq $script:dlVersion) -and ($Dl.fileName -eq $DlName) -and ([long]$Dl.size -eq (Get-Item $Source).Length) -and ((Sha $Source) -eq $Dl.sha256) -and ($Dl.key -eq "sotyware-it/download-ui-validation/$script:dlRun/$DlName")
+    Check "b2-download: manifest names this run's object ($DlName, $($Dl.size) bytes, version as uploaded), and the generated file has its SHA-256 (checked here again)" $prepOk
+    "  object: sotyware-it/download-ui-validation/$($Dl.run)/<$DlName>, $($Dl.size) bytes, SHA-256 $($Dl.sha256), version $($Dl.versionId)"
+  }
+  if (-not $prepOk) {
+    # Nothing is downloaded; only a version the upload reported is deleted.
     DownloadCleanup
     Remove-Item -Recurse -Force $SrcDir, $Out -EA SilentlyContinue
     foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
     "summary: $script:pass passed, $script:fail failed"; exit 1
   }
-  $Dl = Get-Content $ManFile -Raw -Encoding UTF8 | ConvertFrom-Json
-  $Source = Join-Path $SrcDir "source.bin"
-  Check "b2-download: manifest names $DlName, $($Dl.size) bytes, and the generated file has that SHA-256 (checked here again)" (($Dl.fileName -eq $DlName) -and ([long]$Dl.size -eq (Get-Item $Source).Length) -and (Sha $Source) -eq $Dl.sha256 -and $Dl.versionId -eq $script:dlVersion -and $Dl.key -eq "sotyware-it/download-ui-validation/$($Dl.run)/$DlName")
-  "  object: sotyware-it/download-ui-validation/$($Dl.run)/<$DlName>, $($Dl.size) bytes, SHA-256 $($Dl.sha256), version $($Dl.versionId)"
 }
 
 if ($Mode -eq "b2-browse") {
   $ManFile = Join-Path $env:TEMP "sotyware-browse-manifest-$run.json"
-  $out = CargoIt "cloud::integration::browse::backblaze_b2_browse_dataset" @{ SOTYWARE_IT_B2_BROWSE_KEEP = "1"; SOTYWARE_IT_B2_BROWSE_MANIFEST = $ManFile }
+  # Not $out: names ignore case, and $Out is the download folder of the
+  # download modes (tests/desktop/check-ps-variables.ps1 finds such clashes).
+  $dataset = CargoIt "cloud::integration::browse::backblaze_b2_browse_dataset" @{ SOTYWARE_IT_B2_BROWSE_KEEP = "1"; SOTYWARE_IT_B2_BROWSE_MANIFEST = $ManFile }
   $createExit = $script:cargoExit
-  $m = [regex]::Match(($out -join "`n"), 'dataset kept; run id (\d+-\d+)')
+  $m = [regex]::Match(($dataset -join "`n"), 'dataset kept; run id (\d+-\d+)')
   if ($m.Success) { $script:browseRun = $m.Groups[1].Value }
-  $out | Where-Object { $_ -match '^(provider|run prefix|permissions|dataset:|stored:|read-only UI key|local server|checks:|manifest:|FAIL)' } | ForEach-Object { "  $(Redact $_)" }
+  $dataset | Where-Object { $_ -match '^(provider|run prefix|permissions|dataset:|stored:|read-only UI key|local server|checks:|manifest:|FAIL)' } | ForEach-Object { "  $(Redact $_)" }
   Check "b2-browse: dataset created and checked through the Rust listing (run $script:browseRun)" (($createExit -eq 0) -and (Test-Path $ManFile))
   if (-not (Test-Path $ManFile)) { BrowseCleanup; "summary: $script:pass passed, $script:fail failed"; exit 1 }
   $Manifest = Get-Content $ManFile -Raw -Encoding UTF8 | ConvertFrom-Json

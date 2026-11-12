@@ -2,16 +2,19 @@
 //! through the app's own download path
 //! (docs/development/testing.md#one-download-from-backblaze).
 //!
-//! `backblaze_b2_download_file` uploads one generated file (its SHA-256
-//! computed locally before the upload) under
-//! `sotyware-it/download-validation/<run id>/`, reads its metadata once with
-//! the read-only key, downloads it once through [`CloudDownloads`] (the code
-//! behind `download_cloud_file`, without the save dialog) with the read-only
-//! key, and deletes exactly the version it created.
+//! `backblaze_b2_download_file` checks that the account is Backblaze's own
+//! endpoint and that the new run prefix
+//! `sotyware-it/download-validation/<run id>/` holds no version, uploads one
+//! generated file there (its SHA-256 computed locally before the upload),
+//! reads its metadata once with the read-only key, downloads it once through
+//! [`CloudDownloads`] (the code behind `download_cloud_file`, without the
+//! save dialog) with the read-only key, and deletes exactly the version it
+//! created.
 //!
-//! Remote requests, and nothing else: `PutObject` (write key), `HeadObject`
-//! and `GetObject` (read-only key), `DeleteObject` with the version id and
-//! one `ListObjectVersions` of the run prefix (write key). Every client makes
+//! Remote requests, and nothing else: one `ListObjectVersions` of the run
+//! prefix and `PutObject` (write key), `HeadObject` and `GetObject`
+//! (read-only key), `DeleteObject` with the version id and one more
+//! `ListObjectVersions` of the run prefix (write key). Every client makes
 //! one attempt per request, so a failure is never retried against the
 //! provider's daily transaction cap. Cleanup runs even when a check fails
 //! (the checks run in their own task).
@@ -23,7 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
 
-use super::super::account::MemoryAccountStore;
+use super::super::account::{MemoryAccountStore, ResolvedAccount};
 use super::super::credentials::{
     CredentialStore, Credentials, EnvCredentials, MemoryCredentialStore,
 };
@@ -50,6 +53,25 @@ fn one_attempt() -> ClientOptions {
         max_attempts: 1,
         ..ClientOptions::default()
     }
+}
+
+/// Refuses any account but Backblaze's own S3 endpoint for the configured
+/// region, before the first remote request.
+fn assert_backblaze(resolved: &ResolvedAccount) {
+    assert_eq!(resolved.profile.id, "backblaze-b2");
+    assert_eq!(
+        resolved.endpoint_url,
+        format!("https://s3.{}.backblazeb2.com", resolved.region),
+        "the configured endpoint must be Backblaze's own"
+    );
+}
+
+/// Prints `message` on stdout, then panics with it: the Windows driver keeps
+/// only a test's stdout (a panic message goes to stderr), and it must still
+/// see why a provider step failed.
+fn fail(message: String) -> ! {
+    println!("{message}");
+    panic!("{message}");
 }
 
 fn sha256_of(path: &Path) -> String {
@@ -228,6 +250,7 @@ async fn download_through_app(
 #[ignore = "opt-in: needs a Backblaze B2 test bucket, its write key and its read-only key"]
 async fn backblaze_b2_download_file() {
     let (t, resolved, write_creds, _) = b2_store();
+    assert_backblaze(&resolved);
     let read_creds = EnvCredentials::from_process()
         .credentials("it-b2-read")
         .expect(
@@ -253,6 +276,13 @@ async fn backblaze_b2_download_file() {
     println!(
         "backblaze-b2: endpoint {}, bucket {}, key {key:?}",
         resolved.endpoint_url, t.bucket
+    );
+    // Never upload over anything: the new run prefix must hold no object,
+    // version or delete marker.
+    let before = versions(&write, &t.bucket, &prefix).await;
+    assert!(
+        before.is_empty(),
+        "the run prefix is not empty, nothing uploaded: {before:?}"
     );
 
     let source_dir = TempDir::new("b2-download-source");
@@ -448,12 +478,7 @@ async fn backblaze_b2_download_ui_prepare() {
         "{dir:?} is not empty"
     );
     let (t, resolved, write_creds, _) = b2_store();
-    assert_eq!(resolved.profile.id, "backblaze-b2");
-    assert_eq!(
-        resolved.endpoint_url,
-        format!("https://s3.{}.backblazeb2.com", resolved.region),
-        "the configured endpoint must be Backblaze's own"
-    );
+    assert_backblaze(&resolved);
     let read_creds = EnvCredentials::from_process()
         .credentials("it-b2-read")
         .expect("the read-only key (SOTYWARE_CLOUD_IT_B2_READ_*)");
@@ -479,10 +504,12 @@ async fn backblaze_b2_download_ui_prepare() {
         resolved.profile.id, resolved.region, resolved.endpoint_url
     );
     let before = versions(&write, &t.bucket, &prefix).await;
-    assert!(
-        before.is_empty(),
-        "the run prefix is not empty, nothing uploaded: {before:?}"
-    );
+    if !before.is_empty() {
+        fail(format!(
+            "run prefix not empty, nothing uploaded: {} versions/delete markers",
+            before.len()
+        ));
+    }
     println!("run prefix: no objects, versions or delete markers");
 
     let generated = TempDir::new("b2-download-ui");
@@ -494,9 +521,15 @@ async fn backblaze_b2_download_ui_prepare() {
 
     let up = write.upload_file(&t.bucket, &key, &source).await;
     show_requests(&t.bucket, &[("write key", writes.take())]);
-    let up = up.unwrap_or_else(|e| panic!("upload: {e}"));
+    let up = up.unwrap_or_else(|e| {
+        fail(format!(
+            "upload failed: {e}; if the request reached the provider, delete what is under {prefix} by version id"
+        ))
+    });
     let Some(version) = up.version_id.clone() else {
-        panic!("NOT CLEANED UP: {key:?} has no version id; delete it by hand");
+        fail(format!(
+            "upload: NOT CLEANED UP: {key:?} has no version id; delete it by hand"
+        ));
     };
     // The driver reads the run id and version from this line even if a later
     // step fails, so the cleanup always gets them.
@@ -546,14 +579,18 @@ async fn backblaze_b2_download_ui_cleanup() {
     let prefix = ui_run_prefix(&run);
     let key = format!("{prefix}{FILE_NAME}");
     let (t, resolved, write_creds, _) = b2_store();
+    assert_backblaze(&resolved);
     let writes = Requests::default();
     let write = S3Store::new(resolved, write_creds, one_attempt()).with_interceptor(writes.clone());
     println!("cleaning up run {run}: deleting version {version} of {key:?}");
     let deleted = write.delete_object(&t.bucket, &key, Some(&version)).await;
     if let Err(e) = deleted {
         show_requests(&t.bucket, &[("write key", writes.take())]);
-        panic!("CLEANUP FAILED for {key:?} version {version}: {e}; nothing more was sent");
+        fail(format!(
+            "CLEANUP FAILED for {key:?} version {version}: {e}; nothing more was sent"
+        ));
     }
+    println!("cleanup: version {version} deleted");
     let left = versions(&write, &t.bucket, &prefix).await;
     show_requests(&t.bucket, &[("write key", writes.take())]);
     println!(

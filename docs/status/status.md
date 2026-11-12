@@ -123,6 +123,45 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Review of the download tests (2026-11-12)
+
+Tree: uncommitted, on `5a7453a`; test code and docs only, **no application
+change**. WSL2 (Ubuntu 24.04.1, Rust 1.99.1); Windows PowerShell 5.1 of the
+Windows 11 host, called from WSL2, only to **parse** the Windows scripts.
+No remote request, no desktop interaction, no dialog opened.
+
+The production download path (`cloud/download.rs`, `S3Store::download`)
+was reviewed without finding a defect: the body is streamed chunk by chunk,
+synced, size- and SHA-256-checked before the commit point; cancel and the
+final move are decided once in `TransferControl`; the temporary file is
+removed on every error and on cancel; "completed" is sent after the file is
+in place; `sha256-verified` only for a stored, matching SHA-256; the page
+gets only the destination's file name (local write errors name the path
+the user chose).
+
+Changed in the tests:
+
+- `windows-cloud-ui.ps1`: the `b2-browse` block's `$out` renamed (it is the
+  same variable as the download folder `$Out`; harmless today only because
+  the modes exclude each other); `b2-download` stops before starting the
+  app unless the manifest names the run and version the upload printed.
+- New `tests/desktop/check-ps-variables.ps1` (static, parse only): fails
+  when one scope spells a variable two ways. It found the `$out`/`$Out`
+  clash above, flags mutants that reintroduce the two clashes seen in the
+  `b2-download` attempts (`$out`/`$Out`, `$a`/`$A`), and passes
+  `windows.ps1`, `windows-isolated.ps1` and the fixed `windows-cloud-ui.ps1`.
+- `cloud/integration/download.rs`: `backblaze_b2_download_file` now checks
+  the endpoint and that its run prefix is empty before uploading (one more
+  listing; **not yet run against Backblaze**); the cleanup test checks the
+  endpoint too; prepare and cleanup print a failure's reason on stdout,
+  which the Windows driver keeps (it drops stderr, where a panic goes).
+
+Checks: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`;
+`cargo test` **238 passed, 14 ignored** (no `SOTYWARE_*` variable set);
+`check-ps-variables.ps1` PASS on the three Windows scripts. Frontend not
+rerun (unchanged). The changed `b2-download` path and the changed opt-in
+tests have **not run** against Backblaze or on the Windows desktop.
+
 ### Real Backblaze download through the Windows dashboard (2026-11-12)
 
 Tree: uncommitted, on `fc76109` (test code only: `windows-cloud-ui.ps1
