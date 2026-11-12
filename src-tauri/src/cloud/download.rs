@@ -327,7 +327,11 @@ pub fn download_error(error: &StorageError) -> CommandError {
             };
             (ErrorKind::Provider, message)
         }
-        StorageError::Cancelled | StorageError::FileChanged(_) | StorageError::TooLarge { .. } => (
+        // Not reached: a cancel is handled before, the rest are upload errors.
+        StorageError::Cancelled
+        | StorageError::FileChanged(_)
+        | StorageError::AlreadyExists(_)
+        | StorageError::TooLarge { .. } => (
             ErrorKind::Other,
             "the file could not be downloaded".to_owned(),
         ),

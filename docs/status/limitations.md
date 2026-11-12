@@ -401,10 +401,43 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   visible in Credential Manager or Seahorse under `com.sotyware.desktop`.
 - **Environment-variable credentials exist only in test builds** (the opt-in
   provider tests); the app cannot use them, and nothing imports them.
-- **Uploads:** the file is read twice (hash, then send); the parts of one file
-  are sent one after another, not in parallel; an interrupted upload starts
-  again from the beginning (no resume); a file that changes during upload is
-  detected only by size and modification time.
+- **Uploads (backend only, ADR-021):** not reachable from the app, and
+  tested only against the in-process server: **never at Backblaze or
+  Hetzner**, never on native Windows. The file is read twice (the first
+  hashing pass, then while sending); the parts of one file are sent one
+  after another, not in parallel; an interrupted upload starts again from
+  the beginning (no resume).
+- **Upload conflicts are checked, not prevented.** The destination is
+  checked by `HeadObject` before any data is sent (and before completing a
+  multipart upload); another client that creates the same key in between is
+  overwritten (or, on a versioned bucket, hidden behind the new version). No
+  conditional write is sent: Backblaze does not document `If-None-Match`.
+  The checks and the verification need a key that may read objects as well
+  as write them.
+- **Incomplete multipart uploads can remain.** A failed or cancelled
+  multipart upload is aborted; if the abort fails or does not answer within
+  30 s, the error says that parts may remain, and they stay stored (and
+  billed) until a bucket lifecycle rule removes them. A process killed or
+  crashing during a multipart upload aborts nothing. sotyware does not list
+  or clean up old multipart uploads.
+- **Upload stall detection sees the local socket, not the network.** Bytes
+  in the operating system's send buffer count as sent, for progress and for
+  the 60 s stall timeout. After the last byte is handed over, the response
+  must arrive within 60 s including the time the buffer needs to drain; on
+  loopback through the test relay about 2.6 MiB drained in 26 s at
+  100 KiB/s, so with such a buffer a working link below about 44 KiB/s would
+  time out at the end of each request. Real slow links usually keep smaller
+  buffers (not measured).
+- **Touching a file during its upload fails it.** A new modification time
+  counts as a change (`FileChanged`) even if the content is the same. On
+  file systems with coarse timestamps a change that keeps the size and the
+  timestamp is caught only through the bytes the first pass had already
+  read; a change to bytes it had not read yet is hashed and sent as the
+  file now is, so the object is consistent but reflects the change.
+- **After an upload's commit point a failure is not cleaned up.** If the
+  provider may have stored the object but its verification fails (or the
+  response is lost), the error says so (`NeedsInspection`) and the object is
+  left as it is.
 - **Deletes on versioned buckets:** `delete_object` without a version id only
   hides the object on Backblaze (always versioned) and on a Hetzner bucket with
   versioning; the data stays billed. Only the exact version returned by the

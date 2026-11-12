@@ -272,6 +272,52 @@ layers, the first two in every `cargo test`:
   a download (cancelled, temporary file removed, no new download); and a
   stalled body ending as `network` after the SDK's ~5 s stalled-stream
   protection.
+- **Uploads** (`cloud/s3/upload/tests.rs`, `S3Store::upload`, ADR-021),
+  against the in-process server, which records every operation (`UploadPart`
+  with its part number), injects faults per operation and part
+  (`TestServer::inject`: 500 once, 403, no answer, or a callback such as
+  writing a competing object), plus hooks on `TransferControl`
+  (`during_hashing`, `during_send(part)`, `before_commit`, `after_commit`)
+  and a TCP relay that throttles or stalls the client-to-server direction
+  (`ThrottledLink`, small receive buffer). Basics: a small file (exactly
+  HEAD, PUT, HEAD), an empty file, a 3-part multipart file (exact operation
+  sequence, no multipart files left, downloaded back with SHA-256), Unicode,
+  `+ & = % ; # ~`, spaces and nested keys kept exactly, an existing key
+  refused after one HEAD (also through `upload_file`), an object created by
+  another client during part 2 found by the second check (aborted, theirs
+  untouched), a stored object of the wrong size or without the SHA-256
+  metadata failing verification with `NeedsInspection` and **not** deleted.
+  Cancellation: before the start (no request), during hashing (no request),
+  during a single PUT and during part 2 (nothing stored; aborted, no part 3,
+  no completion), right before completion and right before a PUT's last
+  chunk (nothing stored), after the commit point (both `cancel()` calls
+  return `false`, the upload completes and verifies), repeated (always
+  `true`), and one upload cancelled while another with its own control
+  completes. Multipart cleanup: a refused part and a refused completion
+  aborted, nothing left; a refused abort and an abort that never answers
+  (given up after `abort_timeout`) reported as `IncompleteParts`, with the
+  parts really still on the server. Integrity: same-size changes during
+  hashing, during a PUT and to a later part during multipart, a truncation,
+  and a rewrite with the same content (new modification time), all
+  `FileChanged` and never completed; per-part SHA-256 at exact boundaries
+  (multiples, +1, single, empty); a transient 500 on part 2 and on a PUT
+  retried by the SDK with a fresh hash, verified, content equal. Timeouts:
+  the control experiment (a plain `PutObject` through a 1 MiB/s relay fails
+  with the 1 s read timeout), a 12 MiB PUT through a 2 MiB/s relay taking
+  about 7.5 s with that same read timeout (passes; at least 8 progress
+  updates while sending), and a relay that stalls after 256 KiB (timeout
+  after the 1.5 s stall timeout, nothing stored). Progress in every test:
+  stages forward only, bytes never down, throttled to 250 ms except a
+  stage's last, `verifying` last only when completed; the throttle and its
+  held-back update also as pure unit tests. Opt-in, about 72 s: one 7 MiB PUT
+  through a 100 KiB/s relay with the **default** 60 s read and stall
+  timeouts:
+  `cargo test --lib cloud::s3::upload::tests::a_slow_upload_longer_than_a_minute -- --ignored --nocapture`.
+  What the server cannot model: a provider's real conditional-write or
+  versioning behaviour, a provider that refuses after reading the body
+  (s3s answers before reading it, so a refused part reaches the client as
+  403 or as a broken pipe), and socket buffers of a real slow link (the
+  relay runs on loopback).
 - **Real providers**, opt-in only: [below](#cloud-storage-integration-tests).
 - **The real OS credential store**, opt-in only:
   [below](#os-credential-store-test).
@@ -581,10 +627,12 @@ makes its own:
    16 MiB + 3 bytes (deterministic pattern) in a temporary folder and
    computes their SHA-256 **locally, before the upload**: the independent
    expectation.
-2. Write key: one `PutObject` of `sotyware-it/download-validation/<unix
+2. Write key: `upload_file` of `sotyware-it/download-validation/<unix
    nanos>-<pid>/größe test.bin` (a space and non-ASCII letters, so the key
    must come back exactly), with the `sotyware-sha256` metadata as the app's
-   uploader sets it. It must return a version id, or the test stops and asks
+   uploader sets it: since ADR-021 a `HeadObject` (must find nothing), one
+   `PutObject` and a verifying `HeadObject`, so the write key needs read
+   access too. It must return a version id, or the test stops and asks
    for manual cleanup.
 3. Read-only key: one `HeadObject`; size and `sotyware-sha256` must equal
    the local values.
@@ -600,9 +648,9 @@ makes its own:
    version id, then one `ListObjectVersions` of the run prefix, which must be
    empty.
 
-Six remote requests per run (five in the recorded run of 2026-11-12: the
-listing before the upload was added afterwards and has not run against
-Backblaze yet); every client makes one attempt, so nothing is retried
+Eight remote requests per run (five in the recorded run of 2026-11-12: the
+listing before the upload and the upload's two `HeadObject` were added
+afterwards and have not run against Backblaze yet); every client makes one attempt, so nothing is retried
 against the daily transaction cap. Requests from the write key and
 the `HeadObject` are recorded and printed (bucket as `<bucket>`; the
 `GetObject` goes through the app's own client, without the recorder). It
@@ -646,7 +694,9 @@ the driver keeps only stdout.
   computes their SHA-256, uploads them as `größe test.bin` with the
   `sotyware-sha256` metadata, prints the run id and version id at once and
   writes `manifest.json` (key, size, SHA-256, version id). The object is
-  kept for the dashboard. Requests: `ListObjectVersions`, `PutObject`.
+  kept for the dashboard. Requests: `ListObjectVersions`, then the upload's
+  `HeadObject`, `PutObject` and verifying `HeadObject` (ADR-021; not yet run
+  at Backblaze with these two HEADs).
 - `backblaze_b2_download_ui_cleanup`: `DeleteObject` of exactly
   `SOTYWARE_IT_B2_DOWNLOAD_UI_VERSION` (never without a version id), then
   one `ListObjectVersions` of the run prefix, which must be empty. If the
@@ -677,7 +727,7 @@ file's size, its SHA-256 (`Get-FileHash`) and every byte equal the generated
 original's. Then the usual tail (rename, replace key, remove; Credential
 Manager as before). Always, also after a failed check: the cleanup test, and
 both local folders removed. No fingerprint of `sotyware-it/` is taken, so the
-rest of the bucket is not listed. Requests per run: write key 4 (above), read
+rest of the bucket is not listed. Requests per run: write key 6 (above), read
 key about 6 through the app (`HeadBucket`, `ListObjectsV2` of the root,
 `sotyware-it/`, `download-ui-validation/` and the run folder, one
 `GetObject`; not recorded, the app's own client). Costs as for the

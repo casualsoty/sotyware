@@ -809,3 +809,116 @@ unreachable.
   during a download (crash, power loss, `kill -9`) leaves its hidden
   temporary file next to the destination. Details:
   [cloud-storage.md](cloud-storage.md#downloading-a-file).
+
+## ADR-021: Uploads have one commit point, re-hash what they send, verify by HEAD and time out on stalls, not on duration
+
+Status: Accepted (2026-11-12). Backend only: `S3Store::upload` in
+`src-tauri/src/cloud/s3/upload.rs`. No command, dialog or page reaches it
+yet; the planned multi-file uploads will call it once per file, one after
+another.
+
+- **Context:** the proof-of-concept `upload_file` (ADR-016) hashed the file,
+  sent it, and afterwards compared the file's size and modification time,
+  deleting the new version if they had changed. It could not be cancelled,
+  reported no progress, silently overwrote an existing object, never
+  checked what the provider stored, and could not tell what it left behind.
+  Reading the Smithy HTTP client (`aws-smithy-http-client` 1.1.9,
+  `client/timeout.rs`) showed that the 60-second read timeout wraps the
+  whole hyper request future, which includes sending the body: any upload
+  request taking longer than 60 s failed, however steadily it progressed.
+  The connector is chosen per request from the request's timeout settings
+  (`aws-smithy-runtime` 1.10.0, `orchestrator.rs`, cached per settings), so a
+  per-operation override takes effect.
+- **Decision:**
+  - **API:** `S3Store::upload(bucket, key, path, control, progress)` →
+    `Result<UploadReport, UploadError>`. `control` is the existing
+    `TransferControl` (as `Arc`, because the request body itself takes the
+    commit step); `progress` gets `UploadProgress { stage, bytes, total }`
+    with the stages `hashing`, `sending`, `verifying`, monotonic, at most one
+    update per 250 ms except a stage's first and last (an update held back
+    by the throttle is sent once due, so the end of a burst is not hidden).
+    `UploadError` is the `StorageError` plus `RemoteOutcome`:
+    `NothingStored`, `IncompleteParts { upload_id }` or `NeedsInspection`.
+    `upload_file` remains as a wrapper without cancellation or progress that
+    returns only the `StorageError`. There is no overwrite parameter: its only
+    allowed value would be "refuse" (see Conflicts).
+  - **Lifecycle:** bucket and key checks → transfer slot (cancellable) →
+    first hashing pass → `HeadObject` on the destination → send → `HeadObject`
+    verification → `Ok`. `TransferControl` keeps its two transitions
+    (`Running → Cancelling`, `Running → Committed`); `commit()` now also
+    answers `true` when already committed, because an SDK retry after the
+    commit point commits again.
+  - **Commit point:** a single PUT holds back its last body chunk until the
+    bytes sent plus that chunk match the first pass's SHA-256, the file's
+    size and modification time are unchanged, and `commit()` succeeds; only
+    then does the provider receive a complete request. A cancelled or
+    changed upload therefore never becomes an object (an empty file, with
+    nothing to hold back, commits before its request). A multipart upload
+    commits after all parts were sent and checked, the destination was
+    checked again and the file found unchanged, right before
+    `CompleteMultipartUpload`. Before the commit point `cancel()` returns
+    `true` and the upload stops; after it `cancel()` returns `false`
+    ("finishing") and the upload runs to its end.
+  - **Cancellation:** drops the request in flight. `CreateMultipartUpload` is
+    never dropped in flight (an upload id could be created that nothing
+    knows). A multipart upload that fails or is cancelled before its commit
+    point is aborted in a spawned task (it finishes even if the caller drops
+    the upload future), bounded by `ClientOptions::abort_timeout` (30 s). A
+    failed or timed-out abort is reported as `IncompleteParts`: parts may
+    remain, billed, at the provider. A failed `CompleteMultipartUpload` is
+    followed by an abort too; if the provider no longer knows the upload, it
+    may have completed, so that is `NeedsInspection`.
+  - **Integrity:** the first pass computes the file's SHA-256 (it goes into
+    `x-amz-meta-sotyware-sha256`, so it must be known before sending) and,
+    for multipart, the SHA-256 of every part at its exact boundaries. Each
+    request body hashes the bytes as the connection takes them, with a fresh
+    hash for every attempt (the SDK rebuilds the body per attempt, reopening
+    the file), and compares before handing over its last chunk. Any
+    difference, a file that ends early, or a changed size or modification
+    time before the commit point is `FileChanged`, and a multipart upload is
+    aborted instead of completed. No third read of the file. The old
+    after-the-fact size/mtime check and its delete are gone.
+  - **Verification:** `HeadObject` on the version the provider reported (if
+    it reported one) must show the size sent and the SHA-256 metadata; only
+    then is the upload complete. A failure after the commit point is
+    `NeedsInspection`; nothing is deleted (on a versioned bucket a delete
+    only hides, and the object may be the user's only good copy).
+  - **Timeouts:** requests that carry file data (`PutObject`, `UploadPart`)
+    run with a per-operation config override: connect timeout kept, read
+    timeout disabled, the SDK's own stalled-stream protection disabled.
+    Instead the upload fails with `Timeout` once its body has handed no bytes
+    to the connection, and no response has arrived, for
+    `ClientOptions::stall_timeout` (60 s). Every other request, downloads
+    included, keeps the client's 60 s read timeout unchanged. Proven, not
+    assumed: through a throttled TCP relay a plain `PutObject` with a 1 s read
+    timeout fails, the same relay with the override passes a 12 MiB PUT of
+    about 7.5 s, a stalled relay times out after the stall timeout, and an
+    opt-in test passes one 7 MiB PUT of 72 s with the default 60 s settings.
+  - **Conflicts:** `HeadObject` before any file data is sent and, for
+    multipart, again before completion; an existing object is
+    `StorageError::AlreadyExists`. Uploads therefore need a key that may also
+    read (HEAD). No conditional write (`If-None-Match: *`): Backblaze does
+    not document it, and a provider capability flag is not needed yet.
+  - Rejected: keeping the read timeout and raising it (a large file on a
+    slow line can need hours; a stall would then go unnoticed for that long);
+    the SDK's stalled-stream protection as the only stall check (its 20 s
+    grace and 1 B/s floor are not configurable per stage here, and its error
+    surfaces as a network error, not a timeout); buffering each part in
+    memory to hash it (up to 64 MiB for a single PUT, and no progress while
+    sending); deleting a stored object that fails verification; a
+    `Replace` option (needs its own confirmation design and versioning
+    semantics).
+- **Consequences:** `ClientOptions` gains `stall_timeout` and
+  `abort_timeout`; `StorageError` gains `AlreadyExists`; tokio's `time`
+  feature and a direct `http-body` 1 dependency are added (both already in
+  the tree). Every upload sends two `HeadObject` more than before (a
+  Backblaze class B transaction each), and needs read permission. Remaining
+  risks, all documented in
+  [limitations.md](../status/limitations.md#cloud-storage): another client
+  can create the object between the check and the write, which the upload
+  then replaces or hides; a process killed during a multipart upload, or an
+  abort that fails, leaves its parts until a bucket lifecycle rule removes
+  them; progress and the stall timeout count bytes taken by the operating
+  system's socket buffer, which can run ahead of the network by a few MiB;
+  touching a file (new modification time, same content) during an upload
+  fails it. Details: [cloud-storage.md](cloud-storage.md#uploads-and-integrity).

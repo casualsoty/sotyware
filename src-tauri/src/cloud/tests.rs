@@ -24,6 +24,8 @@ fn test_options() -> ClientOptions {
         max_attempts: 1,
         multipart_threshold: 6 * MIB as u64,
         part_size: 5 * MIB as u64,
+        stall_timeout: Duration::from_secs(2),
+        abort_timeout: Duration::from_secs(2),
     }
 }
 

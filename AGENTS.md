@@ -46,7 +46,7 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-12 (native save dialog for cloud downloads).
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-12 (backend upload lifecycle: tokio `time`, direct `http-body`).
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
@@ -74,7 +74,8 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `zbus` (Linux only) | through `ksni` and the single-instance plugin; also a Linux-only direct dependency `5` (no features, to name its error types) | 5.19.0 |
 | `aws-sdk-s3` (no default features; `rt-tokio`, `http-1x`; cloud storage proof of concept) | `1` | 1.102.0 (newest supporting Rust 1.90) |
 | `aws-smithy-http-client` (feature `rustls-ring`: rustls on ring, not aws-lc-rs) | `1` | 1.1.9 |
-| `tokio` (`fs`, `io-util`, `sync`; already in the tree through Tauri) | `1` | 1.54.1 |
+| `tokio` (`fs`, `io-util`, `sync`, `rt`, `time`; already in the tree through Tauri) | `1` | 1.54.1 |
+| `http-body` (the upload request body's `Body` trait, ADR-021; already in the tree through `aws-sdk-s3` and hyper) | `1` | 1.1.0 |
 | `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
 | `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
@@ -133,6 +134,11 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   Windows Credential Manager, Linux Secret Service; no fallback; environment
   variables only in test builds), and one S3 adapter (`S3Store`,
   `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account.
+  Its upload (`S3Store::upload` in `cloud/s3/upload.rs`, backend only, not
+  reachable from the app) refuses an existing key, re-hashes what it sends,
+  has one commit point for cancellation, aborts failed multipart uploads,
+  verifies by `HeadObject` and times out on stalls instead of the read
+  timeout ([ADR-021](docs/architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)).
   The dashboard reaches only the account part, through `cloud/dashboard.rs`
   (`CloudAccounts`, managed state loaded in `run()` before the event loop, no
   credential read at startup): list, add, edit, remove accounts and a

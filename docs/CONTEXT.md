@@ -88,7 +88,14 @@ other changes to objects, backups or other product features exist**.
   leaving the browser or quitting cancels. Backend underneath: provider
   profiles as data, one S3 adapter on `aws-sdk-s3` with end-to-end SHA-256,
   multipart and a transfer queue per account; uploads are **not reachable
-  from the app**. Recommended first provider: Backblaze B2, EU Central.
+  from the app**. Their backend lifecycle (`S3Store::upload`,
+  [ADR-021](architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)):
+  existing key refused (HEAD; race documented), cancellable until one commit
+  point (a PUT's held-back last chunk; before `CompleteMultipartUpload`),
+  bytes re-hashed while sent (per part, per attempt) → `FileChanged`,
+  failed multipart aborted in its own task (≤ 30 s; else "parts may
+  remain"), `HeadObject` verification, 60 s stall timeout instead of the
+  read timeout for PUT/UploadPart, progress `hashing`/`sending`/`verifying`. Recommended first provider: Backblaze B2, EU Central.
   [cloud-storage.md](architecture/cloud-storage.md#dashboard),
   [cloud-providers.md](architecture/cloud-providers.md), ADR-016, ADR-017.
 
@@ -162,6 +169,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Backend upload lifecycle (2026-11-12, uncommitted on `7b11ecf`, WSL2,
+  in-process server only): `cargo test` **272 passed, 15 ignored**, 3 runs
+  (34 new: cancellation at every stage, multipart abort and its failure,
+  file changes, SDK retries, conflicts, verification, throttled and stalled
+  links); the opt-in one-minute PUT with the default timeouts passed (72 s).
+  **No real provider, no native Windows.**
+  [status.md](status/status.md#backend-upload-lifecycle-2026-11-12).
 - Hardened Backblaze download test, **native Windows 11 dashboard**
   (2026-11-12, `bb8c178`, no change): offline checks first (variable check
   PASS; WSL2 `cargo test` 238 + 14 ignored, Windows 228 + 93); then

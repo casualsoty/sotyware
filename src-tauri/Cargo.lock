@@ -4408,6 +4408,7 @@ dependencies = [
  "bytes",
  "digest 0.11.0-rc.4",
  "futures-core",
+ "http-body 1.1.0",
  "hyper-util",
  "keyring-core",
  "ksni",

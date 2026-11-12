@@ -12,7 +12,8 @@
 //! created.
 //!
 //! Remote requests, and nothing else: one `ListObjectVersions` of the run
-//! prefix and `PutObject` (write key), `HeadObject` and `GetObject`
+//! prefix and the upload's `HeadObject`, `PutObject` and verifying
+//! `HeadObject` (write key, ADR-021), `HeadObject` and `GetObject`
 //! (read-only key), `DeleteObject` with the version id and one more
 //! `ListObjectVersions` of the run prefix (write key). Every client makes
 //! one attempt per request, so a failure is never retried against the
@@ -461,8 +462,9 @@ fn show_requests(bucket: &str, sent: &[(&str, Vec<String>)]) {
 /// `manifest.json` next to it. The object is kept for the dashboard; the
 /// driver deletes it with `backblaze_b2_download_ui_cleanup`.
 ///
-/// Remote requests: one `ListObjectVersions` of the run prefix and one
-/// `PutObject`, both with the write key, one attempt each.
+/// Remote requests: one `ListObjectVersions` of the run prefix and the
+/// upload's `HeadObject`, `PutObject` and verifying `HeadObject`, all with
+/// the write key, one attempt each.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "opt-in: uploads one file to the Backblaze B2 test bucket and keeps it"]
 async fn backblaze_b2_download_ui_prepare() {

@@ -34,16 +34,51 @@ pub struct TestServer {
     /// The S3 operation names (`HeadBucket`, `ListBuckets`, …) of every
     /// authenticated request, in order.
     pub operations: Arc<Mutex<Vec<String>>>,
+    injections: Arc<Mutex<Vec<Injection>>>,
     root: PathBuf,
     task: JoinHandle<()>,
 }
 
-/// Records every authenticated operation and refuses the `denied` ones with
+/// What an injected fault does to a matching request, before the server
+/// handles it (and before it reads the request body).
+#[derive(Clone)]
+pub enum Inject {
+    /// Refuse with `InternalError` (HTTP 500): transient, so the SDK retries.
+    InternalError,
+    /// Refuse with `AccessDenied` (HTTP 403): not retried.
+    Deny,
+    /// Never answer.
+    Hang,
+    /// Run this, then handle the request normally.
+    Run(Arc<dyn Fn() + Send + Sync>),
+}
+
+struct Injection {
+    op: &'static str,
+    /// Only requests for this part number (`UploadPart`).
+    part: Option<u32>,
+    /// Matching requests left to affect.
+    times: usize,
+    action: Inject,
+}
+
+/// The `partNumber` query parameter of a request.
+fn part_number(query: Option<&str>) -> Option<u32> {
+    query?
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("partNumber="))
+        .and_then(|n| n.parse().ok())
+}
+
+/// Records every authenticated operation (`UploadPart` with its part
+/// number, as `UploadPart#2`), refuses the `denied` ones with
 /// `AccessDenied`, as a provider does for a key without that permission (a
-/// Backblaze key restricted to one bucket is refused `ListBuckets`).
+/// Backblaze key restricted to one bucket is refused `ListBuckets`), and
+/// applies injected faults.
 struct Access {
     denied: Vec<&'static str>,
     operations: Arc<Mutex<Vec<String>>>,
+    injections: Arc<Mutex<Vec<Injection>>>,
 }
 
 // Written out instead of with `#[async_trait]`, which would be a new
@@ -60,16 +95,42 @@ impl S3Access for Access {
         Self: 'f,
     {
         let op = cx.s3_op().name().to_owned();
+        let part = part_number(cx.uri().query());
         let signed = cx.credentials().is_some();
         Box::pin(async move {
             if !signed {
                 return Err(s3s::s3_error!(AccessDenied, "Signature is required"));
             }
-            self.operations.lock().unwrap().push(op.clone());
+            let recorded = match part {
+                Some(n) if op == "UploadPart" => format!("{op}#{n}"),
+                _ => op.clone(),
+            };
+            self.operations.lock().unwrap().push(recorded);
             if self.denied.contains(&op.as_str()) {
                 return Err(s3s::s3_error!(AccessDenied, "not entitled"));
             }
-            Ok(())
+            let action = {
+                let mut injections = self.injections.lock().unwrap();
+                injections
+                    .iter_mut()
+                    .find(|i| i.op == op && i.times > 0 && (i.part.is_none() || i.part == part))
+                    .map(|i| {
+                        i.times -= 1;
+                        i.action.clone()
+                    })
+            };
+            match action {
+                None => Ok(()),
+                Some(Inject::InternalError) => {
+                    Err(s3s::s3_error!(InternalError, "injected by the test"))
+                }
+                Some(Inject::Deny) => Err(s3s::s3_error!(AccessDenied, "injected by the test")),
+                Some(Inject::Hang) => std::future::pending().await,
+                Some(Inject::Run(f)) => {
+                    f();
+                    Ok(())
+                }
+            }
         })
     }
 }
@@ -531,9 +592,11 @@ impl TestServer {
         let mut builder = S3ServiceBuilder::new(backend);
         builder.set_auth(SimpleAuth::from_single(access_key_id, secret));
         let operations = Arc::new(Mutex::new(Vec::new()));
+        let injections = Arc::new(Mutex::new(Vec::new()));
         builder.set_access(Access {
             denied: denied.to_vec(),
             operations: Arc::clone(&operations),
+            injections: Arc::clone(&injections),
         });
         let service = builder.build();
 
@@ -557,9 +620,62 @@ impl TestServer {
             access_key_id: access_key_id.into(),
             secret: secret.into(),
             operations,
+            injections,
             root,
             task,
         }
+    }
+
+    /// Applies `action` to the next `times` requests of operation `op`
+    /// (`PutObject`, `UploadPart`, …), for `UploadPart` only those of part
+    /// `part` if given. Rules are checked in the order they were added.
+    pub fn inject(&self, op: &'static str, part: Option<u32>, times: usize, action: Inject) {
+        self.injections.lock().unwrap().push(Injection {
+            op,
+            part,
+            times,
+            action,
+        });
+    }
+
+    /// The operations requested so far.
+    pub fn ops(&self) -> Vec<String> {
+        self.operations.lock().unwrap().clone()
+    }
+
+    /// Files `s3s-fs` keeps for multipart uploads that were neither
+    /// completed nor aborted (upload ids, parts, their metadata).
+    pub fn open_multipart_files(&self) -> Vec<String> {
+        fs::read_dir(&self.root)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains(".upload"))
+            .collect()
+    }
+
+    /// The file `s3s-fs` keeps an object's metadata in.
+    pub fn metadata_path(&self, bucket: &str, key: &str) -> PathBuf {
+        fn b64(s: &str) -> String {
+            const A: &[u8; 64] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            let b = s.as_bytes();
+            let mut out = String::new();
+            for chunk in b.chunks(3) {
+                let n = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u32, |n, (i, &c)| n | u32::from(c) << (16 - 8 * i));
+                for i in 0..=chunk.len() {
+                    out.push(char::from(A[(n >> (18 - 6 * i) & 63) as usize]));
+                }
+            }
+            out
+        }
+        self.root.join(format!(
+            ".bucket-{}.object-{}.metadata.json",
+            b64(bucket),
+            b64(key)
+        ))
     }
 
     /// The file `s3s-fs` keeps an object's content in.
@@ -595,6 +711,110 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.task.abort();
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+/// How a [`ThrottledLink`] forwards the bytes a client sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pace {
+    /// At most this many bytes per second.
+    BytesPerSecond(u64),
+    /// This many bytes per connection, then nothing more (the connection
+    /// stays open), as on a link that stopped carrying data.
+    StallAfter(usize),
+}
+
+/// A TCP relay in front of a test server whose client-to-server direction
+/// is slow or stalls, so an upload meets real backpressure: the client's
+/// socket buffers fill and its HTTP stack stops taking body bytes. The
+/// server-to-client direction is not slowed. Its own receive buffer is
+/// small, so little can pile up in front of the throttle.
+pub struct ThrottledLink {
+    pub endpoint: String,
+    task: JoinHandle<()>,
+    stop: Arc<tokio::sync::Notify>,
+}
+
+impl ThrottledLink {
+    pub async fn start(upstream: &str, pace: Pace) -> Self {
+        let upstream = upstream
+            .strip_prefix("http://")
+            .expect("an http endpoint")
+            .to_owned();
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_recv_buffer_size(64 * 1024).unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener = socket.listen(16).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = Arc::new(tokio::sync::Notify::new());
+        let stop2 = Arc::clone(&stop);
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((client, _)) = listener.accept().await else {
+                    continue;
+                };
+                let upstream = upstream.clone();
+                let stop = Arc::clone(&stop2);
+                tokio::spawn(async move {
+                    let stopped = stop.notified();
+                    tokio::pin!(stopped);
+                    tokio::select! {
+                        () = relay(client, &upstream, pace) => {}
+                        () = &mut stopped => {}
+                    }
+                });
+            }
+        });
+        Self {
+            endpoint: format!("http://{addr}"),
+            task,
+            stop,
+        }
+    }
+}
+
+async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let Ok(server) = tokio::net::TcpStream::connect(upstream).await else {
+        return;
+    };
+    let (mut client_rd, mut client_wr) = client.into_split();
+    let (mut server_rd, mut server_wr) = server.into_split();
+    let back = tokio::spawn(async move {
+        let _ = tokio::io::copy(&mut server_rd, &mut client_wr).await;
+    });
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut total = 0usize;
+    loop {
+        let max = match pace {
+            Pace::StallAfter(n) if total >= n => {
+                // Stop reading: the client's buffers fill up.
+                std::future::pending::<()>().await;
+                0
+            }
+            Pace::StallAfter(n) => buf.len().min(n - total),
+            Pace::BytesPerSecond(_) => buf.len(),
+        };
+        let n = match client_rd.read(&mut buf[..max]).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if server_wr.write_all(&buf[..n]).await.is_err() {
+            break;
+        }
+        total += n;
+        if let Pace::BytesPerSecond(rate) = pace {
+            tokio::time::sleep(Duration::from_secs_f64(n as f64 / rate as f64)).await;
+        }
+    }
+    let _ = server_wr.shutdown().await;
+    let _ = back.await;
+}
+
+impl Drop for ThrottledLink {
+    fn drop(&mut self) {
+        self.task.abort();
+        self.stop.notify_waiters();
     }
 }
 

@@ -32,8 +32,12 @@ aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", 
 # The HTTPS client for aws-sdk-s3, with rustls on ring instead of aws-lc-rs:
 # ring builds with the C compiler Tauri already needs on both platforms.
 aws-smithy-http-client = { version = "1", default-features = false, features = ["rustls-ring"] }
-# Already in the tree through Tauri: file I/O and the per-account transfer limit.
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "sync", "rt"] }
+# Already in the tree through Tauri: file I/O, the per-account transfer limit,
+# and (`time`) the upload stall timeout and the bounded multipart abort.
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "sync", "rt", "time"] }
+# Already in the tree through aws-sdk-s3 and hyper: the `Body` trait of the
+# upload request body that hashes the bytes as they are sent (ADR-021).
+http-body = "1"
 # Already in the tree through Tauri: end-to-end SHA-256 of uploaded objects.
 sha2 = "0.10"
 # Cloud account credentials in the OS credential store (ADR-017): the

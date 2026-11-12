@@ -11,13 +11,17 @@ From the browser one file at a time can be downloaded to a place the user
 picks in the native save dialog ([Downloading a file](#downloading-a-file),
 [ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
 Uploads, any change to objects and the transfer queue are not reachable
-from the app: no command exposes them. Decision and rationale of
+from the app: no command exposes them. The backend's upload lifecycle
+(commit point, cancellation, re-hashing, verification, stall timeout) is
+built and tested against the in-process server only
+([Uploads and integrity](#uploads-and-integrity),
+[ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)). Decision and rationale of
 the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs`, `dashboard.rs`, `browser.rs`, `download.rs`) and `SqliteAccountStore` in
+`keyring.rs`, `s3.rs` with `s3/upload.rs`, `dashboard.rs`, `browser.rs`, `download.rs`) and `SqliteAccountStore` in
 `src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
 `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` and
 `src/cloudMessages.ts`.
@@ -43,7 +47,7 @@ AccountConfig (no secret) ──resolve()──▶ ResolvedAccount ──┐
 | `AccountStore` trait / `SqliteAccountStore` | `load`, `save`, `remove`. SQLite in `cloud-accounts.sqlite3` (tables `storage_accounts`, `storage_account_buckets`; `ACCOUNT_MIGRATIONS`, `PRAGMA user_version`), using the same open/check/migrate code as the preferences database. Schema has no column for a secret. |
 | `CredentialStore` trait (`credentials.rs`) | `store`, `load`, `delete`, `exists` for an account's key pair, **by account id**. `Secret` never prints its value in `Debug`/`Display`. `EnvCredentials` (`SOTYWARE_CLOUD_<ID>_ACCESS_KEY_ID`, `…_SECRET_ACCESS_KEY`) exists only in test builds, for the opt-in provider tests. |
 | `OsCredentialStore` (`keyring.rs`) | The one real `CredentialStore`: Windows Credential Manager or the Linux Secret Service through `keyring-core`. No fallback. |
-| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_folder` (one page of one folder level, for the browser), `list_buckets`, `list_objects` (all pages), `head_object`, `upload_file`, `download` (streamed, with progress and a `TransferControl` for cancellation; `download_file` is it without either), `delete_object`. |
+| `S3Store` (`s3.rs`) | The one adapter: `check_bucket` (the connection check), `list_folder` (one page of one folder level, for the browser), `list_buckets`, `list_objects` (all pages), `head_object`, `upload` (`s3/upload.rs`: refuses an existing key, cancellable through a `TransferControl` until its commit point, progress by stage, verified by `HeadObject`; `upload_file` is it without cancellation or progress), `download` (streamed, with progress and a `TransferControl` for cancellation; `download_file` is it without either), `delete_object`. |
 | `CloudAccounts` (`dashboard.rs`) | What the dashboard's commands work on: `Accounts` (or why its database could not be opened) plus the last connection check and the listing cursors per account, in memory. Safe shapes (`AccountInfo`, `ProviderInfo`), structured `CommandError`, account ids from labels. [Dashboard](#dashboard). |
 | `cloud::browser` (`browser.rs`) | `list_cloud_folder`: `FolderListing` (folders, files, breadcrumbs, next-page cursor), the prefix and key rules, listing errors. [Browsing a bucket](#browsing-a-bucket). |
 | `cloud::download` (`download.rs`) | `download_cloud_file`, `cancel_cloud_download`, `retry_cloud_download`; `CloudDownloads` (the one download slot, managed state), progress messages, the save dialog, download errors. [Downloading a file](#downloading-a-file). |
@@ -74,6 +78,10 @@ core logic would not change.
   sotyware's own SHA-256 instead (below).
 - **Timeouts and retries:** connect 10 s, read 60 s, 3 attempts with the SDK's
   standard exponential backoff (transient errors only). `ClientOptions`.
+  The read timeout covers a whole request, body included, so requests that
+  carry file data (`PutObject`, `UploadPart`) switch it off per operation and
+  use a stall timeout instead (60 s without body bytes taken and without a
+  response; below).
 - **Plain HTTP** is refused except for `localhost`/`127.0.0.1`/`::1` (the test
   server); an endpoint is `scheme://host[:port]` only.
 - **Bucket allow-list:** if an account lists buckets, any operation on another
@@ -81,19 +89,84 @@ core logic would not change.
 
 ## Uploads and integrity
 
-1. The file is hashed (SHA-256) and its size and modification time noted.
-2. `plan_upload` picks a single PUT (up to `multipart_threshold`, 64 MiB, and
+`S3Store::upload(bucket, key, path, control, progress)` in
+`src-tauri/src/cloud/s3/upload.rs`; decision and rejected alternatives:
+[ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration).
+Not reachable from the app.
+
+1. **Checks** without a request: bucket configured for the account, key 1 to
+   1,024 bytes; a transfer already cancelled stops here. Then a slot in the
+   account's transfer queue (cancellable).
+2. **Hashing** (stage `hashing`): size and modification time noted, then one
+   pass over the file for its SHA-256 (stored as user metadata
+   `x-amz-meta-sotyware-sha256`, so it must be known before sending) and, for
+   multipart, the SHA-256 of each part at its exact boundaries. Cancellable
+   after every 1 MiB.
+3. `plan_upload` picks a single PUT (up to `multipart_threshold`, 64 MiB, and
    never above the provider's single-PUT limit) or a multipart upload: parts of
    16 MiB, raised to the provider minimum and to whatever keeps the count within
    `max_parts`, whole MiB; never a one-part multipart upload (B2 requires two);
    refused before any request if larger than the provider's object limit.
-3. The SHA-256 is stored as user metadata `x-amz-meta-sotyware-sha256`. Parts
-   are streamed from the file (`ByteStream::read_from().offset().length()`), so
-   memory use does not grow with the file size. Parts of one file go one after
-   another.
-4. A failed multipart upload is **aborted**, so no orphaned parts stay billed.
-5. If the file's size or modification time changed meanwhile, the version just
-   created is deleted and the upload fails with `FileChanged`.
+4. **Destination:** `HeadObject` on the key. An existing object fails with
+   `AlreadyExists` before any file data is sent; nothing is overwritten on
+   purpose. A multipart upload checks again right before completing. Between
+   check and write another client can still create the object, which the
+   upload then replaces (or, on a versioned bucket, hides): no
+   `If-None-Match: *` is sent, because Backblaze does not document it.
+5. **Sending** (stage `sending`): parts are streamed from the file
+   (`ByteStream::read_from().offset().length()`, 64 KiB chunks), one after
+   another, so memory use does not grow with the file size. Each request
+   body hashes the bytes as the connection takes them, with a fresh hash per
+   SDK attempt (the SDK rebuilds the body, reopening the file), and holds
+   back its last chunk until the hash matches the first pass.
+6. **Commit point.** A single PUT: right before its last chunk is handed
+   over (hash matched, size and modification time unchanged, then
+   `TransferControl` → committed); without that chunk the provider never has
+   a complete request. An empty file commits before its request. Multipart:
+   after all parts, the second destination check and an unchanged file,
+   right before `CompleteMultipartUpload`.
+7. **Verifying** (stage `verifying`): `HeadObject` on the version created
+   (if the provider named one) must report the size sent and the SHA-256
+   metadata. Only then does `upload` return `Ok`.
+
+| What happens | Before the commit point | After it |
+| --- | --- | --- |
+| `cancel()` | returns `true`; the request in flight is dropped; `Cancelled` | returns `false` ("finishing"); the upload runs to its end |
+| File differs from the first pass (content, size, modification time) | `FileChanged`; the last chunk is never sent, multipart is aborted | cannot happen: checked before the commit |
+| Request or part fails | that error; multipart is aborted | `CompleteMultipartUpload` failed: aborted; if the provider no longer knows the upload, `NeedsInspection` |
+| Verification fails | — | `Integrity` (or the request's error) with `NeedsInspection`; the object is **not** deleted |
+| What `UploadError::remote` says | `NothingStored`, or `IncompleteParts { upload_id }` if the abort failed | `NeedsInspection` |
+
+**Multipart abort:** `AbortMultipartUpload` runs in its own task, so it
+finishes even if the caller drops the upload, and is given at most
+`abort_timeout` (30 s) including retries. If it fails or times out, the
+error says that parts may remain (and are billed) at the provider. A process
+that ends during a multipart upload aborts nothing; a bucket lifecycle rule
+that removes unfinished multipart uploads is the only cleanup then.
+`CreateMultipartUpload` is never dropped in flight, so no upload id can exist
+that sotyware did not learn.
+
+**Timeouts:** `PutObject` and `UploadPart` run with a per-operation override
+(connect timeout kept, read timeout and the SDK's stalled-stream protection
+off) and fail with `Timeout` once the body has handed no bytes to the
+connection, and no response has come, for `stall_timeout` (60 s). The
+measure is the local TCP stack: bytes waiting in the operating system's send
+buffer count as taken, so after the last byte the response must come within
+the stall timeout *including* the time that buffer needs to drain. Through
+the test relay on loopback at 100 KiB/s the last byte was taken after 46 s
+and the response came after 72 s: about 2.6 MiB, 26 s of draining. With a
+buffer that size, a link slower than about 44 KiB/s would time out after
+its last byte although it works; operating systems size the buffer by the
+connection's bandwidth and delay, so slow real links usually keep it much
+smaller (not measured). Every other request, downloads
+included, keeps the 60 s read timeout.
+
+**Progress:** `UploadProgress { stage, bytes, total }`, stages only forward,
+bytes never down within a stage (a retried request is not shown until it
+passes the earlier position), at most one update per 250 ms except a stage's
+first and last; an update held back by the throttle is sent once due.
+`verifying` is the last update of a completed upload; completion itself is
+the `Ok`.
 
 Downloads stream into `<dest>.sotyware-partial` while hashing, then compare
 size and SHA-256; only a match is renamed to `<dest>`. A mismatch is
@@ -107,9 +180,11 @@ uploads and differ between providers.
 
 `StorageError` sorts failures by what can be done about them:
 `InvalidCredentials` (unknown key id, wrong secret), `AccessDenied`,
-`NotFound`, `Network`, `Timeout`, `Integrity`, `FileChanged`, `TooLarge`,
-`Refused` (bucket not configured, bad key, existing destination), `Io`
-(local file), `Provider { status, code, message }`. `is_transient()` is true for
+`NotFound`, `Network`, `Timeout`, `Integrity`, `FileChanged`,
+`AlreadyExists` (an upload's key is taken), `TooLarge`, `Refused` (bucket
+not configured, bad key), `Io` (local file), `LocalWrite` (a download's
+destination), `Cancelled`, `Provider { status, code, message }`. `upload`
+returns it inside `UploadError` together with `RemoteOutcome` (above). `is_transient()` is true for
 `Network`, `Timeout`, 5xx and 429: the basis for a later retrying queue. The
 mapping from S3 error codes is a pure function (`classify_response`). Which
 codes Backblaze and Hetzner really return for a bad key is checked only by the

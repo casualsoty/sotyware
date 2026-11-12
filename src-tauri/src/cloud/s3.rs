@@ -3,15 +3,19 @@
 //!
 //! Integrity is checked end to end, independently of the provider: before an
 //! upload the file's SHA-256 is computed and stored with the object as user
-//! metadata (`x-amz-meta-sotyware-sha256`); a download is streamed to a new
+//! metadata (`x-amz-meta-sotyware-sha256`), the bytes are hashed again as
+//! they are sent, and the stored object is checked by `HeadObject` (see
+//! [`S3Store::upload`] in `upload.rs`); a download is streamed to a new
 //! temporary file next to its destination, hashed while it streams, and moved
 //! into place only if the size (and, when the object has one, the stored
 //! SHA-256) match. Nothing relies on ETags (an ETag is not an MD5 for
 //! multipart uploads and differs between providers).
 //!
-//! A download can be cancelled through its [`TransferControl`], which also
-//! settles the race between cancelling and finishing: once the verified file
-//! is being moved into place, a cancel request no longer has any effect.
+//! A transfer can be cancelled through its [`TransferControl`], which also
+//! settles the race between cancelling and finishing: once a transfer has
+//! passed its commit point (a download: the verified file is being moved
+//! into place; an upload: the provider is being asked to store the object),
+//! a cancel request no longer has any effect.
 //!
 //! Each [`S3Store`] belongs to one account and has its own HTTP connection
 //! pool and its own transfer queue (a semaphore of
@@ -26,7 +30,7 @@ use std::pin::pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::Poll;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::retry::RetryConfig;
@@ -36,16 +40,18 @@ use aws_sdk_s3::config::{
     ResponseChecksumValidation,
 };
 use aws_sdk_s3::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
-use aws_sdk_s3::primitives::{ByteStream, Length};
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_http_client::tls;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{Semaphore, watch};
 
 use super::account::ResolvedAccount;
 use super::credentials::Credentials;
 use super::provider::{SdkChecksums, TransferLimits};
+
+mod upload;
+
+pub use upload::{RemoteOutcome, UploadError, UploadProgress, UploadStage};
 
 /// User metadata key holding the hex SHA-256 of the object's content.
 pub const SHA256_METADATA: &str = "sotyware-sha256";
@@ -76,6 +82,15 @@ pub struct ClientOptions {
     pub multipart_threshold: u64,
     /// Preferred part size; raised when a file would need too many parts.
     pub part_size: u64,
+    /// Upload requests (`PutObject`, `UploadPart`) fail with a timeout once
+    /// the connection has taken no body bytes, and no response has arrived,
+    /// for this long. `read_timeout` does not apply to them: the SDK measures
+    /// it over the whole request, body included, so a slow but steady upload
+    /// would fail (ADR-021).
+    pub stall_timeout: Duration,
+    /// Longest wait for `AbortMultipartUpload` after a failed or cancelled
+    /// multipart upload, retries included.
+    pub abort_timeout: Duration,
 }
 
 impl Default for ClientOptions {
@@ -86,6 +101,8 @@ impl Default for ClientOptions {
             max_attempts: 3,
             multipart_threshold: 64 * MIB,
             part_size: 16 * MIB,
+            stall_timeout: Duration::from_secs(60),
+            abort_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -108,6 +125,9 @@ pub enum StorageError {
     Integrity(String),
     /// The local file changed while it was being uploaded.
     FileChanged(String),
+    /// An upload's destination key already holds an object; nothing was
+    /// overwritten.
+    AlreadyExists(String),
     /// The file is larger than the provider accepts.
     TooLarge { size: u64, max: u64 },
     /// The bucket is not one of the account's configured buckets, or the key
@@ -153,6 +173,7 @@ impl fmt::Display for StorageError {
             Self::Timeout(m) => write!(f, "timed out: {m}"),
             Self::Integrity(m) => write!(f, "integrity check failed: {m}"),
             Self::FileChanged(m) => write!(f, "file changed during upload: {m}"),
+            Self::AlreadyExists(m) => write!(f, "already exists: {m}"),
             Self::TooLarge { size, max } => {
                 write!(
                     f,
@@ -365,30 +386,6 @@ fn hex(bytes: &[u8]) -> String {
         })
 }
 
-/// Size, modification time and SHA-256 of a local file.
-async fn hash_file(path: &Path) -> Result<(u64, Option<SystemTime>, String), StorageError> {
-    let mut file = tokio::fs::File::open(path).await.map_err(io_error(path))?;
-    let meta = file.metadata().await.map_err(io_error(path))?;
-    if !meta.is_file() {
-        return Err(StorageError::Io(format!("{}: not a file", path.display())));
-    }
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; MIB as usize];
-    let mut size = 0u64;
-    loop {
-        let n = file.read(&mut buf).await.map_err(io_error(path))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-        size += n as u64;
-    }
-    if size != meta.len() {
-        return Err(StorageError::FileChanged(path.display().to_string()));
-    }
-    Ok((size, meta.modified().ok(), hex(&hasher.finalize())))
-}
-
 fn write_error(path: &Path) -> impl Fn(io::Error) -> StorageError + '_ {
     move |e| StorageError::LocalWrite {
         kind: e.kind(),
@@ -453,17 +450,23 @@ pub enum Existing {
     Replace,
 }
 
+/// Where a transfer stands. The only transitions are
+/// `Running → Cancelling` ([`TransferControl::cancel`]) and
+/// `Running → Committed` (the transfer's commit point); both end states are
+/// final, so whichever of the two comes first wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Running,
     Cancelling,
-    /// The verified file is being moved into place; too late to cancel.
+    /// Past the commit point (a download: the verified file is being moved
+    /// into place; an upload: the provider is being asked to store the
+    /// object); too late to cancel.
     Committed,
 }
 
-/// Cancels one download, and decides the race between cancelling and
-/// finishing in one place: whichever of [`Self::cancel`] and the download's
-/// final move comes first wins, and the other one sees that.
+/// Cancels one transfer, and decides the race between cancelling and
+/// finishing in one place: whichever of [`Self::cancel`] and the transfer's
+/// commit point comes first wins, and the other one sees that.
 pub struct TransferControl {
     phase: watch::Sender<Phase>,
     /// The temporary file while it exists, so it can be removed at shutdown
@@ -475,7 +478,14 @@ pub struct TransferControl {
     before_commit: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     after_commit: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    during_hashing: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    during_send: Mutex<Option<(u32, Hook)>>,
 }
+
+#[cfg(test)]
+type Hook = Box<dyn FnOnce() + Send>;
 
 impl fmt::Debug for TransferControl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -502,12 +512,17 @@ impl TransferControl {
             before_commit: Mutex::new(None),
             #[cfg(test)]
             after_commit: Mutex::new(None),
+            #[cfg(test)]
+            during_hashing: Mutex::new(None),
+            #[cfg(test)]
+            during_send: Mutex::new(None),
         }
     }
 
-    /// Asks the download to stop. Returns `true` if it will stop (also when
-    /// it was asked before), `false` if it is already moving the verified
-    /// file into place and will complete. Safe to call any number of times.
+    /// Asks the transfer to stop. Returns `true` if it will stop (also when
+    /// it was asked before), `false` if it has passed its commit point and
+    /// will finish (completed, or failed after the commit). Safe to call any
+    /// number of times.
     pub fn cancel(&self) -> bool {
         let mut stops = false;
         self.phase.send_if_modified(|phase| match phase {
@@ -529,19 +544,28 @@ impl TransferControl {
         *self.phase.borrow() == Phase::Cancelling
     }
 
-    /// Moves to the final step unless cancelled first.
+    /// Moves to the final step unless cancelled first. `true` again once
+    /// committed (an upload request retried by the SDK after its commit point
+    /// commits again).
     fn commit(&self) -> bool {
         let mut committed = false;
-        self.phase.send_if_modified(|phase| {
-            if *phase == Phase::Running {
+        self.phase.send_if_modified(|phase| match phase {
+            Phase::Running => {
                 *phase = Phase::Committed;
                 committed = true;
                 true
-            } else {
+            }
+            Phase::Committed => {
+                committed = true;
                 false
             }
+            Phase::Cancelling => false,
         });
         committed
+    }
+
+    fn is_committed(&self) -> bool {
+        *self.phase.borrow() == Phase::Committed
     }
 
     /// Resolves once [`Self::cancel`] took effect.
@@ -594,10 +618,33 @@ impl TransferControl {
         *self.before_commit.lock().unwrap() = Some(Box::new(f));
     }
 
-    /// Runs `f` right after the commit point, before the file is moved.
+    /// Runs `f` right after the commit point, before the file is moved (an
+    /// upload: before the provider is asked to store the object).
     #[cfg(test)]
     pub(crate) fn after_commit(&self, f: impl FnOnce() + Send + 'static) {
         *self.after_commit.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// Runs `f` once an upload's first hashing pass has read its first
+    /// chunk.
+    #[cfg(test)]
+    pub(crate) fn during_hashing(&self, f: impl FnOnce() + Send + 'static) {
+        *self.during_hashing.lock().unwrap() = Some(Box::new(f));
+    }
+
+    /// Runs `f` once part `part` of an upload (1 for a single PUT) has handed
+    /// its first chunk to the connection.
+    #[cfg(test)]
+    pub(crate) fn during_send(&self, part: u32, f: impl FnOnce() + Send + 'static) {
+        *self.during_send.lock().unwrap() = Some((part, Box::new(f)));
+    }
+
+    #[cfg(test)]
+    fn run_hook(hook: &Mutex<Option<Box<dyn FnOnce() + Send>>>) {
+        let f = hook.lock().unwrap().take();
+        if let Some(f) = f {
+            f();
+        }
     }
 }
 
@@ -975,158 +1022,25 @@ impl S3Store {
         }
     }
 
-    /// Uploads `path` to `bucket/key` (single PUT or multipart, per
-    /// [`plan_upload`]), storing its SHA-256 with the object. Waits for a slot
-    /// in the account's transfer queue first. A failed multipart upload is
-    /// aborted, so no orphaned parts stay billed.
+    /// Uploads `path` to `bucket/key`, which must not hold an object yet,
+    /// without cancellation or progress: see [`Self::upload`]. Kept for the
+    /// tests and the opt-in provider tests; only the error is returned, not
+    /// what may be left at the provider.
     pub async fn upload_file(
         &self,
         bucket: &str,
         key: &str,
         path: &Path,
     ) -> Result<UploadReport, StorageError> {
-        self.check_target(bucket, Some(key))?;
-        let _slot = self.transfer_slot().await?;
-        let (size, modified, sha256) = hash_file(path).await?;
-        let plan = plan_upload(size, &self.account.profile.limits, &self.options)?;
-        let (parts, version_id) = match plan {
-            UploadPlan::Single => {
-                let body = ByteStream::from_path(path)
-                    .await
-                    .map_err(|e| StorageError::Io(format!("{}: {e}", path.display())))?;
-                let out = self
-                    .client
-                    .put_object()
-                    .bucket(bucket)
-                    .key(key)
-                    .content_length(i64::try_from(size).unwrap_or(i64::MAX))
-                    .metadata(SHA256_METADATA, &sha256)
-                    .body(body)
-                    .send()
-                    .await
-                    .map_err(|e| classify("upload", e))?;
-                (1, out.version_id().map(str::to_owned))
-            }
-            UploadPlan::Multipart { part_size, parts } => {
-                let version = self
-                    .upload_multipart(bucket, key, path, &sha256, size, part_size)
-                    .await?;
-                (parts, version)
-            }
-        };
-        // The hash was taken before sending; if the file changed since, the
-        // object does not match it. Remove exactly the version just created.
-        let unchanged = tokio::fs::metadata(path)
-            .await
-            .map(|m| m.len() == size && m.modified().ok() == modified)
-            .unwrap_or(false);
-        if !unchanged {
-            if let Err(e) = self.delete_object(bucket, key, version_id.as_deref()).await {
-                eprintln!("sotyware: cannot remove the inconsistent upload of '{key}': {e}");
-            }
-            return Err(StorageError::FileChanged(path.display().to_string()));
-        }
-        Ok(UploadReport {
-            size,
-            sha256,
-            parts,
-            version_id,
-        })
-    }
-
-    async fn upload_multipart(
-        &self,
-        bucket: &str,
-        key: &str,
-        path: &Path,
-        sha256: &str,
-        size: u64,
-        part_size: u64,
-    ) -> Result<Option<String>, StorageError> {
-        let created = self
-            .client
-            .create_multipart_upload()
-            .bucket(bucket)
-            .key(key)
-            .metadata(SHA256_METADATA, sha256)
-            .send()
-            .await
-            .map_err(|e| classify("start multipart upload", e))?;
-        let upload_id = created
-            .upload_id()
-            .ok_or_else(|| StorageError::Provider {
-                status: 0,
-                code: String::new(),
-                message: "start multipart upload: no upload id".into(),
-            })?
-            .to_owned();
-        let result = async {
-            let mut completed = Vec::new();
-            let mut offset = 0u64;
-            let mut number = 1i32;
-            while offset < size {
-                let len = part_size.min(size - offset);
-                let body = ByteStream::read_from()
-                    .path(path)
-                    .offset(offset)
-                    .length(Length::Exact(len))
-                    .build()
-                    .await
-                    .map_err(|e| StorageError::Io(format!("{}: {e}", path.display())))?;
-                let out = self
-                    .client
-                    .upload_part()
-                    .bucket(bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .part_number(number)
-                    .content_length(i64::try_from(len).unwrap_or(i64::MAX))
-                    .body(body)
-                    .send()
-                    .await
-                    .map_err(|e| classify(&format!("upload part {number}"), e))?;
-                completed.push(
-                    CompletedPart::builder()
-                        .part_number(number)
-                        .set_e_tag(out.e_tag().map(str::to_owned))
-                        .build(),
-                );
-                offset += len;
-                number += 1;
-            }
-            let out = self
-                .client
-                .complete_multipart_upload()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(&upload_id)
-                .multipart_upload(
-                    CompletedMultipartUpload::builder()
-                        .set_parts(Some(completed))
-                        .build(),
-                )
-                .send()
-                .await
-                .map_err(|e| classify("complete multipart upload", e))?;
-            Ok(out.version_id().map(str::to_owned))
-        }
-        .await;
-        if result.is_err()
-            && let Err(e) = self
-                .client
-                .abort_multipart_upload()
-                .bucket(bucket)
-                .key(key)
-                .upload_id(&upload_id)
-                .send()
-                .await
-        {
-            eprintln!(
-                "sotyware: cannot abort the multipart upload of '{key}': {}",
-                classify("abort multipart upload", e)
-            );
-        }
-        result
+        self.upload(
+            bucket,
+            key,
+            path,
+            &std::sync::Arc::new(TransferControl::new()),
+            &mut |_| {},
+        )
+        .await
+        .map_err(|e| e.error)
     }
 
     /// Downloads `bucket/key` to `dest`, which must not exist yet: see
@@ -1459,6 +1373,11 @@ mod tests {
 
         let c = TransferControl::new();
         assert!(c.commit());
+        assert!(c.is_committed());
+        assert!(
+            c.commit(),
+            "committing again (an SDK retry) stays committed"
+        );
         assert!(!c.cancel(), "too late once committed");
         assert!(!c.is_cancelled());
         assert!(!c.cancel());
