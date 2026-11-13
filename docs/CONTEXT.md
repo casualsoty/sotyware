@@ -197,6 +197,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Late-part wait on native Windows 11** (2026-11-13, uncommitted test
+  code on `ad6f69c`, recorder build `0ae6f848…`, local server): new
+  rehearsal-only `windows-cloud-ui.ps1 -Mode b2-lifecycle -Rehearse
+  -RecordRequests -Scenario settle` (buffering link) **42/42, 3 runs**:
+  the part in flight at the cancel was answered 200 about 2.3 s later and
+  the abort followed it (ADR-025 wait ran; the first run, on a link capped
+  by Windows' timer, hit the 5 s bound and left a part). The other
+  recorder rehearsals on this build: download 40/40 (20 = 20), upload
+  78/78 (104 = 104), multipart 42/42, retry 42/42, leave 38/38, each
+  recording complete and equal to the server.
+  [status.md](status/status.md#late-part-wait-and-the-remaining-recorder-rehearsals-on-native-windows-11-2026-11-13).
 - **Request recorder** (2026-11-13, uncommitted on `1e50821`, ADR-024):
   opt-in Cargo feature `request-recorder` (off by default, only into
   `--target-dir target/recorder`, refused by the packaging guard

@@ -127,6 +127,45 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Late-part wait and the remaining recorder rehearsals on native Windows 11 (2026-11-13)
+
+Tree `ad6f69c` + uncommitted test code (`-Scenario settle` in
+`windows-cloud-ui.ps1`; `SOTYWARE_UI_UPLOAD_PACE=buffered` and
+deadline pacing of `Pace::Buffered` in `test_server.rs`; no production
+change). Copy `C:\dev\sotyware-recorder`, recorder build SHA-256
+`0ae6f848…d64061` (built from `ad6f69c`), Windows 11 Home 25H2 build
+26200.9711, real desktop, local in-process server only, every run ended
+with the tray Quit (real mouse). **No real provider.**
+
+- Rehearsals not yet run on this build, one run each, `-RecordRequests`:
+  `download` **40/40** (recorder 20 = server 20; the save-dialog step
+  passed), `upload` **78/78** (104 = 104, 5 dropped, helper's 293
+  excluded), `b2-lifecycle -Rehearse` `multipart` **42/42** (17 = 17),
+  `retry` **42/42** (19 = 19), `leave` **38/38** (9 = 9, 1 dropped).
+  `cancel` and `quit` had passed on this build before (39/39 each). In
+  every recording: start and end line, `accounting: complete`, sequence
+  numbers without gaps, every operation ended or dropped, attempts
+  without an answer exactly those of dropped operations; no key, secret,
+  endpoint, signature, object key or body; bucket `configured`, keys,
+  prefixes and upload ids hashed. Buckets empty, no multipart upload left.
+- None of these reached the ADR-025 wait: every cancelled part (upload
+  mode 4, cancel, quit) was still being handed over (dropped 1.0–13.3 s
+  into a part of about 16 s), the abort 0–5 ms later.
+- `-Scenario settle` (new, [testing.md](../development/testing.md#upload-lifecycle-through-the-windows-dashboard-at-backblaze)):
+  first run **38 passed, 4 failed**: the cancel came right after part 3
+  was handed over, the app waited the 5 s bound (part 3 `op-dropped`
+  5,054 ms after the press, abort 204 then), and the part's file was
+  still written after the abort; parts took about 16 s because the
+  relay's per-piece sleep is capped by Windows' ~15.6 ms timer. With
+  deadline pacing in `Pace::Buffered` (parts about 2.7 s): **42/42, 3
+  runs**; each time part 3 was in flight at the press (handed over
+  335–419 ms before), answered 200 at +2,242 to +2,336 ms, abort 204 0 ms
+  after that answer, 12 = 12 app requests, 0 dropped, no part left.
+  WSL2 after the pacing change: `cargo test` 333 passed, 26 ignored; the
+  `cloud::s3::upload` tests (with the `Buffered` ones) 37 passed, 3 runs;
+  `probe_a_part_landing_after_the_abort` 0 of 3; fmt and clippy clean in
+  both configurations.
+
 ### A cancelled part is awaited before the abort (2026-11-13)
 
 Uncommitted tree on `1e50821` (ADR-025, with the request recorder
@@ -161,7 +200,8 @@ changes). **No real provider.**
   left), one run each. In both the cancel came while part 2 was still
   being handed over (cancel: dropped after 11.7 s, quit: after 13.3 s;
   part 1 took 15.9 s; abort 0 ms later, no wait), so the new wait itself did **not** run on
-  Windows; it ran only in the WSL2 tests and the Linux UI run above.
+  Windows in these runs; it did later, in `-Scenario settle`
+  ([below](#late-part-wait-and-the-remaining-recorder-rehearsals-on-native-windows-11-2026-11-13)).
 
 ### Request recorder (2026-11-13)
 
