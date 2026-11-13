@@ -435,10 +435,11 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   file chosen for upload is skipped as "name cannot be an object key", a
   download is saved under exactly that name. The fix lasts only while
   Cargo uses the patch: a `tauri-plugin-dialog` update that requires
-  another rfd version silently brings the abort back (Cargo only warns
-  that the patch was not used), so re-check
-  [`src-tauri/patches/`](../../src-tauri/patches/README.md) on every such
-  update. The upload panel shows such a name with U+FFFD in place of the
+  another rfd version would bring the abort back (Cargo only warns that
+  the patch was not used); `npm run check:rfd-patch` fails then, in
+  `test:headless` and CI, but a build started without it (a plain
+  `cargo build` or `npm run tauri build`) does not check
+  ([`src-tauri/patches/`](../../src-tauri/patches/README.md#updating-or-removing-the-patch)). The upload panel shows such a name with U+FFFD in place of the
   surrogate (display only; the file is never sent). Builds print rfd's own
   nine upstream dead-code warnings, as Cargo does not silence a path
   dependency

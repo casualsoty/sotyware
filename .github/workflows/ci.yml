@@ -94,6 +94,15 @@ jobs:
       - name: cargo fetch --locked
         working-directory: src-tauri
         run: cargo fetch --locked
+      # Fails if Cargo no longer builds rfd from the local patch (ADR-023):
+      # Cargo only warns about an unused patch and then builds the unpatched
+      # crate, which aborts sotyware on some Windows file names. Checked from
+      # the resolved graph (cargo metadata), before anything is compiled.
+      - name: check the rfd patch is applied
+        run: npm run check:rfd-patch
+      # The guard's own tests, against broken temporary copies of src-tauri.
+      - name: test the rfd patch guard
+        run: npm run test:rfd-patch-guard
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --check

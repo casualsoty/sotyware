@@ -41,16 +41,28 @@ cd src-tauri && cargo test
 npm run test:frontend                       # Vitest: dashboard UI with Tauri IPC mocks
 ```
 
-`npm run test:headless` runs the frontend tests and `cargo test` in one go; it
+`npm run test:headless` first runs `npm run check:rfd-patch` (below), then
+the frontend tests and `cargo test`; it
 needs no display, window manager, tray host or D-Bus session
 ([testing.md](testing.md#headless-tests)).
 
 A change to `src-tauri/patches/` (the locally patched rfd, ADR-023), or a
 dependency update that touches `tauri-plugin-dialog` or rfd, also needs the
 patch tests on native Windows, from `src-tauri`: `cargo test --manifest-path
-patches/rfd/Cargo.toml --lib --locked`, and a check that Cargo still uses the
-patch (no "patch … was not used" warning; `Cargo.lock` lists rfd without a
-`source`). How to verify the copy: [patches/README.md](../../src-tauri/patches/README.md).
+patches/rfd/Cargo.toml --lib --locked`, and the guard's own tests:
+
+```bash
+npm run check:rfd-patch                     # fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd
+npm run test:rfd-patch-guard                # the guard against broken temporary copies of src-tauri
+```
+
+`check:rfd-patch` reads Cargo's resolved graph (`cargo metadata --locked`,
+never changes `Cargo.lock`), so it needs `cargo` on `PATH` and the crates
+fetched or fetchable; it runs from any directory, on Windows and Linux.
+Cargo only warns when a `[patch]` entry is not used and then builds the
+unpatched rfd from crates.io, which brings back the Windows abort: treat
+that warning, and any guard failure, as a failed check. How to update or
+remove the patch: [patches/README.md](../../src-tauri/patches/README.md#updating-or-removing-the-patch).
 Builds print rfd's nine upstream dead-code warnings; they are expected.
 
 There is no JavaScript linter or formatter (ESLint/Prettier) and no `rustfmt.toml`

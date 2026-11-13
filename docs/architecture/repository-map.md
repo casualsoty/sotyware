@@ -10,7 +10,7 @@ Where things are. Generated and ignored paths are listed in
 ├── README.md                 Human-facing overview and quick start
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, fmt, clippy, test:headless
+│       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, fmt, clippy, test:headless
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
 │       └── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
 ├── docs/
@@ -37,6 +37,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Features.test.ts      Tests of the Features section and of features.ts
 │   └── features.ts           Typed wrappers for list_features / set_feature_enabled; validates responses
 ├── package.json              npm scripts and JS dependencies
+├── scripts/
+│   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
+│   └── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri
 ├── package-lock.json         Pinned JS dependency tree
 ├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)

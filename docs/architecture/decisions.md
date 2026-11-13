@@ -1086,7 +1086,15 @@ how to check it in [`src-tauri/patches/`](../../src-tauri/patches/README.md).
   patch file and the `[patch]` entry are removed (`patches/README.md`). A
   `tauri-plugin-dialog` update that needs another rfd version makes Cargo
   ignore the patch (it warns that the patch was not used) and brings the
-  defect back: re-check this patch on every dialog plugin update. Cargo does
+  defect back. Since 2026-11-13 `scripts/check-rfd-patch.mjs`
+  (`npm run check:rfd-patch`, in `test:headless`, CI and before the manual
+  workflows' release builds) turns that into a failure: it checks the graph
+  `cargo metadata --locked` resolved (rfd once, 0.17.2, path source in
+  `patches/rfd`) and the patched function, not Cargo's warning text alone.
+  A small Node script without dependencies, because Node is already
+  required on both platforms and the check must run unchanged on Windows
+  and Linux; a Rust test was rejected (it would only run after compiling
+  the very crate it checks). Cargo does
   not cap lints for path dependencies, so builds now print rfd's own nine
   upstream dead-code warnings (`oneshot.rs`, Linux); they do not fail
   `cargo clippy -- -D warnings`, which applies to sotyware only. The patch

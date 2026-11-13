@@ -57,6 +57,9 @@ jobs:
           rustup default stable
 
       - run: npm ci
+      # The release binary must contain the patched rfd (ADR-023).
+      - name: check the rfd patch is applied
+        run: npm run check:rfd-patch
       - name: Build the release binary (no installers)
         run: npm run tauri build -- --no-bundle
 

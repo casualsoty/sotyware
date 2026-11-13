@@ -66,8 +66,12 @@ D-Bus calls and AT-SPI actions instead of clicks).
 ## Headless tests
 
 ```bash
-npm run test:headless        # = npm run test:frontend && npm run test:rust
+npm run test:headless        # = npm run check:rfd-patch && npm run test:frontend && npm run test:rust
 ```
+
+`check:rfd-patch` is not a test but a guard: it fails if Cargo no longer
+builds rfd from the local patch
+([patches/README.md](../../src-tauri/patches/README.md), ADR-023).
 
 Runs the [Rust unit tests](#rust-unit-tests) and the
 [frontend tests](#frontend-tests). Neither starts sotyware, opens a window or
@@ -1491,10 +1495,10 @@ runner other than standard `ubuntu-latest` and `windows-latest`.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `npm run test:headless` | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `npm run test:headless` | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands, native Windows (MSVC Rust, no WSL); does not start sotyware | A. headless |
-| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
-| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated` | B″. private desktop |
+| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
+| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated` | B″. private desktop |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -1530,7 +1534,12 @@ gh workflow run desktop-windows-isolated.yml --ref main
 - **Order.** `npm run build` runs before any Cargo command because the Tauri
   crate embeds `dist/` at compile time. `cargo fetch --locked` fails if
   `Cargo.lock` does not match `Cargo.toml`; `npm ci` does the same for
-  `package-lock.json`.
+  `package-lock.json`. Right after it, before anything compiles,
+  `npm run check:rfd-patch` fails if the resolved rfd is not the local
+  patch (an unused `[patch]` is only a Cargo warning), and
+  `npm run test:rfd-patch-guard` runs the guard against broken temporary
+  copies of `src-tauri` (it re-resolves rfd from crates.io there; a few
+  seconds).
 - **Linux packages.** Only the Tauri build libraries from
   [setup.md](setup.md#linux-system-packages); no display server, window manager,
   tray host or D-Bus session.
