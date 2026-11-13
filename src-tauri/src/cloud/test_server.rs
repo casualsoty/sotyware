@@ -843,6 +843,12 @@ async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
                 }
             }
         });
+        // Paced by deadline, not by one sleep per piece: Windows timers
+        // fire only every ~15.6 ms, so a 2.6 ms sleep per 16 KiB piece
+        // would cap the link near 1 MiB/s whatever the rate. A late wake-up
+        // is caught up by the next pieces; after an idle gap (more than
+        // 100 ms behind) the schedule restarts instead of bursting.
+        let mut due = tokio::time::Instant::now();
         while let Some(chunk) = rx.recv().await {
             for piece in chunk.chunks(16 * 1024) {
                 if server_wr.write_all(piece).await.is_err() {
@@ -850,7 +856,12 @@ async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
                     let _ = back.await;
                     return;
                 }
-                tokio::time::sleep(Duration::from_secs_f64(piece.len() as f64 / rate as f64)).await;
+                let now = tokio::time::Instant::now();
+                if now > due + Duration::from_millis(100) {
+                    due = now;
+                }
+                due += Duration::from_secs_f64(piece.len() as f64 / rate as f64);
+                tokio::time::sleep_until(due).await;
             }
         }
         let _ = server_wr.shutdown().await;
@@ -1160,6 +1171,13 @@ async fn ui_upload_state(server: &TestServer, store: &super::s3::S3Store) -> ser
 /// 6 MiB/s), so that cancelling during an upload and a download beside it
 /// can be seen. Writes the link's endpoint to `SOTYWARE_UI_SERVER_FILE`
 /// and the seed objects' sizes and SHA-256 to that name plus `.json`.
+///
+/// With `SOTYWARE_UI_UPLOAD_PACE=buffered` the link is a
+/// [`Pace::Buffered`] one instead: it takes each request body at once, so
+/// every part is handed over completely while it is still being forwarded
+/// (the case ADR-025 waits for; `windows-cloud-ui.ps1 -Mode b2-lifecycle
+/// -Rehearse -Scenario settle`).
+///
 /// Until the endpoint file is deleted it reads commands from that name
 /// plus `.ctl` (one per line), deletes the file when done, and answers
 /// `dump` in `.state.json`:
@@ -1234,10 +1252,15 @@ async fn serve_uploads_for_ui() {
         serde_json::to_string(&manifest).unwrap(),
     )
     .unwrap();
-    let link = ThrottledLink::start(&server.endpoint, Pace::BytesPerSecond(rate)).await;
+    let pace = match std::env::var("SOTYWARE_UI_UPLOAD_PACE").as_deref() {
+        Ok("buffered") => Pace::Buffered(rate),
+        Ok(other) => panic!("SOTYWARE_UI_UPLOAD_PACE: unknown pace {other:?}"),
+        Err(_) => Pace::BytesPerSecond(rate),
+    };
+    let link = ThrottledLink::start(&server.endpoint, pace).await;
     fs::write(&file, &link.endpoint).unwrap();
     println!(
-        "serving {} at {} ({} bytes/s towards the server), seeded {} objects",
+        "serving {} at {} ({} bytes/s towards the server, {pace:?}), seeded {} objects",
         UI_UPLOAD_BUCKET,
         link.endpoint,
         rate,

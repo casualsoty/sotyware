@@ -8,6 +8,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle] [-Exe <path>] [-ExpectSha256 <hex>]
 #   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
 #   b2-lifecycle takes -Scenario multipart|cancel|retry|leave|quit and -Rehearse or -ConfirmB2Lifecycle lifecycle-ui-validation
+#   (or -Scenario settle, only with -Rehearse -RecordRequests)
 #   download, upload, b2-upload and b2-lifecycle also take -RecordRequests: -Exe must be a
 #   request-recorder build (ADR-024, src-tauri\target\recorder\release\sotyware.exe); the app
 #   records its S3 requests into a kept folder under %TEMP%; every recording must be complete and
@@ -127,6 +128,14 @@
 #       at 10% or more.
 #     quit: quit.bin (144 MiB, 9 parts), tray Quit at 20% or more (MOVES
 #       THE MOUSE once, like -Mode upload; needs the interactive desktop).
+#     settle (rehearsal only, needs -RecordRequests; never at Backblaze):
+#       settle.bin (144 MiB, 9 parts) behind a link that takes every request
+#       body at once and forwards it at 6 MiB/s (Pace::Buffered), so each
+#       part is handed over completely and then about 2.7 s unanswered.
+#       Cancel upload right after the percentage moves to a new part (20%
+#       or more); the recording must show the ADR-025 wait: the part in
+#       flight at the cancel answered 200 at least 500 ms after it (not
+#       dropped), and the abort only after that answer.
 #   Afterwards backblaze_b2_upload_lifecycle_verify downloads what the
 #   scenario must have stored and compares it, deletes exactly this run's
 #   versions by id, aborts any incomplete multipart upload of its keys by id
@@ -151,7 +160,7 @@ param(
   # b2-upload, b2-lifecycle: the in-process server instead of Backblaze.
   [switch]$Rehearse,
   # b2-lifecycle: the one behaviour this run checks.
-  [ValidateSet("", "multipart", "cancel", "retry", "leave", "quit")][string]$Scenario = "",
+  [ValidateSet("", "multipart", "cancel", "retry", "leave", "quit", "settle")][string]$Scenario = "",
   # b2-lifecycle against Backblaze: must be exactly "lifecycle-ui-validation".
   [string]$ConfirmB2Lifecycle = "",
   # b2-upload against Backblaze: must be exactly "upload-ui-validation".
@@ -169,7 +178,9 @@ $IsLc = $Mode -eq "b2-lifecycle"
 $IsB2Up = $Mode -eq "b2-upload" -or $IsLc
 if ($Rehearse -and -not $IsB2Up) { "ABORT: -Rehearse is only for -Mode b2-upload and b2-lifecycle"; exit 2 }
 if ($Scenario -and -not $IsLc) { "ABORT: -Scenario is only for -Mode b2-lifecycle"; exit 2 }
-if ($IsLc -and -not $Scenario) { "ABORT: -Mode b2-lifecycle needs -Scenario multipart, cancel, retry, leave or quit (one per run)"; exit 2 }
+if ($IsLc -and -not $Scenario) { "ABORT: -Mode b2-lifecycle needs -Scenario multipart, cancel, retry, leave, quit or settle (one per run)"; exit 2 }
+# settle needs a link no provider has and proves its point only from the recording.
+if ($Scenario -eq "settle" -and -not ($Rehearse -and $RecordRequests)) { "ABORT: -Scenario settle runs only with -Rehearse -RecordRequests"; exit 2 }
 if ($IsLc -and -not $Rehearse -and $ConfirmB2Lifecycle -cne "lifecycle-ui-validation") {
   "ABORT: -Mode b2-lifecycle writes to the Backblaze test bucket; add -ConfirmB2Lifecycle lifecycle-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
 }
@@ -470,6 +481,7 @@ if ($IsLc) {
     }
     "leave" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "a-away.bin"), 60 * $LcMiB, 23); LcText "b-away.txt" "never started: the browser was left"; $UiNames = @("a-away.bin", "b-away.txt"); $LcStored = @() }
     "quit" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "quit.bin"), 144 * $LcMiB, 24); $UiNames = @("quit.bin"); $LcStored = @() }
+    "settle" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "settle.bin"), 144 * $LcMiB, 25); $UiNames = @("settle.bin"); $LcStored = @() }
   }
   "b2-lifecycle: scenario $Scenario, run id $LcRun, run prefix $UiPrefix, local files in $UpSrc"
   "variant: $(if ($Rehearse) { 'rehearsal against the in-process server (no provider)' } else { 'Backblaze B2 (confirmed with -ConfirmB2Lifecycle)' })$(if ($Scenario -ne 'quit') { '; does not move the mouse' }); do not use the mouse or keyboard while it runs"
@@ -523,6 +535,9 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # UI Automation, much slower to read than AT-SPI, still sees a 40 MiB PUT
   # in progress and can cancel it.
   if ($Mode -eq "upload" -or $IsB2Up) { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
+  # settle: every body taken at once, forwarded at 6 MiB/s (a 16 MiB part
+  # about 2.7 s, inside the app's 5 s bound for the wait).
+  if ($Scenario -eq "settle") { $env:SOTYWARE_UI_UPLOAD_RATE = "$(6 * 1048576)"; $env:SOTYWARE_UI_UPLOAD_PACE = "buffered" }
   # The rehearsal's bucket holds only the seed, under the run's key.
   if ($Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}existing.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
   if ($IsLc) { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}anchor.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
@@ -531,7 +546,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
   Remove-Item Env:SOTYWARE_UI_SERVER_FILE
-  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE, Env:SOTYWARE_UI_UPLOAD_SEED_KEY, Env:SOTYWARE_UI_UPLOAD_SEED_FILE, Env:SOTYWARE_UI_RECORDING_DIR -EA SilentlyContinue
+  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE, Env:SOTYWARE_UI_UPLOAD_PACE, Env:SOTYWARE_UI_UPLOAD_SEED_KEY, Env:SOTYWARE_UI_UPLOAD_SEED_FILE, Env:SOTYWARE_UI_RECORDING_DIR -EA SilentlyContinue
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
@@ -1706,6 +1721,23 @@ try {
         $ok = (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("sotyware-it") } 60)
         Check "back in the browser: no upload panel, and Upload files$([char]0x2026) is enabled (the slot is free)" ($ok -and (UpPanel) -eq "" -and (UploadEnabled)) (UpPanel)
       }
+      "settle" {
+        # The link takes each part at once, so the percentage moves once
+        # per part, when that part has been handed over completely. Cancel
+        # right after it moves: that part is then still being forwarded.
+        $running = $picked -and (Until { param($x) (SendingIn $x $big 20) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 20)
+        $settleFrom = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
+        $moved = $running -and (Until { param($x) (Finished $x) -or (SendingIn $x $big ([int]$settleFrom + 1)) } 60) -and -not (Finished $script:untilText)
+        $settleTo = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
+        $script:settlePressMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $pressed = $moved -and (Press "Cancel upload")
+        $script:settlePressedMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $done = if ($picked) { Until { param($x) Finished $x } 300 } else { $null }
+        "  Cancel upload pressed as the percentage moved from $settleFrom% to $settleTo% (Invoke took $($script:settlePressedMs - $script:settlePressMs) ms); file row: $(Redact (UpRow $big))"
+        Check "Cancel upload right after a new part was handed over: Upload cancelled. 1 file: 0 uploaded, 1 cancelled." ($pressed -and $done -and $done.Contains("Upload cancelled. 1 file: 0 uploaded, 1 cancelled.")) (Redact "$done")
+        Check "the row says cancelled during its upload, nothing stored; no 'may remain'" ((UpRow $big).Contains("Cancelled during its upload") -and (UpRow $big).Contains("Nothing was stored for this file.") -and -not (UpRow $big).Contains("may remain")) (UpRow $big)
+        UpDismiss
+      }
       "quit" {
         $running = $picked -and (Until { param($x) (SendingIn $x $big 20) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 20)
         $at = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
@@ -1964,6 +1996,8 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB
         $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 5 -and (Ops "HeadObject") -eq 4 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -eq 5 -and (Ops "CompleteMultipartUpload") -eq 1 -and $n.Count -eq 6 }
       "cancel" { $want = "HeadBucket 1, ListObjectsV2 4, HeadObject 2, CreateMultipartUpload 1, UploadPart 1 to 8, AbortMultipartUpload 1, nothing else"
         $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 4 -and (Ops "HeadObject") -eq 2 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -ge 1 -and $parts -le 8 -and (Ops "AbortMultipartUpload") -eq 1 -and $n.Count -eq 6 }
+      "settle" { $want = "HeadBucket 1, ListObjectsV2 4, HeadObject 2, CreateMultipartUpload 1, UploadPart 1 to 8, AbortMultipartUpload 1, nothing else"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 4 -and (Ops "HeadObject") -eq 2 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -ge 1 -and $parts -le 8 -and (Ops "AbortMultipartUpload") -eq 1 -and $n.Count -eq 6 }
       "quit" { $want = "HeadBucket 1, ListObjectsV2 5, HeadObject 2, CreateMultipartUpload 1, UploadPart 1 to 8, AbortMultipartUpload 1, nothing else"
         $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 5 -and (Ops "HeadObject") -eq 2 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -ge 1 -and $parts -le 8 -and (Ops "AbortMultipartUpload") -eq 1 -and $n.Count -eq 6 }
       # anchor.txt 1 (exists: skipped); a-first, c-third and the retried
@@ -1995,6 +2029,33 @@ if ($RecordRequests) {
   if ($Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
     [regex]::Matches("$srvLog", '(?m)^recorder: [^\r\n]*') | ForEach-Object { "  $($_.Value)" }
     Check "request recorder: the recordings agree with the app's requests on the test server (the helper's own excluded)" ("$srvLog" -match '(?m)^recorder: every answered attempt reached the server') ([regex]::Match("$srvLog", 'MISMATCH[^\r\n]*').Value)
+  }
+  if ($Scenario -eq "settle") {
+    # The ADR-025 wait, from the recording: absolute times are the start
+    # line's started_unix_ms plus t_us (same clock as the press stamps).
+    $sev = @(); $sBase = 0
+    foreach ($t in $recTexts) {
+      $lines = @($t -split "`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+      if (@($lines | Where-Object { $_.name -eq "UploadPart" }).Count -gt 0) { $sBase = [long]$lines[0].started_unix_ms; $sev = $lines }
+    }
+    function EvMs($e) { $sBase + [long][Math]::Floor([double]$e.t_us / 1000) }
+    $sParts = @(); $sAbort = @()
+    foreach ($e in $sev) {
+      if ($e.kind -eq "op-start" -and $e.name -eq "UploadPart") { $sParts += , @{ op = $e.op; part = $e.part; start = (EvMs $e); end = $null; endKind = ""; status = $null } }
+      if ($e.kind -eq "op-start" -and $e.name -eq "AbortMultipartUpload") { $sAbort += , @{ op = $e.op; start = (EvMs $e); status = $null } }
+      if ($e.kind -eq "op-end" -or $e.kind -eq "op-dropped") {
+        foreach ($x in $sParts) { if ($x.op -eq $e.op) { $x.end = (EvMs $e); $x.endKind = $e.kind; $x.status = $e.status } }
+        foreach ($x in $sAbort) { if ($x.op -eq $e.op) { $x.status = $e.status } }
+      }
+    }
+    foreach ($x in $sParts) { "  recorder: UploadPart $($x.part): $($x.start - $script:settlePressMs) ms to $(if ($x.end) { $x.end - $script:settlePressMs } else { '?' }) ms after the press, $($x.endKind) $($x.status)" }
+    foreach ($x in $sAbort) { "  recorder: AbortMultipartUpload at $($x.start - $script:settlePressMs) ms after the press, status $($x.status)" }
+    $inFlight = @($sParts | Where-Object { $_.start -le $script:settlePressMs -and $_.end -and $_.end -ge $script:settlePressedMs })
+    $cut = if ($inFlight.Count -eq 1) { $inFlight[0] } else { $null }
+    Check "settle: exactly one part was in flight when Cancel upload was pressed (by the recording's clock)" ($null -ne $cut) "$($inFlight.Count) in flight"
+    Check "settle: that part was answered, not dropped: op-end with 200, at least 500 ms after the press (the ADR-025 wait ran)" ($cut -and $cut.endKind -eq "op-end" -and $cut.status -eq 200 -and ($cut.end - $script:settlePressedMs) -ge 500) "$(if ($cut) { "part $($cut.part) $($cut.endKind) $($cut.status), $($cut.end - $script:settlePressedMs) ms after the press" })"
+    Check "settle: no part dropped, none started after the press" (@($sParts | Where-Object { $_.endKind -ne "op-end" }).Count -eq 0 -and @($sParts | Where-Object { $_.start -gt $script:settlePressMs }).Count -eq 0)
+    Check "settle: one AbortMultipartUpload, 204, started after that part's answer and within 1 s of it" ($cut -and $sAbort.Count -eq 1 -and $sAbort[0].status -eq 204 -and $sAbort[0].start -ge $cut.end -and ($sAbort[0].start - $cut.end) -le 1000) "$(if ($cut -and $sAbort.Count) { "$($sAbort[0].start - $cut.end) ms after, status $($sAbort[0].status)" })"
   }
   "  recordings kept in $RecDir"
 }

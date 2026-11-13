@@ -1305,8 +1305,34 @@ anchor and the stored files, contents and SHA-256 metadata, no multipart
 left; then exact-key deletion), and checks the app's requests by operation
 (the "App" column above).
 
+**Scenario `settle`** (rehearsal only; refused without `-Rehearse
+-RecordRequests`, so it ends with the tray Quit and moves the mouse once):
+checks the wait of
+[ADR-025](../architecture/decisions.md#adr-025-a-cancelled-part-that-was-handed-over-completely-is-awaited-before-the-abort)
+through the dashboard. `serve_uploads_for_ui` runs with
+`SOTYWARE_UI_UPLOAD_PACE=buffered` (`Pace::Buffered`, 6 MiB/s): the link
+takes every request body at once, so each 16 MiB part of `settle.bin`
+(144 MiB, 9 parts) is handed over completely and then forwarded for about
+2.7 s. The page's percentage therefore moves once per part; the driver
+presses Cancel upload right after it moves (20% or more) and stamps the
+press. From the recording (absolute times: `started_unix_ms` + `t_us`) it
+checks that exactly one part was in flight at the press, that it ended with
+`op-end` 200 at least 500 ms after the press (not `op-dropped`), that no
+part was dropped or started after the press, and that the one
+`AbortMultipartUpload` (204) started after that answer, within 1 s. A wait
+that runs into the 5 s bound shows as `op-dropped` about 5 s after the
+press and fails the check.
+
+The throttled links pace by deadline in `Buffered` mode only:
+`BytesPerSecond` still sleeps once per 16 KiB piece, and Windows timers fire
+only every ~15.6 ms, so on Windows that link carries about 1 MiB/s whatever
+`SOTYWARE_UI_UPLOAD_RATE` says (a 16 MiB part takes about 16 s at the
+nominal 2 MiB/s); every Windows `upload` and lifecycle run so far ran
+at that speed.
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Rehearse -Scenario multipart
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Rehearse -RecordRequests -Scenario settle -Exe src-tauri\target\recorder\release\sotyware.exe
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Scenario multipart -ConfirmB2Lifecycle lifecycle-ui-validation -ExpectSha256 <approved hash>
 ```
 
