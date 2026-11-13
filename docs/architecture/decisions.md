@@ -1040,3 +1040,57 @@ the backend's states and `retryable` flags; it decides nothing itself.
   the one-at-a-time order make large selections slow but simple. A quit
   with an unreachable provider can take up to 35 s. Details:
   [cloud-storage.md](cloud-storage.md#uploading-files).
+
+## ADR-023: rfd is patched locally so Windows dialog paths are read as `OsString`
+
+Status: Accepted (2026-11-13). `[patch.crates-io]` in
+`src-tauri/Cargo.toml`, the copy in `src-tauri/patches/rfd/`, the diff and
+how to check it in [`src-tauri/patches/`](../../src-tauri/patches/README.md).
+
+- **Context:** on Windows, rfd 0.17.2 (reached through
+  `tauri-plugin-dialog` 2.8.4, which requires `rfd = "0.17"`) reads every
+  path the common item dialog returns with
+  `String::from_utf16(..).unwrap()` (`read_to_string` in
+  `backend/win_cid/file_dialog/com.rs`, called by `IShellItem::get_path`).
+  Windows file names are UTF-16 code units that need not be valid UTF-16:
+  NTFS allows an unpaired surrogate. Choosing such a file in the upload
+  dialog, or saving under such a name or into such a folder in the save
+  dialog, panicked there; with the release profile's `panic = "abort"`
+  sotyware ended with `0xC0000409` before it saw any path. Every Windows
+  dialog result goes through that one function (`get_result`: open-file,
+  folder and save dialogs; `get_results`: multi-selection). sotyware's own
+  code was already lossless: `check_file` skips a name that is not valid
+  Unicode as `invalid-name` (`OsStr::to_str`, never a lossy key), and
+  downloads keep the destination as a `PathBuf`. On 2026-11-13 rfd 0.18.0
+  and `master` still had the `unwrap`, and no upstream issue or pull
+  request mentioned it.
+- **Decision:** build rfd from an unchanged copy of the published 0.17.2
+  crate with one function changed: `read_to_os_string` returns
+  `OsString::from_wide(slice)`, so the `PathBuf` holds exactly the code
+  units Windows returned (no replacement, no loss). Windows-only regression
+  tests are added to the same file, one of them through a real
+  `IShellItem` (`SHCreateItemFromParsingName`) of files with unpaired
+  surrogates. The copy is wired in with `[patch.crates-io]`; the lockfile
+  entry loses its registry source and checksum, nothing else in the graph
+  changes. sotyware's validation, upload protocol and dialog use are not
+  changed.
+  - Rejected: `panic = "unwind"` (rfd's dialog thread would still die, the
+    dialog would never answer, and the path would still be lost); waiting
+    for upstream (no fix exists, and 0.18.0 needs Rust 1.92 and is not
+    accepted by `tauri-plugin-dialog` 2.8.4); a git fork (an external
+    repository to maintain and trust; the copy is reviewable in this one);
+    replacing `tauri-plugin-dialog` with sotyware's own dialog code (much
+    more platform code for one line).
+- **Consequences:** sotyware maintains a 500 KB vendored crate until a fixed
+  rfd is released and accepted by `tauri-plugin-dialog`; then the copy, the
+  patch file and the `[patch]` entry are removed (`patches/README.md`). A
+  `tauri-plugin-dialog` update that needs another rfd version makes Cargo
+  ignore the patch (it warns that the patch was not used) and brings the
+  defect back: re-check this patch on every dialog plugin update. Cargo does
+  not cap lints for path dependencies, so builds now print rfd's own nine
+  upstream dead-code warnings (`oneshot.rs`, Linux); they do not fail
+  `cargo clippy -- -D warnings`, which applies to sotyware only. The patch
+  tests run with `cargo test --manifest-path patches/rfd/Cargo.toml --lib
+  --locked`, on Windows only (the module is Windows-only); they are not
+  part of `npm run test:headless`. Linux keeps its separate rfd limitation:
+  the GTK 3 backend drops a non-UTF-8 path from the selection (no crash).

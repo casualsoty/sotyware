@@ -47,14 +47,14 @@ spelling ("behaviour").
 ## Technology stack
 
 Declared ranges are in the manifests; resolved versions are from the lockfiles
-(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-12 (backend upload lifecycle: tokio `time`, direct `http-body`).
+(`package-lock.json`, `src-tauri/Cargo.lock`) as of 2026-11-13 (rfd built from a local patched copy, ADR-023).
 
 | Component | Declared | Resolved |
 | --- | --- | --- |
 | Tauri (Rust crate, feature `tray-icon`) | `2` | 2.12.5 |
 | tauri-build | `2` | 2.7.4 |
 | tauri-plugin-single-instance (desktop targets only) | `2` | 2.5.5 |
-| tauri-plugin-dialog (desktop targets only; Rust-side save dialog for cloud downloads, no frontend permission) | `2` | 2.8.4 (with `rfd` 0.17.2: GTK 3 on Linux, common item dialog on Windows; `tauri-plugin-fs` 2.7.1 as its dependency, not registered) |
+| tauri-plugin-dialog (desktop targets only; Rust-side save dialog for cloud downloads, no frontend permission) | `2` | 2.8.4 (with `rfd` 0.17.2: GTK 3 on Linux, common item dialog on Windows; **built from `src-tauri/patches/rfd`** through `[patch.crates-io]`, Windows dialog paths read as `OsString`, ADR-023; `tauri-plugin-fs` 2.7.1 as its dependency, not registered) |
 | Rust | edition 2024, `rust-version = "1.90"` | developed with 1.99.1 |
 | `serde` (feature `derive`; already in the tree through Tauri) | `1` | 1.0.229 |
 | `rusqlite` (feature `bundled`, no default features; feature preferences) | `0.41` | 0.41.1 |

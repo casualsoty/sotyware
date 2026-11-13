@@ -114,11 +114,12 @@ order:
    ([status.md](status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12)).
    The same workflow passed on the native Windows 11 desktop with the
    Windows multi-file dialog, except one defect
-   ([status.md](status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)).
-   **Next:** decide the fix for that defect (a file name with an unpaired
-   surrogate chosen in the Windows dialog ends sotyware: rfd 0.17.2
-   `unwrap`s the UTF-16 decoding under `panic = "abort"`; proposed: decode
-   lossless in a patched rfd), then runs at Backblaze. Later: deletes and folder creation, each with its own
+   ([status.md](status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)),
+   fixed on 2026-11-13 by a locally patched rfd (ADR-023; native Windows 11
+   upload and save dialog with an unpaired-surrogate name passed,
+   [status.md](status.md#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)).
+   Drop the patch once a fixed rfd reaches `tauri-plugin-dialog`.
+   **Next:** uploads at Backblaze. Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.
 8. restic orchestration (child process, `--json`, exit codes), tried first

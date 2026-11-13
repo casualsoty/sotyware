@@ -104,3 +104,12 @@ zbus-secret-service-keyring-store = { version = "1", default-features = false, f
 # can name its error type and tell "no Secret Service" and "locked" apart
 # from other failures. No features are added.
 secret-service = { version = "5", default-features = false }
+
+[patch.crates-io]
+# rfd 0.17.2 (through tauri-plugin-dialog) with one function changed: the
+# Windows dialogs' result paths are read as `OsString` instead of
+# `String::from_utf16(..).unwrap()`, which aborted sotyware on a file name
+# with an unpaired surrogate (ADR-023). Upstream 0.17.2, 0.18.0 and master
+# still have the `unwrap`. Remove this once a fixed rfd is released and
+# tauri-plugin-dialog accepts it. How to check and update: patches/README.md.
+rfd = { path = "patches/rfd" }

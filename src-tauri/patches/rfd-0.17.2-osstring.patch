@@ -1,0 +1,183 @@
+--- a/src/backend/win_cid/file_dialog/com.rs
++++ b/src/backend/win_cid/file_dialog/com.rs
+@@ -1,6 +1,7 @@
+ #![allow(non_snake_case)]
+ 
+-use std::ffi::c_void;
++use std::ffi::{c_void, OsString};
++use std::os::windows::ffi::OsStringExt;
+ use windows_sys::core::{HRESULT, PCWSTR, PWSTR};
+ pub use windows_sys::{
+     core::GUID,
+@@ -21,8 +22,12 @@
+     }
+ }
+ 
++// sotyware patch: Windows file names are sequences of UTF-16 code units that
++// need not be valid UTF-16 (an unpaired surrogate is allowed). They are kept
++// losslessly as an `OsString`; upstream's `String::from_utf16(..).unwrap()`
++// panicked on such a name, which aborts a `panic = "abort"` application.
+ #[inline]
+-unsafe fn read_to_string(ptr: *const u16) -> String {
++unsafe fn read_to_os_string(ptr: *const u16) -> OsString {
+     let mut cursor = ptr;
+ 
+     while *cursor != 0 {
+@@ -30,7 +35,7 @@
+     }
+ 
+     let slice = std::slice::from_raw_parts(ptr, cursor.offset_from(ptr) as usize);
+-    String::from_utf16(slice).unwrap()
++    OsString::from_wide(slice)
+ }
+ 
+ #[repr(C)]
+@@ -100,7 +105,7 @@
+             ))?;
+ 
+             let dname = dname.assume_init();
+-            let fname = read_to_string(dname);
++            let fname = read_to_os_string(dname);
+             windows_sys::Win32::System::Com::CoTaskMemFree(dname.cast());
+             fname
+         };
+@@ -266,3 +271,139 @@
+         drop_impl(self.0.cast());
+     }
+ }
++
++// sotyware patch: regression tests for `read_to_os_string`, the conversion
++// behind every path the Windows dialogs return (`get_result` for the
++// open-file, folder and save dialogs, `get_results` for multi-selection).
++#[cfg(test)]
++mod tests {
++    use super::{read_to_os_string, IShellItem};
++    use crate::backend::win_cid::utils::init_com;
++    use std::ffi::OsString;
++    use std::os::windows::ffi::{OsStrExt, OsStringExt};
++    use std::path::{Path, PathBuf};
++    use windows_sys::{core::GUID, Win32::UI::Shell::SHCreateItemFromParsingName};
++
++    const SHELL_ITEM_IID: GUID = GUID::from_u128(0x43826d1e_e718_42ee_bc55_a1e261c37bfe);
++
++    fn nul_terminated(units: &[u16]) -> Vec<u16> {
++        let mut v = units.to_vec();
++        v.push(0);
++        v
++    }
++
++    fn convert(units: &[u16]) -> OsString {
++        let buf = nul_terminated(units);
++        unsafe { read_to_os_string(buf.as_ptr()) }
++    }
++
++    fn units(path: &Path) -> Vec<u16> {
++        path.as_os_str().encode_wide().collect()
++    }
++
++    #[test]
++    fn ascii_path_is_read_unchanged() {
++        let wide: Vec<u16> = r"C:\Users\test\report.txt".encode_utf16().collect();
++        let path = PathBuf::from(convert(&wide));
++        assert_eq!(path, Path::new(r"C:\Users\test\report.txt"));
++        assert_eq!(units(&path), wide);
++    }
++
++    #[test]
++    fn unicode_path_is_read_unchanged() {
++        // Includes a character outside the BMP (a valid surrogate pair).
++        let text = "C:\\Daten\\größe 日本 \u{1D11E}.bin";
++        let wide: Vec<u16> = text.encode_utf16().collect();
++        let path = PathBuf::from(convert(&wide));
++        assert_eq!(path.to_str(), Some(text));
++        assert_eq!(units(&path), wide);
++    }
++
++    #[test]
++    fn empty_string_is_read_as_empty() {
++        assert_eq!(convert(&[]), OsString::new());
++    }
++
++    #[test]
++    fn unpaired_surrogates_are_kept_without_panic_or_loss() {
++        let cases: [&[u16]; 4] = [
++            &[0x43, 0x3A, 0x5C, 0x62, 0xD800, 0x2E, 0x62], // lone high
++            &[0x43, 0x3A, 0x5C, 0x62, 0xDC00, 0x2E, 0x62], // lone low
++            &[0x43, 0x3A, 0x5C, 0xDC00, 0xD800],           // reversed pair
++            &[0x43, 0x3A, 0x5C, 0x61, 0xDBFF],             // high at the end
++        ];
++        for wide in cases {
++            let path = PathBuf::from(convert(wide));
++            // Lossless: the very same code units come back out.
++            assert_eq!(units(&path), wide, "{wide:x?}");
++            // Not valid Unicode, so not silently replaced by U+FFFD.
++            assert_eq!(path.to_str(), None, "{wide:x?}");
++            assert_eq!(path, PathBuf::from(OsString::from_wide(wide)));
++        }
++    }
++
++    /// A unique, empty folder under the temporary folder, removed on drop.
++    struct TempDir(PathBuf);
++
++    impl TempDir {
++        fn new(tag: &str) -> Self {
++            let nanos = std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .map(|d| d.as_nanos())
++                .unwrap_or_default();
++            let dir = std::env::temp_dir().join(format!(
++                "rfd-sotyware-{tag}-{}-{nanos}",
++                std::process::id()
++            ));
++            std::fs::create_dir(&dir).unwrap();
++            Self(dir)
++        }
++    }
++
++    impl Drop for TempDir {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++
++    /// What `IShellItem::get_path` (the dialogs' result conversion) returns
++    /// for the shell item of an existing `path`.
++    fn shell_item_path(path: &Path) -> PathBuf {
++        let wide: Vec<u16> = nul_terminated(&units(path));
++        init_com(|| unsafe {
++            let mut item = std::mem::MaybeUninit::uninit();
++            let hr = SHCreateItemFromParsingName(
++                wide.as_ptr(),
++                std::ptr::null_mut(),
++                &SHELL_ITEM_IID,
++                item.as_mut_ptr(),
++            );
++            assert!(hr >= 0, "SHCreateItemFromParsingName: 0x{hr:08X}");
++            let item = IShellItem(item.assume_init().cast());
++            item.get_path().unwrap()
++        })
++        .unwrap()
++    }
++
++    #[test]
++    fn shell_items_return_the_original_file_system_path() {
++        let dir = TempDir::new("item");
++        let names = [
++            OsString::from("plain.txt"),
++            OsString::from("größe test \u{1D11E}.bin"),
++            OsString::from("a + & # % b.txt"),
++            // An unpaired surrogate: NTFS allows it, it is not valid Unicode.
++            OsString::from_wide(&[0x6C, 0x2D, 0xD800, 0x2D, 0x73, 0x2E, 0x74]),
++            OsString::from_wide(&[0x6C, 0x2D, 0xDC00, 0x2E, 0x74]),
++        ];
++        for name in names {
++            let original = dir.0.join(&name);
++            std::fs::write(&original, b"x").unwrap();
++            let returned = shell_item_path(&original);
++            assert_eq!(units(&returned), units(&original), "{name:?}");
++            assert_eq!(returned.file_name(), Some(name.as_os_str()));
++            // Usable as a file system path: it names the same file.
++            assert_eq!(std::fs::read(&returned).unwrap(), b"x", "{name:?}");
++        }
++    }
++}

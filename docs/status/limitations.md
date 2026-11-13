@@ -422,24 +422,27 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   selected, but rfd 0.17.2 drops every path that is not valid UTF-8 from the
   dialog's answer (`get_results` in its GTK 3 backend), so it never reaches
   sotyware's `invalid-name` check: the panel lists the other files and says
-  nothing about it. Seen 2026-11-12 on the virtual display. Windows differs
-  (next item).
-- **On Windows a file name with an unpaired surrogate ends sotyware.**
-  NTFS allows such names (UTF-16 that is not valid Unicode). When one is
-  chosen in the Windows file dialog ("Choose files to upload"), rfd 0.17.2
-  decodes the dialog's answer with `String::from_utf16(..).unwrap()`
-  (`read_to_string` in `backend/win_cid/file_dialog/com.rs`); the panic, under
-  the release profile's `panic = "abort"`, ends the process with
-  `0xC0000409` before sotyware sees any path, so its own `invalid-name` skip
-  is never reached. A running download or upload is cut off (nothing is
-  aborted at the provider; a multipart upload in progress would leave its
-  parts) and the dashboard disappears; accounts and keys are kept. Seen
-  2026-11-12 on native Windows 11 in every `-Mode upload` run (the check
-  fails on purpose). The save dialog decodes its answer the same way, so a
-  save name with such a character is expected to do the same (not tested).
-  Not changed: the fix belongs in rfd (decode with `OsString::from_wide`);
-  see the
-  [status entry](status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12).
+  nothing about it. Seen 2026-11-12 on the virtual display. Not changed by
+  the Windows patch (ADR-023), which leaves rfd's Linux code as it is.
+  Windows differs (next item).
+- **Windows dialog paths depend on a locally patched rfd.** NTFS allows
+  file names with an unpaired surrogate (UTF-16 that is not valid
+  Unicode). Upstream rfd 0.17.2 (and 0.18.0) decodes every Windows dialog
+  answer with `String::from_utf16(..).unwrap()`, which ended sotyware with
+  `0xC0000409` (seen 2026-11-12 in the upload dialog, and on 2026-11-13 in
+  the save dialog with an unpatched build). Fixed since 2026-11-13 by a
+  local copy of rfd that reads the path as `OsString` (ADR-023): such a
+  file chosen for upload is skipped as "name cannot be an object key", a
+  download is saved under exactly that name. The fix lasts only while
+  Cargo uses the patch: a `tauri-plugin-dialog` update that requires
+  another rfd version silently brings the abort back (Cargo only warns
+  that the patch was not used), so re-check
+  [`src-tauri/patches/`](../../src-tauri/patches/README.md) on every such
+  update. The upload panel shows such a name with U+FFFD in place of the
+  surrogate (display only; the file is never sent). Builds print rfd's own
+  nine upstream dead-code warnings, as Cargo does not silence a path
+  dependency
+  ([status](status.md#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)).
 - **The Windows upload test does not select files the way a person does.**
   It selects them in the dialog's file list through UI Automation or types
   their quoted names into File name; the dialog returns the same items

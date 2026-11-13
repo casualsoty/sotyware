@@ -49,6 +49,10 @@ Where things are. Generated and ignored paths are listed in
 │   ├── capabilities/
 │   │   └── default.json      Frontend permissions for window `main` (hide is added at runtime, tray mode only)
 │   ├── icons/                Bundle and tray icons (Tauri placeholders)
+│   ├── patches/              Dependencies built from a local copy via `[patch.crates-io]` (ADR-023)
+│   │   ├── README.md         What is patched, why, how to verify the copy, when to remove it
+│   │   ├── rfd-0.17.2-osstring.patch  The full diff against the published crate
+│   │   └── rfd/              rfd 0.17.2 as published, `com.rs` changed: Windows dialog paths as `OsString` + tests
 │   └── src/
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests
@@ -114,4 +118,5 @@ Where things are. Generated and ignored paths are listed in
 | Where is the CSP? | `app.security.csp` in `src-tauri/tauri.conf.json` |
 | Where is the frontend? | `src/`, entered from `index.html` |
 | Where are tests? | Rust unit tests inline in `#[cfg(test)]` modules (cloud storage: also `cloud/tests.rs`, `cloud/s3/upload/tests.rs`, `cloud/browser/tests.rs`, `cloud/download/tests.rs`, `cloud/upload/tests.rs`, opt-in `cloud/integration.rs`, `cloud/integration/browse.rs` and `cloud/integration/download.rs`); frontend tests in `src/*.test.ts` (`App.test.ts`, `Features.test.ts`, `CloudStorage.test.ts`, `CloudBrowser.test.ts`, `CloudUpload.test.ts`); desktop tests in `tests/desktop/` (`run.sh`/`virtual.sh` Linux, `windows.ps1`, `windows-isolated.ps1` Windows; opt-in Cloud Storage end-to-end: `cloud-ui.sh`, `windows-cloud-ui.ps1`); all headless tests: `npm run test:headless`; CI workflows in `.github/workflows/` ([testing.md](../development/testing.md#ci)) |
+| Where is a dependency patched? | `src-tauri/patches/` (rfd, wired in by `[patch.crates-io]` in `src-tauri/Cargo.toml`; [README](../../src-tauri/patches/README.md), [ADR-023](decisions.md#adr-023-rfd-is-patched-locally-so-windows-dialog-paths-are-read-as-osstring)) |
 | Where are versions set? | `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json` all say `0.1.0`; keep them in sync |

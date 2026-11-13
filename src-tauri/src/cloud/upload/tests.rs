@@ -414,9 +414,14 @@ fn names_that_are_not_utf8_are_skipped() {
     let dir = TempDir::new("utf8");
     let path = dir.0.join(std::ffi::OsStr::from_bytes(b"bad-\xff.bin"));
     fs::write(&path, b"x").unwrap();
-    let checked = check_selection("", vec![path], &limits(), &options());
+    let checked = check_selection("", vec![path.clone()], &limits(), &options());
     assert_eq!(reasons(&checked), vec![Some(SkipReason::InvalidName)]);
     assert_eq!(checked[0].key, None);
+    // The file system path is kept byte for byte; only the shown name is lossy.
+    assert_eq!(
+        checked[0].path.as_os_str().as_bytes(),
+        path.as_os_str().as_bytes()
+    );
     assert!(
         checked[0].name.contains('\u{fffd}'),
         "{:?}",
@@ -427,12 +432,33 @@ fn names_that_are_not_utf8_are_skipped() {
 #[cfg(windows)]
 #[test]
 fn names_that_are_not_utf8_are_skipped() {
-    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     let dir = TempDir::new("utf8");
-    // An unpaired surrogate: a valid Windows name, not valid Unicode.
+    // An unpaired surrogate: a valid Windows name, not valid Unicode. This is
+    // the path the patched rfd now hands over instead of aborting (ADR-023).
     let name = std::ffi::OsString::from_wide(&[0x62, 0xD800, 0x2E, 0x62]);
-    let checked = check_selection("", vec![dir.0.join(name)], &limits(), &options());
+    let path = dir.0.join(name);
+    fs::write(&path, b"x").unwrap();
+    let checked = check_selection("", vec![path.clone()], &limits(), &options());
     assert_eq!(reasons(&checked), vec![Some(SkipReason::InvalidName)]);
+    // No key under another name: the file is never sent.
+    assert_eq!(checked[0].key, None);
+    assert_eq!(checked[0].size, None);
+    // The path is kept code unit for code unit; only the shown name is lossy.
+    assert_eq!(
+        checked[0]
+            .path
+            .as_os_str()
+            .encode_wide()
+            .collect::<Vec<_>>(),
+        path.as_os_str().encode_wide().collect::<Vec<_>>()
+    );
+    assert_eq!(checked[0].name, "b\u{fffd}.b");
+    let message = &checked[0].skip.as_ref().map(|s| s.message.clone());
+    assert_eq!(
+        message.as_deref(),
+        Some("the file name is not valid Unicode, so it cannot be an object key")
+    );
 }
 
 #[test]
