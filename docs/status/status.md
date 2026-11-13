@@ -127,6 +127,148 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Dashboard upload at Backblaze on native Windows 11: rerun passed (2026-11-13)
+
+**`windows-cloud-ui.ps1 -Mode b2-upload` passed, 38/38, once**, after
+explicit approval, first attempt, run id `20261113054909817` (06:49
+local); the rerun of the [first run](#dashboard-upload-at-backblaze-on-native-windows-11-2026-11-13)
+with the verify test's request count fixed. Same machine (Windows 11 Home
+25H2, build 26200.9711, x64, real desktop), same release binary
+`d17382a13060091e3a41282f0533814aa1b73f98a6049a4e8bfbdd91a0785d0d`
+(`-ExpectSha256`), test program SHA-256
+`0481bd3f4d932d01be49510c2a2fed83d7edcc0f86e56722f30ce23bd0ebb8a8`
+(unchanged before the prepare and after the verification), app key
+`b2-upload.xml`, write key for prepare, verify and cleanup. **This is the
+first real-provider result for the dashboard's upload path** (release
+binary, native Windows multi-file dialog, page, commands, batch, S3
+adapter); it is separate from the Rust batch results at Backblaze and from
+the local dashboard runs.
+
+- Prepare: run prefix empty; seed `existing.txt` (58 B) uploaded; 5
+  requests, nothing refused.
+- Dashboard: Connected; root → `sotyware-it` → `upload-ui-validation` →
+  run folder (only the seed); destination named before Open; "Upload
+  finished. 4 files: 3 uploaded, 1 skipped."; three "Uploaded and
+  verified", `existing.txt` "Skipped: already in this folder … left as it
+  is"; no Try again; `progress.bin` Sending 0, 39, 77, 100 % and Verifying
+  seen; no local path in any text; Show destination folder listed the four
+  objects, `existing.txt` 58 B. Account removed; Credential Manager and
+  account database as before.
+- Verify: each key downloaded once, `Sha256Verified`, size, SHA-256 and
+  **every byte equal** to the local file (the seed for `existing.txt`);
+  exactly four keys, one version each, no delete marker, `existing.txt`
+  still the seed's version id; no incomplete multipart upload; 12 requests
+  (4 `GetObject`, 4 listings, 4 `DeleteObject` by version id → 204).
+- Cleanup: afterwards 0 versions and 0 multipart uploads under the run
+  prefix; local files removed.
+- App requests at Backblaze were not recorded (no recorder in the release
+  binary); the rehearsal counted 19 for the same steps.
+- **Not run:** cancel, retry, multipart and the browser lifecycle at
+  Backblaze (local only, on purpose); Linux; Windows 10; Hetzner.
+
+### Dashboard upload at Backblaze on native Windows 11 (2026-11-13)
+
+One run of `windows-cloud-ui.ps1 -Mode b2-upload` after explicit approval
+(run id `20261113054534091`, 06:45 local), first attempt, on the real
+Windows 11 desktop (Home 25H2, build 26200.9711, x64), release binary
+`C:\dev\sotyware-b2upui\src-tauri\target\release\sotyware.exe` SHA-256
+`d17382a13060091e3a41282f0533814aa1b73f98a6049a4e8bfbdd91a0785d0d` (checked
+by `-ExpectSha256`), test program SHA-256 `04944d20…29e1b5f` (unchanged
+before the prepare and after the verification). App key: the new
+`b2-upload.xml` (no file name prefix); prepare, verify and cleanup: the
+write key. **37 passed, 1 failed. The failure is a defect in the test's
+own request count, not in sotyware; no rerun yet.**
+
+- **Prepare:** run prefix empty (versions and multipart uploads); seed
+  `existing.txt` (58 B) uploaded; 5 requests as planned, nothing refused.
+- **Dashboard:** account added through the form, Connected; browsed root →
+  `sotyware-it` → `upload-ui-validation` → the run folder (only the seed
+  shown); the panel named the run folder before Open was pressed in the
+  native dialog; one batch: "Upload finished. 4 files: 3 uploaded, 1
+  skipped."; `a-small.txt`, `größe +test.bin`, `progress.bin` (24 MiB) each
+  "Uploaded and verified", `existing.txt` "Skipped: already in this folder
+  … left as it is"; no Try again; `progress.bin` seen Sending at 0, 45 and
+  100 % (only 10 polls: the upload was fast); no local path in any text;
+  Show destination folder listed the four objects, `existing.txt` with the
+  seed's 58 B. Account renamed, key replaced and removed; Credential
+  Manager and the account database as before.
+- **Provider side (verify):** each of the four keys downloaded once and
+  reported `Sha256Verified` with the expected size (the stored SHA-256
+  equals the received bytes' hash); the version listing found exactly the
+  four keys, one version each, no delete marker, sizes 77 / 58 / 200,003 /
+  25,165,829, and `existing.txt` still the seed's version id (not
+  overwritten); no incomplete multipart upload. 12 requests, exactly as
+  planned.
+- **Cleanup:** 4 `DeleteObject` by version id → 204; afterwards 0
+  versions and 0 multipart uploads under the run prefix. Local files
+  removed.
+- **The failed check:** `backblaze_b2_upload_ui_verify` did not print its
+  final "passed" line. Its request count looked for `GET` requests whose
+  path contains `/sotyware-it/`; the test bucket's own name ends in
+  `sotyware-it` (checked without printing it), so the four listings
+  matched too (8, not 4). This assertion comes after the cleanup and after
+  the found-versions checks, which the printed listing satisfies. The
+  driver discarded the test's stderr, so the panic message itself was not
+  seen, and the byte-for-byte comparison of each download (asserted after
+  its `Sha256Verified` line) is therefore **not shown** by this run. Fixed:
+  the count now matches `x-id=GetObject`; the driver keeps stderr for this
+  mode; the local test uses a bucket name ending in `sotyware-it`. WSL2
+  `cargo test` 319 + 21 ignored; Windows 309 + 21 ignored; new test
+  program SHA-256 `0481bd3f…ebb8a8`.
+
+The rerun with the fixed test program passed
+([above](#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13)).
+
+### Dashboard upload test at Backblaze: prepared (2026-11-13)
+
+Uncommitted tree on `48c33c4`. **Prepared and validated locally only;
+nothing was sent to Backblaze or any other provider.** New
+`tests\desktop\windows-cloud-ui.ps1 -Mode b2-upload` (one batch through
+the release binary, its bundled page and the native Windows multi-file
+dialog into the B2 test bucket) with a local `-Rehearse` variant, and its
+provider side in `cloud/integration/upload/ui.rs` (prepare, verify, cleanup;
+design, requests and safeguards:
+[testing.md](../development/testing.md#uploads-through-the-windows-dashboard-at-backblaze)).
+Production code is unchanged. Test code changed elsewhere: the batch test's
+run scope and cleanup take their list of file names; `serve_uploads_for_ui`
+can be seeded with one given file; `Pick` in the driver can cancel the
+dialog instead of pressing Open. **The dashboard is not validated at a real
+provider yet**: the three upload results stay separate (Rust batch path at
+Backblaze; dashboard against the local server; dashboard at Backblaze: not
+run).
+
+- **WSL2** (Ubuntu 24.04, cargo 1.99.1): `cargo fmt --check`, `cargo clippy
+  --all-targets -- -D warnings`, `npm run check` clean; `npm run
+  test:headless`: rfd guard ok, Vitest 135, Rust **319 passed, 21 ignored**.
+  New: `upload_ui_run_against_the_test_server` (seed, the dashboard's batch
+  through the code behind `upload_cloud_files`, verification downloads, all
+  through the run scope; 13 batch requests, the skipped file `started:
+  false`) and three rule tests; three new opt-in tests, `#[ignore]`d. The
+  prepare test without `SOTYWARE_IT_B2_UPLOAD_CONFIRM` failed at once with
+  "nothing was sent".
+- **Native Windows 11** (Home 25H2, build 26200.9711, x64; fresh copy
+  `C:\dev\sotyware-b2upui`, real desktop): release binary
+  `src-tauri\target\release\sotyware.exe` SHA-256 `d17382a1…785d0d`
+  (bundled page; nothing listened on port 1420); fmt, clippy,
+  `npm run check` clean; `test:headless` Vitest 135, Rust 309 passed, 21
+  ignored; the same prepare guard. Against local servers only, one run
+  each: **`-Mode b2-upload -Rehearse` 41/41, twice** (navigation to the run
+  folder; destination named before Open; native dialog; "Upload finished. 4
+  files: 3 uploaded, 1 skipped."; `progress.bin` seen Sending 0 → 100 %
+  in 67 samples; no local path in any text; Show destination folder lists
+  the four objects with the seed's size for `existing.txt`; the server held
+  exactly the four keys with matching content and SHA-256 metadata; the app
+  sent exactly `HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 10,
+  `PutObject` 3). Regression: `-Mode upload` **74/74** (moved the mouse
+  once, tray Quit), `download` 36/36, `browse` 29/29, `local` 19/19.
+  Credential Manager and `%TEMP%` unchanged afterwards, account database
+  put back. Gates: `b2-upload` without or with a wrong `-ConfirmB2Upload`,
+  `-Rehearse` with another mode, and a wrong `-ExpectSha256` each stopped
+  with exit 2 before anything ran.
+- **Not run** in this preparation: anything at Backblaze (the run
+  followed after approval, [above](#dashboard-upload-at-backblaze-on-native-windows-11-2026-11-13));
+  Linux (no Linux variant of this mode); Windows 10.
+
 ### Uploads at Backblaze on native Windows 11 (2026-11-13)
 
 Tree `96c9461` (no change to code or tests; a fresh copy of the clean

@@ -123,8 +123,11 @@ order:
    once on WSL2 and once on native Windows 11
    ([WSL2](status.md#uploads-at-backblaze-2026-11-13),
    [Windows](status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13)).
-   **Next:** uploads through the dashboard and native dialog at Backblaze
-   ([testing.md](../development/testing.md#uploads-at-backblaze)).
+   Uploads through the Windows dashboard and native dialog at Backblaze
+   passed once (2026-11-13,
+   [status.md](status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13)).
+   **Next:** the same at a real provider on a real Linux desktop and on
+   Windows 10.
    Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.

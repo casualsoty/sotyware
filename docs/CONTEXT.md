@@ -197,6 +197,27 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Uploads through the **Windows dashboard at Backblaze** (2026-11-13,
+  after approval): `windows-cloud-ui.ps1 -Mode b2-upload` **passed 38/38
+  once** (rerun; the first run failed only on the verify test's own request
+  count, fixed). Release binary `d17382a1…785d0d`, native Windows 11 25H2
+  real desktop, native multi-file dialog, app key without file name prefix:
+  one batch, 3 uploaded, `existing.txt` skipped and not overwritten; the
+  four objects downloaded `Sha256Verified` and byte-equal; cleanup by
+  version id left 0 versions and 0 multipart uploads. Not at Backblaze:
+  cancel, retry, multipart, browser lifecycle; Linux; Windows 10.
+  [status.md](status/status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13).
+  Preparation (same day, uncommitted on `48c33c4`):
+  `windows-cloud-ui.ps1 -Mode b2-upload` (refused without
+  `-ConfirmB2Upload upload-ui-validation`; needs a third key without file
+  name prefix, `b2-upload.xml`, not created yet) with provider side in
+  `cloud/integration/upload/ui.rs` (36 requests planned, cleanup by version
+  id). Local only, native Windows 11, release binary `d17382a1…785d0d`:
+  `-Rehearse` 41/41 twice (app requests exactly as planned), `upload`
+  74/74, `download` 36/36, `browse` 29/29, `local` 19/19; Windows Rust 309
+  + 21 ignored, WSL2 319 + 21 ignored, Vitest 135.
+  [testing.md](development/testing.md#uploads-through-the-windows-dashboard-at-backblaze),
+  [status.md](status/status.md#dashboard-upload-test-at-backblaze-prepared-2026-11-13).
 - Uploads at **real Backblaze B2** (2026-11-13, `2828582` + uncommitted
   docs): opt-in `backblaze_b2_upload_batch`
   (`cloud/integration/upload.rs`; needs `--ignored`, the B2 variables and
@@ -575,13 +596,13 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads ran at a real provider only through the Rust batch path at
-Backblaze, once on WSL2 and once on native Windows 11 (never through the
-UI there, never at Hetzner); never
-on Windows 10 or a real Linux desktop (the release binary only against
-the local server: on the
-WSL2 virtual display with the GTK dialog and on the native Windows 11
-desktop with the Windows dialog); on Linux a non-UTF-8 file name
+Uploads ran at a real provider only at Backblaze: through the Rust
+batch path once on WSL2 and once on native Windows 11, and through the
+native Windows 11 dashboard and multi-file dialog once (one batch; cancel,
+retry, multipart and the browser lifecycle only against the local server);
+never at Hetzner, on Windows 10 or a real Linux desktop (Linux: the
+release binary with the GTK dialog only against the local server on the
+WSL2 virtual display); on Linux a non-UTF-8 file name
 silently drops out of the dialog's selection (rfd); on Windows names with
 an unpaired surrogate work only through the locally patched rfd (a
 dialog-plugin update that bypasses the patch brings the abort back;
@@ -599,7 +620,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze through the UI; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at a real provider on Linux and Windows 10; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

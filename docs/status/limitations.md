@@ -408,12 +408,16 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   binary and the native GTK multi-file dialog on a **virtual display under
   WSL2** (`cloud-ui.sh upload`, 2026-11-12) and on the **native Windows 11
   desktop** with the native Windows multi-file dialog
-  (`windows-cloud-ui.ps1 -Mode upload`, 2026-11-12). **At Backblaze only
-  through the Rust batch path, once on WSL2 and once on native Windows 11**
+  (`windows-cloud-ui.ps1 -Mode upload`, 2026-11-12). **At Backblaze**
+  through the Rust batch path once on WSL2 and once on native Windows 11
   (2026-11-13, no UI or dialog,
   [WSL2](status.md#uploads-at-backblaze-2026-11-13),
-  [Windows](status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13));
-  **never at
+  [Windows](status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13)),
+  and **through the native Windows 11 dashboard and multi-file dialog once**
+  (2026-11-13, one batch of four files with one existing object;
+  [status](status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13));
+  cancel, retry, multipart and the browser lifecycle through the UI only
+  against the local server; **never at
   Hetzner**, never on Windows 10, a real Linux desktop, Wayland or with
   the XDG portal's dialog. At most 100 files per batch, one batch at a time, the
   files one after another; a skipped file (existing object, duplicate name,
