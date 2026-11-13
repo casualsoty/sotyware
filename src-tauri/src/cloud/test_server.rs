@@ -864,8 +864,23 @@ async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
                 tokio::time::sleep_until(due).await;
             }
         }
-        let _ = server_wr.shutdown().await;
-        let _ = back.await;
+        // No half-close towards the server: like a proxy that buffers
+        // bodies, the request it forwarded is finished independently of
+        // its client. hyper's server (half-close off) takes an EOF as the
+        // connection closing and drops a handler still running, so a part
+        // whose client went away would be cut short when the server is
+        // slow (debug build on a loaded machine) instead of being stored.
+        // The connection ends once the answer cannot reach the client, at
+        // the latest after a minute (an idle connection the client closed
+        // gets no answer), or when the link is dropped.
+        let mut back = back;
+        if tokio::time::timeout(Duration::from_secs(60), &mut back)
+            .await
+            .is_err()
+        {
+            back.abort();
+        }
+        drop(server_wr);
         return;
     }
     let mut buf = vec![0u8; 16 * 1024];

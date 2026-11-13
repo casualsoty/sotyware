@@ -127,6 +127,31 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### The late-part control test on a loaded machine (2026-11-13)
+
+On `f902efb`, `ci.yml` failed on Linux (Ubuntu 26.04 runner, Rust
+1.100.0): `without_the_wait_a_handed_over_part_lands_after_the_abort`
+found no late `part-2` (332 passed, 1 failed). Reproduced on WSL2 by
+running the whole `cargo test --lib` pinned to 2 CPUs (`taskset -c 0,1`):
+failed 3 of 3. Cause (test code only, no production change): the client
+handed over all of part 2 and closed cleanly, the `Pace::Buffered` relay
+forwarded every byte and then half-closed its upstream connection; hyper's
+server (half-close off) took that EOF as the connection closing and
+dropped s3s-fs's `upload_part` before it moved the part into place. Idle,
+the debug-build handler finished first. The relay now keeps the upstream
+write side open after its client left, waits up to 60 s for the answer,
+then closes. WSL2 after the change: pinned to 2 CPUs the control passed
+11 of 11 full-suite runs, the three ADR-025 tests pinned to 1 CPU 8 of 8;
+`cargo test` 333 passed, 26 ignored, 3 runs; feature build with every
+store recorded 360; fmt and clippy clean in both configurations. Not yet
+run on CI or Windows. Seen meanwhile, unrelated (no `ThrottledLink`):
+`cloud::upload::tests::cancelling_during_a_single_put_stores_nothing`
+reports its cancelled file at stage `hashing` instead of `sending` when
+CPU is short: full suite pinned to 2 CPUs 1 of 10 runs before the change
+and 8 of 14 after it (the control now stores its 5 MiB part, more load);
+`cloud::upload::tests` alone pinned to 1 CPU 10 of 10; never seen
+unpinned or on CI.
+
 ### Late-part wait and the remaining recorder rehearsals on native Windows 11 (2026-11-13)
 
 Tree `ad6f69c` + test code then uncommitted, committed afterwards

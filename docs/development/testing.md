@@ -1396,7 +1396,11 @@ cd .. && npm run check:release-binary && npm run test:release-binary-guard
   (`Pace::Buffered` in `test_server.rs`), a cancel after part 2 was handed
   over completely waits for its answer and the abort leaves no part; with
   `part_settle_timeout` zero (the control) the late part remains; the
-  wait ends at its bound.
+  wait ends at its bound. After its client went away, the `Buffered` link
+  does not half-close towards the server (it waits up to a minute for the
+  answer, then closes): hyper's server takes that EOF as a closed
+  connection and drops a handler still storing the part, which on a
+  loaded machine (CI) made the control fail.
 - `probe_a_part_landing_after_the_abort` (`cloud/s3/upload/tests.rs`,
   `#[ignore]`, prints its findings, needs no feature): cancels a
   multipart upload right after part 2 was handed to the connection

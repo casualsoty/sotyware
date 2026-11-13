@@ -197,6 +197,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Late-part control on a loaded machine** (2026-11-13, test code only):
+  CI failed at `f902efb` on
+  `without_the_wait_a_handed_over_part_lands_after_the_abort`; the
+  `Pace::Buffered` relay half-closed upstream after its client left, and
+  hyper's server then dropped the part being stored. The relay no longer
+  half-closes (waits ≤ 60 s for the answer). WSL2, pinned to 2 CPUs: 11/11
+  full-suite runs; `cargo test` 333 + 26 ignored. Not yet on CI or
+  Windows. Separate, older flake when CPU is short (pinned only, 10/10
+  alone on 1 CPU): `cancelling_during_a_single_put_stores_nothing`
+  (stage `hashing`).
+  [status.md](status/status.md#the-late-part-control-test-on-a-loaded-machine-2026-11-13).
 - **Late-part wait on native Windows 11** (2026-11-13, test code on
   `ad6f69c`, committed as `bf991d0`; recorder build `0ae6f848…`, local
   server): new rehearsal-only `windows-cloud-ui.ps1 -Mode b2-lifecycle
