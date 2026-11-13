@@ -206,7 +206,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   temporary broken copies: unused patch, removed entry, other version,
   stale lock, missing copy or file, reverted conversion) **10/10 on WSL2
   and 10/10 on native Windows 11**; WSL2 `test:headless` 135 + 308.
-  CI steps not yet run on GitHub.
+  **On GitHub at `f19dd8b`** (2026-11-13): `ci.yml` run 43360177079
+  passed on Linux and Windows (guard after `cargo fetch --locked`, before
+  any compile; self-test 10/10 on each; Vitest 135; Rust 308 / 298 + 16
+  ignored); `desktop-virtual.yml` passed 119/0/0 with the guard before the
+  release build; `desktop-windows-isolated.yml` guard and build ok, test NOT
+  RUN (exit 4, elevated runner, as expected). Every build compiled rfd from
+  `src-tauri/patches/rfd`.
   [status.md](status/status.md#rfd-patch-guard-2026-11-13).
 - Windows dialog paths with an unpaired surrogate (2026-11-13,
   uncommitted on `bd704af`): rfd 0.17.2 patched locally
@@ -498,18 +504,20 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
   `test:headless`; docs-only changes skipped). Its two automatic runs so far
   passed: both the Ubuntu and the Windows headless job (run ids, commits and
-  durations not recorded). Manual only:
+  durations not recorded); a third, run 43360177079 at `f19dd8b`
+  (2026-11-13, with the rfd guard), passed both jobs (7 min 37 s Linux,
+  17 min 23 s Windows, cold Cargo cache). Manual only:
   `desktop-virtual.yml` (virtual display, not a real desktop) and
   `desktop-windows-isolated.yml` (experimental). The real-desktop Windows test
   is not in CI. `desktop-virtual.yml` passed on GitHub, 92/0/0 (run id and
-  commit not recorded); this supersedes its first run (`14a5de1`, failed
+  commit not recorded), and 119/0/0 at `f19dd8b` (2026-11-13); this supersedes its first run (`14a5de1`, failed
   89/2/1 on a driver bug fixed in `ead47e7`). It is a virtual display with a
   stub tray host, so it says nothing about real GNOME, KDE or XFCE
   desktops. `desktop-windows-isolated.yml` ran twice
   (Windows Server 2025): the first run failed on the elevated hosted job,
   reproduced on Windows 11 elevated; the second (2026-11-10) printed
   `elevated: True` and reported NOT RUN, exit 4 (not a pass): hosted runners
-  cannot run this test.
+  cannot run this test; a third run at `f19dd8b` (2026-11-13) did the same.
   No other workflow result is recorded.
   [testing.md](development/testing.md#ci).
 

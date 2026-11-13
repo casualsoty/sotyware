@@ -1592,7 +1592,10 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   Its second hosted run (2026-11-10, Windows Server 2025 Datacenter 24H2 build
   26100.33674) printed `elevated: True` and ended with exit 4, NOT RUN: hosted
   jobs are elevated, so this workflow ends with exit 4 until the test can start sotyware non-elevated, which has not been
-  tried. It does not cover the tray, tray menu or Quit.
+  tried. Its third run (2026-11-13, `f19dd8b`) again ended with exit 4 after
+  the rfd guard and the release build passed; the step's process exit code
+  is shown as 1 there, while the summary and error line give 4. It does not
+  cover the tray, tray menu or Quit.
 - **The real-desktop Windows test (`npm run test:desktop:windows`) is not in
   CI.** It needs an unlocked interactive desktop with Explorer's taskbar and moves
   the mouse. Running it automatically would need a self-hosted runner in an
@@ -1632,13 +1635,16 @@ desktop workflows when started by hand. Local runs (`npm run test:headless`,
 `npm run test:desktop:virtual`, the Windows scripts on your own machine) cost
 nothing.
 
-**Estimated cost** (not measured on GitHub: the first `ci.yml` runs passed, but
-their job times were not recorded; replace with the real job times): a headless run takes roughly 4 min on Linux and 6 min on
-Windows with a warm Cargo cache, about twice that cold, so about $0.08 warm to
-$0.17 cold, i.e. roughly 70–140 headless runs a month. A pull request with
-`n` pushes costs `n` runs plus one on merge. A manual virtual-display run is
-roughly 10–15 Linux minutes ($0.06–0.09); a manual isolated-desktop run roughly
-15–20 Windows minutes ($0.15–0.20).
+**Measured cost** (2026-11-13, runs at `f19dd8b`, first to last log line of
+each job; [status.md](../status/status.md#runs-at-f19dd8b-2026-11-13)): with a
+**cold** Cargo cache a headless run took **7 min 37 s on Linux and 17 min 23 s
+on Windows** (Windows Rust tests alone 97 s), about $0.05 + $0.17 = **$0.22**,
+i.e. roughly 50 cold headless runs a month. A warm cache should be faster;
+no warm run has been timed yet. A pull request with `n` pushes costs `n` runs
+plus one on merge. A manual virtual-display run took **9 min 7 s** (release
+build 7 min 49 s; about $0.06); a manual isolated-desktop run **11 min 10 s**
+(release build 9 min 20 s; about $0.11), although it always ends NOT RUN on
+hosted runners.
 
 **Monitoring usage.** Personal account: <https://github.com/settings/billing>,
 then the **Usage** view filtered to Actions (or "Actions grouped by SKU"); GitHub

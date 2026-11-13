@@ -156,7 +156,19 @@ build in both manual desktop workflows) and its tests
   `test:rfd-patch-guard` **10/10 passed** (the same cases). `test:headless`
   was not run there (no `node_modules` in the copy; nothing it tests
   changed).
-- **Not run:** the CI steps on GitHub; Windows 10.
+- **GitHub Actions** (2026-11-13, committed as `3c48288`, run at
+  `f19dd8b` on `main`; every job checked out exactly that commit; details
+  and durations [below](#runs-at-f19dd8b-2026-11-13)): `ci.yml`
+  ([run 43360177079](https://github.com/casualsoty/sotyware/actions/runs/43360177079))
+  passed on `ubuntu-latest` and `windows-latest`: `cargo fetch --locked`,
+  then the guard ok (before the first compile), `test:rfd-patch-guard`
+  **10/10 on each OS** (the negative cases re-resolved rfd from crates.io on
+  the runners), fmt, clippy, `test:headless` (guard ok again, Vitest 135,
+  Rust 308 + 16 ignored on Linux, 298 + 16 ignored on Windows).
+  `desktop-virtual.yml` and `desktop-windows-isolated.yml`: guard ok before
+  the release build. Every build compiled `rfd v0.17.2` from
+  `src-tauri/patches/rfd`; no "was not used" warning in any log.
+- **Not run:** Windows 10.
 
 ### Windows dialog paths with unpaired surrogates (2026-11-13)
 
@@ -1421,7 +1433,7 @@ desktop test of `a7bf8f3`.
 | The developer's own `~/.local/share/com.sotyware.desktop/` has no `preferences.sqlite3` after the runs (the suite uses a private `XDG_DATA_HOME`) | virtual display | ✅ |
 | Not vacuous: a mutant of `save_current` that reads the state before taking the lock survives the concurrency unit test (the bad interleaving cannot be forced from outside); recorded as a design guarantee in ADR-015, not as tested | headless | ⚠️ known gap |
 | Observed: with `XDG_DATA_HOME` set to a file, Tauri fails its own setup (`Failed to setup app: Not a directory`, abort) because it creates the webview data folder there; pre-existing, not caused by the database | virtual display | recorded ([limitations](limitations.md#feature-preferences)) |
-| `tests/desktop/run.sh` (WSLg), manual checklist step 9, `desktop-virtual.yml` on GitHub (expects 115 since `b4918e1`) | — | — not run |
+| `tests/desktop/run.sh` (WSLg), manual checklist step 9, `desktop-virtual.yml` on GitHub (expects 115 since `b4918e1`) | — | — not run (`desktop-virtual.yml` passed later at `f19dd8b` with 119 checks, [CI](#runs-at-f19dd8b-2026-11-13)) |
 
 **Windows: Windows 11 Home 25H2, OS build 26200.9711, x64**, same machine and
 tool setup as [below](#built-in-feature-foundation-native-windows-11-2026-11-11)
@@ -1464,7 +1476,7 @@ write lock from another connection and checks that a save fails after at least
 | --- | --- | --- |
 | WSL2: `cargo fmt --check`, clippy `-D warnings`, `npm run test:headless` (38 frontend, 89 Rust) | headless | ✅ |
 | Not vacuous: with the busy timeout set to 0 (not committed), 777 of 800 saves failed and the rewritten test still passed, checking every stored value | headless | ✅ 5 runs |
-| `ci.yml` on GitHub (Linux, Windows) and native Windows 11 with the fix | — | — not run |
+| `ci.yml` on GitHub (Linux, Windows) and native Windows 11 with the fix | — | — not run then; `ci.yml` passed both jobs later at `f19dd8b`, the Windows job including this test ([CI](#runs-at-f19dd8b-2026-11-13)) |
 
 ### Built-in feature foundation (WSL2, Ubuntu 24.04.1, Rust 1.99.1, Node 24.22.0, 2026-11-11)
 
@@ -1701,6 +1713,26 @@ repository is private on GitHub Free ($12 of hosted compute a month).
 | `desktop-virtual.yml` | manual | ✅ **passed on GitHub: 92 passed, 0 failed, 0 skipped** (confirmed, recorded 2026-11-11; run id, commit, runner image and duration not recorded). Virtual display (Xvfb + openbox, stub tray host): **not** validation on a real GNOME, KDE or XFCE desktop. Supersedes the first GitHub run, at `14a5de1` (runner image ubuntu-26.04 20261101.186, 2026-11-10): build 5 min 27 s, then 89 passed, 2 failed, 1 skipped, exit 1. Scenario 12 found no Hide button; cause was the driver matching the AT-SPI role name, renamed in at-spi2-core 2.60 ([below](#virtual-display-test-on-ubuntu-2604-container-2026-11-10)), fixed in `ead47e7` |
 | `desktop-windows-isolated.yml` | manual, experimental | ❌ run once on GitHub ([run 42919688755](https://github.com/casualsoty/sotyware/actions/runs/42919688755), Windows Server 2025; commit and duration not recorded here): private desktop `sotyware-test-8872` created, input desktop `Default`, no taskbar; the window appeared, then the title and Hide-button checks failed, the primary panicked (`failed to create webview`, `0x80070578` Invalid window handle) and second launches exited -1073740791. Reproduced on Windows 11 by running the suite elevated; cause and evidence [above](#windows-11-isolated-desktop-test-elevated-2026-11-11). Since `468a2c3` an elevated job reports NOT RUN (exit 4). **Second run** (2026-11-10 23:41 UTC, Windows Server 2025 Datacenter 24H2 build 26100.33674; run id and commit not in the pasted log, `origin/main` was `44be84e`): `elevated: True`, `NOT RUN`, exit 4, job failed as intended; no check ran |
 | Workflow syntax | — | YAML parses, every action pinned to a full SHA; not checked with `actionlint`. GitHub accepted all three workflows (each has run) |
+
+#### Runs at `f19dd8b` (2026-11-13)
+
+The push of `main` from `b0c4300` to `f19dd8b` (28 commits) triggered
+`ci.yml`; the two manual workflows were started by hand on `main`
+afterwards. Every job's checkout fetched
+`f19dd8b25c5660a788589105283b709a7d3a94f9`, so each ran exactly the
+committed tree. Read from the full job logs; runner version 2.338.2.
+Durations are from the first to the last log line of each job. Both
+`ci.yml` jobs started with no Cargo cache (`No cache found`) and saved one
+at the end (push to `main`). No real provider was contacted: every
+Backblaze and Hetzner test was ignored as opt-in, and no provider endpoint
+appears in any log.
+
+| Workflow | Run | Runner | Result |
+| --- | --- | --- | --- |
+| `ci.yml`, `headless (ubuntu-latest)` | [43360177079](https://github.com/casualsoty/sotyware/actions/runs/43360177079), 03:37 UTC | image ubuntu-26.04 (20261111.196.1) | ✅ **passed**, 7 min 37 s, cold Cargo cache: check, build, `cargo fetch --locked`, rfd guard ok, guard self-test 10/10, fmt, clippy `-D warnings` (rfd's 9 upstream dead-code warnings from `oneshot.rs` printed, as expected, ADR-023), `test:headless`: guard ok, Vitest 135/135, Rust **308 passed, 16 ignored** |
+| `ci.yml`, `headless (windows-latest)` | same run | image windows-2025-vs2026 (20261103.298.1) | ✅ **passed**, 17 min 23 s, cold Cargo cache: same steps; guard self-test 10/10; Rust **298 passed, 16 ignored** (the Linux-only tests absent), including `concurrent_connections_never_corrupt_the_database` on the hosted runner |
+| `desktop-virtual.yml` | run id not in the downloaded log, 03:56 UTC | image ubuntu-26.04 (20261101.186.1) | ✅ **passed**, 9 min 7 s: rfd guard ok, release build 7 min 49 s, **119 passed, 0 failed, 0 skipped** (the expected count). Virtual display, not a real desktop |
+| `desktop-windows-isolated.yml` | run id not in the downloaded log, 04:07 UTC | Windows Server 2025 Datacenter 24H2 build 26100.33674, image windows-2025-vs2026 (20261103.298.1) | ❌ **failed as intended, NOT RUN**: rfd guard ok, release build 9 min 20 s, then `elevated: True`, exit 4; no check ran (11 min 10 s). The step's process exit code shows as 1 while the summary and error line say exit 4: an `exit` inside the script GitHub runs through `pwsh -command ". '{0}'"`; it predates the guard |
 
 Record further GitHub results here, with the real job durations when they are
 read, and replace the cost estimate in
@@ -2040,8 +2072,8 @@ tray icon was ever seen or clicked by a person.
 | XFCE | — |
 | Real Wayland session with a real tray host | — |
 | Focus and un-minimize on second launch, on any real Linux WM | — (skipped under WSLg; passes only under openbox on Xvfb) |
-| Headless suite and virtual-display test on GitHub Actions | headless: ✅ two automatic `ci.yml` runs passed, Ubuntu and Windows jobs. Virtual-display: ✅ `desktop-virtual.yml` passed, 92/0/0, superseding the 89/2/1 failure at `14a5de1` (driver bug, fixed in `ead47e7`); not a real desktop ([CI](#ci-github-actions-2026-11-10)) |
-| Windows private-desktop test in Session 0 or on a GitHub-hosted runner | — Session 0 not tried. GitHub-hosted runner: not possible, hosted jobs are elevated; the manual workflow failed once and then reported NOT RUN, exit 4 ([CI](#ci-github-actions-2026-11-10)) |
+| Headless suite and virtual-display test on GitHub Actions | headless: ✅ two automatic `ci.yml` runs passed, Ubuntu and Windows jobs; ✅ again at `f19dd8b` (run 43360177079, with the rfd guard and its 10 tests on both OSes). Virtual-display: ✅ `desktop-virtual.yml` passed, 92/0/0, superseding the 89/2/1 failure at `14a5de1` (driver bug, fixed in `ead47e7`); ✅ 119/0/0 at `f19dd8b`; not a real desktop ([CI](#ci-github-actions-2026-11-10), [runs at `f19dd8b`](#runs-at-f19dd8b-2026-11-13)) |
+| Windows private-desktop test in Session 0 or on a GitHub-hosted runner | — Session 0 not tried. GitHub-hosted runner: not possible, hosted jobs are elevated; the manual workflow failed once and then reported NOT RUN, exit 4, twice (2026-11-10, 2026-11-13 at `f19dd8b`) ([CI](#ci-github-actions-2026-11-10)) |
 | Windows tray, real clicks and Quit without an interactive, unlocked desktop | — not possible: `windows.ps1` needs the input desktop with Explorer |
 | Headless suite on Windows 10 | — |
 | Installing and running `.deb` / `.rpm` / AppImage | — |
