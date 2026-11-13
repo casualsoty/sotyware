@@ -482,6 +482,15 @@ impl Accounts {
         inner.connected.insert(id.into(), Arc::clone(&store));
         Ok(store)
     }
+
+    /// Makes [`Self::connect`] return `store` for `id`, so an opt-in provider
+    /// test can record the requests the app's own code sends
+    /// (`S3Store::with_interceptor`). The store must be built for the same
+    /// account and credentials.
+    #[cfg(test)]
+    pub(crate) fn set_connected(&self, id: &str, store: Arc<S3Store>) {
+        self.lock().connected.insert(id.into(), store);
+    }
 }
 
 /// An account store in memory, for tests.

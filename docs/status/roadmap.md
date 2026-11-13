@@ -119,7 +119,11 @@ order:
    upload and save dialog with an unpaired-surrogate name passed,
    [status.md](status.md#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)).
    Drop the patch once a fixed rfd reaches `tauri-plugin-dialog`.
-   **Next:** uploads at Backblaze. Later: deletes and folder creation, each with its own
+   **Next:** uploads at Backblaze; the opt-in test is prepared and
+   validated locally, not run at Backblaze
+   ([testing.md](../development/testing.md#uploads-at-backblaze),
+   [status.md](status.md#upload-test-at-backblaze-prepared-2026-11-13)).
+   Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a
    persistent registry or a documented lifecycle rule.
 8. restic orchestration (child process, `--json`, exit codes), tried first

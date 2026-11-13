@@ -480,6 +480,15 @@ impl CloudAccounts {
         })
     }
 
+    /// See [`Accounts::set_connected`]: the commands then use `store` (with
+    /// a request recorder) for account `id`.
+    #[cfg(test)]
+    pub(crate) fn set_connected(&self, id: &str, store: Arc<super::s3::S3Store>) {
+        self.accounts()
+            .expect("the account database")
+            .set_connected(id, store);
+    }
+
     fn checks(&self) -> MutexGuard<'_, Checks> {
         self.checks.lock().unwrap_or_else(|e| e.into_inner())
     }

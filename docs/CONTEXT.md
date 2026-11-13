@@ -197,6 +197,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Upload test at Backblaze **prepared, not run** (2026-11-13, uncommitted
+  on `3e72226`): opt-in `backblaze_b2_upload_batch`
+  (`cloud/integration/upload.rs`; needs `--ignored`, the B2 variables and
+  `SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation`). It runs one batch
+  (empty, Unicode, 3-part multipart), an existing key, a multipart cancel
+  and downloads in `sotyware-it/upload-validation/<run>/`. A `RunScope`
+  interceptor refuses any request outside the run before it is sent, and
+  cleanup goes by version id and upload id. Locally: the same scenario
+  against the in-process server passed; WSL2 `cargo test` 315 + 18 ignored.
+  [testing.md](development/testing.md#uploads-at-backblaze),
+  [status.md](status/status.md#upload-test-at-backblaze-prepared-2026-11-13).
 - rfd patch guard (2026-11-13, uncommitted on `207363d`):
   `npm run check:rfd-patch` (`scripts/check-rfd-patch.mjs`, first step of
   `test:headless`, in `ci.yml` after `cargo fetch --locked` and before the

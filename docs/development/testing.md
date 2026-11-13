@@ -791,6 +791,228 @@ key about 6 through the app (`HeadBucket`, `ListObjectsV2` of the root,
 [Rust download test](#one-download-from-backblaze). It needs the Rust
 toolchain (the two tests are compiled on the first run).
 
+### Uploads at Backblaze
+
+**Status (2026-11-13): prepared and validated locally only. Never run
+against Backblaze.** `backblaze_b2_upload_batch`
+(`cloud/integration/upload.rs`, `#[ignore]`d) sends one controlled upload
+validation to the B2 test bucket through the code behind
+`upload_cloud_files`: `begin_upload` and `CloudUploads` with an in-memory
+`CloudAccounts` and credential store, a fixed file list in place of the
+file dialog, and a recorder in place of the page's channel. The downloads
+go through `CloudDownloads`, as in the
+[download test](#one-download-from-backblaze). Everything uses the
+**write key only** (`b2.env` / `b2.xml`), which Backblaze limits to
+`sotyware-it/`. The read-only key is not used.
+
+**What it does**, in order. Each client makes one attempt per request.
+Multipart starts at 6 MiB in parts of 5 MiB for this test only (the app
+defaults are 64 and 16 MiB).
+
+1. **Gate, before any request.** `SOTYWARE_IT_B2_UPLOAD_CONFIRM` must be
+   exactly `upload-validation`, and the account must be Backblaze's own
+   endpoint for the region. A new run id `<unix nanos>-<pid>` is made and the
+   run prefix `sotyware-it/upload-validation/<run id>/` is printed.
+2. **Preflight.** One `ListObjectVersions` and one `ListMultipartUploads` of
+   the run prefix. Both must succeed and find nothing (no version, delete
+   marker or incomplete multipart upload). Otherwise the test stops and
+   nothing is written.
+3. **Batch 1**, three generated files (SHA-256 computed locally first):
+   `empty.bin` (0 bytes, one PUT), `größe +test.bin` (200,003 bytes, one
+   PUT; a space, `+` and non-ASCII letters), `multipart.bin` (10 MiB + 3,
+   three parts). The batch must end `completed` with every file
+   `completed`, under its key exactly as named, bytes = total = size. Then
+   one `HeadObject` each: size and `sotyware-sha256` must equal the local
+   values.
+4. **Existing key.** Batch 2 picks a different local file named
+   `größe +test.bin`. It must be `skipped` with `destination-exists` and
+   not `started` (the batch's `HeadObject`; the file is not read). Then
+   `S3Store::upload_file` of that file to the same key must fail with
+   `AlreadyExists` (its own `HeadObject`; nothing sent).
+5. **Cancellation.** Batch 3 uploads `cancelled.bin` (10 MiB + 3) and is
+   cancelled once part 2 has begun. It must end `cancelled` with remote
+   state `nothing-stored` (the multipart upload was aborted), no unresolved
+   upload id, and `HeadObject` must find nothing.
+6. **Downloads.** Each of the three uploaded files is downloaded once
+   through `CloudDownloads`. Each must end `completed` with
+   `sha256-verified` and the full size, and its SHA-256 and bytes must equal
+   the source. `größe +test.bin` must therefore still be the first upload.
+7. **Cleanup** (`cleanup_run`, also after a failed check: the checks run
+   in their own task):
+   - `ListMultipartUploads` of the run prefix, then `AbortMultipartUpload`
+     by upload id, only for this run's keys.
+   - `ListObjectVersions`, then `DeleteObject` **with the version id**,
+     only for this run's keys. These four names are the only keys a run
+     creates.
+   - Anything else found is reported (`NOT OURS, left alone`) and left as
+     it is.
+   - Then both listings once more: both must be empty.
+8. **After cleanup**, from what step 7 found:
+   - Exactly three versions: the three keys exactly as uploaded (the
+     Unicode key comes back as given), sizes 0, 200,003 and 10 MiB + 3.
+   - No delete marker.
+   - No version of `cancelled.bin`.
+   - Only one version of `größe +test.bin`: the existing key was not
+     overwritten.
+   - No incomplete multipart upload before the aborts: the cancellation's
+     own abort worked.
+
+   From the recorded requests: three `UploadPart`s of `multipart.bin`, one
+   abort of `cancelled.bin`, three deletes by version id, at most 45
+   requests.
+
+**Run scope: enforced before a request is sent.** Every request goes
+through one client, which the batch and the downloads also use
+(`CloudAccounts::set_connected`, test builds only). That client carries
+`RunScope`, an SDK interceptor that refuses a request in
+`read_before_transmit`, before it is sent, unless it is one of these:
+
+- `GET` of the bucket with `versions` or `uploads`, `prefix` exactly the
+  run prefix and no delimiter;
+- a request for one of the four run keys (path percent-decoded and
+  compared exactly), `HEAD`, `GET`, `PUT` or `POST`;
+- a `DELETE` of a run key with a non-empty `versionId` or `uploadId`. A
+  plain delete, which on B2 would only hide the object, is refused.
+
+`ListBuckets`, `ListObjectsV2`, `HeadBucket`, `DeleteObjects` and any key
+outside the run are refused. A refusal fails the test and lists what was
+refused. `run_scope_refuses_requests_outside_the_run` checks this against
+the in-process server: six such calls, and none reaches it. It also checks
+that the SDK's own `ListObjectVersions` and `ListMultipartUploads` of the
+run prefix pass the scope and reach the server.
+
+**Expected requests** (write key, one attempt each; counted from the local
+run plus the provider-only listings):
+
+| Request | Count | B2 class |
+| --- | --- | --- |
+| `ListObjectVersions` (run prefix) | 3 (preflight, cleanup, check) | C |
+| `ListMultipartUploads` (run prefix) | 3 (same) | C |
+| `HeadObject` | 18 (batch and upload checks, step 3, step 4, step 5) | B |
+| `GetObject` | 3 | B |
+| `PutObject` | 2 | A |
+| `CreateMultipartUpload` / `UploadPart` / `CompleteMultipartUpload` / `AbortMultipartUpload` | 2 / 4–5 / 1 / 1 | A |
+| `DeleteObject` with version id | 3 | A |
+
+About 41 requests. About 16–21 MiB are sent (part 2 of `cancelled.bin` is
+cut off) and about 10 MiB downloaded. About 10 MiB is stored, and billed,
+for the minutes until cleanup. Class B and C requests count against the
+account's daily free allowance and its daily caps (the class C cap was
+reached once, on 2026-11-11, by the browse test). Check Backblaze's current
+price list before running; prices are not repeated here. `ListMultipartUploads` is
+not used by any earlier test. If Backblaze refuses it for the
+prefix-restricted key, the preflight fails before any write.
+
+**Credentials and permissions.** These are the variables of the
+[integration tests](#cloud-storage-integration-tests):
+`SOTYWARE_IT_B2_BUCKET`, `SOTYWARE_IT_B2_REGION`,
+`SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID` and
+`SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY`, plus
+`SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation`. The key is the existing
+write key:
+
+- the test bucket only, read and write, so it can list, read, write and
+  delete files;
+- file name prefix `sotyware-it/`;
+- "list all bucket names" off.
+
+Object Lock must be off on the bucket, or the version deletes fail. The test
+reads no secret into its output. It prints the run prefix, request paths
+(bucket as `<bucket>`), sizes, SHA-256s and version ids. Provider error
+text is printed as the SDK reports it, so redact the output as for the
+earlier runs before sharing it.
+
+**Running it explicitly** (it is never part of `cargo test`,
+`test:headless` or CI):
+
+```bash
+# WSL2, in src-tauri/, with the 0600 file from the integration tests
+set -a; . ~/.config/sotyware-it/b2.env; set +a
+SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation cargo test --lib cloud::integration::upload::backblaze_b2_upload_batch -- --ignored --exact --nocapture
+```
+
+```powershell
+# Native Windows 11, in a copy of the tree (src-tauri\), credentials from the DPAPI file
+$c = Import-Clixml $env:USERPROFILE\.sotyware-it\b2.xml
+$env:SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $c.UserName
+$env:SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $c.GetNetworkCredential().Password
+$env:SOTYWARE_IT_B2_BUCKET = Get-Content $env:USERPROFILE\.sotyware-it\b2-bucket.txt
+$env:SOTYWARE_IT_B2_REGION = 'eu-central-003'
+$env:SOTYWARE_IT_B2_UPLOAD_CONFIRM = 'upload-validation'
+cargo test --lib cloud::integration::upload::backblaze_b2_upload_batch -- --ignored --exact --nocapture
+```
+
+**How accidental runs are prevented.** There are three layers, and all
+three must be passed:
+
+- `#[ignore]`, so `cargo test`, `npm run test:headless` and `ci.yml` never
+  run it. No npm script, workflow or desktop driver passes `--ignored` with
+  a filter that matches it.
+- The account variables, which CI does not have: no workflow sets a
+  `SOTYWARE_*` variable or reads a secret.
+- The confirmation variable. Without it the test fails with "nothing was
+  sent" before building a client, so a broad `cargo test -- --ignored` with
+  `b2.env` loaded for another test does not write.
+
+The older B2 tests (`backblaze_b2_round_trip`, `backblaze_b2_download_file`,
+`backblaze_b2_browse_dataset`, …) have only the first two layers.
+
+**If the process crashes or cleanup fails.** The run id is printed before
+the first write. What can be left: at most three versions under the run
+prefix, and incomplete multipart uploads of `multipart.bin` or
+`cancelled.bin` with their parts. Delete markers are impossible, since no
+request without a version id can be sent. Incomplete uploads are not shown
+by version listings, so the cleanup lists them separately. To remove what a
+run left:
+
+```bash
+SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation SOTYWARE_IT_B2_UPLOAD_RUN=<run id> cargo test --lib cloud::integration::upload::backblaze_b2_upload_cleanup -- --ignored --exact --nocapture
+```
+
+This runs the same scoped `cleanup_run` and fails unless the run prefix is
+empty afterwards. A failed delete or abort prints
+`CLEANUP FAILED: … <key> … <id>`; nothing is retried. If the daily cap
+refuses the cleanup, run it again the next day. Nothing outside the run's
+four keys is ever deleted or aborted. No bucket setting, lifecycle rule or
+key is changed. A bucket lifecycle rule for unfinished large files would be
+a safety net, but setting one is a decision for the bucket's owner and not
+part of this test. If the run id is lost, find the run under
+`sotyware-it/upload-validation/` in the Backblaze web console.
+
+**Where it can run.**
+
+- **WSL2:** yes (the other B2 Rust tests ran there).
+- **Native Windows 11:** yes, as a plain `cargo test` in a copy of the tree
+  (the round trip ran there three times on 2026-11-11). No desktop or
+  dialog is involved.
+- **GitHub CI:** not prepared, on purpose. It would need repository secrets
+  and a manual, approval-gated workflow, and its log would be on GitHub.
+  Its cost counts against the GitHub Free budget and the B2 caps.
+
+The real file dialog and the dashboard UI are not part of this test. The
+release binary's upload workflow was validated only against the local
+server
+([UI end-to-end test](#cloud-storage-ui-end-to-end-test)).
+
+**Known limitations.**
+
+- The run scope assumes path-style requests (B2's profile).
+- Checks after the commit point (`needs-inspection`) and a refused abort
+  (`incomplete-parts`) cannot be produced safely at a real provider. They
+  are covered only against the in-process server.
+- The race in which another client writes the key between the `HeadObject`
+  and the PUT is not tested (ADR-021).
+
+`upload_scenario_against_the_test_server` runs steps 3–6 with the same
+run scope against the in-process server in every `cargo test`, with
+Backblaze's limits, so the plan is three parts. That server has no
+versioning and no `ListMultipartUploads`, so steps 2, 7 and 8 are replaced
+there by its operation log and its files: three `UploadPart`s, one abort,
+no open multipart files, no object for `cancelled.bin`, and one `DELETE` in
+all. The cleanup's selection rules (`cleanup_touches_only_this_runs_keys`),
+the run scope's rules (`in_scope_allows_only_the_run`), the run prefix and
+the confirmation are unit-tested too.
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a

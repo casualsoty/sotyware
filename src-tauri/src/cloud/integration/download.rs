@@ -58,7 +58,7 @@ fn one_attempt() -> ClientOptions {
 
 /// Refuses any account but Backblaze's own S3 endpoint for the configured
 /// region, before the first remote request.
-fn assert_backblaze(resolved: &ResolvedAccount) {
+pub(super) fn assert_backblaze(resolved: &ResolvedAccount) {
     assert_eq!(resolved.profile.id, "backblaze-b2");
     assert_eq!(
         resolved.endpoint_url,
@@ -70,12 +70,12 @@ fn assert_backblaze(resolved: &ResolvedAccount) {
 /// Prints `message` on stdout, then panics with it: the Windows driver keeps
 /// only a test's stdout (a panic message goes to stderr), and it must still
 /// see why a provider step failed.
-fn fail(message: String) -> ! {
+pub(super) fn fail(message: String) -> ! {
     println!("{message}");
     panic!("{message}");
 }
 
-fn sha256_of(path: &Path) -> String {
+pub(super) fn sha256_of(path: &Path) -> String {
     let digest = Sha256::digest(fs::read(path).unwrap());
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }

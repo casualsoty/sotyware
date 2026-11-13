@@ -127,6 +127,52 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Upload test at Backblaze: prepared (2026-11-13)
+
+Uncommitted tree on `3e72226`. **Prepared and validated locally only;
+nothing was sent to Backblaze or any other provider.** New opt-in
+`backblaze_b2_upload_batch` and `backblaze_b2_upload_cleanup` in
+`cloud/integration/upload.rs` (scope, requests, cleanup and how to run:
+[testing.md](../development/testing.md#uploads-at-backblaze)). Production
+code is unchanged. The only additions outside the test module are the
+test-only `Accounts::set_connected` / `CloudAccounts::set_connected`
+(`#[cfg(test)]`), and three helpers of `integration/download.rs` made
+visible to their sibling.
+
+- **WSL2** (Ubuntu 24.04, cargo 1.99.1): `cargo fmt --check` and
+  `cargo clippy --all-targets -- -D warnings` clean; `cargo test`
+  **315 passed, 18 ignored** (7 new, 2 new ignored; 308 + 16 before).
+  `upload_scenario_against_the_test_server` passed in every run (8 runs). It drives the
+  real batch path against the in-process server: one batch of the empty
+  file, the Unicode name and a 3-part multipart upload; the existing key
+  skipped and refused; a multipart upload cancelled in part 2 and aborted;
+  three downloads verified by SHA-256 and byte comparison. 32 requests, all
+  inside the run scope.
+  `run_scope_refuses_requests_outside_the_run`: six out-of-scope calls are
+  refused before sending (none reached the server), and the SDK's real
+  listings of the run prefix pass.
+- **Gate checked:** with the account variables unset, running both B2
+  tests with `--ignored` but without `SOTYWARE_IT_B2_UPLOAD_CONFIRM` failed
+  at once with "nothing was sent". CI and `test:headless` never pass
+  `--ignored`, and no workflow sets a `SOTYWARE_*` variable or secret.
+- **Found and fixed:** a file skipped because its key exists reported
+  `started: true` (the batch marks a file started before its
+  `HeadObject`), while `UploadFile::started` documents `false` for
+  skipped files. The documentation was right: such a file was never
+  uploaded, like a file skipped at selection, and the page does not read
+  `started` for skipped files. `upload_one` now resets it on a
+  `destination-exists` skip (also one found by `S3Store::upload` after
+  hashing); it stays true while the destination is checked, which the
+  panel uses to show "Starting…". The doc comments in `upload.rs` and
+  `cloud.ts` now say so. New assertions in
+  `an_existing_object_is_skipped_before_the_file_is_read`,
+  `a_conflict_found_by_the_upload_itself_skips_the_file` and the
+  integration scenario; without the fix all three fail.
+- **Not run:** anything at Backblaze; native Windows 11 (the test is a
+  plain `cargo test` and should run there as the round trip did, but it
+  has not); CI (not prepared, on purpose); frontend tests (nothing in the
+  frontend changed).
+
 ### rfd patch guard (2026-11-13)
 
 Uncommitted tree on `207363d`: new `scripts/check-rfd-patch.mjs`
