@@ -775,6 +775,11 @@ impl S3Store {
         reporter: &mut Reporter<'_>,
         base: u64,
     ) -> Result<T, StorageError> {
+        // The stage is `sending` from the moment the request starts, not
+        // from the first progress update this loop gets to: the body moves
+        // on the connection's task, and a cancel or failure right after its
+        // first bytes could otherwise be reported at the earlier stage.
+        reporter.report(UploadStage::Sending, base, false);
         let stall = self.options.stall_timeout;
         let mut send = pin!(send);
         let mut cancelled = pin!(control.cancelled());

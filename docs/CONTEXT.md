@@ -204,9 +204,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   hyper's server then dropped the part being stored. The relay no longer
   half-closes (waits ≤ 60 s for the answer). WSL2, pinned to 2 CPUs: 11/11
   full-suite runs; `cargo test` 333 + 26 ignored. Not yet on CI or
-  Windows. Separate, older flake when CPU is short (pinned only, 10/10
-  alone on 1 CPU): `cancelling_during_a_single_put_stores_nothing`
-  (stage `hashing`).
+  Windows. The older flake seen then
+  (`cancelling_during_a_single_put_stores_nothing`, stage `hashing`) was
+  a reporting race, fixed: a file is `sending` as soon as its PUT or
+  UploadPart starts ([status](status/status.md#a-file-is-sending-as-soon-as-its-request-starts-2026-11-13)).
   [status.md](status/status.md#the-late-part-control-test-on-a-loaded-machine-2026-11-13).
 - **Late-part wait on native Windows 11** (2026-11-13, test code on
   `ad6f69c`, committed as `bf991d0`; recorder build `0ae6f848…`, local

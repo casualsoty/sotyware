@@ -761,7 +761,10 @@ folder), `key`, `size`, `state`, `stage` (the last reached), `bytes`,
 channel passed with the command: `{ batch, seq, kind: "file", count, file }`
 for every state change and for progress (as throttled by `S3Store::upload`:
 at most one per 250 ms within a stage, first and last of each stage always;
-never backwards), `{ kind: "cleanup", key, outcome }` on a retry, and
+never backwards; a file is `sending` from the moment a request carrying its
+data starts, at the bytes of the parts before it, so a cancel or failure
+right after the first bytes is never reported at `hashing`),
+`{ kind: "cleanup", key, outcome }` on a retry, and
 exactly one `{ kind: "finished", summary }` with the batch state, counts
 (`completed`, `skipped`, `failed`, `cancelled`, `notStarted`, `retryable`,
 `needsAttention`), the stopping error and every file in its final state.

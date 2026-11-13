@@ -146,11 +146,32 @@ then closes. WSL2 after the change: pinned to 2 CPUs the control passed
 store recorded 360; fmt and clippy clean in both configurations. Not yet
 run on CI or Windows. Seen meanwhile, unrelated (no `ThrottledLink`):
 `cloud::upload::tests::cancelling_during_a_single_put_stores_nothing`
-reports its cancelled file at stage `hashing` instead of `sending` when
-CPU is short: full suite pinned to 2 CPUs 1 of 10 runs before the change
-and 8 of 14 after it (the control now stores its 5 MiB part, more load);
-`cloud::upload::tests` alone pinned to 1 CPU 10 of 10; never seen
-unpinned or on CI.
+reported its cancelled file at stage `hashing` instead of `sending` when
+CPU was short (full suite pinned to 2 CPUs 1 of 10 runs before the change
+and 8 of 14 after it; `cloud::upload::tests` alone pinned to 1 CPU 10 of
+10; never unpinned or on CI). Fixed the same day, below.
+
+### A file is `sending` as soon as its request starts (2026-11-13)
+
+Production change in `S3Store::upload` (`drive` in `cloud/s3/upload.rs`).
+The flake above was a reporting defect, not only a test problem: the
+stage moved to `sending` only when the request's own loop woke for a
+progress update, while the body runs on the connection's task, so a
+cancel (or a failure) right after the first bytes was handed over won
+the race and the file was reported cancelled at `hashing`; with several
+cores the loop usually ran in between. Now `sending` is reported, at the
+bytes of the parts before it, when each PUT or UploadPart starts (the
+panel shows "Sending · 0%" until bytes move). WSL2 only: the test
+alone pinned to 1 CPU 10 of 10 passed, within `cloud::upload::tests` on
+1 CPU 5 of 5; full suite pinned to 2 CPUs 6 of 6; `cargo test` 333
+passed, 26 ignored, 3 runs; recorder build with every store recorded
+360; fmt and clippy clean in both configurations; Vitest 135, `npm run
+check` clean. Still failing pinned to 1 CPU, before and after the change
+(not a regression): `a_download_runs_while_a_batch_is_uploading`,
+`a_conflict_found_by_the_upload_itself_skips_the_file` and
+`shutdown_cancels_the_batch_and_waits_for_the_multipart_abort`, whose
+hooks block a runtime worker thread, the only one on 1 CPU. Not run on
+Windows, CI or a desktop.
 
 ### Late-part wait and the remaining recorder rehearsals on native Windows 11 (2026-11-13)
 
