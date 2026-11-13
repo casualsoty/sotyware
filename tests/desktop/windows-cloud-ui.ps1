@@ -5,7 +5,8 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload] [-Exe <path>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload] [-Exe <path>] [-ExpectSha256 <hex>]
+#   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -70,6 +71,32 @@
 #   backblaze_b2_download_ui_cleanup deletes exactly that version and lists
 #   the run prefix once (none may be left), and both local folders are
 #   removed. No fingerprint of the rest of the bucket is taken.
+# -Mode b2-upload: one upload batch through the dashboard and the native
+#   Windows multi-file dialog into the Backblaze test bucket. Refused unless
+#   -ConfirmB2Upload upload-ui-validation is given. The local files are
+#   written first, into a new folder under %TEMP% (seed\existing.txt;
+#   batch\ with existing.txt (other content), a-small.txt,
+#   "gr\u00f6\u00dfe +test.bin" (200,003 bytes) and progress.bin (24 MiB + 5,
+#   one PUT)). The opt-in Rust test backblaze_b2_upload_ui_prepare (b2.xml
+#   write key) checks that the run prefix
+#   sotyware-it/upload-ui-validation/<run id>/ holds no version, delete marker
+#   or incomplete multipart upload and uploads the seed as existing.txt (so
+#   the run folder exists). The app, with a third key
+#   ($env:USERPROFILE\.sotyware-it\b2-upload.xml: the test bucket only, read
+#   and write, no file name prefix, so the browser can open the root),
+#   browses to the run folder; the panel must name it as the destination
+#   before Open is pressed in the dialog (else the dialog is cancelled and
+#   nothing is sent); then the four files go up as one batch: three
+#   uploaded, existing.txt skipped. Afterwards backblaze_b2_upload_ui_verify
+#   downloads the four keys and compares them with the local files (the seed
+#   for existing.txt), then deletes exactly this run's versions by id, aborts
+#   any incomplete multipart upload of its keys by id, and lists the prefix
+#   again (none may be left); backblaze_b2_upload_ui_cleanup instead if the
+#   batch never started. Does not move the mouse.
+#   -Rehearse runs the same dashboard steps against the in-process s3s-fs
+#   server (serve_uploads_for_ui seeded with the same existing.txt under the
+#   same kind of key, made-up key; contacts no provider) and also checks the
+#   app's requests there by operation.
 #
 # The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
 # is moved aside first and put back at the end, as in windows.ps1; secret values
@@ -78,12 +105,23 @@
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing, 3 (upload) no interactive desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
-  [string]$Region = "eu-central-003"
+  [string]$Region = "eu-central-003",
+  # b2-upload: the in-process server instead of Backblaze.
+  [switch]$Rehearse,
+  # b2-upload against Backblaze: must be exactly "upload-ui-validation".
+  [string]$ConfirmB2Upload = "",
+  # Stops before anything if the binary's SHA-256 differs.
+  [string]$ExpectSha256 = ""
 )
 if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build -- --no-bundle)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
+if ($ExpectSha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant() -ne $ExpectSha256.ToLowerInvariant()) { "ABORT: $Exe is not the expected binary (SHA-256 differs from $ExpectSha256)"; exit 2 }
+if ($Rehearse -and $Mode -ne "b2-upload") { "ABORT: -Rehearse is only for -Mode b2-upload"; exit 2 }
+if ($Mode -eq "b2-upload" -and -not $Rehearse -and $ConfirmB2Upload -cne "upload-ui-validation") {
+  "ABORT: -Mode b2-upload writes to the Backblaze test bucket; add -ConfirmB2Upload upload-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
+}
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $ErrorActionPreference = "Stop"
 Add-Type @"
@@ -317,8 +355,30 @@ if ($Mode -eq "upload") {
   "binary SHA-256: $(Sha $Exe), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
   "this test moves the mouse once (tray Quit); do not use the mouse or keyboard while it runs"
 }
+if ($Mode -eq "b2-upload") {
+  "binary SHA-256: $((Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant()), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
+  "variant: $(if ($Rehearse) { 'rehearsal against the in-process server (no provider)' } else { 'Backblaze B2 (confirmed with -ConfirmB2Upload)' }); does not move the mouse; do not use the mouse or keyboard while it runs"
+}
 
 $run = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff")
+if ($Mode -eq "b2-upload") {
+  # The local files, before anything else (the rehearsal server is seeded
+  # with seed\existing.txt; the Backblaze prepare test uploads it). .NET
+  # calls only: the helper functions are defined further down.
+  $UiPrefix = "sotyware-it/upload-ui-validation/$run/"
+  $UiUni = "gr$([char]0xF6)$([char]0xDF)e +test.bin"
+  $UiNames = @("existing.txt", "a-small.txt", $UiUni, "progress.bin")
+  $UpSrc = Join-Path $env:TEMP "sotyware-b2-upload-$run"
+  $UiBatch = Join-Path $UpSrc "batch"; $UiSeedDir = Join-Path $UpSrc "seed"
+  New-Item -ItemType Directory $UiBatch, $UiSeedDir | Out-Null
+  $UiSeed = Join-Path $UiSeedDir "existing.txt"
+  [System.IO.File]::WriteAllBytes($UiSeed, [System.Text.Encoding]::UTF8.GetBytes("seeded before the dashboard upload, run $run`n"))
+  [System.IO.File]::WriteAllBytes((Join-Path $UiBatch "existing.txt"), [System.Text.Encoding]::UTF8.GetBytes("the dashboard's own existing.txt: must be skipped, never stored (run $run)`n"))
+  [System.IO.File]::WriteAllBytes((Join-Path $UiBatch "a-small.txt"), [System.Text.Encoding]::UTF8.GetBytes("a small file uploaded through the sotyware dashboard (run $run)`n"))
+  [CloudUiW]::WriteBlob((Join-Path $UiBatch $UiUni), 200003, 2)
+  [CloudUiW]::WriteBlob((Join-Path $UiBatch "progress.bin"), 24 * 1048576 + 5, 3)
+  "b2-upload: run id $run, run prefix $UiPrefix, local files in $UpSrc"
+}
 if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $dir = Join-Path $env:USERPROFILE ".sotyware-it"
   foreach ($f in "b2.xml", "b2-read.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; exit 2 } }
@@ -337,12 +397,25 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
   $Key2 = $Key1; $Secret2 = "sotywareE2eWrongSecret0123456789abcdef"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+} elseif ($Mode -eq "b2-upload" -and -not $Rehearse) {
+  $dir = Join-Path $env:USERPROFILE ".sotyware-it"
+  foreach ($f in "b2.xml", "b2-upload.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; [System.IO.Directory]::Delete($UpSrc, $true); exit 2 } }
+  # b2.xml (prefix sotyware-it/): the prepare, verify and cleanup tests only.
+  $w = Import-Clixml "$dir\b2.xml"; $WriteKey = $w.UserName; $WriteSecret = $w.GetNetworkCredential().Password; $w = $null
+  # b2-upload.xml (no file name prefix): the app's key.
+  $c = Import-Clixml "$dir\b2-upload.xml"
+  $Key1 = $c.UserName; $Secret1 = $c.GetNetworkCredential().Password
+  $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
+  if ($Key1 -eq $WriteKey) { "ABORT: b2-upload.xml holds the write key of b2.xml; the app needs its own key without a file name prefix"; [System.IO.Directory]::Delete($UpSrc, $true); exit 2 }
+  # Replacing the key only stores it (no request); made-up values.
+  $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
+  $Endpoint = ""
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") {
   # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
   # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs).
   if ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
-  } elseif ($Mode -eq "upload") {
+  } elseif ($Mode -eq "upload" -or $Mode -eq "b2-upload") {
     $Key1 = "e2eUploadKey0000000001"; $Secret1 = "e2e-Upload-Secret-0123456789"; $Bucket = "upload-bucket"; $Helper = "serve_uploads_for_ui"
   } else {
     $Key1 = "e2eDownloadKey00000001"; $Secret1 = "e2e-Download-Secret-0123456789"; $Bucket = "download-bucket"; $Helper = "serve_objects_for_ui"
@@ -354,17 +427,19 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # upload: the link takes 2 MiB/s (the helper's default is 6 MiB/s), so that
   # UI Automation, much slower to read than AT-SPI, still sees a 40 MiB PUT
   # in progress and can cancel it.
-  if ($Mode -eq "upload") { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
+  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
+  # The rehearsal's bucket holds only the seed, under the run's key.
+  if ($Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}existing.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
   $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::$Helper", "--", "--ignored", "--nocapture" `
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
   Remove-Item Env:SOTYWARE_UI_SERVER_FILE
-  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE -EA SilentlyContinue
+  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE, Env:SOTYWARE_UI_UPLOAD_SEED_KEY, Env:SOTYWARE_UI_UPLOAD_SEED_FILE -EA SilentlyContinue
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
-  if ($Mode -eq "upload") { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
-  if ($Mode -eq "download" -or $Mode -eq "upload") {
+  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
+  if ($Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") {
     # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
     $Out = Join-Path $env:TEMP "sotyware-downloads-$run"
@@ -381,7 +456,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
 }
 $script:redact = @(@($Secret1, "<secret>"), @($Secret2, "<secret2>"), @($Key1, "<keyID>"), @($Key2, "<keyID2>"), @($Bucket, "<bucket>"))
-if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
+if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download" -or ($Mode -eq "b2-upload" -and -not $Rehearse)) { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
 
 # Runs the opt-in Rust test that fingerprints the B2 bucket; the variables are
 # set for that child only and removed again.
@@ -389,7 +464,13 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") { $script:redact += , @($
 # (removed again afterwards); returns its output lines.
 function CargoIt($test, $extra = @{}) {
   $vars = @{ SOTYWARE_IT_B2_BUCKET = $Bucket; SOTYWARE_IT_B2_REGION = $Region }
-  if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
+  $exact = @()
+  if ($Mode -eq "b2-upload") {
+    # Only the write key (b2.xml) reaches these tests; the app's key never does.
+    $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $WriteKey; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $WriteSecret
+    $vars.SOTYWARE_IT_B2_UPLOAD_CONFIRM = "upload-validation"
+    $exact = @("--exact")
+  } elseif ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
     $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $WriteKey; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $WriteSecret
     $vars.SOTYWARE_CLOUD_IT_B2_READ_ACCESS_KEY_ID = $Key1; $vars.SOTYWARE_CLOUD_IT_B2_READ_SECRET_ACCESS_KEY = $Secret1
   } else {
@@ -399,7 +480,10 @@ function CargoIt($test, $extra = @{}) {
   foreach ($k in $vars.Keys) { Set-Item "Env:$k" $vars[$k] }
   try {
     Push-Location (Join-Path $PSScriptRoot "..\..\src-tauri")
-    $out = & cargo test --quiet --lib $test -- --ignored --nocapture 2>$null
+    # b2-upload keeps stderr too (filtered by the caller): a failed
+    # assertion's panic message goes there.
+    if ($Mode -eq "b2-upload") { $out = & cargo test --quiet --lib $test -- --ignored --nocapture @exact 2>&1 | ForEach-Object { "$_" } }
+    else { $out = & cargo test --quiet --lib $test -- --ignored --nocapture @exact 2>$null }
     $script:cargoExit = $LASTEXITCODE
     Pop-Location
   } finally {
@@ -430,6 +514,36 @@ function DownloadCleanup {
   $out | Where-Object { $_ -match '^(cleaning up|cleanup:|write key:|CLEANUP|thread .* panicked)' } | ForEach-Object { "  $(Redact $_)" }
   Check "b2-download: cleanup deleted version $script:dlVersion of run $script:dlRun and listed 0 versions left" ($script:cargoExit -eq 0)
   if ($script:cargoExit -eq 0) { $script:dlRun = $null } else { "  NOT CLEANED UP: run $script:dlRun, version $script:dlVersion, key sotyware-it/download-ui-validation/$script:dlRun/<file>; not retried" }
+}
+
+# b2-upload: the run (set before the prepare, so the cleanup always runs),
+# the seed's version id, and whether Open was pressed in the dialog (the app
+# may have uploaded something).
+$script:upRun = $null; $script:seedVersion = $null; $script:uiBatchRan = $false
+function TestExe {
+  $e = Get-ChildItem (Join-Path $PSScriptRoot "..\..\src-tauri\target\debug\deps\sotyware_lib-*.exe") -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($e) { "$($e.FullName) SHA-256 $((Get-FileHash -Algorithm SHA256 -LiteralPath $e.FullName).Hash.ToLowerInvariant())" } else { "none" }
+}
+# Verifies what arrived (if the batch may have run) and deletes exactly this
+# run's versions by id; never retried.
+function UploadUiFinish {
+  if (-not $script:upRun) { return }
+  $vars = @{ SOTYWARE_IT_B2_UPLOAD_UI_RUN = $script:upRun; SOTYWARE_IT_B2_UPLOAD_UI_DIR = $UpSrc }
+  $verify = $script:uiBatchRan -and $script:seedVersion
+  if ($verify) {
+    $vars.SOTYWARE_IT_B2_UPLOAD_UI_SEED_VERSION = $script:seedVersion
+    $res = CargoIt "cloud::integration::upload::ui::backblaze_b2_upload_ui_verify" $vars
+  } else {
+    "  the batch never started: cleanup only"
+    $res = CargoIt "cloud::integration::upload::ui::backblaze_b2_upload_ui_cleanup" $vars
+  }
+  $res | Where-Object { $_ -match '^(verifying|cleaning up|found:|after cleanup:|left:|NOT OURS|CLEANUP|upload-ui|download |\d+ requests:|  (GET|PUT|HEAD|DELETE|POST) |thread .* panicked|assertion|  left|  right|the download checks|what the provider|requests: |the run scope)' } | ForEach-Object { "  $(Redact $_)" }
+  $clean = @($res | Where-Object { $_ -eq "upload-ui cleanup: clean" }).Count -eq 1
+  if ($verify) {
+    Check "b2-upload: the provider held exactly the seed and the three uploaded files, one version each, existing.txt still the seed's version; each downloaded byte-equal with its SHA-256 verified" (($script:cargoExit -eq 0) -and @($res | Where-Object { $_ -eq "upload-ui verify: passed" }).Count -eq 1)
+  }
+  Check "b2-upload: cleanup deleted this run's versions by id and listed no version or multipart upload left (run $script:upRun)" $clean
+  if ($clean) { $script:upRun = $null } else { "  NOT CLEANED UP: run $script:upRun under $UiPrefix; run backblaze_b2_upload_ui_cleanup with SOTYWARE_IT_B2_UPLOAD_UI_RUN=$script:upRun; not retried" }
 }
 
 $CloudDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\cloud-accounts.sqlite3"
@@ -474,6 +588,24 @@ if ($Mode -eq "b2-download") {
     # Nothing is downloaded; only a version the upload reported is deleted.
     DownloadCleanup
     Remove-Item -Recurse -Force $SrcDir, $Out -EA SilentlyContinue
+    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    "summary: $script:pass passed, $script:fail failed"; exit 1
+  }
+}
+
+if ($Mode -eq "b2-upload" -and -not $Rehearse) {
+  "test program before the prepare: $(TestExe)"
+  $script:upRun = $run
+  $prep = CargoIt "cloud::integration::upload::ui::backblaze_b2_upload_ui_prepare" @{ SOTYWARE_IT_B2_UPLOAD_UI_RUN = $run; SOTYWARE_IT_B2_UPLOAD_UI_DIR = $UpSrc }
+  $prepExit = $script:cargoExit
+  $m = [regex]::Match(($prep -join "`n"), 'upload-ui seed kept; run id ([0-9A-Za-z_-]+) version (\S+)')
+  if ($m.Success -and $m.Groups[1].Value -eq $run) { $script:seedVersion = $m.Groups[2].Value }
+  $prep | Where-Object { $_ -match '^(provider|run prefix|local |upload-ui|\d+ requests:|  (GET|PUT|HEAD|DELETE|POST) |thread .* panicked|nothing uploaded|seed )' } | ForEach-Object { "  $(Redact $_)" }
+  Check "b2-upload: local files checked, run prefix empty (no version, delete marker or multipart upload), seed existing.txt uploaded (version $script:seedVersion)" (($prepExit -eq 0) -and $script:seedVersion)
+  if (-not (($prepExit -eq 0) -and $script:seedVersion)) {
+    # Nothing goes through the app; only what this run's keys hold is removed.
+    UploadUiFinish
+    [System.IO.Directory]::Delete($UpSrc, $true)
     foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
     "summary: $script:pass passed, $script:fail failed"; exit 1
   }
@@ -767,7 +899,8 @@ function Pick([string]$folder, [string[]]$names, [string]$how = "names", [script
       Write-Host "  File name after the selection: '$([CloudUiW]::GetText($box))'"; CancelDialog $dlg; return $false
     }
   }
-  if ($before) { & $before }
+  # $before may veto Open by returning $false: the dialog is cancelled.
+  if ($before) { $r = @(& $before); if ($r.Count -eq 1 -and $r[0] -is [bool] -and -not $r[0]) { Write-Host "  not opened: cancelled before Open"; CancelDialog $dlg; return $false } }
   [void][CloudUiW]::Click($open)
   WaitFor { $null -eq (DialogNamed $OpenTitle) } 15
 }
@@ -838,7 +971,7 @@ $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label rena
 try {
   $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
   Check "startup: dashboard window" (WaitFor { $null -ne (Dash) } 20)
-  if ($Mode -eq "upload") {
+  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") {
     $wpid = [uint32]0; [void][CloudUiW]::GetWindowThreadProcessId((Hwnd (Dash)), [ref]$wpid)
     Check "the dashboard driven is the window of the started release binary (pid $($p.Id), $Exe)" ($wpid -eq $p.Id -and (Procs).Count -eq 1)
     $listen = @(Get-NetTCPConnection -State Listen -LocalPort 1420 -EA SilentlyContinue)
@@ -1268,6 +1401,62 @@ try {
     if ($locker) { $locker.Close() }
     try { UpCleanup } catch { Check "upload cleanup ran" $false "$($_.Exception.Message)" }
    }
+  } elseif ($Mode -eq "b2-upload") {
+   try {
+    # The same steps against Backblaze and in the rehearsal; only the bucket
+    # name and the key differ.
+    Check "Open bucket lists the bucket's root, with the sotyware-it folder" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+    $ok = (PressFolder "sotyware-it") -and (WaitFor { (PageText) -like "*upload-ui-validation*" } 60)
+    $ok = $ok -and (PressFolder "upload-ui-validation") -and (WaitFor { (PageText) -like "*$run*" } 60)
+    $ok = $ok -and (PressFolder $run) -and (WaitFor { ((PageText) -like "*| $UiPrefix |*") -and ((PageText) -notlike "*Loading*") } 60)
+    Check "navigate sotyware-it, upload-ui-validation, this run's folder" $ok (PageText)
+    $UiSeedLen = (Get-Item -LiteralPath $UiSeed).Length
+    $rows = TableRows
+    Check "the run folder shows exactly one row: the seeded existing.txt ($UiSeedLen B)" ($rows.Count -eq 1 -and $rows[0] -like "existing.txt | $(FormatSize $UiSeedLen) | *") "$($rows -join ' || ')"
+    # Nothing is sent unless the panel names exactly the run folder while
+    # the dialog is open (the destination is fixed when the dialog opens).
+    $script:destSeen = ""; $script:destOk = $false; $script:seen.Clear()
+    $picked = $ok -and (Pick $UiBatch $UiNames "list" {
+      $script:destSeen = UpPanel
+      $script:destOk = $script:destSeen.Contains("$Bucket / $UiPrefix") -and -not $script:destSeen.Contains("Retrying")
+      $script:destOk
+    })
+    # From here on the app may have uploaded something.
+    if ($script:destOk) { $script:uiBatchRan = $true }
+    Check "while the native dialog was open the panel named the run folder as the destination (checked before Open)" $script:destOk (Redact $script:destSeen)
+    Check "native dialog: batch folder opened through File name + Open, the 4 files selected in its file list (UI Automation), Open" $picked
+    $done = if ($picked) { Until { param($x) Finished $x } 900 } else { $null }
+    $ur = UpRows
+    "  file rows: $(Redact ($ur -join ' || '))"
+    Check "final summary: Upload finished. 4 files: 3 uploaded, 1 skipped." ($done -and $done.Contains("Upload finished. 4 files: 3 uploaded, 1 skipped.")) (Redact "$done")
+    $oneRowEach = $ur.Count -eq 4; foreach ($n in $UiNames) { $oneRowEach = $oneRowEach -and @($ur | Where-Object { $_.StartsWith($n, [StringComparison]::Ordinal) }).Count -eq 1 }
+    Check "4 rows, one per chosen file, names exactly as on disk" $oneRowEach (Redact ($ur -join " || "))
+    Check "a-small.txt, $UiUni and progress.bin: Uploaded and verified" (@("a-small.txt", $UiUni, "progress.bin" | Where-Object { -not (UpRow $_).Contains("Uploaded and verified") }).Count -eq 0) (Redact ($ur -join " || "))
+    Check "existing.txt: Skipped: already in this folder (left as it is)" ((UpRow "existing.txt").Contains("Skipped: already in this folder") -and (UpRow "existing.txt").Contains("left as it is")) (UpRow "existing.txt")
+    Check "nothing to retry: no Try again button" (-not ((PageText) -match 'Try \d+ files? again')) (PageText)
+    $stages = @("Computing the SHA-256 checksum", "Sending $([char]0xB7) ", "Verifying the stored object" | Where-Object { $s1 = $_; @($script:seen | Where-Object { $_.Contains($s1) }).Count -gt 0 })
+    $sendSamples = @($script:seen | ForEach-Object { [regex]::Match($_, 'progress\.bin[^|]*?Sending \u00b7 (\d+)%') } | Where-Object { $_.Success } | ForEach-Object { [int]$_.Groups[1].Value })
+    "  stages seen in the panel ($($script:seen.Count) distinct samples, $script:polls polls): $($stages -join ', '); progress.bin Sending percentages seen: $($sendSamples -join ' ')"
+    Check "progress: progress.bin was seen Sending with a percentage" ($sendSamples.Count -ge 1) ($stages -join ", ")
+    $mono = $true; for ($i = 1; $i -lt $sendSamples.Count; $i++) { if ($sendSamples[$i] -lt $sendSamples[$i - 1]) { $mono = $false } }
+    Check "progress.bin's percentage never went down" $mono ($sendSamples -join " ")
+    # No local path reaches the page: not the folder, not the profile.
+    $leaks = @(@($script:seen) + @(PageText) | Where-Object { $_.Contains($UpSrc) -or $_.Contains($env:USERPROFILE) -or $_.Contains($env:TEMP) -or $_ -match '[A-Za-z]:\\' })
+    Check "no local path on the page or in any panel text seen (folder, profile, a drive letter)" ($leaks.Count -eq 0) "$($leaks.Count) text(s)"
+    $ok = (Press "Show destination folder") -and (WaitFor { ((PageText) -like "*| $UiPrefix |*") -and ((PageText) -notlike "*Loading*") -and (TableRows).Count -eq 4 } 60)
+    $rows = TableRows
+    "  destination folder rows: $(Redact ($rows -join ' || '))"
+    $want = @{ "existing.txt" = $UiSeedLen }
+    foreach ($n in "a-small.txt", $UiUni, "progress.bin") { $want[$n] = (Get-Item -LiteralPath (Join-Path $UiBatch $n)).Length }
+    $rowsOk = $ok -and $rows.Count -eq 4
+    foreach ($n in $want.Keys) { $rowsOk = $rowsOk -and @($rows | Where-Object { $_ -like "$(SameText $n) | $(FormatSize $want[$n]) | *" }).Count -eq 1 }
+    Check "Show destination folder lists exactly the four objects; existing.txt keeps the seed's size" $rowsOk (Redact ($rows -join " || "))
+    UpDismiss
+   } catch {
+    Check "b2-upload steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    $d = DialogNamed $OpenTitle; if ($d) { CancelDialog $d }
+    $null = Press "Cancel upload"; $null = Press "Dismiss"
+   }
   } elseif ($Mode -eq "b2-download") {
    try {
     $R = $Dl.run
@@ -1398,19 +1587,39 @@ try {
   foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
   foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
   if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
+  if ($Mode -eq "b2-upload" -and -not $Rehearse) {
+    UploadUiFinish
+    "test program after the verification: $(TestExe)"
+  }
+  if ($Mode -eq "b2-upload" -and $Rehearse) {
+    # The provider-side checks of the Backblaze run, on the server's state.
+    try {
+      $st = State
+      $under = KeysUnder $st $UiPrefix
+      Check "rehearsal: the server holds exactly the four keys under the run prefix, nothing elsewhere" ($under -eq (SortedKeys @($UiNames | ForEach-Object { "$UiPrefix$_" })) -and $st.Objects.Count -eq 4) (Redact (SortedKeys $st.Objects.Keys))
+      $contentOk = (Obj $st "${UiPrefix}existing.txt") -and (Obj $st "${UiPrefix}existing.txt").sha256 -eq (UpSha $UiSeed)
+      foreach ($n in "a-small.txt", $UiUni, "progress.bin") { $contentOk = $contentOk -and (StoredOk (Obj $st "$UiPrefix$n") (Join-Path $UiBatch $n)); [void]$script:created.Add("$UiPrefix$n") }
+      Check "rehearsal: uploaded contents, sizes and SHA-256 metadata equal the local files; existing.txt is still the seed; no multipart upload" ($contentOk -and $st.Multipart.Count -eq 0)
+      UpCleanup
+    } catch { Check "rehearsal: server state read and cleaned up" $false "$($_.Exception.Message)" }
+  }
   if ($Mode -eq "b2-browse") {
     $fpMid2 = Fingerprint
     Check "b2-browse: browsing changed no object version" (($null -ne $fpMid) -and $fpMid -eq $fpMid2)
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($Mode -eq "b2-upload" -and $Rehearse)) {
     # Removing the endpoint file stops the helper (and with it its temporary bucket).
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
   # .NET, not Remove-Item: download mode saves a name with an unpaired surrogate.
-  if (($Mode -eq "download" -or $Mode -eq "upload") -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
+  if (($Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") -and $Out -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
+  if ($Mode -eq "b2-upload" -and (Test-Path -LiteralPath $UpSrc)) {
+    [System.IO.Directory]::Delete($UpSrc, $true)
+    Check "b2-upload: local test files removed ($UpSrc)" (-not (Test-Path -LiteralPath $UpSrc))
+  }
   if ($Mode -eq "upload" -and (Test-Path -LiteralPath $UpSrc)) {
     # .NET, not Remove-Item: the folder holds a name with an unpaired surrogate.
     [System.IO.Directory]::Delete($UpSrc, $true)
@@ -1423,11 +1632,19 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload") {
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($Mode -eq "b2-upload" -and $Rehearse)) {
   $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
+  if ($Mode -eq "b2-upload") {
+    # The requests the Backblaze run expects from the app: the check, five
+    # listings (root, three folders, Show destination folder), per uploaded
+    # file two HeadObject before and one after its PutObject, one HeadObject
+    # for the skipped file.
+    $wantOps = 'operations: {"HeadBucket": 1, "HeadObject": 10, "ListObjectsV2": 5, "PutObject": 3}'
+    Check "rehearsal: the app sent exactly HeadBucket 1, ListObjectsV2 5, HeadObject 10, PutObject 3 (19 requests)" ($ops.StartsWith($wantOps)) $ops
+  }
   if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
-  $what = if ($Mode -eq "upload") { "only listing, reads and upload requests" } else { "only reads and the check" }
+  $what = if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }

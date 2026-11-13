@@ -1095,6 +1095,11 @@ async fn ui_upload_state(server: &TestServer, store: &super::s3::S3Store) -> ser
 /// - `abort-denied`: the next `AbortMultipartUpload` is refused;
 /// - `delete <key>`: deletes exactly that object (the test's cleanup).
 ///
+/// With `SOTYWARE_UI_UPLOAD_SEED_KEY` and `SOTYWARE_UI_UPLOAD_SEED_FILE`
+/// set, the bucket is seeded with that one file under that key instead
+/// (the local rehearsal of `windows-cloud-ui.ps1 -Mode b2-upload`, which
+/// lays the bucket out like its Backblaze run).
+///
 /// At the end it fails if the app (before the first `delete`) sent anything
 /// but listing, the connection check, reads and upload requests. Started by
 /// tests/desktop/cloud-ui.sh (phase `upload`); the key is made up.
@@ -1120,13 +1125,23 @@ async fn serve_uploads_for_ui() {
     );
     let dir = TempDir::new("ui-upload-seed");
     let mut manifest = Vec::new();
-    for (i, (key, data)) in ui_upload_seed().into_iter().enumerate() {
+    let seed: Vec<(String, Vec<u8>)> = match (
+        std::env::var("SOTYWARE_UI_UPLOAD_SEED_KEY"),
+        std::env::var("SOTYWARE_UI_UPLOAD_SEED_FILE"),
+    ) {
+        (Ok(key), Ok(path)) => vec![(key, fs::read(&path).expect("the seed file"))],
+        _ => ui_upload_seed()
+            .into_iter()
+            .map(|(k, d)| (k.to_owned(), d))
+            .collect(),
+    };
+    for (i, (key, data)) in seed.into_iter().enumerate() {
         let path = dir.path(&format!("seed-{i}"));
         fs::write(&path, &data).unwrap();
         store
             .upload(
                 UI_UPLOAD_BUCKET,
-                key,
+                &key,
                 &path,
                 &Arc::new(TransferControl::new()),
                 &mut |_| {},

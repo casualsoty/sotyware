@@ -998,7 +998,8 @@ part of this test. If the run id is lost, find the run under
 The real file dialog and the dashboard UI are not part of this test. The
 release binary's upload workflow was validated only against the local
 server
-([UI end-to-end test](#cloud-storage-ui-end-to-end-test)).
+([UI end-to-end test](#cloud-storage-ui-end-to-end-test)); its Backblaze
+counterpart [passed once](#uploads-through-the-windows-dashboard-at-backblaze).
 
 **Known limitations.**
 
@@ -1024,6 +1025,156 @@ no open multipart files, no object for `cancelled.bin`, and one `DELETE` in
 all. The cleanup's selection rules (`cleanup_touches_only_this_runs_keys`),
 the run scope's rules (`in_scope_allows_only_the_run`), the run prefix and
 the confirmation are unit-tested too.
+
+### Uploads through the Windows dashboard at Backblaze
+
+**Passed once against Backblaze (2026-11-13, 38/38, native Windows 11)**
+after a first run that failed only on the verify test's own request count
+(fixed), see
+[status.md](../status/status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13).
+`tests\desktop\windows-cloud-ui.ps1
+-Mode b2-upload` uploads one batch through the **release binary**, its
+bundled page and the **native Windows multi-file dialog** into the real B2
+test bucket, then checks and removes what arrived. It is the UI
+counterpart of [Uploads at Backblaze](#uploads-at-backblaze) (Rust batch
+path, no UI) and of the local `-Mode upload` (UI, local server only). The
+three are separate results; one does not stand in for another.
+
+**Why a third key.** The browser always opens at the bucket's root, and
+Backblaze refuses the root listing to a key limited to a file name prefix,
+so the write key (`b2.xml`, prefix `sotyware-it/`) cannot reach the run
+folder in the UI, and the read-only key (`b2-read.xml`) cannot upload. The
+app therefore uses a third key, `%USERPROFILE%\.sotyware-it\b2-upload.xml`
+(`Get-Credential | Export-Clixml`, keyID as user name): Application Keys →
+Add a New Application Key, the test bucket only, **Read and Write**, **no**
+file name prefix, "list all bucket names" off, a short expiry. Creating it
+is the bucket owner's decision. This key could write anywhere in the test
+bucket; the safeguards against that are below. Prepare, verification and
+cleanup use only the write key, through the batch test's run scope.
+
+**What it does.**
+
+1. Writes the local files into a new `%TEMP%\sotyware-b2-upload-<run id>\`:
+   `seed\existing.txt` and `batch\` with `existing.txt` (other content and
+   size), `a-small.txt`, `größe +test.bin` (200,003 bytes) and
+   `progress.bin` (24 MiB + 5 bytes; one `PutObject` with the release
+   binary's 64 MiB multipart threshold). The run id is the script's UTC
+   timestamp, chosen before any request.
+2. `backblaze_b2_upload_ui_prepare` (`cloud/integration/upload/ui.rs`, write
+   key, run scope limited to the run prefix and these four names): checks
+   the local layout; lists versions and incomplete multipart uploads of
+   `sotyware-it/upload-ui-validation/<run id>/` (both must be empty); uploads
+   the seed as `existing.txt`, which makes the run folder visible to the
+   browser and is the object the dashboard must not overwrite. Prints the
+   seed's version id.
+3. The dashboard (account added with `b2-upload.xml` through the form;
+   Check connection → Connected) opens the bucket, then `sotyware-it`,
+   `upload-ui-validation` and the run folder, which must show exactly the
+   seed. Upload files… opens the native dialog; **while it is open the panel
+   must name `<bucket> / sotyware-it/upload-ui-validation/<run id>/` as the
+   destination, or the dialog is cancelled and nothing is sent**. The batch
+   folder is opened through File name + Open, the four files are selected in
+   the dialog's file list through UI Automation, Open.
+4. Checks the panel: "Upload finished. 4 files: 3 uploaded, 1 skipped.",
+   one row per file with its exact name, three "Uploaded and verified",
+   `existing.txt` "Skipped: already in this folder … left as it is", no Try
+   again button, `progress.bin` seen "Sending · n%" with a percentage that
+   never goes down, and no local path in any page or panel text seen (the
+   folder, the profile, `%TEMP%`, a drive letter). Show destination folder
+   must then list exactly the four objects, `existing.txt` with the seed's
+   size. Then rename, key replacement (made-up key, no request) and removal
+   of the account, as in every mode.
+5. After sotyware is stopped: `backblaze_b2_upload_ui_verify` (write key,
+   same scope) downloads each of the four keys once through
+   `CloudDownloads` and compares it byte for byte with the local file (the
+   seed for `existing.txt`; each must be `sha256-verified`), then runs the
+   batch test's cleanup for these four keys and checks what it found: the
+   four keys, one version each, no delete marker, `existing.txt` still the
+   seed's version id, the batch files' sizes, no incomplete multipart upload;
+   nothing may be left. If Open was never pressed,
+   `backblaze_b2_upload_ui_cleanup` runs instead (cleanup only).
+6. Removes the local folder; the account database and Credential Manager
+   are back as before (as in every mode).
+
+The `started: false` of the skipped file is not visible in the page (the
+panel's wording does not depend on it). It is covered by the Rust tests
+(`upload_ui_run_against_the_test_server` checks it for this very batch,
+and the Backblaze batch test checked it at the provider).
+
+**Requests, if nothing is retried.** Write key (recorded by the tests):
+prepare 5 (`ListObjectVersions`, `ListMultipartUploads`, `HeadObject`,
+`PutObject`, `HeadObject`); verify and cleanup 12 (4 `GetObject`,
+`ListMultipartUploads`, `ListObjectVersions`, 4 `DeleteObject` with a
+version id, `ListObjectVersions`, `ListMultipartUploads`). App key (not
+recorded; the release binary has no recorder): 19, namely `HeadBucket` 1;
+`ListObjectsV2` 5 (root, `sotyware-it/`, `upload-ui-validation/`, the run
+folder, Show destination folder); per uploaded file the batch's
+`HeadObject`, the adapter's `HeadObject`, `PutObject` and the verifying
+`HeadObject` (12); one `HeadObject` for the skipped file. **36 in all.** The
+app's SDK makes up to 3 attempts per request, so a transient error adds
+requests. About 24.3 MiB are uploaded by the app and downloaded by the
+verification; it is billed for the minutes until cleanup.
+
+**Safeguards.**
+
+- Refused before anything (exit 2) unless `-ConfirmB2Upload
+  upload-ui-validation` is given; `-ExpectSha256 <hex>` stops it unless the
+  release binary is the approved one. The Rust tests also need `--ignored`,
+  the account variables and `SOTYWARE_IT_B2_UPLOAD_CONFIRM` (set by the
+  driver for those child processes only, with `--exact`); `b2-upload.xml`
+  must not be the write key.
+- The run prefix must be empty before the first write; the run id is set
+  before the prepare, so the cleanup runs even if the prepare fails after
+  its upload.
+- The app may send only after the panel named the run folder (step 3);
+  the destination is fixed when the dialog opens. The provider-side checks
+  then require exactly the four keys under the run prefix.
+- Prepare, verify and cleanup go through the run scope: listings only of
+  the run prefix, requests only for its four keys, every `DELETE` with a
+  version id or an upload id; nothing is retried. No bucket setting,
+  lifecycle rule or key is changed.
+
+**Not covered against Backblaze, on purpose.** Cancel, retry, multipart,
+leaving the browser, hiding and quitting during a batch, and the error
+paths stay with the local `-Mode upload`: each would add provider requests
+or cleanup cases without exercising a different path from the UI to the
+provider. A multipart upload with the release binary's 16 MiB parts would
+need a file of more than 64 MiB.
+
+**Residual risks.** The app key has no prefix, so a defect that sent an
+upload elsewhere in the bucket would not be caught by the cleanup's scope
+(only by the destination check before Open and the provider-side checks of
+the run prefix). The app's own requests are counted only in the rehearsal,
+not at Backblaze. If a run is interrupted, remove it with:
+
+```powershell
+# in src-tauri\ of the copy, write key variables as for the batch test
+$env:SOTYWARE_IT_B2_UPLOAD_CONFIRM = 'upload-validation'
+$env:SOTYWARE_IT_B2_UPLOAD_UI_RUN = '<run id>'
+cargo test --lib cloud::integration::upload::ui::backblaze_b2_upload_ui_cleanup -- --ignored --exact --nocapture
+```
+
+**Rehearsal.** `-Mode b2-upload -Rehearse` runs steps 1, 3, 4 and 6
+unchanged against the in-process s3s-fs server (`serve_uploads_for_ui`,
+seeded through `SOTYWARE_UI_UPLOAD_SEED_KEY`/`_SEED_FILE` with only the seed
+under the run's key; made-up key; 2 MiB/s link; contacts no provider) and
+replaces steps 2 and 5 by the server's state: exactly the four keys,
+contents and SHA-256 metadata as the local files, the seed unchanged, no
+multipart; then exact-key deletion. It also checks the app's requests by
+operation (`HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 10, `PutObject`
+3), which is how the 19 above are known.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-upload -Rehearse
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-upload -ConfirmB2Upload upload-ui-validation -ExpectSha256 <approved hash>
+```
+
+`upload_ui_run_against_the_test_server` (every `cargo test`) runs the
+seed, the same batch through the code behind `upload_cloud_files` and the
+verification downloads against the in-process server, with the run scope:
+13 batch requests, the skipped file `started: false`, 4 `GetObject`. The
+local layout check, the run prefix and the scope's four names are
+unit-tested.
 
 ## Cloud Storage UI end-to-end test
 
@@ -1055,6 +1206,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `b2`, Windows `-Mode b2` | **Connected** for the bucket-restricted key; after the rename still Connected; after replacing the key with a wrong secret **Invalid credentials** (so the replaced key is the one used); after putting the real key back Connected | Linux only: the bucket changed to a name the key may not use → **Access denied** or **Bucket unavailable**, not Invalid credentials, then back to Connected. Both: `backblaze_b2_fingerprint` before and after; the run fails if any object version under `sotyware-it/` changed |
 | Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
 | Windows `-Mode b2-download` | **Connected** for the read-only key | one real download through the dashboard and the native save dialog, [described above](#downloading-through-the-windows-dashboard-at-backblaze) |
+| Windows `-Mode b2-upload` | **Connected** for the upload key (`b2-upload.xml`) | one real upload batch through the dashboard and the native multi-file dialog, [described above](#uploads-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs the same steps against the local s3s-fs server |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -1093,7 +1245,7 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download|b2-upload]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
 on the desktop; it is driven through UI Automation too, not clicked).

@@ -67,6 +67,9 @@ use super::super::upload::{
 use super::download::{assert_backblaze, fail, sha256_of};
 use super::{Requests, b2_store};
 
+/// The Windows dashboard upload test's provider side.
+mod ui;
+
 /// Every run's objects live below this, inside the test key's own prefix.
 const UPLOAD_ROOT: &str = "sotyware-it/upload-validation/";
 /// The second, explicit opt-in for the writing tests.
@@ -169,10 +172,16 @@ fn query_param(query: &str, name: &str) -> Option<String> {
 
 /// Whether a request may be sent during a run with prefix `prefix` in
 /// `bucket` (path-style addressing): a listing of exactly the run prefix, or
-/// a request for one of the run's own keys; a `DELETE` only with a version
-/// id or a multipart upload id. `path` is the URI from the path on, query
-/// included.
-fn in_scope(method: &str, path: &str, bucket: &str, prefix: &str) -> Result<(), String> {
+/// a request for one of the run's own keys (`prefix` + one of `names`); a
+/// `DELETE` only with a version id or a multipart upload id. `path` is the
+/// URI from the path on, query included.
+fn in_scope(
+    method: &str,
+    path: &str,
+    bucket: &str,
+    prefix: &str,
+    names: &[&str],
+) -> Result<(), String> {
     let (raw_path, query) = path.split_once('?').unwrap_or((path, ""));
     let decoded = percent_decode(raw_path).ok_or("the path does not decode")?;
     let bucket_root = format!("/{bucket}");
@@ -198,7 +207,7 @@ fn in_scope(method: &str, path: &str, bucket: &str, prefix: &str) -> Result<(), 
     let name = key
         .strip_prefix(prefix)
         .ok_or("the key is outside the run prefix")?;
-    if !NAMES.contains(&name) {
+    if !names.contains(&name) {
         return Err("the key is not one this run may create".into());
     }
     match method {
@@ -222,14 +231,22 @@ fn in_scope(method: &str, path: &str, bucket: &str, prefix: &str) -> Result<(), 
 struct RunScope {
     bucket: String,
     prefix: String,
+    /// The only file names below `prefix` the run may address.
+    names: &'static [&'static str],
     refused: Arc<Mutex<Vec<String>>>,
 }
 
 impl RunScope {
+    /// The scope of an upload batch run ([`NAMES`]).
     fn new(bucket: &str, prefix: &str) -> Self {
+        Self::for_names(bucket, prefix, &NAMES)
+    }
+
+    fn for_names(bucket: &str, prefix: &str, names: &'static [&'static str]) -> Self {
         Self {
             bucket: bucket.to_owned(),
             prefix: prefix.to_owned(),
+            names,
             refused: Arc::default(),
         }
     }
@@ -255,7 +272,7 @@ impl Intercept for RunScope {
         let after_scheme = uri.split_once("://").map_or(uri, |(_, rest)| rest);
         let path = after_scheme.find('/').map_or("/", |i| &after_scheme[i..]);
         let method = request.method();
-        in_scope(method, path, &self.bucket, &self.prefix).map_err(|why| {
+        in_scope(method, path, &self.bucket, &self.prefix, self.names).map_err(|why| {
             let shown = format!(
                 "{method} {}: {why}",
                 path.replacen(&format!("/{}", self.bucket), "/<bucket>", 1)
@@ -367,31 +384,34 @@ async fn list_open_uploads(
     Ok(all)
 }
 
-/// Whether `key` is one this run (prefix `prefix`) may have created.
-fn is_run_key(prefix: &str, key: &str) -> bool {
+/// Whether `key` is one this run (prefix `prefix`, file names `names`) may
+/// have created.
+fn is_run_key(prefix: &str, names: &[&str], key: &str) -> bool {
     key.strip_prefix(prefix)
-        .is_some_and(|name| NAMES.contains(&name))
+        .is_some_and(|name| names.contains(&name))
 }
 
 /// Splits a version listing into what cleanup deletes (this run's keys,
 /// with a version id) and what it only reports.
 fn split_versions<'a>(
     prefix: &str,
+    names: &[&str],
     rows: &'a [VersionRow],
 ) -> (Vec<&'a VersionRow>, Vec<&'a VersionRow>) {
     rows.iter()
-        .partition(|r| is_run_key(prefix, &r.key) && !r.version_id.is_empty())
+        .partition(|r| is_run_key(prefix, names, &r.key) && !r.version_id.is_empty())
 }
 
 /// Splits incomplete multipart uploads into what cleanup aborts (this run's
 /// keys, with an upload id) and what it only reports.
 fn split_uploads<'a>(
     prefix: &str,
+    names: &[&str],
     uploads: &'a [OpenUpload],
 ) -> (Vec<&'a OpenUpload>, Vec<&'a OpenUpload>) {
     uploads
         .iter()
-        .partition(|u| is_run_key(prefix, &u.key) && !u.upload_id.is_empty())
+        .partition(|u| is_run_key(prefix, names, &u.key) && !u.upload_id.is_empty())
 }
 
 /// What cleanup found and left.
@@ -418,8 +438,8 @@ impl Cleanup {
 /// Aborts this run's incomplete multipart uploads (by upload id), deletes
 /// this run's versions and delete markers (by version id), then lists the
 /// run prefix again. Never panics, so every step gets its attempt; nothing
-/// outside this run's keys is changed.
-async fn cleanup_run(store: &S3Store, bucket: &str, prefix: &str) -> Cleanup {
+/// outside this run's keys (`prefix` + one of `names`) is changed.
+async fn cleanup_run(store: &S3Store, bucket: &str, prefix: &str, names: &[&str]) -> Cleanup {
     let mut problems = Vec::new();
     let found_uploads = match list_open_uploads(store, bucket, prefix).await {
         Ok(u) => Some(u),
@@ -429,7 +449,7 @@ async fn cleanup_run(store: &S3Store, bucket: &str, prefix: &str) -> Cleanup {
         }
     };
     if let Some(found) = &found_uploads {
-        let (abort, foreign) = split_uploads(prefix, found);
+        let (abort, foreign) = split_uploads(prefix, names, found);
         for f in foreign {
             problems.push(format!(
                 "NOT OURS, left alone: multipart upload {} of {:?}",
@@ -457,7 +477,7 @@ async fn cleanup_run(store: &S3Store, bucket: &str, prefix: &str) -> Cleanup {
         }
     };
     if let Some(found) = &found_versions {
-        let (delete, foreign) = split_versions(prefix, found);
+        let (delete, foreign) = split_versions(prefix, names, found);
         for f in foreign {
             problems.push(format!(
                 "NOT OURS, left alone: version {:?} of {:?}",
@@ -550,6 +570,7 @@ async fn run_batch(
 }
 
 /// A generated source file and what it must arrive as.
+#[derive(Clone, Debug)]
 struct Source {
     name: &'static str,
     path: PathBuf,
@@ -910,7 +931,7 @@ async fn backblaze_b2_upload_batch() {
     ))
     .await;
 
-    let cleanup = cleanup_run(&store, &t.bucket, &prefix).await;
+    let cleanup = cleanup_run(&store, &t.bucket, &prefix, &NAMES).await;
     let sent = requests.take();
     show_requests(&t.bucket, &sent);
     for line in &cleanup.problems {
@@ -996,7 +1017,7 @@ async fn backblaze_b2_upload_cleanup() {
     let scope = RunScope::new(&t.bucket, &prefix);
     let store = scoped_store(&resolved, creds, &requests, &scope);
     println!("cleaning up run {run} under {prefix}");
-    let cleanup = cleanup_run(&store, &t.bucket, &prefix).await;
+    let cleanup = cleanup_run(&store, &t.bucket, &prefix, &NAMES).await;
     show_requests(&t.bucket, &requests.take());
     println!(
         "found: versions {:?}, multipart uploads {:?}",
@@ -1187,7 +1208,7 @@ fn in_scope_allows_only_the_run() {
         ),
     ];
     for (m, path) in ok {
-        assert_eq!(in_scope(m, path, b, p), Ok(()), "{m} {path}");
+        assert_eq!(in_scope(m, path, b, p, &NAMES), Ok(()), "{m} {path}");
     }
     let refused = [
         // Listings: other prefix, no prefix, a parent, ListObjectsV2,
@@ -1239,7 +1260,7 @@ fn in_scope_allows_only_the_run() {
         ),
     ];
     for (m, path) in refused {
-        assert!(in_scope(m, path, b, p).is_err(), "{m} {path}");
+        assert!(in_scope(m, path, b, p, &NAMES).is_err(), "{m} {path}");
     }
 }
 
@@ -1262,7 +1283,7 @@ fn cleanup_touches_only_this_runs_keys() {
         row("sotyware-it/upload-validation/1-3/empty.bin", "v6", false),
         row(&format!("{p}cancelled.bin"), "", false),
     ];
-    let (delete, keep) = split_versions(p, &rows);
+    let (delete, keep) = split_versions(p, &NAMES, &rows);
     let ids = |v: &[&VersionRow]| v.iter().map(|r| r.version_id.clone()).collect::<Vec<_>>();
     assert_eq!(ids(&delete), ["v1", "v2", "v3"]);
     assert_eq!(ids(&keep), ["v4", "v5", "v6", ""]);
@@ -1277,7 +1298,7 @@ fn cleanup_touches_only_this_runs_keys() {
         up(&format!("{p}multipart.bin"), ""),
         up("sotyware-it/x", "u3"),
     ];
-    let (abort, keep) = split_uploads(p, &uploads);
+    let (abort, keep) = split_uploads(p, &NAMES, &uploads);
     assert_eq!(
         abort
             .iter()
