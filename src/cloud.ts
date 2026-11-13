@@ -279,8 +279,10 @@ export interface UploadFile {
   total: number;
   /**
    * Whether its upload began: true from the moment the batch takes the file
-   * (also while its destination is checked); false for skipped files (also
-   * when the key turned out to exist) and never-reached files.
+   * (also while its destination is checked, though no event is sent then:
+   * a file's first event is its first progress or its final state); false
+   * for skipped files (also when the key turned out to exist) and
+   * never-reached files.
    */
   started: boolean;
   /** Only for "skipped". */

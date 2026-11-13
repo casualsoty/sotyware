@@ -793,8 +793,10 @@ toolchain (the two tests are compiled on the first run).
 
 ### Uploads at Backblaze
 
-**Status (2026-11-13): prepared and validated locally only. Never run
-against Backblaze.** `backblaze_b2_upload_batch`
+**Status: passed once against Backblaze (2026-11-13, WSL2, 41 requests,
+cleanup verified empty;
+[status.md](../status/status.md#uploads-at-backblaze-2026-11-13)).
+Never run on native Windows.** `backblaze_b2_upload_batch`
 (`cloud/integration/upload.rs`, `#[ignore]`d) sends one controlled upload
 validation to the B2 test bucket through the code behind
 `upload_cloud_files`: `begin_upload` and `CloudUploads` with an in-memory
@@ -899,9 +901,10 @@ cut off) and about 10 MiB downloaded. About 10 MiB is stored, and billed,
 for the minutes until cleanup. Class B and C requests count against the
 account's daily free allowance and its daily caps (the class C cap was
 reached once, on 2026-11-11, by the browse test). Check Backblaze's current
-price list before running; prices are not repeated here. `ListMultipartUploads` is
-not used by any earlier test. If Backblaze refuses it for the
-prefix-restricted key, the preflight fails before any write.
+price list before running; prices are not repeated here. Backblaze
+accepted `ListMultipartUploads` of the run prefix with the
+prefix-restricted key in the 2026-11-13 run. If it ever refuses it, the
+preflight fails before any write.
 
 **Credentials and permissions.** These are the variables of the
 [integration tests](#cloud-storage-integration-tests):
@@ -997,6 +1000,12 @@ server
 **Known limitations.**
 
 - The run scope assumes path-style requests (B2's profile).
+- The run scope checks method, path and the id query parameters only. A
+  `PUT` or `POST` on a run key passes whatever headers or subresources it
+  carries (`x-amz-copy-source`, `?retention`, `?legal-hold`, `?tagging`,
+  `?acl`). Neither the adapter nor the test sends any of these. A retention
+  or legal hold on a run key would block its cleanup; Object Lock is off on
+  the bucket, so it could not be set anyway.
 - Checks after the commit point (`needs-inspection`) and a refused abort
   (`incomplete-parts`) cannot be produced safely at a real provider. They
   are covered only against the in-process server.

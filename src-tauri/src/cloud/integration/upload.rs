@@ -1,7 +1,7 @@
 //! Opt-in: one controlled upload validation against the real Backblaze B2
 //! test bucket through the app's own upload batch path
-//! (docs/development/testing.md#uploads-at-backblaze). **Prepared, not yet
-//! run against Backblaze.**
+//! (docs/development/testing.md#uploads-at-backblaze). Passed once against
+//! Backblaze on 2026-11-13 (WSL2).
 //!
 //! `backblaze_b2_upload_batch` uploads three generated files into the new
 //! run prefix `sotyware-it/upload-validation/<run id>/` through

@@ -243,9 +243,11 @@ pub struct UploadFile {
     pub bytes: u64,
     pub total: u64,
     /// Whether its upload began. True from the moment the batch takes the
-    /// file, so also while its destination is checked; false for skipped
-    /// files (also those skipped because the key turned out to exist,
-    /// whenever that was found) and files the batch never reached.
+    /// file, so also while its destination is checked (no event is sent
+    /// then: a file's first event is its first progress or its final
+    /// state); false for skipped files (also those skipped because the key
+    /// turned out to exist, whenever that was found) and files the batch
+    /// never reached.
     pub started: bool,
     /// Only for "skipped".
     pub skip: Option<Skip>,

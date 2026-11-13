@@ -127,6 +127,59 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Uploads at Backblaze (2026-11-13)
+
+Tree `2828582` plus uncommitted doc-comment and documentation changes (no
+code change). **`backblaze_b2_upload_batch` passed once against the real
+B2 test bucket** (`eu-central-003`, write key limited to `sotyware-it/`),
+run by the user on **WSL2** with the command in
+[testing.md](../development/testing.md#uploads-at-backblaze), first
+attempt, 4.44 s. Run prefix
+`sotyware-it/upload-validation/1794546057268171887-144403/`. This is the
+Rust batch path (`begin_upload`, `CloudUploads`, `CloudDownloads`), not the
+UI or a file dialog.
+
+- **41 requests, exactly as planned**, all inside the run scope (nothing
+  refused):
+
+  | Request | Count |
+  | --- | --- |
+  | `ListObjectVersions` / `ListMultipartUploads` of the run prefix | 3 / 3, all 200 |
+  | `HeadObject` | 18 |
+  | `GetObject` | 3, all 200 |
+  | `PutObject` | 2 |
+  | `CreateMultipartUpload` / `UploadPart` / `CompleteMultipartUpload` / `AbortMultipartUpload` | 2 / 5 / 1 / 1 (204) |
+  | `DeleteObject` with `versionId` | 3, all 204 |
+
+- **Batch 1:** `empty.bin`, `größe +test.bin` (sent as
+  `gr%C3%B6%C3%9Fe%20%2Btest.bin`) and `multipart.bin` (three
+  `UploadPart`s) completed. Each upload began with two `HeadObject`s → 404
+  (the batch's, then `S3Store::upload`'s) and ended with a verifying
+  `HeadObject` by version id → 200. `multipart.bin` had a third
+  `HeadObject` → 404 after its last part, before
+  `CompleteMultipartUpload`. Sizes and `sotyware-sha256` matched.
+- **Existing key:** two `HeadObject`s of `größe +test.bin` → 200 (the
+  batch's skip, then `S3Store::upload_file`'s refusal); no `PUT`, so it
+  was not overwritten. The skipped file reported `started: false`.
+- **Cancellation:** `cancelled.bin` part 1 → 200; part 2 was cut off by
+  the cancellation (no status recorded); `AbortMultipartUpload` → 204;
+  `HeadObject` → 404.
+- **Downloads:** three `GetObject`s, each `sha256-verified`, with SHA-256
+  and bytes equal to the source.
+- **Cleanup:** the multipart-upload listing found none, so nothing was
+  aborted. The version listing found exactly three versions, one per
+  uploaded key, under the keys as uploaded, with no delete marker and none
+  of `cancelled.bin`; each was deleted by version id. Afterwards both
+  listings were empty (`versions Ok([])`, `multipart uploads Ok([])`).
+- **Learned at the provider:**
+  - Backblaze accepts `ListMultipartUploads` limited to the run prefix
+    with the prefix-restricted key. No earlier test had used it.
+  - The version id of the completed multipart object equals its upload id
+    (B2's large-file id).
+- **Not run:** the UI and the native dialogs at a real provider; native
+  Windows 11 for this test; Hetzner; `backblaze_b2_upload_cleanup` (not
+  needed). One run only.
+
 ### Upload test at Backblaze: prepared (2026-11-13)
 
 Uncommitted tree on `3e72226`. **Prepared and validated locally only;
@@ -162,13 +215,18 @@ visible to their sibling.
   uploaded, like a file skipped at selection, and the page does not read
   `started` for skipped files. `upload_one` now resets it on a
   `destination-exists` skip (also one found by `S3Store::upload` after
-  hashing); it stays true while the destination is checked, which the
-  panel uses to show "Starting…". The doc comments in `upload.rs` and
-  `cloud.ts` now say so. New assertions in
+  hashing); it stays true while the destination is checked. No event is
+  sent at that moment (a file's first event is its first `hashing`
+  progress or its final state), so the panel's "Starting…" text (pending
+  and started) is never shown for a real batch; the row says "Waiting"
+  until hashing begins (found 2026-11-13 in the readiness audit; not
+  changed). The doc comments in `upload.rs` and `cloud.ts` now say so.
+  New assertions in
   `an_existing_object_is_skipped_before_the_file_is_read`,
   `a_conflict_found_by_the_upload_itself_skips_the_file` and the
   integration scenario; without the fix all three fail.
-- **Not run:** anything at Backblaze; native Windows 11 (the test is a
+- **Not run** at the time (the Backblaze run followed the same day,
+  [above](#uploads-at-backblaze-2026-11-13)): anything at Backblaze; native Windows 11 (the test is a
   plain `cargo test` and should run there as the round trip did, but it
   has not); CI (not prepared, on purpose); frontend tests (nothing in the
   frontend changed).

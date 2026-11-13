@@ -197,17 +197,23 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- Upload test at Backblaze **prepared, not run** (2026-11-13, uncommitted
-  on `3e72226`): opt-in `backblaze_b2_upload_batch`
+- Uploads at **real Backblaze B2** (2026-11-13, `2828582` + uncommitted
+  docs): opt-in `backblaze_b2_upload_batch`
   (`cloud/integration/upload.rs`; needs `--ignored`, the B2 variables and
-  `SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation`). It runs one batch
-  (empty, Unicode, 3-part multipart), an existing key, a multipart cancel
-  and downloads in `sotyware-it/upload-validation/<run>/`. A `RunScope`
-  interceptor refuses any request outside the run before it is sent, and
-  cleanup goes by version id and upload id. Locally: the same scenario
-  against the in-process server passed; WSL2 `cargo test` 315 + 18 ignored.
+  `SOTYWARE_IT_B2_UPLOAD_CONFIRM=upload-validation`) **passed once on
+  WSL2** (run by the user, 4.44 s). Through the Rust batch path (no UI,
+  no dialog): one batch (empty, Unicode `größe +test.bin`, 3-part
+  multipart) completed with size and SHA-256 matched; an existing key was
+  skipped (`started: false`) and refused, never overwritten; a multipart
+  upload cancelled in part 2 was aborted (204); three downloads were
+  `sha256-verified` and byte-equal. 41 requests, exactly as planned, all
+  inside the `RunScope` (which refuses any request outside the run before
+  it is sent). Cleanup deleted the 3 versions by id; afterwards 0 versions
+  and 0 multipart uploads under the run prefix. Backblaze accepts
+  `ListMultipartUploads` with the prefix-restricted key. **Not run:**
+  native Windows, the UI at a real provider, Hetzner.
   [testing.md](development/testing.md#uploads-at-backblaze),
-  [status.md](status/status.md#upload-test-at-backblaze-prepared-2026-11-13).
+  [status.md](status/status.md#uploads-at-backblaze-2026-11-13).
 - rfd patch guard (2026-11-13, uncommitted on `207363d`):
   `npm run check:rfd-patch` (`scripts/check-rfd-patch.mjs`, first step of
   `test:headless`, in `ci.yml` after `cargo fetch --locked` and before the
@@ -562,8 +568,10 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads were never run at a real provider, on Windows 10 or on a real
-Linux desktop (the release binary only against the local server: on the
+Uploads ran at a real provider once, through the Rust batch path at
+Backblaze on WSL2 (never through the UI there, never at Hetzner); never
+on Windows 10 or a real Linux desktop (the release binary only against
+the local server: on the
 WSL2 virtual display with the GTK dialog and on the native Windows 11
 desktop with the Windows dialog); on Linux a non-UTF-8 file name
 silently drops out of the dialog's selection (rfd); on Windows names with
@@ -583,7 +591,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze on native Windows 11 and through the UI; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.
