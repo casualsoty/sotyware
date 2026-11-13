@@ -131,7 +131,7 @@ src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, feat
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
-src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/
+src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing, downloads and uploads: cloud-ui.sh, windows-cloud-ui.ps1)
@@ -195,6 +195,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Windows dialog paths with an unpaired surrogate (2026-11-13,
+  uncommitted on `bd704af`): rfd 0.17.2 patched locally
+  (`src-tauri/patches/rfd`, `OsString::from_wide` instead of
+  `String::from_utf16(..).unwrap()`, ADR-023; upload and save dialogs were
+  both affected). **Native Windows 11** (release binary SHA-256
+  `24f4db80…7d1c66`): patch tests 6 passed (real `IShellItem` of files
+  with unpaired surrogates returns the same code units); `-Mode upload`
+  **74/74** (the surrogate file skipped as "name cannot be an object key",
+  the valid one uploaded, nothing under another key); `-Mode download`
+  **36/36** with a new save under an unpaired-surrogate name; negative
+  control without the patch: that step ended sotyware with `0xC0000409`;
+  `test:headless` 135 + 298, 0 failed. **WSL2:** `cargo test` 308 + 16
+  ignored, fmt, clippy; `cloud-ui.sh upload` 51/51, `download` 22/22.
+  One run each. No real provider, no Windows 10.
+  [status.md](status/status.md#windows-dialog-paths-with-unpaired-surrogates-2026-11-13).
 - Uploads on the **native Windows 11 desktop** (2026-11-12, uncommitted
   test code on `695e089`; 25H2 build 26200.9711, release binary SHA-256
   `a7601843…f07c`): `windows-cloud-ui.ps1 -Mode upload` **74 passed, 1
@@ -204,7 +219,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   process holds open (failed, then retried); bucket empty afterwards. The
   failure is a **defect**: an unpaired-surrogate file name chosen in the
   dialog ends sotyware (`0xC0000409`, rfd's `unwrap` under `panic =
-  "abort"`; not fixed). Regression: `-Mode download` 35/35 (3 runs),
+  "abort"`; fixed 2026-11-13, above). Regression: `-Mode download` 35/35 (3 runs),
   `local` 19/19, `browse` 29/29; Windows `test:headless` 135 + Rust 297
   passed, **1 failed** (an existing unit test wrote a file name with `?`,
   which Windows refuses; fixed 2026-11-13: Windows Rust 298 passed, 0
@@ -519,9 +534,10 @@ Uploads were never run at a real provider, on Windows 10 or on a real
 Linux desktop (the release binary only against the local server: on the
 WSL2 virtual display with the GTK dialog and on the native Windows 11
 desktop with the Windows dialog); on Linux a non-UTF-8 file name
-silently drops out of the dialog's selection (rfd); on Windows a file name
-with an unpaired surrogate chosen in the dialog ends sotyware (rfd panics,
-`panic = "abort"`); incomplete multipart uploads whose abort failed are remembered
+silently drops out of the dialog's selection (rfd); on Windows names with
+an unpaired surrogate work only through the locally patched rfd (a
+dialog-plugin update that bypasses the patch brings the abort back;
+ADR-023); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
@@ -534,7 +550,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (decide the fix for the Windows unpaired-surrogate abort in rfd, then uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-13 (upload unit test made portable to Windows; uploads on the native Windows 11 desktop, local server only: [details](#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)). Update this file whenever
+Last updated: 2026-11-13 (Windows dialog paths with unpaired surrogates no longer end sotyware: rfd patched locally, native Windows 11 and WSL2 runs: [details](#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -127,6 +127,89 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Windows dialog paths with unpaired surrogates (2026-11-13)
+
+Uncommitted tree on `bd704af`: rfd 0.17.2 patched locally
+([ADR-023](../architecture/decisions.md#adr-023-rfd-is-patched-locally-so-windows-dialog-paths-are-read-as-osstring),
+[`src-tauri/patches/`](../../src-tauri/patches/README.md)); production
+change only in that copy (`com.rs`: `OsString::from_wide` instead of
+`String::from_utf16(..).unwrap()`) and the `[patch.crates-io]` entry; tests
+added in the copy, `names_that_are_not_utf8_are_skipped` (both platform
+variants) now also checks that the path is kept unchanged and no key is
+made, and `windows-cloud-ui.ps1 -Mode download` gained one step (save
+under a name with an unpaired surrogate). No real provider was contacted.
+
+- **Root cause:** every Windows dialog answer goes through
+  `IShellItem::get_path` → `read_to_string`, which `unwrap`ped the UTF-16
+  decoding: the multi-file upload dialog (`get_results`) and the save
+  dialog (`get_result`) were both affected. Nothing after it was lossy:
+  `tauri-plugin-dialog` passes the `PathBuf` on as is (`FilePath::Path`,
+  `into_path`), `check_file` skips a non-Unicode name (`to_str`, never a
+  lossy key), downloads keep the destination `PathBuf` (only the hidden
+  temporary file's name and the name shown are made with
+  `to_string_lossy`).
+
+**Native Windows 11** (Home 25H2, build 26200.9711; Rust 1.99.1, Node
+24.14.1, npm 11.12.1), fresh copy `C:\dev\sotyware-rfdfix`, real unlocked
+desktop (the user agreed to keep hands off):
+
+- Release binary `npm run tauri build -- --no-bundle`: 9,733,120 bytes,
+  SHA-256 `24f4db80e05a561628dfa97e7a595223477b2a3632fe19caae5f85715f7d1c66`;
+  its dependency file lists the sources under `patches\rfd`.
+- `cargo test --manifest-path patches\rfd\Cargo.toml --lib --locked`:
+  **6 passed** (5 new: ASCII, Unicode with a surrogate pair, empty,
+  four unpaired-surrogate patterns kept code unit for code unit and not
+  valid UTF-8, and real files, two of them with unpaired surrogates,
+  through `SHCreateItemFromParsingName` → `get_path`: the same code units
+  and the same file come back; 1 upstream). `cargo fmt --check`, `cargo
+  clippy --all-targets -- -D warnings` and `npm run check` (0/0) clean;
+  `npm run test:headless`: frontend **135**, Rust **298 passed, 0
+  failed**, 16 ignored.
+- `windows-cloud-ui.ps1 -Mode upload` (native multi-file dialog, local
+  s3s-fs server): **74 passed, 0 failed**, one run. Batch 11
+  (`lone-<U+D800>-surrogate.txt` with `z-valid.txt`): the dialog closed,
+  the process kept running, the row said "Skipped: name cannot be an object
+  key", `z-valid.txt` was uploaded and verified, the summary said "2 files:
+  1 uploaded, 1 skipped"; the server held no key the run did not know
+  (nothing under a replaced name) and was empty after cleanup. Unicode and
+  special-character names (`Grüße Ünïcödé 日本.txt`, `report 2024 (final) +
+  notes & more #1.txt`) were stored under exactly those keys with matching
+  SHA-256. Tray Quit (real mouse) during a multipart upload: exit 0 after
+  1.3 s, parts aborted.
+- `-Mode download` (native save dialog): **35/35** before the new step,
+  then **36/36** with it (one run each): `readme.txt` saved as
+  `lone-<U+D800>-copy.txt` through the save dialog, sotyware kept running,
+  "Downloaded … matched", the file exists under exactly that name (read
+  through .NET) with the object's SHA-256, no temporary file left.
+- **Negative control** (same copy, only the `[patch]` line removed, release
+  binary SHA-256 `688a1bf0133c1abd44fa3abee03562c7f711fd85a4f55b789174376f8f671191`,
+  rfd from crates.io): `-Mode download` **21 passed, 15 failed**: the new
+  step ended sotyware with **`0xC0000409`**, every later check failed
+  because the process was gone. So the save dialog was affected too, and
+  the new step catches it. The aborted run left its test account's
+  Credential Manager entry (local-server test key), removed by exact target
+  with `cmdkey /delete`; the patched binary was put back (same SHA-256).
+- `%LOCALAPPDATA%\com.sotyware.desktop` (file hashes), Credential Manager
+  (0 sotyware entries) and `%TEMP%` were the same before and after.
+- **Not run:** a folder (rather than a file) with an unpaired surrogate in
+  the save dialog's path (same `get_path` call, covered by the unit test
+  only); the folder picker (not used by sotyware); Windows 10; any real
+  provider.
+
+**WSL2** (Ubuntu 24.04, Rust 1.99.1), not a Windows result:
+
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`
+  clean (rfd prints its 9 upstream dead-code warnings, ADR-023); `cargo
+  test` **308 passed, 16 ignored**; the patch's crate alone (`cargo test
+  --manifest-path patches/rfd/Cargo.toml --lib --locked`): 1 passed, 6
+  ignored (upstream tests; the new ones are Windows-only and not compiled).
+  Frontend tests not re-run (no frontend change).
+- Release binary (SHA-256
+  `3bb702234465b580c5dde5d9f2e5665789831b55735402b7115158ba09cd7e1c`) on the
+  virtual display with the GTK dialog: `cloud-ui.sh upload` **51/51**,
+  `download` **22/22**, one run each (unchanged counts; the non-UTF-8 file
+  still drops out of the GTK selection, as before).
+
 ### Cloud Storage: uploads on the native Windows 11 desktop (2026-11-12)
 
 Uncommitted tree on `695e089` (test code and docs only: new `-Mode upload`
@@ -204,7 +287,7 @@ appeared on the page. The tray Quit used the real mouse.
     `a-quit.bin`), all aborted. Each run ended with 0 objects and no
     multipart files; `%LOCALAPPDATA%\com.sotyware.desktop` (hashes),
     Credential Manager (0 sotyware entries) and `%TEMP%` were as before.
-- **Defect found (not fixed):** a file whose name holds an unpaired
+- **Defect found (fixed 2026-11-13 by a patched rfd, [details](#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)):** a file whose name holds an unpaired
   surrogate (NTFS allows it), chosen in the dialog with a valid file,
   **ends sotyware with `0xC0000409`** at once: seen in each of the five
   attempts whose output was kept (2, 3 and the final three; attempt 4's log
