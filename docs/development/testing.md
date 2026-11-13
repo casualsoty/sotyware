@@ -1134,12 +1134,12 @@ verification; it is billed for the minutes until cleanup.
   version id or an upload id; nothing is retried. No bucket setting,
   lifecycle rule or key is changed.
 
-**Not covered against Backblaze, on purpose.** Cancel, retry, multipart,
-leaving the browser, hiding and quitting during a batch, and the error
-paths stay with the local `-Mode upload`: each would add provider requests
-or cleanup cases without exercising a different path from the UI to the
-provider. A multipart upload with the release binary's 16 MiB parts would
-need a file of more than 64 MiB.
+**Not covered by this mode.** Cancel, retry, multipart, leaving the
+browser and quitting during a batch are kept out of this run so that it
+checks one plain batch; they have their own mode, one scenario per run
+([below](#upload-lifecycle-through-the-windows-dashboard-at-backblaze)).
+Hiding during a batch and the error paths stay with the local
+`-Mode upload`.
 
 **Residual risks.** The app key has no prefix, so a defect that sent an
 upload elsewhere in the bucket would not be caught by the cleanup's scope
@@ -1176,6 +1176,140 @@ verification downloads against the in-process server, with the run scope:
 local layout check, the run prefix and the scope's four names are
 unit-tested.
 
+### Upload lifecycle through the Windows dashboard at Backblaze
+
+**Each scenario passed once at Backblaze (2026-11-13, native Windows 11)**,
+see [status.md](../status/status.md#upload-lifecycle-at-backblaze-on-native-windows-11-2026-11-13).
+`tests\desktop\windows-cloud-ui.ps1
+-Mode b2-lifecycle -Scenario <scenario>` checks one upload lifecycle
+behaviour per run through the **release binary with its release settings**
+(`ClientOptions::default()`: one `PutObject` up to 64 MiB, above that
+multipart in 16 MiB parts), its bundled page and the native Windows
+multi-file dialog, against the Backblaze test bucket. The local
+`-Mode upload` covers the same behaviours against the s3s-fs server; this
+mode is the provider counterpart, one scenario at a time, so each result
+stands on its own and a failed one does not hide the others. It replaces
+the earlier decision (above) to keep these paths local only.
+
+| Scenario | Local files (`batch\`) | What the dashboard does | Must hold afterwards |
+| --- | --- | --- | --- |
+| `multipart` | `multipart.bin`, 72 MiB + 3 (5 parts: 4 × 16 MiB, 8 MiB + 3) | uploads it; at 10 % or more `backblaze_b2_upload_lifecycle_probe` lists the run prefix's open multipart uploads (must be exactly one, for this key); "Upload finished. 1 file: 1 uploaded.", "Uploaded and verified", Sending percentages rising, Show destination folder lists it with its size | anchor + `multipart.bin`, downloaded `sha256-verified` and byte-equal |
+| `cancel` | `cancel.bin`, 144 MiB (9 parts) | Cancel upload at 20 % or more: "Upload cancelled. 1 file: 0 uploaded, 1 cancelled.", "Cancelled during its upload", "Nothing was stored", no "may remain" | only the anchor; **no incomplete multipart upload** |
+| `retry` | `anchor.txt` (other content), `a-first.txt`, `b-locked.txt`, `c-third.txt` | `b-locked.txt` is held open without sharing by the script: "Upload finished. 4 files: 2 uploaded, 1 skipped, 1 failed."; only "Try 1 file again" offered; released, Try again: "1 file: 1 uploaded.", only `b-locked.txt` in the new batch | anchor (its own version: not overwritten) + the three small files, one version each (a completed file sent twice would leave two) |
+| `leave` | `a-away.bin`, 60 MiB (one PUT), `b-away.txt` | ← Back to accounts at 10 % or more; 35 s later Open bucket: no panel, Upload files… enabled | only the anchor (the PUT was cut before its last chunk; `b-away.txt` never started) |
+| `quit` | `quit.bin`, 144 MiB (9 parts) | tray Quit at 20 % or more (**real mouse**, as `-Mode upload`): exit 0 within 35 s; the panel never said finished or uploaded; relaunch, the bucket opens, no panel | only the anchor; **no incomplete multipart upload** |
+
+Needs-inspection (a refused verification after the commit point) and a
+refused abort (`incomplete-parts`) need a provider that misbehaves on
+purpose; they stay with the local `-Mode upload` (`verify-denied`,
+`abort-denied`).
+
+**Steps of every scenario.** Keys as for `-Mode b2-upload` (the app uses
+`b2-upload.xml`, the Rust tests the write key `b2.xml`).
+
+1. Writes the local files into a new
+   `%TEMP%\sotyware-b2-lifecycle-<scenario>-<run id>\` (`seed\anchor.txt`
+   and `batch\`). The run id is `<scenario>-<UTC timestamp>`, chosen before
+   any request; the run prefix is
+   `sotyware-it/upload-lifecycle-validation/<scenario>-<timestamp>/`.
+2. `backblaze_b2_upload_lifecycle_prepare`
+   (`cloud/integration/upload/lifecycle.rs`, write key, run scope limited
+   to the run prefix and the scenario's names): checks the local layout,
+   including that each file is the single `PutObject` or the multipart
+   upload of the stated part count **with the release settings at
+   Backblaze's limits**; lists versions and incomplete multipart uploads of
+   the run prefix (both must be empty); uploads `anchor.txt` so the browser
+   can open the run folder. Prints the anchor's version id.
+3. The dashboard (account added with `b2-upload.xml`; Connected) opens
+   `sotyware-it`, `upload-lifecycle-validation` and the run folder (exactly
+   the anchor). Upload files…; **while the dialog is open the panel must
+   name `<bucket> / <run prefix>` as the destination, or the dialog is
+   cancelled and nothing is sent**; the batch folder's files are selected in
+   the dialog's file list; Open. Then the scenario's steps (table).
+4. After sotyware is stopped: `backblaze_b2_upload_lifecycle_verify`
+   downloads what the scenario must have stored and compares it, runs the
+   cleanup for the scenario's names (aborts incomplete multipart uploads
+   **by upload id**, deletes versions **by version id**, lists again) and
+   fails if it found anything but the anchor (its own version) and the
+   stored files, one version each, or **any incomplete multipart upload**.
+   If Open was never pressed, `backblaze_b2_upload_lifecycle_cleanup` runs
+   instead.
+5. Removes the local folder; account database and Credential Manager as
+   before.
+
+**Requests, if nothing is retried.** Write key (recorded by the tests):
+prepare 5; probe 1 (`multipart` only); verify and cleanup: one `GetObject`
+per stored file, `ListMultipartUploads`, `ListObjectVersions`, one
+`DeleteObject` with a version id per version, `ListObjectVersions`,
+`ListMultipartUploads`. App key (not recorded at Backblaze; known from the
+rehearsal): `HeadBucket` 1; `ListObjectsV2` 4 (root, `sotyware-it/`,
+`upload-lifecycle-validation/`, the run folder) plus 1 (Show destination
+folder, the root after leaving, or the root after the relaunch); per file
+uploaded one `HeadObject` in the batch and one in the adapter before
+sending, one after it (a multipart upload one more, just before
+`CompleteMultipartUpload`, the commit point).
+
+| Scenario | App | Write key | Uploaded by the app | Downloaded |
+| --- | --- | --- | --- | --- |
+| `multipart` | 17: `HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 4, `CreateMultipartUpload` 1, `UploadPart` 5, `CompleteMultipartUpload` 1 | 5 + 1 + 7 = 13 | 72 MiB | 72 MiB |
+| `cancel` | 9 + k: `HeadBucket` 1, `ListObjectsV2` 4, `HeadObject` 2, `CreateMultipartUpload` 1, `UploadPart` k (k ≈ 2–3; some may be cut off), `AbortMultipartUpload` 1 | 5 + 5 = 10 | about 20–50 MiB (cut off) | — |
+| `retry` | 19: `HeadBucket` 1, `ListObjectsV2` 4, `HeadObject` 11 (the existing `anchor.txt` 1, the locked file 1 in the first batch, 3 per uploaded file), `PutObject` 3 | 5 + 11 = 16 | < 1 KiB | < 1 KiB |
+| `leave` | 8–9: `HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 2, `PutObject` ≤ 1 (body cut off) | 5 + 5 = 10 | about 6–60 MiB (cut off) | — |
+| `quit` | 10 + k, as `cancel` with `ListObjectsV2` 5 | 5 + 5 = 10 | about 30–60 MiB (cut off) | — |
+
+The app's SDK makes up to 3 attempts per request, so a transient error adds
+requests. Listings are Backblaze class C transactions, `HeadObject` and
+`GetObject` class B, uploads and deletes class A (free); all five
+scenarios together stay far below the daily free caps (2,500 B and C
+each), but a cap reached by other tests that day would refuse the
+cleanup's listings (seen once, 2026-11-11); the cleanup is then run again
+the next day with the command below.
+
+**Safeguards.** As for `-Mode b2-upload`: refused before anything (exit 2)
+unless `-ConfirmB2Lifecycle lifecycle-ui-validation` and `-Scenario` are
+given (`-ExpectSha256` pins the approved binary); the Rust tests need
+`--ignored`, the account variables and `SOTYWARE_IT_B2_UPLOAD_CONFIRM`; the
+run prefix must be empty before the first write; the app sends only after
+the panel named the run folder; every write-key request goes through the
+run scope (listings only of the run prefix, requests only for the
+scenario's names, every `DELETE` with a version id or upload id; nothing
+retried). No bucket setting, lifecycle rule or key is changed. `quit` moves
+the mouse once and needs the interactive desktop (exit 3 otherwise).
+
+**Residual risks.** As for `-Mode b2-upload` (the app key has no prefix;
+the app's own requests are not recorded at Backblaze, only the outcome is
+checked by listing). In addition: a cut-off `UploadPart` that Backblaze
+completes after the abort could leave a part; the verify fails then and its
+cleanup aborts the upload by id. If the link is so fast that the file
+completes before the cancel, leave or quit (at 20 % of 144 MiB, a few
+seconds at 100 Mbit/s), the scenario fails as inconclusive and the cleanup
+removes the stored object. If a run is interrupted:
+
+```powershell
+# in src-tauri\ of the copy, write key variables as for the batch test
+$env:SOTYWARE_IT_B2_UPLOAD_CONFIRM = 'upload-validation'
+$env:SOTYWARE_IT_B2_LIFECYCLE_SCENARIO = '<scenario>'
+$env:SOTYWARE_IT_B2_LIFECYCLE_RUN = '<scenario>-<timestamp>'
+cargo test --lib cloud::integration::upload::lifecycle::backblaze_b2_upload_lifecycle_cleanup -- --ignored --exact --nocapture
+```
+
+**Rehearsal.** `-Mode b2-lifecycle -Rehearse -Scenario <scenario>` runs
+steps 1, 3 and 5 unchanged against the in-process s3s-fs server
+(`serve_uploads_for_ui`, seeded with only the anchor under the run's key,
+2 MiB/s link, made-up key; contacts no provider), uses the server's open
+multipart files for the probe and its state instead of step 4 (exactly the
+anchor and the stored files, contents and SHA-256 metadata, no multipart
+left; then exact-key deletion), and checks the app's requests by operation
+(the "App" column above).
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Rehearse -Scenario multipart
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Scenario multipart -ConfirmB2Lifecycle lifecycle-ui-validation -ExpectSha256 <approved hash>
+```
+
+The layout checks against the release settings, the run prefix, the
+scope and the final-state check are unit-tested in `lifecycle.rs`.
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a
@@ -1207,6 +1341,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `b2-browse`, Windows `-Mode b2-browse` | **Connected** for the read-only key | the [temporary dataset](#browsing-a-temporary-dataset-at-backblaze) in the real bucket: `backblaze_b2_browse_dataset` with `SOTYWARE_IT_B2_BROWSE_KEEP=1` creates and checks it (with the write key) and writes the manifest; the app gets the read-only key; Open bucket → root shows `sotyware-it`; down to the run folder; the run root, `docs/` → `2024/` → `q1/` → `deep/` → `er/`, the `2024` breadcrumb, Up one folder, both marker-only folders (empty), `photos/` (no marker row), `special/` and its folder `f+o&l?d#e%r`, the Unicode folders, `dots/` → `..` (holds `escape.txt`) → Up, `double/` → (no name) → (no name), `many/` (1,000 rows and Load more → 1,010 rows, no Load more → Refresh → 1,000); each folder must show **every row exactly as the provider listed it** (name, size as the page formats it, date formatted with the page's own `toLocaleString` call run in `node`); ← Back, Open bucket again → root; remove. Fingerprint after creating = after browsing (the UI wrote nothing); then `backblaze_b2_browse_cleanup` (also on exit or interrupt), and the fingerprint before the dataset = after cleanup |
 | Windows `-Mode b2-download` | **Connected** for the read-only key | one real download through the dashboard and the native save dialog, [described above](#downloading-through-the-windows-dashboard-at-backblaze) |
 | Windows `-Mode b2-upload` | **Connected** for the upload key (`b2-upload.xml`) | one real upload batch through the dashboard and the native multi-file dialog, [described above](#uploads-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs the same steps against the local s3s-fs server |
+| Windows `-Mode b2-lifecycle -Scenario <scenario>` | **Connected** for the upload key (`b2-upload.xml`) | one upload lifecycle scenario (multipart, cancel, retry, leave, quit) through the dashboard with the release settings, [described above](#upload-lifecycle-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs it against the local s3s-fs server |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -1245,7 +1380,7 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download|b2-upload]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
 on the desktop; it is driven through UI Automation too, not clicked).

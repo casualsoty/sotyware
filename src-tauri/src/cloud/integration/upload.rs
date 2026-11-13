@@ -70,6 +70,9 @@ use super::{Requests, b2_store};
 /// The Windows dashboard upload test's provider side.
 mod ui;
 
+/// The Windows dashboard upload lifecycle tests' provider side.
+mod lifecycle;
+
 /// Every run's objects live below this, inside the test key's own prefix.
 const UPLOAD_ROOT: &str = "sotyware-it/upload-validation/";
 /// The second, explicit opt-in for the writing tests.

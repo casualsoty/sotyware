@@ -5,8 +5,9 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload] [-Exe <path>] [-ExpectSha256 <hex>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle] [-Exe <path>] [-ExpectSha256 <hex>]
 #   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
+#   b2-lifecycle takes -Scenario multipart|cancel|retry|leave|quit and -Rehearse or -ConfirmB2Lifecycle lifecycle-ui-validation
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -97,19 +98,56 @@
 #   server (serve_uploads_for_ui seeded with the same existing.txt under the
 #   same kind of key, made-up key; contacts no provider) and also checks the
 #   app's requests there by operation.
+# -Mode b2-lifecycle -Scenario <scenario>: one upload lifecycle behaviour
+#   through the dashboard (release binary, release settings: multipart above
+#   64 MiB in 16 MiB parts) and the native multi-file dialog into the
+#   Backblaze test bucket, one scenario per run, each under its own prefix
+#   sotyware-it/upload-lifecycle-validation/<scenario>-<run id>/. Refused
+#   unless -ConfirmB2Lifecycle lifecycle-ui-validation is given. Keys as
+#   for b2-upload (b2.xml for the Rust tests, b2-upload.xml for the app).
+#   The opt-in Rust test backblaze_b2_upload_lifecycle_prepare checks the
+#   local files (each must be the single PutObject or the multipart upload
+#   the scenario needs with the release settings) and that the run prefix
+#   is empty, and uploads seed\anchor.txt (so the browser can open the run
+#   folder). Scenarios:
+#     multipart: multipart.bin (72 MiB + 3, 5 parts) uploads and completes;
+#       while it is sent, backblaze_b2_upload_lifecycle_probe must list one
+#       open multipart upload for it.
+#     cancel: cancel.bin (144 MiB, 9 parts), Cancel upload at 20% or more.
+#     retry: anchor.txt (other content: skipped), a-first.txt,
+#       b-locked.txt (held open without sharing by this script: fails),
+#       c-third.txt; then Try 1 file again once it is closed.
+#     leave: a-away.bin (60 MiB, one PUT) and b-away.txt; Back to accounts
+#       at 10% or more.
+#     quit: quit.bin (144 MiB, 9 parts), tray Quit at 20% or more (MOVES
+#       THE MOUSE once, like -Mode upload; needs the interactive desktop).
+#   Afterwards backblaze_b2_upload_lifecycle_verify downloads what the
+#   scenario must have stored and compares it, deletes exactly this run's
+#   versions by id, aborts any incomplete multipart upload of its keys by id
+#   (and fails if there was one), and lists again (none may be left);
+#   backblaze_b2_upload_lifecycle_cleanup instead if the batch never
+#   started. -Rehearse runs the same steps against the in-process s3s-fs
+#   server (seeded with the anchor under the same kind of key) and checks
+#   the app's requests there by operation.
 #
 # The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
 # is moved aside first and put back at the end, as in windows.ps1; secret values
 # are only compared, never shown. Needs a logged-in session (the WebView2 window
-# must be created); it does not move the mouse (except -Mode upload, above).
+# must be created); it does not move the mouse (except -Mode upload and
+# -Mode b2-lifecycle -Scenario quit, above).
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
-# or b2 credentials missing, 3 (upload) no interactive desktop: nothing was run.
+# or b2 credentials missing, 3 (upload, b2-lifecycle quit) no interactive
+# desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
   [string]$Region = "eu-central-003",
-  # b2-upload: the in-process server instead of Backblaze.
+  # b2-upload, b2-lifecycle: the in-process server instead of Backblaze.
   [switch]$Rehearse,
+  # b2-lifecycle: the one behaviour this run checks.
+  [ValidateSet("", "multipart", "cancel", "retry", "leave", "quit")][string]$Scenario = "",
+  # b2-lifecycle against Backblaze: must be exactly "lifecycle-ui-validation".
+  [string]$ConfirmB2Lifecycle = "",
   # b2-upload against Backblaze: must be exactly "upload-ui-validation".
   [string]$ConfirmB2Upload = "",
   # Stops before anything if the binary's SHA-256 differs.
@@ -118,7 +156,15 @@ param(
 if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build -- --no-bundle)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
 if ($ExpectSha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant() -ne $ExpectSha256.ToLowerInvariant()) { "ABORT: $Exe is not the expected binary (SHA-256 differs from $ExpectSha256)"; exit 2 }
-if ($Rehearse -and $Mode -ne "b2-upload") { "ABORT: -Rehearse is only for -Mode b2-upload"; exit 2 }
+# b2-lifecycle shares b2-upload's keys, rehearsal server and cleanup rules.
+$IsLc = $Mode -eq "b2-lifecycle"
+$IsB2Up = $Mode -eq "b2-upload" -or $IsLc
+if ($Rehearse -and -not $IsB2Up) { "ABORT: -Rehearse is only for -Mode b2-upload and b2-lifecycle"; exit 2 }
+if ($Scenario -and -not $IsLc) { "ABORT: -Scenario is only for -Mode b2-lifecycle"; exit 2 }
+if ($IsLc -and -not $Scenario) { "ABORT: -Mode b2-lifecycle needs -Scenario multipart, cancel, retry, leave or quit (one per run)"; exit 2 }
+if ($IsLc -and -not $Rehearse -and $ConfirmB2Lifecycle -cne "lifecycle-ui-validation") {
+  "ABORT: -Mode b2-lifecycle writes to the Backblaze test bucket; add -ConfirmB2Lifecycle lifecycle-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
+}
 if ($Mode -eq "b2-upload" -and -not $Rehearse -and $ConfirmB2Upload -cne "upload-ui-validation") {
   "ABORT: -Mode b2-upload writes to the Backblaze test bucket; add -ConfirmB2Upload upload-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
 }
@@ -344,7 +390,7 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 "os: $((Get-CimInstance Win32_OperatingSystem).Caption) $($cv.DisplayVersion) build $($cv.CurrentBuild).$($cv.UBR)"
 "binary: $Exe"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
-if ($Mode -eq "upload") {
+if ($Mode -eq "upload" -or ($IsLc -and $Scenario -eq "quit")) {
   # The tray Quit needs real clicks, which reach only the input desktop with
   # a taskbar (as in windows.ps1); stop before starting anything otherwise.
   $inputDesk = [CloudUiW]::DesktopName([CloudUiW]::OpenInputDesktop(0, $false, 0x0001))
@@ -354,6 +400,9 @@ if ($Mode -eq "upload") {
   [void][CloudUiW]::SetProcessDPIAware()
   "binary SHA-256: $(Sha $Exe), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
   "this test moves the mouse once (tray Quit); do not use the mouse or keyboard while it runs"
+}
+if ($IsLc -and $Scenario -ne "quit") {
+  "binary SHA-256: $((Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant()), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
 }
 if ($Mode -eq "b2-upload") {
   "binary SHA-256: $((Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant()), built $((Get-Item $Exe).LastWriteTime.ToString('s'))"
@@ -379,6 +428,33 @@ if ($Mode -eq "b2-upload") {
   [CloudUiW]::WriteBlob((Join-Path $UiBatch "progress.bin"), 24 * 1048576 + 5, 3)
   "b2-upload: run id $run, run prefix $UiPrefix, local files in $UpSrc"
 }
+if ($IsLc) {
+  # One scenario per run, under its own prefix; the local files first.
+  $LcRun = "$Scenario-$run"
+  $UiPrefix = "sotyware-it/upload-lifecycle-validation/$LcRun/"
+  $LcMiB = 1048576
+  $UpSrc = Join-Path $env:TEMP "sotyware-b2-lifecycle-$LcRun"
+  $UiBatch = Join-Path $UpSrc "batch"; $UiSeedDir = Join-Path $UpSrc "seed"
+  New-Item -ItemType Directory $UiBatch, $UiSeedDir | Out-Null
+  $UiSeed = Join-Path $UiSeedDir "anchor.txt"
+  [System.IO.File]::WriteAllBytes($UiSeed, [System.Text.Encoding]::UTF8.GetBytes("anchor of upload lifecycle run $LcRun`n"))
+  function LcText([string]$name, [string]$text) { [System.IO.File]::WriteAllBytes((Join-Path $UiBatch $name), [System.Text.Encoding]::UTF8.GetBytes("$text (run $LcRun)`n")) }
+  switch ($Scenario) {
+    "multipart" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "multipart.bin"), 72 * $LcMiB + 3, 21); $UiNames = @("multipart.bin"); $LcStored = @("multipart.bin") }
+    "cancel" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "cancel.bin"), 144 * $LcMiB, 22); $UiNames = @("cancel.bin"); $LcStored = @() }
+    "retry" {
+      LcText "anchor.txt" "the dashboard's own anchor.txt: must be skipped, never stored"
+      LcText "a-first.txt" "uploaded by the first batch, never again"
+      LcText "b-locked.txt" "held open without sharing during the first batch"
+      LcText "c-third.txt" "uploaded by the first batch after the failure"
+      $UiNames = @("anchor.txt", "a-first.txt", "b-locked.txt", "c-third.txt"); $LcStored = @("a-first.txt", "b-locked.txt", "c-third.txt")
+    }
+    "leave" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "a-away.bin"), 60 * $LcMiB, 23); LcText "b-away.txt" "never started: the browser was left"; $UiNames = @("a-away.bin", "b-away.txt"); $LcStored = @() }
+    "quit" { [CloudUiW]::WriteBlob((Join-Path $UiBatch "quit.bin"), 144 * $LcMiB, 24); $UiNames = @("quit.bin"); $LcStored = @() }
+  }
+  "b2-lifecycle: scenario $Scenario, run id $LcRun, run prefix $UiPrefix, local files in $UpSrc"
+  "variant: $(if ($Rehearse) { 'rehearsal against the in-process server (no provider)' } else { 'Backblaze B2 (confirmed with -ConfirmB2Lifecycle)' })$(if ($Scenario -ne 'quit') { '; does not move the mouse' }); do not use the mouse or keyboard while it runs"
+}
 if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $dir = Join-Path $env:USERPROFILE ".sotyware-it"
   foreach ($f in "b2.xml", "b2-read.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; exit 2 } }
@@ -397,7 +473,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Bucket = (Get-Content "$dir\b2-bucket.txt" -Raw).Trim()
   $Key2 = $Key1; $Secret2 = "sotywareE2eWrongSecret0123456789abcdef"
   $Endpoint = ""
-} elseif ($Mode -eq "b2-upload" -and -not $Rehearse) {
+} elseif ($IsB2Up -and -not $Rehearse) {
   $dir = Join-Path $env:USERPROFILE ".sotyware-it"
   foreach ($f in "b2.xml", "b2-upload.xml", "b2-bucket.txt") { if (-not (Test-Path "$dir\$f")) { "ABORT: $dir\$f missing (see testing.md)"; [System.IO.Directory]::Delete($UpSrc, $true); exit 2 } }
   # b2.xml (prefix sotyware-it/): the prepare, verify and cleanup tests only.
@@ -410,12 +486,12 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # Replacing the key only stores it (no request); made-up values.
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") {
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
   # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
   # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs).
   if ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
-  } elseif ($Mode -eq "upload" -or $Mode -eq "b2-upload") {
+  } elseif ($Mode -eq "upload" -or $IsB2Up) {
     $Key1 = "e2eUploadKey0000000001"; $Secret1 = "e2e-Upload-Secret-0123456789"; $Bucket = "upload-bucket"; $Helper = "serve_uploads_for_ui"
   } else {
     $Key1 = "e2eDownloadKey00000001"; $Secret1 = "e2e-Download-Secret-0123456789"; $Bucket = "download-bucket"; $Helper = "serve_objects_for_ui"
@@ -427,9 +503,10 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # upload: the link takes 2 MiB/s (the helper's default is 6 MiB/s), so that
   # UI Automation, much slower to read than AT-SPI, still sees a 40 MiB PUT
   # in progress and can cancel it.
-  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
+  if ($Mode -eq "upload" -or $IsB2Up) { $env:SOTYWARE_UI_UPLOAD_RATE = "$(2 * 1048576)" }
   # The rehearsal's bucket holds only the seed, under the run's key.
   if ($Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}existing.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
+  if ($IsLc) { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}anchor.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
   $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::$Helper", "--", "--ignored", "--nocapture" `
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
@@ -438,8 +515,8 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
-  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
-  if ($Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") {
+  if ($Mode -eq "upload" -or $IsB2Up) { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
+  if ($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
     # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
     $Out = Join-Path $env:TEMP "sotyware-downloads-$run"
@@ -456,7 +533,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
 }
 $script:redact = @(@($Secret1, "<secret>"), @($Secret2, "<secret2>"), @($Key1, "<keyID>"), @($Key2, "<keyID2>"), @($Bucket, "<bucket>"))
-if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download" -or ($Mode -eq "b2-upload" -and -not $Rehearse)) { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
+if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download" -or ($IsB2Up -and -not $Rehearse)) { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
 
 # Runs the opt-in Rust test that fingerprints the B2 bucket; the variables are
 # set for that child only and removed again.
@@ -465,7 +542,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download" -or ($Mode -eq "b2-upload"
 function CargoIt($test, $extra = @{}) {
   $vars = @{ SOTYWARE_IT_B2_BUCKET = $Bucket; SOTYWARE_IT_B2_REGION = $Region }
   $exact = @()
-  if ($Mode -eq "b2-upload") {
+  if ($IsB2Up) {
     # Only the write key (b2.xml) reaches these tests; the app's key never does.
     $vars.SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID = $WriteKey; $vars.SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY = $WriteSecret
     $vars.SOTYWARE_IT_B2_UPLOAD_CONFIRM = "upload-validation"
@@ -482,7 +559,7 @@ function CargoIt($test, $extra = @{}) {
     Push-Location (Join-Path $PSScriptRoot "..\..\src-tauri")
     # b2-upload keeps stderr too (filtered by the caller): a failed
     # assertion's panic message goes there.
-    if ($Mode -eq "b2-upload") { $out = & cargo test --quiet --lib $test -- --ignored --nocapture @exact 2>&1 | ForEach-Object { "$_" } }
+    if ($IsB2Up) { $out = & cargo test --quiet --lib $test -- --ignored --nocapture @exact 2>&1 | ForEach-Object { "$_" } }
     else { $out = & cargo test --quiet --lib $test -- --ignored --nocapture @exact 2>$null }
     $script:cargoExit = $LASTEXITCODE
     Pop-Location
@@ -545,6 +622,42 @@ function UploadUiFinish {
   Check "b2-upload: cleanup deleted this run's versions by id and listed no version or multipart upload left (run $script:upRun)" $clean
   if ($clean) { $script:upRun = $null } else { "  NOT CLEANED UP: run $script:upRun under $UiPrefix; run backblaze_b2_upload_ui_cleanup with SOTYWARE_IT_B2_UPLOAD_UI_RUN=$script:upRun; not retried" }
 }
+# b2-lifecycle: the same, for one scenario's run.
+function LcVars { @{ SOTYWARE_IT_B2_LIFECYCLE_RUN = $LcRun; SOTYWARE_IT_B2_LIFECYCLE_DIR = $UpSrc; SOTYWARE_IT_B2_LIFECYCLE_SCENARIO = $Scenario } }
+$LcKeep = '^(provider|verifying|cleaning up|found:|after cleanup:|left:|local |run prefix|NOT OURS|CLEANUP|upload-lifecycle|download |\d+ requests:|  (GET|PUT|HEAD|DELETE|POST) |thread .* panicked|assertion|  left|  right|the download checks|what the provider|requests: |the run scope|nothing uploaded|anchor )'
+function LifecycleFinish {
+  if (-not $script:upRun) { return }
+  $vars = LcVars
+  $verify = $script:uiBatchRan -and $script:seedVersion
+  if ($verify) {
+    $vars.SOTYWARE_IT_B2_LIFECYCLE_ANCHOR_VERSION = $script:seedVersion
+    $res = CargoIt "cloud::integration::upload::lifecycle::backblaze_b2_upload_lifecycle_verify" $vars
+  } else {
+    "  the batch never started: cleanup only"
+    $res = CargoIt "cloud::integration::upload::lifecycle::backblaze_b2_upload_lifecycle_cleanup" $vars
+  }
+  $res | Where-Object { $_ -match $LcKeep } | ForEach-Object { "  $(Redact $_)" }
+  $clean = @($res | Where-Object { $_ -eq "upload-lifecycle cleanup: clean" }).Count -eq 1
+  if ($verify) {
+    $what = if ($LcStored.Count -gt 0) { "the anchor (its own version) and $($LcStored -join ', '), one version each, each downloaded byte-equal with its SHA-256 verified" } else { "only the anchor (its own version): nothing of the batch" }
+    Check "b2-lifecycle: the provider held $what; no incomplete multipart upload" (($script:cargoExit -eq 0) -and @($res | Where-Object { $_ -eq "upload-lifecycle verify: passed" }).Count -eq 1)
+  }
+  Check "b2-lifecycle: cleanup deleted this run's versions by id and listed no version or multipart upload left (run $LcRun)" $clean
+  if ($clean) { $script:upRun = $null } else { "  NOT CLEANED UP: run $LcRun under $UiPrefix; run backblaze_b2_upload_lifecycle_cleanup with SOTYWARE_IT_B2_LIFECYCLE_RUN=$LcRun SOTYWARE_IT_B2_LIFECYCLE_SCENARIO=$Scenario; not retried" }
+}
+# While the dashboard uploads: the open multipart uploads under the run
+# prefix, as "<count>:<names>" ($null if unknown). Backblaze: one
+# ListMultipartUploads with the write key; rehearsal: the server's state.
+function LcOpenUploads {
+  # s3s-fs keeps two files per open upload (".upload-<id>.json" and its
+  # ".metadata.json"): count the distinct upload ids.
+  if ($Rehearse) { $st = State; $ids = @($st.Multipart | ForEach-Object { [regex]::Match([string]$_, 'upload-([0-9a-f-]{36})').Groups[1].Value } | Where-Object { $_ } | Sort-Object -Unique); return "$($ids.Count):s3s-fs" }
+  $res = CargoIt "cloud::integration::upload::lifecycle::backblaze_b2_upload_lifecycle_probe" (LcVars)
+  $res | Where-Object { $_ -match '^(upload-lifecycle probe|\d+ requests:|  GET |thread .* panicked)' } | ForEach-Object { "  $(Redact $_)" }
+  $m = [regex]::Match(($res -join "`n"), 'upload-lifecycle probe: (\d+) open multipart upload\(s\): \[([^\]]*)\]')
+  if ($script:cargoExit -ne 0 -or -not $m.Success) { return $null }
+  "$($m.Groups[1].Value):$($m.Groups[2].Value -replace '"', '')"
+}
 
 $CloudDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\cloud-accounts.sqlite3"
 $CloudBackup = "$CloudDb.cloud-ui-test-backup"
@@ -605,6 +718,23 @@ if ($Mode -eq "b2-upload" -and -not $Rehearse) {
   if (-not (($prepExit -eq 0) -and $script:seedVersion)) {
     # Nothing goes through the app; only what this run's keys hold is removed.
     UploadUiFinish
+    [System.IO.Directory]::Delete($UpSrc, $true)
+    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    "summary: $script:pass passed, $script:fail failed"; exit 1
+  }
+}
+
+if ($IsLc -and -not $Rehearse) {
+  "test program before the prepare: $(TestExe)"
+  $script:upRun = $LcRun
+  $prep = CargoIt "cloud::integration::upload::lifecycle::backblaze_b2_upload_lifecycle_prepare" (LcVars)
+  $prepExit = $script:cargoExit
+  $m = [regex]::Match(($prep -join "`n"), 'upload-lifecycle anchor kept; run id ([0-9A-Za-z_-]+) version (\S+)')
+  if ($m.Success -and $m.Groups[1].Value -eq $LcRun) { $script:seedVersion = $m.Groups[2].Value }
+  $prep | Where-Object { $_ -match $LcKeep } | ForEach-Object { "  $(Redact $_)" }
+  Check "b2-lifecycle: local files checked against the release settings, run prefix empty (no version, delete marker or multipart upload), anchor.txt uploaded (version $script:seedVersion)" (($prepExit -eq 0) -and $script:seedVersion)
+  if (-not (($prepExit -eq 0) -and $script:seedVersion)) {
+    LifecycleFinish
     [System.IO.Directory]::Delete($UpSrc, $true)
     foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
     "summary: $script:pass passed, $script:fail failed"; exit 1
@@ -971,7 +1101,7 @@ $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label rena
 try {
   $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
   Check "startup: dashboard window" (WaitFor { $null -ne (Dash) } 20)
-  if ($Mode -eq "upload" -or $Mode -eq "b2-upload") {
+  if ($Mode -eq "upload" -or $IsB2Up) {
     $wpid = [uint32]0; [void][CloudUiW]::GetWindowThreadProcessId((Hwnd (Dash)), [ref]$wpid)
     Check "the dashboard driven is the window of the started release binary (pid $($p.Id), $Exe)" ($wpid -eq $p.Id -and (Procs).Count -eq 1)
     $listen = @(Get-NetTCPConnection -State Listen -LocalPort 1420 -EA SilentlyContinue)
@@ -1457,6 +1587,123 @@ try {
     $d = DialogNamed $OpenTitle; if ($d) { CancelDialog $d }
     $null = Press "Cancel upload"; $null = Press "Dismiss"
    }
+  } elseif ($IsLc) {
+   $locker = $null
+   try {
+    # The same steps against Backblaze and in the rehearsal; only the bucket
+    # name and the key differ.
+    Check "Open bucket lists the bucket's root, with the sotyware-it folder" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+    $ok = (PressFolder "sotyware-it") -and (WaitFor { (PageText) -like "*upload-lifecycle-validation*" } 60)
+    $ok = $ok -and (PressFolder "upload-lifecycle-validation") -and (WaitFor { (PageText) -like "*$LcRun*" } 60)
+    $ok = $ok -and (PressFolder $LcRun) -and (WaitFor { ((PageText) -like "*| $UiPrefix |*") -and ((PageText) -notlike "*Loading*") } 60)
+    Check "navigate sotyware-it, upload-lifecycle-validation, this run's folder ($LcRun)" $ok (PageText)
+    $UiSeedLen = (Get-Item -LiteralPath $UiSeed).Length
+    $rows = TableRows
+    Check "the run folder shows exactly one row: anchor.txt ($UiSeedLen B)" ($rows.Count -eq 1 -and $rows[0] -like "anchor.txt | $(FormatSize $UiSeedLen) | *") "$($rows -join ' || ')"
+    if ($Scenario -eq "retry") { $locker = [System.IO.File]::Open((Join-Path $UiBatch "b-locked.txt"), "Open", "Read", "None") }
+    # Nothing is sent unless the panel names exactly the run folder while
+    # the dialog is open (the destination is fixed when the dialog opens).
+    $script:destSeen = ""; $script:destOk = $false; $script:seen.Clear()
+    $picked = $ok -and (Pick $UiBatch $UiNames "list" {
+      $script:destSeen = UpPanel
+      $script:destOk = $script:destSeen.Contains("$Bucket / $UiPrefix") -and -not $script:destSeen.Contains("Retrying")
+      $script:destOk
+    })
+    if ($script:destOk) { $script:uiBatchRan = $true }
+    Check "while the native dialog was open the panel named the run folder as the destination (checked before Open)" $script:destOk (Redact $script:destSeen)
+    Check "native dialog: the batch folder opened, its $($UiNames.Count) file(s) selected in the file list (UI Automation), Open" $picked
+    $big = $UiNames[0]
+    switch ($Scenario) {
+      "multipart" {
+        # While it is sent, the provider must hold one open multipart upload
+        # for it (the release settings chose multipart, not one PUT).
+        $mid = if ($picked) { Until { param($x) (SendingIn $x $big 10) -or (Finished $x) } 1800 } else { $null }
+        $open = if ($mid -and -not (Finished $mid)) { LcOpenUploads } else { $null }
+        "  open multipart uploads while sending: $open"
+        Check "while $big was being sent (10% or more), exactly one multipart upload was open, for it" ($open -eq "1:$big" -or ($Rehearse -and $open -like "1:*")) "$open | $(Redact "$mid")"
+        $done = if ($picked) { Until { param($x) Finished $x } 1800 } else { $null }
+        $ur = UpRows; "  file rows: $(Redact ($ur -join ' || '))"
+        Check "final summary: Upload finished. 1 file: 1 uploaded." ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.")) (Redact "$done")
+        Check "${big}: Uploaded and verified" ((UpRow $big).Contains("Uploaded and verified")) (UpRow $big)
+        $stages = @("Computing the SHA-256 checksum", "Sending $([char]0xB7) ", "Verifying the stored object" | Where-Object { $s1 = $_; @($script:seen | Where-Object { $_.Contains($s1) }).Count -gt 0 })
+        $sendSamples = @($script:seen | ForEach-Object { [regex]::Match($_, [regex]::Escape($big) + '[^|]*?Sending \u00b7 (\d+)%') } | Where-Object { $_.Success } | ForEach-Object { [int]$_.Groups[1].Value })
+        "  stages seen ($($script:seen.Count) distinct samples, $script:polls polls): $($stages -join ', '); Sending percentages: $($sendSamples -join ' ')"
+        Check "progress: $big was seen Sending with at least two different percentages" (@($sendSamples | Sort-Object -Unique).Count -ge 2) ($sendSamples -join " ")
+        $mono = $true; for ($i = 1; $i -lt $sendSamples.Count; $i++) { if ($sendSamples[$i] -lt $sendSamples[$i - 1]) { $mono = $false } }
+        Check "${big}'s percentage never went down" $mono ($sendSamples -join " ")
+        $ok = (Press "Show destination folder") -and (WaitFor { ((PageText) -like "*| $UiPrefix |*") -and ((PageText) -notlike "*Loading*") -and (TableRows).Count -eq 2 } 60)
+        $rows = TableRows
+        $len = (Get-Item -LiteralPath (Join-Path $UiBatch $big)).Length
+        Check "Show destination folder lists anchor.txt and $big ($(FormatSize $len))" ($ok -and @($rows | Where-Object { $_ -like "$big | $(FormatSize $len) | *" }).Count -eq 1 -and @($rows | Where-Object { $_ -like "anchor.txt | *" }).Count -eq 1) (Redact ($rows -join " || "))
+        UpDismiss
+      }
+      "cancel" {
+        $running = $picked -and (Until { param($x) (SendingIn $x $big 20) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 20)
+        $at = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
+        $pressed = $running -and (Press "Cancel upload")
+        $done = if ($picked) { Until { param($x) Finished $x } 300 } else { $null }
+        "  Cancel upload pressed at $at%; file row: $(Redact (UpRow $big))"
+        Check "Cancel upload during the multipart upload (at 20% or more): Upload cancelled. 1 file: 0 uploaded, 1 cancelled." ($pressed -and $done -and $done.Contains("Upload cancelled. 1 file: 0 uploaded, 1 cancelled.")) (Redact "$done")
+        Check "the row says cancelled during its upload, nothing stored; no 'may remain'" ((UpRow $big).Contains("Cancelled during its upload") -and (UpRow $big).Contains("Nothing was stored for this file.") -and -not (UpRow $big).Contains("may remain")) (UpRow $big)
+        Check "Try 1 file again is offered (cancelled, nothing stored); not pressed" (Btn "Try 1 file again") (PageText)
+        UpDismiss
+      }
+      "retry" {
+        $done = if ($picked) { Until { param($x) Finished $x } 600 } else { $null }
+        $ur = UpRows; "  file rows: $(Redact ($ur -join ' || '))"
+        Check "first batch: Upload finished. 4 files: 2 uploaded, 1 skipped, 1 failed." ($done -and $done.Contains("Upload finished. 4 files: 2 uploaded, 1 skipped, 1 failed.")) (Redact "$done")
+        $lr = UpRow "b-locked.txt"
+        Check "b-locked.txt (held open without sharing): Failed, could not be read on this computer, nothing stored" ($lr.Contains("Failed") -and ($lr.Contains("could not be read on this computer") -or $lr.Contains("may not read this file")) -and $lr.Contains("Nothing was stored for this file.")) $lr
+        Check "a-first.txt and c-third.txt: Uploaded and verified (the batch went on after the failure)" ((UpRow "a-first.txt").Contains("Uploaded and verified") -and (UpRow "c-third.txt").Contains("Uploaded and verified")) (Redact ($ur -join " || "))
+        Check "anchor.txt: Skipped: already in this folder (left as it is)" ((UpRow "anchor.txt").Contains("Skipped: already in this folder")) (UpRow "anchor.txt")
+        Check "Try again offers exactly 1 file: not the uploaded ones, not the skipped one" ((Btn "Try 1 file again") -and -not (Btn "Try 2 files again") -and -not (Btn "Try 3 files again")) (PageText)
+        $locker.Close(); $locker = $null
+        $script:seen.Clear()
+        $null = Press "Try 1 file again"
+        $done = Until { param($x) Retried $x } 600
+        $ur = UpRows; "  file rows after Try again: $(Redact ($ur -join ' || '))"
+        Check "Try again: Upload finished. 1 file: 1 uploaded.; only b-locked.txt in the new batch" ($done -and $done.Contains("Upload finished. 1 file: 1 uploaded.") -and $ur.Count -eq 1 -and (UpRow "b-locked.txt").Contains("Uploaded and verified") -and -not $done.Contains("a-first.txt") -and -not $done.Contains("c-third.txt") -and -not $done.Contains("anchor.txt")) (Redact "$done")
+        UpDismiss
+      }
+      "leave" {
+        $running = $picked -and (Until { param($x) (SendingIn $x $big 10) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 10)
+        $at = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
+        $left = $running -and (Press "$([char]0x2190) Back to accounts") -and (WaitFor { Btn "Open bucket" } 15)
+        "  Back to accounts pressed at $at%"
+        Check "Back to accounts during the one-PUT upload of $big (at 10% or more): the account list is shown" $left (PageText)
+        # Longer than the rest of the PUT would take at the rehearsal's rate;
+        # at Backblaze the verify test then lists what is left.
+        Start-Sleep 35
+        $ok = (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("sotyware-it") } 60)
+        Check "back in the browser: no upload panel, and Upload files$([char]0x2026) is enabled (the slot is free)" ($ok -and (UpPanel) -eq "" -and (UploadEnabled)) (UpPanel)
+      }
+      "quit" {
+        $running = $picked -and (Until { param($x) (SendingIn $x $big 20) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 20)
+        $at = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $quitSent = $running -and (TrayQuit)
+        $exited = $quitSent -and $p.WaitForExit(45000)
+        $secs = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+        if (OverflowOpen) { [CloudUiW]::Esc() }
+        if (-not $exited) { Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }; $null = WaitFor { (Procs).Count -eq 0 } 10 }
+        "  tray Quit at $at%; to exit: $secs s"
+        Check "tray Quit (real mouse) during the multipart upload (at 20% or more): exit 0 within 35 s (the documented bound for aborts on quit)" ($running -and $exited -and $p.ExitCode -eq 0 -and $secs -le 35) "sent=$quitSent $script:why exit=$(if ($exited) { $p.ExitCode }) $secs s"
+        $claimed = @($script:seen | Where-Object { $_.Contains("Upload finished.") -or $_.Contains("Uploaded and verified") })
+        Check "before it ended, the panel never claimed the upload finished or the file uploaded" ($claimed.Count -eq 0) (Redact ($claimed -join " || "))
+        # Relaunch, so the account can be removed through the page again.
+        $p = Start-Process $Exe -PassThru; $null = $p.Handle
+        $ok = (WaitFor { $null -ne (Dash) } 20) -and (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { Btn "Open bucket" } 15) -and
+          (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("sotyware-it") } 60)
+        Check "relaunch: the account is still listed and its bucket opens; no upload panel" ($ok -and (UpPanel) -eq "") (PageText)
+      }
+    }
+   } catch {
+    Check "b2-lifecycle steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    $d = DialogNamed $OpenTitle; if ($d) { CancelDialog $d }
+    $null = Press "Cancel upload"; $null = Press "Dismiss"
+   } finally {
+    if ($locker) { $locker.Close() }
+   }
   } elseif ($Mode -eq "b2-download") {
    try {
     $R = $Dl.run
@@ -1591,6 +1838,23 @@ try {
     UploadUiFinish
     "test program after the verification: $(TestExe)"
   }
+  if ($IsLc -and -not $Rehearse) {
+    LifecycleFinish
+    "test program after the verification: $(TestExe)"
+  }
+  if ($IsLc -and $Rehearse) {
+    # The provider-side checks of the Backblaze run, on the server's state.
+    try {
+      $st = State
+      foreach ($n in $UiNames) { [void]$script:created.Add("$UiPrefix$n") }
+      $want = @("${UiPrefix}anchor.txt") + @($LcStored | ForEach-Object { "$UiPrefix$_" })
+      Check "rehearsal: the server holds exactly the anchor$(if ($LcStored.Count) { ' and ' + ($LcStored -join ', ') }) under the run prefix, nothing elsewhere" ((KeysUnder $st $UiPrefix) -eq (SortedKeys $want) -and $st.Objects.Count -eq $want.Count) (Redact (SortedKeys $st.Objects.Keys))
+      $contentOk = (Obj $st "${UiPrefix}anchor.txt") -and (Obj $st "${UiPrefix}anchor.txt").sha256 -eq (UpSha $UiSeed)
+      foreach ($n in $LcStored) { $contentOk = $contentOk -and (StoredOk (Obj $st "$UiPrefix$n") (Join-Path $UiBatch $n)) }
+      Check "rehearsal: stored contents, sizes and SHA-256 metadata equal the local files; anchor.txt is still the seed; no multipart upload left" ($contentOk -and $st.Multipart.Count -eq 0) "$($st.Multipart -join ',')"
+      UpCleanup
+    } catch { Check "rehearsal: server state read and cleaned up" $false "$($_.Exception.Message)" }
+  }
   if ($Mode -eq "b2-upload" -and $Rehearse) {
     # The provider-side checks of the Backblaze run, on the server's state.
     try {
@@ -1609,16 +1873,20 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($Mode -eq "b2-upload" -and $Rehearse)) {
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
     # Removing the endpoint file stops the helper (and with it its temporary bucket).
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
   # .NET, not Remove-Item: download mode saves a name with an unpaired surrogate.
-  if (($Mode -eq "download" -or $Mode -eq "upload" -or $Mode -eq "b2-upload") -and $Out -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
+  if (($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) -and $Out -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
   if ($Mode -eq "b2-upload" -and (Test-Path -LiteralPath $UpSrc)) {
     [System.IO.Directory]::Delete($UpSrc, $true)
     Check "b2-upload: local test files removed ($UpSrc)" (-not (Test-Path -LiteralPath $UpSrc))
+  }
+  if ($IsLc -and (Test-Path -LiteralPath $UpSrc)) {
+    [System.IO.Directory]::Delete($UpSrc, $true)
+    Check "b2-lifecycle: local test files removed ($UpSrc)" (-not (Test-Path -LiteralPath $UpSrc))
   }
   if ($Mode -eq "upload" -and (Test-Path -LiteralPath $UpSrc)) {
     # .NET, not Remove-Item: the folder holds a name with an unpaired surrogate.
@@ -1632,7 +1900,7 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($Mode -eq "b2-upload" -and $Rehearse)) {
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
   $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
   if ($Mode -eq "b2-upload") {
@@ -1643,8 +1911,36 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($Mod
     $wantOps = 'operations: {"HeadBucket": 1, "HeadObject": 10, "ListObjectsV2": 5, "PutObject": 3}'
     Check "rehearsal: the app sent exactly HeadBucket 1, ListObjectsV2 5, HeadObject 10, PutObject 3 (19 requests)" ($ops.StartsWith($wantOps)) $ops
   }
+  if ($IsLc) {
+    # The app's requests by operation, as the Backblaze run expects them:
+    # the check; listings of the root, sotyware-it/, the lifecycle root and
+    # the run folder (plus Show destination folder, or the root again after
+    # leaving or the relaunch); per file one HeadObject in the batch and
+    # one in the adapter before sending, one after it (a multipart upload
+    # one more, just before CompleteMultipartUpload).
+    $n = @{}; foreach ($x in [regex]::Matches($ops, '"(\w+)": (\d+)')) { $n[$x.Groups[1].Value] = [int]$x.Groups[2].Value }
+    function Ops([string]$op) { if ($n.ContainsKey($op)) { $n[$op] } else { 0 } }
+    $parts = Ops "UploadPart"
+    switch ($Scenario) {
+      # Multipart: the adapter checks the key again before completing.
+      "multipart" { $want = "HeadBucket 1, ListObjectsV2 5, HeadObject 4, CreateMultipartUpload 1, UploadPart 5, CompleteMultipartUpload 1, nothing else (17)"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 5 -and (Ops "HeadObject") -eq 4 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -eq 5 -and (Ops "CompleteMultipartUpload") -eq 1 -and $n.Count -eq 6 }
+      "cancel" { $want = "HeadBucket 1, ListObjectsV2 4, HeadObject 2, CreateMultipartUpload 1, UploadPart 1 to 8, AbortMultipartUpload 1, nothing else"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 4 -and (Ops "HeadObject") -eq 2 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -ge 1 -and $parts -le 8 -and (Ops "AbortMultipartUpload") -eq 1 -and $n.Count -eq 6 }
+      "quit" { $want = "HeadBucket 1, ListObjectsV2 5, HeadObject 2, CreateMultipartUpload 1, UploadPart 1 to 8, AbortMultipartUpload 1, nothing else"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 5 -and (Ops "HeadObject") -eq 2 -and (Ops "CreateMultipartUpload") -eq 1 -and $parts -ge 1 -and $parts -le 8 -and (Ops "AbortMultipartUpload") -eq 1 -and $n.Count -eq 6 }
+      # anchor.txt 1 (exists: skipped); a-first, c-third and the retried
+      # b-locked 3 each; b-locked in the first batch 1 (the batch's HEAD,
+      # then the file cannot be opened).
+      "retry" { $want = "HeadBucket 1, ListObjectsV2 4, HeadObject 11, PutObject 3, nothing else (19)"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 4 -and (Ops "HeadObject") -eq 11 -and (Ops "PutObject") -eq 3 -and $n.Count -eq 4 }
+      "leave" { $want = "HeadBucket 1, ListObjectsV2 5, HeadObject 2, PutObject at most 1 (its body cut off), nothing for b-away.txt, nothing else"
+        $okOps = (Ops "HeadBucket") -eq 1 -and (Ops "ListObjectsV2") -eq 5 -and (Ops "HeadObject") -eq 2 -and (Ops "PutObject") -le 1 -and $n.Count -le 4 -and ($n.Keys | Where-Object { $_ -notin "HeadBucket", "ListObjectsV2", "HeadObject", "PutObject" }).Count -eq 0 }
+    }
+    Check "rehearsal: the app sent $want" $okOps $ops
+  }
   if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
-  $what = if ($Mode -eq "upload" -or $Mode -eq "b2-upload") { "only listing, reads and upload requests" } else { "only reads and the check" }
+  $what = if ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
