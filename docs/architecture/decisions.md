@@ -812,7 +812,10 @@ unreachable.
 
 ## ADR-021: Uploads have one commit point, re-hash what they send, verify by HEAD and time out on stalls, not on duration
 
-Status: Accepted (2026-11-12). Backend only: `S3Store::upload` in
+Status: Accepted (2026-11-12); its cancellation of a part that was
+handed over completely is amended by
+[ADR-025](#adr-025-a-cancelled-part-that-was-handed-over-completely-is-awaited-before-the-abort).
+Backend only: `S3Store::upload` in
 `src-tauri/src/cloud/s3/upload.rs`. No command, dialog or page reaches it
 yet; the planned multi-file uploads will call it once per file, one after
 another.
@@ -1378,3 +1381,52 @@ a real provider.**
     recording run that way (`-RecordRequests`). A run that kills the app
     leaves an incomplete recording, which the drivers report as "count
     unknown" (seen on native Windows 11 before this was added).
+
+## ADR-025: A cancelled part that was handed over completely is awaited before the abort
+
+Status: Accepted (2026-11-13). Amends the cancellation rule of
+[ADR-021](#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration);
+code: `drive` in `src-tauri/src/cloud/s3/upload.rs`,
+`ClientOptions::part_settle_timeout`.
+
+- **Context:** ADR-021 cancels a multipart upload by dropping the
+  `UploadPart` in flight, then sending `AbortMultipartUpload` on a new
+  connection. Dropping closes the socket gracefully: bytes already in the
+  operating system's send buffer (or in a proxy that buffers request
+  bodies) still reach the provider, and the abort can arrive first. A
+  provider that then stores the part keeps a part of an aborted upload,
+  billed and invisible to sotyware, which reports `NothingStored`. Seen on
+  2026-11-13 in a native Windows 11 quit rehearsal (the request recorder,
+  ADR-024, showed the part dropped in flight and the abort answered 3 ms
+  later) and reproduced on WSL2 (1 of 3 probe trials) against s3s-fs, which
+  checks the upload id only when a part request starts. AWS documents the
+  same: an in-progress part "might or might not succeed" after an abort.
+  Backblaze and Hetzner document nothing about it; neither was asked.
+- **Decision:** when a cancel arrives while a part's every byte has been
+  handed to the connection (the request body finished, after its hash
+  matched), the upload keeps that request running and waits for its
+  answer, at most `part_settle_timeout` (default 5 s), then returns
+  `Cancelled` and aborts as before. The abort then comes after the part
+  and removes it with the others. A part not handed over completely is
+  dropped at once, as before: its body never reaches the provider whole,
+  so it cannot be stored. A single PUT is unchanged (its commit point
+  holds the last chunk back, so a cancelled PUT is never complete).
+  - Rejected: aborting a second time and checking with `ListParts` (the
+    remedy AWS documents; extra requests on every such cancel, and s3s-fs
+    answers a second abort with AccessDenied); resetting the connection
+    instead of closing it (not reachable through the SDK and hyper);
+    reporting `IncompleteParts` instead (honest, but leaves the part).
+- **Consequences:** a cancel during the tail of a part can take up to
+  5 s longer (in the tests about 1.3 s: the time the part's last bytes
+  needed); 5 s plus the 30 s abort timeout stays within the 35 s quit
+  bound. If the part is not answered within the bound (a very slow link,
+  a provider that does not answer), the abort goes out anyway and the
+  part can still land afterwards: logged
+  (`sotyware: part N got no answer within …`), still reported as
+  `NothingStored`. A bucket lifecycle rule that aborts incomplete
+  multipart uploads stays the safety net. Tested against the in-process
+  server with a link that buffers the body and forwards it slowly
+  (`Pace::Buffered`): with the wait no part remains, without it
+  (`part_settle_timeout` zero) the part remains every time, and the wait
+  ends at its bound.
+

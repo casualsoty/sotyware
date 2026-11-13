@@ -650,9 +650,9 @@ ADR-023; `npm run check:rfd-patch` fails then, in `test:headless` and
 CI); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs; a part whose bytes
-were already sent when cancelling or quitting dropped it can land after
-the abort (seen against the local server: a part left while sotyware said
-nothing was stored; unchecked at real providers).
+were all handed over when cancelling is awaited up to 5 s before the
+abort (ADR-025), past that it can still land after the abort (unchecked
+at real providers).
 Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps

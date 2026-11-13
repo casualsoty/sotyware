@@ -94,6 +94,13 @@ pub struct ClientOptions {
     /// Longest wait for `AbortMultipartUpload` after a failed or cancelled
     /// multipart upload, retries included.
     pub abort_timeout: Duration,
+    /// When a multipart upload is cancelled after a part's every byte was
+    /// handed to the connection, the longest wait for that part's response
+    /// before the abort is sent. Those bytes reach the provider even if the
+    /// request is dropped, and a part that lands after the abort can
+    /// remain stored. With `abort_timeout` it stays within the 35 s quit
+    /// bound (`upload::SHUTDOWN_WAIT`).
+    pub part_settle_timeout: Duration,
 }
 
 impl Default for ClientOptions {
@@ -106,6 +113,7 @@ impl Default for ClientOptions {
             part_size: 16 * MIB,
             stall_timeout: Duration::from_secs(60),
             abort_timeout: Duration::from_secs(30),
+            part_settle_timeout: Duration::from_secs(5),
         }
     }
 }

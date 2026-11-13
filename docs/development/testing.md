@@ -1358,6 +1358,12 @@ cd .. && npm run check:release-binary && npm run test:release-binary-guard
 - `SOTYWARE_RECORDER_TEST_ALL=1` (test builds only) records every store of
   the test process into a discarding sink, so the whole existing suite runs
   with the interceptor installed and must pass unchanged.
+- ADR-025 (`cloud/s3/upload/tests.rs`, every build, about 8 s): behind a
+  link that buffers the request body and forwards it slowly
+  (`Pace::Buffered` in `test_server.rs`), a cancel after part 2 was handed
+  over completely waits for its answer and the abort leaves no part; with
+  `part_settle_timeout` zero (the control) the late part remains; the
+  wait ends at its bound.
 - `probe_a_part_landing_after_the_abort` (`cloud/s3/upload/tests.rs`,
   `#[ignore]`, prints its findings, needs no feature): cancels a
   multipart upload right after part 2 was handed to the connection

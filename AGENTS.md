@@ -137,7 +137,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   variables only in test builds), and one S3 adapter (`S3Store`,
   `aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account.
   Its upload (`S3Store::upload` in `cloud/s3/upload.rs`) refuses an existing key, re-hashes what it sends,
-  has one commit point for cancellation, aborts failed multipart uploads,
+  has one commit point for cancellation, aborts failed multipart uploads
+  (after awaiting, at most 5 s, a cancelled part that was handed over
+  completely, [ADR-025](docs/architecture/decisions.md#adr-025-a-cancelled-part-that-was-handed-over-completely-is-awaited-before-the-abort)),
   verifies by `HeadObject` and times out on stalls instead of the read
   timeout ([ADR-021](docs/architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)).
   The dashboard reaches only the account part, through `cloud/dashboard.rs`

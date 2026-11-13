@@ -761,6 +761,12 @@ pub enum Pace {
     /// This many bytes per connection, then nothing more (the connection
     /// stays open), as on a link that stopped carrying data.
     StallAfter(usize),
+    /// Takes whatever the client sends at once (the client's body is
+    /// handed over immediately) and forwards it at most this many bytes per
+    /// second, also after the client closed the connection: like a proxy
+    /// or load balancer that buffers request bodies, or a send buffer that
+    /// still drains after a cancelled request.
+    Buffered(u64),
 }
 
 /// A TCP relay in front of a test server whose client-to-server direction
@@ -822,6 +828,35 @@ async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
     let back = tokio::spawn(async move {
         let _ = tokio::io::copy(&mut server_rd, &mut client_wr).await;
     });
+    if let Pace::Buffered(rate) = pace {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let reader = tokio::spawn(async move {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match client_rd.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        while let Some(chunk) = rx.recv().await {
+            for piece in chunk.chunks(16 * 1024) {
+                if server_wr.write_all(piece).await.is_err() {
+                    reader.abort();
+                    let _ = back.await;
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs_f64(piece.len() as f64 / rate as f64)).await;
+            }
+        }
+        let _ = server_wr.shutdown().await;
+        let _ = back.await;
+        return;
+    }
     let mut buf = vec![0u8; 16 * 1024];
     let mut total = 0usize;
     loop {
@@ -832,7 +867,7 @@ async fn relay(client: tokio::net::TcpStream, upstream: &str, pace: Pace) {
                 0
             }
             Pace::StallAfter(n) => buf.len().min(n - total),
-            Pace::BytesPerSecond(_) => buf.len(),
+            Pace::BytesPerSecond(_) | Pace::Buffered(_) => buf.len(),
         };
         let n = match client_rd.read(&mut buf[..max]).await {
             Ok(0) | Err(_) => break,

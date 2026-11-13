@@ -127,6 +127,42 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### A cancelled part is awaited before the abort (2026-11-13)
+
+Uncommitted tree on `1e50821` (ADR-025, with the request recorder
+changes). **No real provider.**
+
+- New tests in `cloud/s3/upload/tests.rs` against s3s-fs behind a link that
+  buffers the body and forwards it at 4 MiB/s (`Pace::Buffered`), 3 runs
+  each: a cancel after part 2 was handed over completely waits about 1.3 s
+  for its answer and the abort leaves no part; the control with
+  `part_settle_timeout` zero leaves the late `part-2` every time; with a
+  1 s bound at 1 MiB/s the wait ends at the bound. The opt-in probe
+  `probe_a_part_landing_after_the_abort`: **0 of 3** trials left a part
+  (1 of 3 before the change).
+- `cargo test` **333 passed, 26 ignored**, 3 runs (9 s); feature build 360;
+  with every store recorded 360, 3 runs (after making the hook
+  assumption's cancel deterministic: it used a 700 ms timer, which under
+  load could also fall on a completely handed-over part and wait the
+  bound); fmt and clippy clean in both configurations; `npm run
+  test:headless` passed.
+- Release binaries rebuilt (normal `b984b28c…`, recorder `f9fe442a…`):
+  Linux virtual display `cloud-ui.sh download upload` normal **75/75**,
+  recorder **77/77** (21 = 21, 92 = 92 app requests); the upload phase now
+  has 4 dropped operations and 87 answered attempts instead of 5 and 86:
+  one cancelled part that was already handed over is now answered before
+  the abort.
+- **Native Windows 11 25H2** (copy `C:\dev\sotyware-recorder`, rebuilt
+  recorder build SHA-256 `0ae6f848…d64061`, real desktop, local server,
+  after the user's approval; tray Quit with the real mouse):
+  `windows-cloud-ui.ps1 -Mode b2-lifecycle -Rehearse -RecordRequests`
+  `-Scenario cancel` **39/39** (11 = 11 app requests) and `-Scenario
+  quit` **39/39** (12 = 12; exit after the tray Quit in 1.8 s; no part
+  left), one run each. In both the cancel came while part 2 was still
+  being handed over (cancel: dropped after 11.7 s, quit: after 13.3 s;
+  part 1 took 15.9 s; abort 0 ms later, no wait), so the new wait itself did **not** run on
+  Windows; it ran only in the WSL2 tests and the Linux UI run above.
+
 ### Request recorder (2026-11-13)
 
 Uncommitted tree on `1e50821` (ADR-024 implemented; test code, a guard

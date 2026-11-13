@@ -40,7 +40,12 @@
 //! **Cancellation and multipart cleanup.** A cancel drops the request in
 //! flight (closing its connection). `CreateMultipartUpload` is never
 //! dropped in flight, so no upload id can be created without sotyware
-//! knowing it. A multipart upload that fails or is cancelled before its
+//! knowing it. An `UploadPart` whose every byte the connection already took
+//! is not dropped at once either: those bytes reach the provider anyway
+//! (the socket closes gracefully and its send buffer drains), and a part
+//! that lands after the abort can remain stored. The cancel waits for that
+//! part's answer, at most [`ClientOptions::part_settle_timeout`](super::ClientOptions),
+//! so the abort comes after it (ADR-025). A multipart upload that fails or is cancelled before its
 //! commit point is aborted with `AbortMultipartUpload`, in its own task
 //! (so it finishes even if the caller drops the upload future) and bounded
 //! by [`ClientOptions::abort_timeout`](super::ClientOptions). If the abort
@@ -791,7 +796,27 @@ impl S3Store {
             .await;
             match step {
                 Step::Done(v) => return Ok(v),
-                Step::Cancelled => return Err(StorageError::Cancelled),
+                Step::Cancelled => {
+                    // A part whose every byte the connection took reaches
+                    // the provider even if this request is dropped (the
+                    // socket closes gracefully, its send buffer still
+                    // drains). Wait for its answer, bounded, so the abort
+                    // that follows comes after it and removes it, instead
+                    // of a part that lands after the abort and remains.
+                    // A part not handed over completely can never be
+                    // stored: dropping it is enough.
+                    if !probe.commits && probe.complete() {
+                        let settle = self.options.part_settle_timeout;
+                        if tokio::time::timeout(settle, send.as_mut()).await.is_err() {
+                            eprintln!(
+                                "sotyware: part {} got no answer within {} s of cancelling; it may still be stored after the abort",
+                                probe.part,
+                                settle.as_secs_f32()
+                            );
+                        }
+                    }
+                    return Err(StorageError::Cancelled);
+                }
                 Step::Activity => {
                     let (sent, last_activity) = probe.snapshot();
                     let now = Instant::now();

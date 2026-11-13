@@ -135,7 +135,7 @@ Called once per file by upload batches ([Uploading files](#uploading-files)).
 
 | What happens | Before the commit point | After it |
 | --- | --- | --- |
-| `cancel()` | returns `true`; the request in flight is dropped; `Cancelled` | returns `false` ("finishing"); the upload runs to its end |
+| `cancel()` | returns `true`; the request in flight is dropped (a part already handed over completely is first awaited, at most 5 s); `Cancelled` | returns `false` ("finishing"); the upload runs to its end |
 | File differs from the first pass (content, size, modification time) | `FileChanged`; the last chunk is never sent, multipart is aborted | cannot happen: checked before the commit |
 | Request or part fails | that error; multipart is aborted | `CompleteMultipartUpload` failed: aborted; if the provider no longer knows the upload, `NeedsInspection` |
 | Verification fails | — | `Integrity` (or the request's error) with `NeedsInspection`; the object is **not** deleted |
@@ -155,6 +155,13 @@ multipart uploads is the only cleanup then.
 `CreateMultipartUpload` is never dropped in flight, so no upload id can exist
 that sotyware did not learn.
 
+**A part handed over completely is awaited**
+([ADR-025](decisions.md#adr-025-a-cancelled-part-that-was-handed-over-completely-is-awaited-before-the-abort)):
+when the cancel comes after the connection took a part's last byte, that
+part reaches the provider even if its request is dropped, and could land
+after the abort and remain. The cancel therefore waits for the part's
+answer, at most `part_settle_timeout` (5 s), before the abort; past the
+bound the abort goes out anyway and the part may still land (logged).
 
 **Timeouts:** `PutObject` and `UploadPart` run with a per-operation override
 (connect timeout kept, read timeout and the SDK's stalled-stream protection

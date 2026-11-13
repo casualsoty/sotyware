@@ -206,6 +206,7 @@ fn options(max_attempts: u32) -> ClientOptions {
         part_size: 5 * MIB as u64,
         stall_timeout: Duration::from_secs(30),
         abort_timeout: Duration::from_secs(5),
+        part_settle_timeout: Duration::from_secs(5),
     }
 }
 
