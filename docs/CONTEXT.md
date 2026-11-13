@@ -207,10 +207,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   version id left 0 versions and 0 multipart uploads. Not at Backblaze:
   cancel, retry, multipart, browser lifecycle; Linux; Windows 10.
   [status.md](status/status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13).
-  Preparation (same day, uncommitted on `48c33c4`):
+  Preparation (same day, on `48c33c4`, committed as `32bd7d7`):
   `windows-cloud-ui.ps1 -Mode b2-upload` (refused without
   `-ConfirmB2Upload upload-ui-validation`; needs a third key without file
-  name prefix, `b2-upload.xml`, not created yet) with provider side in
+  name prefix, `b2-upload.xml`) with provider side in
   `cloud/integration/upload/ui.rs` (36 requests planned, cleanup by version
   id). Local only, native Windows 11, release binary `d17382a1…785d0d`:
   `-Rehearse` 41/41 twice (app requests exactly as planned), `upload`

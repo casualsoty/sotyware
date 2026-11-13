@@ -130,8 +130,8 @@ script or procedure is not in the repository; it was not repeated.
 ### Dashboard upload at Backblaze on native Windows 11: rerun passed (2026-11-13)
 
 **`windows-cloud-ui.ps1 -Mode b2-upload` passed, 38/38, once**, after
-explicit approval, first attempt, run id `20261113054909817` (06:49
-local); the rerun of the [first run](#dashboard-upload-at-backblaze-on-native-windows-11-2026-11-13)
+explicit approval, run id `20261113054909817` (06:49 local), on its
+first try; the rerun of the [first run](#dashboard-upload-at-backblaze-on-native-windows-11-2026-11-13)
 with the verify test's request count fixed. Same machine (Windows 11 Home
 25H2, build 26200.9711, x64, real desktop), same release binary
 `d17382a13060091e3a41282f0533814aa1b73f98a6049a4e8bfbdd91a0785d0d`
