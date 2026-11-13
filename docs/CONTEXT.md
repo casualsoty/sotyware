@@ -197,6 +197,25 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- Upload **lifecycle at Backblaze through the Windows dashboard**
+  (2026-11-13, after approval): **all five scenarios passed once each**
+  (multipart 35/35: one open multipart upload seen, 5 parts completed,
+  `sha256-verified`; cancel 32/32 and quit 32/32 (exit in 1.4 s): no
+  object, no open multipart upload; retry 35/35: only the locked file
+  retried, one version per file; leave 31/31: nothing stored); cleanup by
+  version id left 0 versions and 0 multipart uploads each time. App
+  requests not recorded at Backblaze.
+  [status.md](status/status.md#upload-lifecycle-at-backblaze-on-native-windows-11-2026-11-13).
+  Preparation (same day, uncommitted on `4d9d9a7`): `windows-cloud-ui.ps1 -Mode b2-lifecycle
+  -Scenario multipart|cancel|retry|leave|quit` (refused without
+  `-ConfirmB2Lifecycle lifecycle-ui-validation`; provider side in
+  `cloud/integration/upload/lifecycle.rs`; release settings, so
+  `multipart` completes a 5-part upload through the UI for the first
+  time). `-Rehearse` against the local server on native Windows 11,
+  release binary `5e364f2a…94f5e1f`: 38/38, 35/35, 38/38 (twice), 34/34,
+  35/35 (quit in 1.3 s); `b2-upload -Rehearse` 41/41; WSL2 Rust 324 + 25
+  ignored, Windows 314 + 25, Vitest 135.
+  [status.md](status/status.md#upload-lifecycle-tests-at-backblaze-prepared-2026-11-13).
 - Uploads through the **Windows dashboard at Backblaze** (2026-11-13,
   after approval): `windows-cloud-ui.ps1 -Mode b2-upload` **passed 38/38
   once** (rerun; the first run failed only on the verify test's own request
@@ -598,8 +617,10 @@ only against the local object server; one at a time, without resume; a killed pr
 appearing at a new destination in the last instant could be replaced.
 Uploads ran at a real provider only at Backblaze: through the Rust
 batch path once on WSL2 and once on native Windows 11, and through the
-native Windows 11 dashboard and multi-file dialog once (one batch; cancel,
-retry, multipart and the browser lifecycle only against the local server);
+native Windows 11 dashboard and multi-file dialog (one batch, then
+multipart, cancel, retry, leaving the browser and quit once each with the
+release settings; needs-inspection and a refused abort only against the
+local server);
 never at Hetzner, on Windows 10 or a real Linux desktop (Linux: the
 release binary with the GTK dialog only against the local server on the
 WSL2 virtual display); on Linux a non-UTF-8 file name

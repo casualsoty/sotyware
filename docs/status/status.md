@@ -127,6 +127,87 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Upload lifecycle at Backblaze on native Windows 11 (2026-11-13)
+
+Uncommitted tree on `4d9d9a7` (the prepared lifecycle tests below), after
+the user's approval of all five scenarios. **Each scenario passed once at
+Backblaze** through `windows-cloud-ui.ps1 -Mode b2-lifecycle -Scenario
+<scenario> -ConfirmB2Lifecycle lifecycle-ui-validation -ExpectSha256
+5e364f2a…94f5e1f`: release binary with the release settings (64 MiB
+threshold, 16 MiB parts), native Windows 11 25H2 build 26200.9711, real
+desktop, native multi-file dialog, real Credential Manager; app key
+`b2-upload.xml` (no file name prefix), prepare/probe/verify/cleanup with the
+write key through the run scope (test program SHA-256 `6e8d7706…d043dd`);
+bucket region `eu-central-003`. One run each, first attempt, in this order:
+
+| Scenario | Checks | What Backblaze held before cleanup | Cleanup |
+| --- | --- | --- | --- |
+| `multipart` | **35/35** | mid-upload probe: exactly **one open multipart upload, for `multipart.bin`**; afterwards anchor + `multipart.bin` (75,497,475 bytes), one version each; downloaded `sha256-verified`, byte-equal (1.35 s); no open multipart upload | 2 versions deleted by id; 0 versions, 0 multipart uploads left |
+| `cancel` | **32/32** | Cancel upload at 22 % of 144 MiB: "Cancelled during its upload", "Nothing was stored"; only the anchor; **no open multipart upload** (the app's own abort worked with its key) | 1 version deleted; 0 / 0 left |
+| `retry` | **35/35** | locked file failed, only it offered and retried; anchor (its own version, not overwritten) + `a-first.txt`, `b-locked.txt`, `c-third.txt`, **one version each** (nothing sent twice); all three `sha256-verified` | 4 versions deleted; 0 / 0 left |
+| `leave` | **31/31** | ← Back to accounts at 14 % of the 60 MiB PUT; only the anchor (the cut-off PUT stored nothing, `b-away.txt` never started); slot free afterwards | 1 version deleted; 0 / 0 left |
+| `quit` | **32/32** | tray Quit (real mouse) at 22 %: exit 0 in **1.4 s**, never shown as finished; only the anchor; **no open multipart upload** (aborted on quit); relaunch fine | 1 version deleted; 0 / 0 left |
+
+Write-key requests exactly as planned (multipart 13, cancel 10, retry 16,
+leave 10, quit 10; nothing refused by the run scope, every DELETE by
+version id). The app's own requests were not recorded at Backblaze (the
+release binary has no recorder; counts known from the rehearsals); the
+outcomes above come from the provider's listings. Credential Manager and
+the account database were as before after each run; local files removed.
+The 72 MiB multipart file reached Backblaze in about 5 s (fast link), so
+the 20 % triggers fired with a few seconds to spare.
+
+**Not covered here:** needs-inspection and a refused abort (need a
+misbehaving provider; local only); hiding during a batch; Linux; Windows
+10; Hetzner. Each scenario ran once.
+
+### Upload lifecycle tests at Backblaze: prepared (2026-11-13)
+
+Uncommitted tree on `4d9d9a7`. **Prepared and rehearsed locally only;
+nothing was sent to Backblaze or any other provider here.** (Run
+afterwards: [above](#upload-lifecycle-at-backblaze-on-native-windows-11-2026-11-13).) New
+`tests\desktop\windows-cloud-ui.ps1 -Mode b2-lifecycle -Scenario
+multipart|cancel|retry|leave|quit` (one scenario per run, each under its
+own prefix, release binary with its release settings) and its provider
+side in `cloud/integration/upload/lifecycle.rs` (prepare, probe, verify,
+cleanup; design, requests and safeguards:
+[testing.md](../development/testing.md#upload-lifecycle-through-the-windows-dashboard-at-backblaze)).
+Production code is unchanged.
+
+Why: the local UI tests never completed a multipart upload with the
+release settings (64 MiB threshold, 16 MiB parts; every 72 MiB UI file
+was cancelled, refused or quit), and the Backblaze batch test uses 6 MiB /
+5 MiB parts, so the release binary's multipart path had not completed
+anywhere through the UI.
+
+Native Windows 11 25H2 build 26200.9711, real desktop, copy
+`C:\dev\sotyware-lifecycle`, release binary SHA-256
+`5e364f2a…94f5e1f`, rehearsals against the in-process s3s-fs server at
+2 MiB/s (one run each, after two fixes to the driver's own checks):
+
+| Scenario | Checks | App requests (by operation) |
+| --- | --- | --- |
+| `multipart` | **38/38** (one open multipart upload seen while sending; 5 parts; Uploaded and verified; percentages 0 → 100, never down) | `HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 4, `CreateMultipartUpload` 1, `UploadPart` 5, `CompleteMultipartUpload` 1 |
+| `cancel` | **35/35** (cancelled at 20 %, nothing stored, no multipart upload left) | `HeadBucket` 1, `ListObjectsV2` 4, `HeadObject` 2, `CreateMultipartUpload` 1, `UploadPart` 2, `AbortMultipartUpload` 1 |
+| `retry` | **38/38, twice** (locked file failed, only it retried; the two uploaded files and the skipped anchor not sent again) | `HeadBucket` 1, `ListObjectsV2` 4, `HeadObject` 11, `PutObject` 3 |
+| `leave` | **34/34** (Back to accounts at 10 %, nothing stored, `b-away.txt` never started, slot free) | `HeadBucket` 1, `ListObjectsV2` 5, `HeadObject` 2, `PutObject` 1 (cut off) |
+| `quit` | **35/35** (tray Quit with the real mouse at 20 %, exit 0 in 1.3 s, never shown as finished, aborted, relaunch fine) | as `cancel`, `ListObjectsV2` 5 |
+
+The first `multipart` run failed 2 checks, both in the driver: it counted
+s3s-fs's two files per open upload as two uploads, and expected 3
+`HeadObject` where the adapter sends 4 (it checks the key again just
+before `CompleteMultipartUpload`). Both fixed; the app was not changed.
+Regression: `-Mode b2-upload -Rehearse` 41/41; the gates (no or wrong
+`-ConfirmB2Lifecycle`, no `-Scenario`, `-Scenario` with another mode)
+exit 2 before anything runs; the four opt-in Rust tests refuse without
+`SOTYWARE_IT_B2_UPLOAD_CONFIRM` ("nothing was sent").
+`check-ps-variables.ps1` and the PowerShell parser: clean. Windows: `npm
+run check`, release build, fmt, clippy, `test:headless` (Vitest 135, Rust
+314 passed, 25 ignored). WSL2: fmt, clippy, `npm run check`,
+`test:headless` (Vitest 135, Rust 324 passed, 25 ignored; 5 new unit tests
+in `lifecycle.rs`). The full local `-Mode upload` was not rerun (its code
+paths were not changed). Not run: anything at Backblaze, Linux, Windows 10.
+
 ### Dashboard upload at Backblaze on native Windows 11: rerun passed (2026-11-13)
 
 **`windows-cloud-ui.ps1 -Mode b2-upload` passed, 38/38, once**, after

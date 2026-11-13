@@ -416,8 +416,11 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   and **through the native Windows 11 dashboard and multi-file dialog once**
   (2026-11-13, one batch of four files with one existing object;
   [status](status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13));
-  cancel, retry, multipart and the browser lifecycle through the UI only
-  against the local server; **never at
+  then multipart (release settings), cancel, retry, leaving the browser
+  and quit once each through the same dashboard
+  ([status](status.md#upload-lifecycle-at-backblaze-on-native-windows-11-2026-11-13));
+  needs-inspection and a refused abort only against the local server;
+  hiding during a batch not at a provider; **never at
   Hetzner**, never on Windows 10, a real Linux desktop, Wayland or with
   the XDG portal's dialog. At most 100 files per batch, one batch at a time, the
   files one after another; a skipped file (existing object, duplicate name,
