@@ -51,6 +51,9 @@ use super::provider::{SdkChecksums, TransferLimits};
 
 mod upload;
 
+#[cfg(test)]
+mod hook_assumptions;
+
 pub use upload::{AbortOutcome, RemoteOutcome, UploadError, UploadProgress, UploadStage};
 
 /// User metadata key holding the hex SHA-256 of the object's content.
@@ -739,6 +742,52 @@ impl fmt::Debug for S3Store {
 impl S3Store {
     /// Builds the client. Sends no request.
     pub fn new(account: ResolvedAccount, credentials: Credentials, options: ClientOptions) -> Self {
+        let config = Self::config(&account, &credentials, &options);
+        // A recorder build with recording switched on (ADR-024): one
+        // read-only interceptor; it changes nothing the client does.
+        #[cfg(feature = "request-recorder")]
+        let config = match super::recorder::installed() {
+            Some(rec) => config.interceptor(rec.interceptor_for(&account)),
+            None => config,
+        };
+        Self::from_config(config, account, credentials, options)
+    }
+
+    /// Like [`Self::new`], recorded by `rec` instead of the process's
+    /// recorder (the recorder's own tests).
+    #[cfg(all(test, feature = "request-recorder"))]
+    pub(crate) fn new_recorded(
+        account: ResolvedAccount,
+        credentials: Credentials,
+        options: ClientOptions,
+        rec: &std::sync::Arc<super::recorder::Recorder>,
+    ) -> Self {
+        let config = Self::config(&account, &credentials, &options)
+            .interceptor(rec.interceptor_for(&account));
+        Self::from_config(config, account, credentials, options)
+    }
+
+    fn from_config(
+        config: aws_sdk_s3::config::Builder,
+        account: ResolvedAccount,
+        credentials: Credentials,
+        options: ClientOptions,
+    ) -> Self {
+        Self {
+            client: Client::from_conf(config.build()),
+            transfers: Semaphore::new(usize::from(account.max_concurrent_transfers)),
+            access_key_id: credentials.access_key_id,
+            account,
+            options,
+        }
+    }
+
+    /// The client settings of an account.
+    fn config(
+        account: &ResolvedAccount,
+        credentials: &Credentials,
+        options: &ClientOptions,
+    ) -> aws_sdk_s3::config::Builder {
         let checksums = account.profile.sdk_checksums;
         let (request_checksums, response_checksums) = match checksums {
             SdkChecksums::WhenSupported => (
@@ -756,7 +805,7 @@ impl S3Store {
                 tls::rustls_provider::CryptoMode::Ring,
             ))
             .build_https();
-        let config = aws_sdk_s3::Config::builder()
+        aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
             .http_client(http)
             .region(Region::new(account.region.clone()))
@@ -778,14 +827,6 @@ impl S3Store {
                     .build(),
             )
             .retry_config(RetryConfig::standard().with_max_attempts(options.max_attempts))
-            .build();
-        Self {
-            client: Client::from_conf(config),
-            transfers: Semaphore::new(usize::from(account.max_concurrent_transfers)),
-            access_key_id: credentials.access_key_id,
-            account,
-            options,
-        }
     }
 
     pub fn account_id(&self) -> &str {

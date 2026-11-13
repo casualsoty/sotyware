@@ -10,9 +10,11 @@
     "tauri": "tauri",
     "test:frontend": "vitest run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
-    "test:headless": "npm run check:rfd-patch && npm run test:frontend && npm run test:rust",
+    "test:headless": "npm run check:rfd-patch && npm run check:release-binary && npm run test:frontend && npm run test:rust",
     "check:rfd-patch": "node scripts/check-rfd-patch.mjs",
     "test:rfd-patch-guard": "node --test scripts/check-rfd-patch.test.mjs",
+    "check:release-binary": "node scripts/check-release-binary.mjs --manifest",
+    "test:release-binary-guard": "node --test scripts/check-release-binary.test.mjs",
     "test:desktop:virtual": "bash tests/desktop/virtual.sh",
     "test:desktop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/windows.ps1",
     "test:desktop:windows:isolated": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/windows-isolated.ps1"

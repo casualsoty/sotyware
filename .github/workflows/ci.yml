@@ -103,6 +103,12 @@ jobs:
       # The guard's own tests, against broken temporary copies of src-tauri.
       - name: test the rfd patch guard
         run: npm run test:rfd-patch-guard
+      # The request recorder (ADR-024) stays off by default, and its
+      # packaging guard keeps working.
+      - name: check the request recorder is off by default
+        run: npm run check:release-binary
+      - name: test the release binary guard
+        run: npm run test:release-binary-guard
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --check

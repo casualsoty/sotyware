@@ -1088,3 +1088,53 @@ fn upload_errors_say_what_may_be_left_at_the_provider() {
     };
     assert!(e.to_string().contains("may remain"));
 }
+
+/// Probe, not a regression test (opt-in, prints what happens): cancels a
+/// multipart upload just after the HTTP stack took the last byte of part 2,
+/// behind a slow link. Dropping the request closes the socket gracefully,
+/// so the bytes already in the kernel's send buffer still reach the server,
+/// while the abort goes out on a new connection and can arrive first. If
+/// the server stores the part after the abort (s3s-fs does; AWS documents
+/// that an in-progress part "might or might not succeed"), a part of an
+/// aborted upload remains. Run:
+/// `cargo test --lib part_landing_after_the_abort -- --ignored --nocapture`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "probe of a timing race; prints its findings"]
+async fn probe_a_part_landing_after_the_abort() {
+    let mut left = 0;
+    let trials = 3;
+    for trial in 0..trials {
+        let server = server().await;
+        let link = ThrottledLink::start(&server.endpoint, Pace::BytesPerSecond(1024 * 1024)).await;
+        let s = store_with(&server, &link.endpoint, options());
+        let dir = TempDir::new("up-late-part");
+        let src = dir.file("src", 12 * MIB, 50 + trial as u8);
+        let control = Arc::new(TransferControl::new());
+        let weak = Arc::downgrade(&control);
+        let started = Instant::now();
+        let result = s
+            .upload(BUCKET, "late.bin", &src, &control, &mut |p| {
+                if p.stage == UploadStage::Sending
+                    && p.bytes >= 10 * MIB as u64
+                    && let Some(c) = weak.upgrade()
+                {
+                    c.cancel();
+                }
+            })
+            .await;
+        let returned = started.elapsed();
+        let e = expect_err(result);
+        // Let the link deliver whatever was already sent.
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let files = server.open_multipart_files();
+        let ops = server.ops();
+        println!(
+            "trial {trial}: returned after {returned:?} with {:?}/{:?}; ops {:?}; multipart files left after 8 s: {files:?}",
+            e.error, e.remote, ops
+        );
+        if !files.is_empty() {
+            left += 1;
+        }
+    }
+    println!("a part of an aborted upload remained in {left} of {trials} trials");
+}

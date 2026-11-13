@@ -78,6 +78,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `tokio` (`fs`, `io-util`, `sync`, `rt`, `time`; already in the tree through Tauri) | `1` | 1.54.1 |
 | `http-body` (the upload request body's `Body` trait, ADR-021; already in the tree through `aws-sdk-s3` and hyper) | `1` | 1.1.0 |
 | `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
+| `serde_json`, `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; all already in the tree; the two SDK crates also dev-only for `hook_assumptions.rs`) | `1`, `1`, `1` | 1.0.154, 1.11.3, 1.4.3 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
 | `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
@@ -176,6 +177,15 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust),
   [ADR-020](docs/architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel),
   [ADR-022](docs/architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
+- **Request recorder (test builds only):** the off-by-default Cargo
+  feature `request-recorder` adds `src-tauri/src/cloud/recorder.rs`, one
+  read-only SDK interceptor per `S3Store` (installed in `S3Store::new`)
+  that records the app's own S3 requests, redacted, when the
+  `SOTYWARE_REQUEST_RECORD_*` variables are set. Built only into
+  `--target-dir target/recorder` (build.rs), never packaged
+  (`scripts/check-release-binary.mjs`, `beforeBundleCommand`)
+  ([ADR-024](docs/architecture/decisions.md#adr-024-an-opt-in-request-recorder-observes-the-apps-own-s3-requests-through-an-sdk-interceptor-compiled-only-into-a-test-build),
+  [cloud-storage.md](docs/architecture/cloud-storage.md#request-recorder)).
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
   (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`,

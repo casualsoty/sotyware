@@ -1667,3 +1667,78 @@ fn local_paths_never_appear_in_a_serialized_file() {
     .unwrap();
     assert!(!json.contains("/home/someone"), "{json}");
 }
+
+/// Quitting during a multipart upload with the request recorder on
+/// (ADR-024), in the order `RunEvent::Exit` uses: the upload shutdown
+/// first, then the recorder. The cancelled part is recorded as dropped, the
+/// abort as its own completed operation, and the recording is complete.
+#[cfg(feature = "request-recorder")]
+#[tokio::test(flavor = "multi_thread")]
+async fn quitting_during_a_multipart_upload_is_recorded_with_its_abort() {
+    use super::super::recorder::{Recorder, Settings};
+    use super::super::s3::S3Store;
+    let s = setup().await;
+    let out = TempDir::new("upload-quit-recorded");
+    let settings = Settings {
+        dir: out.0.clone(),
+        run: "quit-recorded-0001".into(),
+        scope: "in/".into(),
+        account: Some("local".into()),
+    };
+    let rec = Recorder::start(&settings).unwrap();
+    let store = S3Store::new_recorded(
+        s.server.resolved("local", &[BUCKET]),
+        s.server.credentials(),
+        options(),
+        &rec,
+    );
+    s.accounts.set_connected("local", Arc::new(store));
+    let big = s.dir.file("big.bin", 11 * MIB, 1);
+    let entered = Arc::new(Latch::default());
+    {
+        let entered = Arc::clone(&entered);
+        s.uploads.file_control(move |_, control| {
+            let entered = Arc::clone(&entered);
+            control.during_send(2, move || entered.open());
+        });
+    }
+    let (batch, _) = s.start("in/", vec![big]).await;
+    assert!(entered.wait(Duration::from_secs(20)));
+    let uploads = Arc::clone(&s.uploads);
+    tokio::task::spawn_blocking(move || uploads.shutdown(SHUTDOWN_WAIT))
+        .await
+        .unwrap();
+    let health = rec.finish(Duration::from_secs(5));
+    assert!(health.complete(), "{health:?}");
+    assert_eq!(s.server.open_multipart_files(), Vec::<String>::new());
+    assert_eq!(s.of_finished(&batch).unwrap().state, BatchState::Cancelled);
+    let text = fs::read_to_string(settings.file(std::process::id())).unwrap();
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let named = |name: &str, kind: &str| {
+        lines
+            .iter()
+            .filter(|e| e["name"] == name && e["kind"] == kind)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let dropped = named("UploadPart", "op-dropped");
+    assert_eq!(dropped.len(), 1, "{text}");
+    assert_eq!(dropped[0]["in_flight"], true);
+    let abort = named("AbortMultipartUpload", "op-end");
+    assert_eq!(abort.len(), 1, "{text}");
+    assert_eq!(abort[0]["outcome"], "ok");
+    assert!(named("CompleteMultipartUpload", "op-start").is_empty());
+    assert!(dropped[0]["seq"].as_u64() < abort[0]["seq"].as_u64());
+    let end = lines.last().unwrap();
+    assert_eq!(end["kind"], "end");
+    assert_eq!(end["accounting"], "complete");
+    // Every request the server saw was recorded as sent.
+    let sent = lines
+        .iter()
+        .filter(|e| e["kind"] == "attempt-start")
+        .count();
+    assert_eq!(sent, s.server.ops().len(), "{:?}", s.server.ops());
+}

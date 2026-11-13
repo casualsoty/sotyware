@@ -130,11 +130,11 @@ exist**.
 src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), CloudUpload.svelte (upload panel), cloud.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
-scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd
+scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd; check-release-binary.mjs (+ .test.mjs): no request recorder by default or in a package
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing, downloads and uploads: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
@@ -197,6 +197,25 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Request recorder** (2026-11-13, uncommitted on `1e50821`, ADR-024):
+  opt-in Cargo feature `request-recorder` (off by default, only into
+  `--target-dir target/recorder`, refused by the packaging guard
+  `scripts/check-release-binary.mjs` in `beforeBundleCommand`; a packaged
+  recorder binary never records) records the app's own S3 requests when
+  `SOTYWARE_REQUEST_RECORD_DIR`, `_RUN` and `_SCOPE` are set: one
+  read-only interceptor per `S3Store`, JSON Lines per run and process,
+  redacted, bounded queue + writer thread
+  ([cloud-storage.md](architecture/cloud-storage.md#request-recorder)).
+  Local only: default `cargo test` 330 + 25 ignored, feature build 357
+  (also with every store recorded); Linux virtual display `cloud-ui.sh
+  download upload` with the recorder **77/77, 3 runs**, recorder = server
+  (21 = 21, 92 = 92 app requests); native Windows 11 (recorder runs end
+  with the tray Quit): download 40/40 (20 = 20; one earlier run had 5
+  save-dialog failures), upload 78/78 (104 = 104), `b2-lifecycle
+  -Rehearse` multipart/cancel/retry/leave all passed, quit 37/2 (a part
+  file left by an s3s-fs race the recording explains) then 39/39.
+  **Never run at a real provider.**
+  [status.md](status/status.md#request-recorder-2026-11-13).
 - Upload **lifecycle at Backblaze through the Windows dashboard**
   (2026-11-13, after approval): **all five scenarios passed once each**
   (multipart 35/35: one open multipart upload seen, 5 parts completed,
@@ -630,7 +649,10 @@ dialog-plugin update that bypasses the patch brings the abort back;
 ADR-023; `npm run check:rfd-patch` fails then, in `test:headless` and
 CI); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
-them); quitting can take up to 35 s if an abort hangs.
+them); quitting can take up to 35 s if an abort hangs; a part whose bytes
+were already sent when cancelling or quitting dropped it can land after
+the abort (seen against the local server: a part left while sotyware said
+nothing was stored; unchecked at real providers).
 Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps

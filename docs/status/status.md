@@ -127,6 +127,97 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Request recorder (2026-11-13)
+
+Uncommitted tree on `1e50821` (ADR-024 implemented; test code, a guard
+script and docs; no change to upload, download, browse or account
+behaviour). **No real provider was contacted.** WSL2 Ubuntu 24.04 unless
+noted.
+
+- **SDK assumptions first** (`cloud/s3/hook_assumptions.rs`, 6 tests,
+  locked `aws-smithy-runtime` 1.10.0 / `-api` 1.11.3, in-process server):
+  both critical ones hold (state in `interceptor_state()` is dropped with
+  a dropped future, its `Drop` runs without `read_after_execution`; the
+  client interceptor runs for uploads with their per-operation override);
+  hook order for success, a 403, a 500-then-404 retry and a drop as
+  expected; typed input at `read_before_execution`; status and attempt
+  numbers readable. One assumption was wrong: the operation `Metadata` is
+  not there yet at `read_before_execution` (deviation in ADR-024).
+- **Headless:** `cargo test` (default build, no recorder) **330 passed, 25
+  ignored** (324 before + 6 assumption tests); `cargo test --features
+  request-recorder --target-dir target/recorder` **357 passed** (27 new:
+  26 in `cloud/recorder/tests.rs`, 1 quit test in `cloud/upload/tests.rs`;
+  the recorder tests 3 runs in a row); the same with
+  `SOTYWARE_RECORDER_TEST_ALL=1` (every store of the test process
+  recorded) **357 passed**; `cargo fmt --check` and `cargo clippy
+  --all-targets -- -D warnings` clean in both configurations;
+  `npm run check:release-binary` ok; its self-test 13/13.
+- **Builds:** normal release (`--no-bundle`) SHA-256 `1e4140a3…6d66644`
+  contains none of `sotyware-request-recorder`, `request-recorder`,
+  `SOTYWARE_REQUEST_RECORD`; the recorder release build
+  (`target/recorder`) `2438ff77…227e23b` contains each once and is refused
+  by `check-release-binary.mjs`. `build.rs` refuses the feature in the
+  default target directory. Real `tauri build`: `--bundles deb --features
+  request-recorder -- --target-dir target/recorder` **refused** in
+  `beforeBundleCommand` before Tauri patched or bundled anything; a normal
+  `--bundles deb` passed the guard and bundled (that run overwrote the
+  existing `target/release/bundle/deb/*.deb` build output; the normal
+  binary was relinked afterwards, byte-identical, `1e4140a3…`). A copy of
+  the recorder binary patched the way Tauri marks a deb bundle refused to
+  record (no file; stderr "this binary was packaged"); the unpatched copy
+  recorded, and when killed with SIGTERM left only the `start` line
+  (incomplete, as designed).
+- **Linux virtual display** (`cloud-ui.sh download upload` with
+  `SOTYWARE_CLOUD_UI_RECORD=1` and the recorder build, native GTK dialogs,
+  local servers): **77/77, 3 runs**. Recorder versus server, every run the
+  same: download 1 file, 17 operations, **21 attempts sent = 21 app
+  requests on the server** (ListObjectsV2 8, GetObject 13), 15 answered;
+  upload 1 file, 92 operations (5 dropped), **92 sent = 92 app requests**
+  (HeadObject 52, PutObject 16, ListObjectsV2 10, UploadPart 6,
+  AbortMultipartUpload 4, CreateMultipartUpload 3, GetObject 1), 86
+  answered; the helper's own 245 requests (its own key) were not in the
+  recording; every recording complete, no key or secret in it.
+  Regression with the normal binary: **75/75**, server counts identical to
+  the recorder runs.
+- **Native Windows 11 25H2** (copy `C:\dev\sotyware-recorder`, recorder
+  build SHA-256 `55ed7cf1…70be75`, real desktop, local servers,
+  `windows-cloud-ui.ps1 -RecordRequests`; after the user's approval, since
+  a recording run ends with the tray Quit, real mouse):
+  - First two `-Mode download` runs, before the tray-Quit ending: run 1
+    **28 passed, 11 failed** (the save dialog's file name step failed while
+    the Linux runs loaded the machine, the rest cascaded); run 2 all 36 UI
+    checks passed, **3 failed** because the driver killed the app
+    (`Stop-Process`), so the recording had no `end` line and was reported
+    as "count unknown", not as a match. The driver now ends a recording run
+    with the tray Quit.
+  - With the tray Quit: `download` **35 passed, 5 failed** (the save dialog
+    of the slow download stayed open, the same step that passed before;
+    recorder complete, **12 = 12** app requests), rerun **40/40**
+    (**20 = 20**); `upload` **78/78**, two recording files (the mode quits
+    and relaunches), **104 = 104** app requests (HeadObject 59, PutObject
+    18, ListObjectsV2 12, UploadPart 6, AbortMultipartUpload 4,
+    CreateMultipartUpload 3, HeadBucket 1, GetObject 1), the helper's own
+    293 requests excluded.
+  - `b2-lifecycle -Rehearse` (the scenarios of the Backblaze lifecycle
+    run, local server): multipart **42/42** (17 = 17), cancel **39/39**
+    (11 = 11, 1 dropped), retry **42/42** (19 = 19), leave **38/38** (9 = 9,
+    1 dropped), quit **37 passed, 2 failed** then rerun **39/39** (12 = 12
+    both times). The failed quit run: the recording shows part 2 in flight
+    for 14.5 s (part 1 took 14.7 s) when quitting dropped it, and the abort
+    answered 204 3 ms later; s3s-fs then still wrote the part's file from
+    the bytes the throttled link had buffered, so a part file of the
+    aborted upload remained. The app sent exactly the expected requests;
+    this is the "received or not: unknown" case of `op-dropped`, here a
+    race in the local test setup (whether a real provider can keep a part
+    that arrives after the abort was not checked). Reproduced on WSL2 the
+    same day by the opt-in probe `probe_a_part_landing_after_the_abort`:
+    1 of 3 trials left a part file while sotyware returned
+    `NothingStored`
+    ([limitations.md](limitations.md#a-part-can-land-after-the-multipart-abort)).
+  - Every Windows recording without the kill: complete, no key, secret or
+    bucket name; every comparison: every answered attempt reached the
+    server, and the server saw nothing the recorder did not see sent.
+
 ### Upload lifecycle at Backblaze on native Windows 11 (2026-11-13)
 
 Uncommitted tree on `4d9d9a7` (the prepared lifecycle tests below), after

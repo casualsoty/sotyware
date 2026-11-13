@@ -34,10 +34,18 @@ pub struct TestServer {
     /// The S3 operation names (`HeadBucket`, `ListBuckets`, …) of every
     /// authenticated request, in order.
     pub operations: Arc<Mutex<Vec<String>>>,
+    /// The same operations with the access key that signed each, so a
+    /// desktop test can tell the app's requests from the helper's own
+    /// ([`HELPER_KEY_ID`]).
+    keyed: Arc<Mutex<Vec<(String, String)>>>,
     injections: Arc<Mutex<Vec<Injection>>>,
     root: PathBuf,
     task: JoinHandle<()>,
 }
+
+/// The second key every [`TestServer`] accepts ([`TestServer::helper_credentials`]).
+pub const HELPER_KEY_ID: &str = "e2eHelperKey0000000001";
+const HELPER_SECRET: &str = "e2e-Helper-Secret-0123456789";
 
 /// What an injected fault does to a matching request, before the server
 /// handles it (and before it reads the request body).
@@ -78,6 +86,7 @@ fn part_number(query: Option<&str>) -> Option<u32> {
 struct Access {
     denied: Vec<&'static str>,
     operations: Arc<Mutex<Vec<String>>>,
+    keyed: Arc<Mutex<Vec<(String, String)>>>,
     injections: Arc<Mutex<Vec<Injection>>>,
 }
 
@@ -97,6 +106,10 @@ impl S3Access for Access {
         let op = cx.s3_op().name().to_owned();
         let part = part_number(cx.uri().query());
         let signed = cx.credentials().is_some();
+        let key = cx
+            .credentials()
+            .map(|c| c.access_key.clone())
+            .unwrap_or_default();
         Box::pin(async move {
             if !signed {
                 return Err(s3s::s3_error!(AccessDenied, "Signature is required"));
@@ -105,7 +118,8 @@ impl S3Access for Access {
                 Some(n) if op == "UploadPart" => format!("{op}#{n}"),
                 _ => op.clone(),
             };
-            self.operations.lock().unwrap().push(recorded);
+            self.operations.lock().unwrap().push(recorded.clone());
+            self.keyed.lock().unwrap().push((key, recorded));
             if self.denied.contains(&op.as_str()) {
                 return Err(s3s::s3_error!(AccessDenied, "not entitled"));
             }
@@ -590,12 +604,16 @@ impl TestServer {
         denied: &[&'static str],
     ) -> Self {
         let mut builder = S3ServiceBuilder::new(backend);
-        builder.set_auth(SimpleAuth::from_single(access_key_id, secret));
+        let mut auth = SimpleAuth::from_single(access_key_id, secret);
+        auth.register(HELPER_KEY_ID.to_owned(), HELPER_SECRET.into());
+        builder.set_auth(auth);
         let operations = Arc::new(Mutex::new(Vec::new()));
+        let keyed = Arc::new(Mutex::new(Vec::new()));
         let injections = Arc::new(Mutex::new(Vec::new()));
         builder.set_access(Access {
             denied: denied.to_vec(),
             operations: Arc::clone(&operations),
+            keyed: Arc::clone(&keyed),
             injections: Arc::clone(&injections),
         });
         let service = builder.build();
@@ -620,6 +638,7 @@ impl TestServer {
             access_key_id: access_key_id.into(),
             secret: secret.into(),
             operations,
+            keyed,
             injections,
             root,
             task,
@@ -641,6 +660,26 @@ impl TestServer {
     /// The operations requested so far.
     pub fn ops(&self) -> Vec<String> {
         self.operations.lock().unwrap().clone()
+    }
+
+    /// The operations signed with `access_key_id`.
+    pub fn ops_of(&self, access_key_id: &str) -> Vec<String> {
+        self.keyed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k == access_key_id)
+            .map(|(_, op)| op.clone())
+            .collect()
+    }
+
+    /// The second key every server accepts, for a desktop test helper's own
+    /// requests (they are then never counted as the app's).
+    pub fn helper_credentials(&self) -> Credentials {
+        Credentials {
+            access_key_id: HELPER_KEY_ID.into(),
+            secret_access_key: Secret::new(HELPER_SECRET.to_owned()),
+        }
     }
 
     /// Files `s3s-fs` keeps for multipart uploads that were neither
@@ -1005,6 +1044,7 @@ async fn serve_objects_for_ui() {
             .all(|op| matches!(op.as_str(), "GetObject" | "ListObjectsV2" | "HeadBucket")),
         "downloading must only read: {ops:?}"
     );
+    compare_recordings_if_asked(&server, &server.access_key_id.clone());
 }
 
 pub const UI_UPLOAD_BUCKET: &str = "upload-bucket";
@@ -1118,9 +1158,11 @@ async fn serve_uploads_for_ui() {
         &[UI_UPLOAD_BUCKET],
     )
     .await;
+    // The helper's own requests (seeding, `dump`, `delete`) are signed with
+    // the helper key, so they are never counted as the app's.
     let store = S3Store::new(
         server.resolved("helper", &[UI_UPLOAD_BUCKET]),
-        server.credentials(),
+        server.helper_credentials(),
         ClientOptions::default(),
     );
     let dir = TempDir::new("ui-upload-seed");
@@ -1235,6 +1277,7 @@ async fn serve_uploads_for_ui() {
         left["multipart"]
     );
     drop(link);
+    compare_recordings_if_asked(&server, "e2eUploadKey0000000001");
     assert!(
         counts.keys().all(|op| matches!(
             op.as_str(),
@@ -1250,4 +1293,172 @@ async fn serve_uploads_for_ui() {
         )),
         "the app must only list, read and upload: {counts:?}"
     );
+}
+
+/// With `SOTYWARE_UI_RECORDING_DIR` set (a desktop test run with a
+/// request-recorder build, ADR-024): compares the app's recordings in that
+/// folder with the requests this server saw signed with the app's key, and
+/// fails unless they agree ([`check_recordings`]).
+fn compare_recordings_if_asked(server: &TestServer, app_key: &str) {
+    let Ok(dir) = std::env::var("SOTYWARE_UI_RECORDING_DIR") else {
+        return;
+    };
+    let app_ops = server.ops_of(app_key);
+    let helper_ops = server.ops_of(HELPER_KEY_ID).len();
+    match check_recordings(
+        Path::new(&dir),
+        &app_ops,
+        &[app_key, &server.secret, HELPER_KEY_ID, HELPER_SECRET],
+    ) {
+        Ok(report) => {
+            for line in report {
+                println!("recorder: {line}");
+            }
+            println!(
+                "recorder: the helper's own {helper_ops} requests (helper key) are not in the recording"
+            );
+        }
+        Err(e) => panic!("recorder: MISMATCH: {e}"),
+    }
+}
+
+/// Checks the request recordings (`*.requests.jsonl`) in `dir` against the
+/// requests a server saw from the app (`server_ops`, as `UploadPart#2`):
+/// every file is complete (start, end with `accounting: complete`, every
+/// line JSON, sequence numbers without gaps), every attempt that got an
+/// answer is on the server, the server saw nothing the recorder did not
+/// see being sent, and none of `secrets` appears. Returns report lines.
+pub fn check_recordings(
+    dir: &Path,
+    server_ops: &[String],
+    secrets: &[&str],
+) -> Result<Vec<String>, String> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.to_string_lossy().ends_with(".requests.jsonl"))
+        .collect();
+    files.sort();
+    if files.is_empty() {
+        return Err("no recording: the count of the app's requests is unknown".into());
+    }
+    let mut sent: Vec<String> = Vec::new();
+    let mut answered: Vec<String> = Vec::new();
+    let mut ops = 0usize;
+    let mut dropped = 0usize;
+    let mut report = Vec::new();
+    for file in &files {
+        let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        for secret in secrets {
+            if text.contains(secret) {
+                return Err(format!("{} contains a credential", file.display()));
+            }
+        }
+        if !text.ends_with('\n') {
+            return Err(format!(
+                "{}: partial last line (incomplete)",
+                file.display()
+            ));
+        }
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("{}: not JSON Lines: {e}", file.display()))?;
+        let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
+            return Err(format!("{}: empty", file.display()));
+        };
+        if first["kind"] != "start" {
+            return Err(format!("{}: no start line", file.display()));
+        }
+        if last["kind"] != "end" || last["accounting"] != "complete" {
+            return Err(format!(
+                "{}: incomplete recording (count unknown): {last}",
+                file.display()
+            ));
+        }
+        let mut parts: HashMap<u64, u64> = HashMap::new();
+        let mut started: Vec<(u64, u64, String)> = Vec::new();
+        let mut expected = 0u64;
+        for e in &lines[1..lines.len() - 1] {
+            if e["seq"].as_u64() != Some(expected) {
+                return Err(format!("{}: sequence gap at {e}", file.display()));
+            }
+            expected += 1;
+            let op = e["op"].as_u64().unwrap_or(u64::MAX);
+            let name = e["name"].as_str().unwrap_or("?").to_owned();
+            match e["kind"].as_str().unwrap_or("") {
+                "op-start" => {
+                    ops += 1;
+                    if let Some(n) = e["part"].as_u64() {
+                        parts.insert(op, n);
+                    }
+                }
+                "op-dropped" => dropped += 1,
+                "attempt-start" => {
+                    let label = match parts.get(&op) {
+                        Some(n) => format!("{name}#{n}"),
+                        None => name,
+                    };
+                    started.push((op, e["attempt"].as_u64().unwrap_or(0), label.clone()));
+                    sent.push(label);
+                }
+                "attempt-end" if e.get("status").is_some() => {
+                    let attempt = e["attempt"].as_u64().unwrap_or(0);
+                    if let Some((_, _, label)) =
+                        started.iter().find(|(o, a, _)| *o == op && *a == attempt)
+                    {
+                        answered.push(label.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        report.push(format!(
+            "{}: complete, {} events",
+            file.file_name().unwrap_or_default().to_string_lossy(),
+            expected
+        ));
+    }
+    let mut server = server_ops.to_vec();
+    for a in &answered {
+        let i = server.iter().position(|s| s == a).ok_or_else(|| {
+            format!("{a} was answered but is not among the server's app requests")
+        })?;
+        server.remove(i);
+    }
+    let mut unanswered = sent.clone();
+    for a in &answered {
+        if let Some(i) = unanswered.iter().position(|s| s == a) {
+            unanswered.remove(i);
+        }
+    }
+    for s in &server {
+        let i = unanswered.iter().position(|u| u == s).ok_or_else(|| {
+            format!("the server saw {s} from the app, which the recorder did not see sent")
+        })?;
+        unanswered.remove(i);
+    }
+    let count = |list: &[String]| {
+        let mut m: BTreeMap<String, usize> = BTreeMap::new();
+        for op in list {
+            *m.entry(op.split('#').next().unwrap_or(op).to_owned())
+                .or_default() += 1;
+        }
+        m
+    };
+    report.push(format!(
+        "{} file(s), {ops} operations ({dropped} dropped), {} attempts sent, {} answered; server: {} app requests",
+        files.len(),
+        sent.len(),
+        answered.len(),
+        server_ops.len()
+    ));
+    report.push(format!("sent by operation: {:?}", count(&sent)));
+    report.push(format!("server by operation: {:?}", count(server_ops)));
+    report.push(
+        "every answered attempt reached the server; the server saw nothing the recorder did not see sent"
+            .into(),
+    );
+    Ok(report)
 }

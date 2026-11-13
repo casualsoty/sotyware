@@ -527,6 +527,75 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 - **Dependencies:** `aws-sdk-s3` is held at 1.102.0 by `rust-version = 1.90`;
   `s3s` 0.12 needs the dev-only `digest` release-candidate pin.
 
+### A part can land after the multipart abort
+
+Found 2026-11-13 (native Windows 11 quit rehearsal with the request
+recorder, reproduced on WSL2 by the opt-in probe
+`probe_a_part_landing_after_the_abort` in `cloud/s3/upload/tests.rs`: 1 of
+3 trials). Local server only; no real provider was asked.
+
+- **What happens:** cancelling (or quitting, or leaving the browser) drops
+  the `UploadPart` request in flight. Dropping closes the socket
+  gracefully, so the bytes already in the operating system's send buffer
+  (on a slow link, up to the whole rest of the part) still reach the
+  server. The abort goes out on a new connection and can arrive first. A
+  server that accepts the part anyway stores it after the abort: s3s-fs
+  does (it checks the upload id when a part request starts, and the
+  abort deletes only the files that exist then).
+- **Effect in sotyware:** the upload still returns `NothingStored` and
+  forgets the upload id, so the dashboard says nothing remains while a
+  part may. Nothing retries or checks the abort.
+- **Real providers:** AWS documents exactly this: in-progress part uploads
+  "might or might not succeed" after an abort, so an upload may have to be
+  aborted more than once, checked with ListParts
+  ([AWS AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html)).
+  Backblaze's S3 documentation says nothing about it
+  ([B2 S3 AbortMultipartUpload](https://www.backblaze.com/apidocs/s3-abort-multipart-upload)).
+  Ceph RGW (Hetzner Object Storage) has had abort and orphaned-part
+  races ([Red Hat bug 2008835](https://bugzilla.redhat.com/show_bug.cgi?id=2008835)).
+  Whether Backblaze or Hetzner keep, bill or list such a part is
+  **unchecked**; the five Backblaze lifecycle runs left 0 multipart
+  uploads, but none hit this timing.
+- **Possible fixes (not built; ADR-021 decides cancellation, so a change
+  needs a decision):** (a) after an abort that followed a dropped
+  in-flight part, abort again after a short wait, then check with
+  `ListParts`/`ListMultipartUploads` (the AWS remedy; extra requests;
+  s3s-fs answers a second abort with AccessDenied, so the test server
+  would need to follow S3 more closely); (b) when a part has been handed
+  over completely, wait (bounded) for its response before aborting
+  instead of dropping it (no extra request, cancel can take up to the
+  rest of one part); (c) report `IncompleteParts` instead of
+  `NothingStored` when a part was in flight at the drop, so the user is
+  not told nothing remains. A bucket lifecycle rule that aborts incomplete
+  multipart uploads remains the safety net.
+
+### Request recorder (test builds only, ADR-024)
+
+- Never run against a real provider. Validated only against the
+  in-process server (unit tests, the Linux virtual-display driver and the
+  native Windows 11 driver; details in
+  [status.md](status.md#request-recorder-2026-11-13)).
+- Seen with it (not a recorder defect): a part that lands after the
+  abort, see [below](#a-part-can-land-after-the-multipart-abort).
+- The binary that records is not the shipped binary (one feature more);
+  it proves what the app's code sends, not that a packaged build sends
+  the same.
+- `op-dropped` does not say whether the provider received or completed
+  the request; a `gap`, a missing `end` line or an open operation makes
+  the count unknown. A missing event never proves a request was not sent.
+- A killed or crashed app writes no `end` line. On Windows in tray mode
+  the only orderly exit is the tray Quit (real mouse), so a recording run
+  of the Windows driver moves the mouse once.
+- Connections, TLS, connection reuse, bytes on the wire and provider-side
+  timings are not observable; timings are local.
+- The hook semantics are those of the locked `aws-smithy-runtime` 1.10.0;
+  an SDK update must pass `hook_assumptions.rs` again (it runs in every
+  `cargo test`).
+- The packaging guard reads the `tauri build` command line from the
+  process tree; where that fails it checks every recorder binary at least
+  as new as the normal one, which may refuse a normal bundle next to a
+  newer recorder build (remove `src-tauri/target/recorder` then).
+
 ## General
 
 - **Placeholder icons.** `src-tauri/icons/` contains Tauri's default icons.

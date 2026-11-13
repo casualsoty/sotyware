@@ -8,6 +8,12 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle] [-Exe <path>] [-ExpectSha256 <hex>]
 #   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
 #   b2-lifecycle takes -Scenario multipart|cancel|retry|leave|quit and -Rehearse or -ConfirmB2Lifecycle lifecycle-ui-validation
+#   download, upload, b2-upload and b2-lifecycle also take -RecordRequests: -Exe must be a
+#   request-recorder build (ADR-024, src-tauri\target\recorder\release\sotyware.exe); the app
+#   records its S3 requests into a kept folder under %TEMP%; every recording must be complete and
+#   free of keys, secrets and the bucket name; against the local server they must also agree with
+#   the requests it saw signed with the app's key (the helper's own requests use another key).
+#   It ends the app with the tray Quit (MOVES THE MOUSE once): a killed app writes no end line.
 #
 # -Mode local (default): made-up keys and an endpoint nobody listens on;
 #   contacts no provider. Writes one Credential Manager entry per account it
@@ -151,7 +157,9 @@ param(
   # b2-upload against Backblaze: must be exactly "upload-ui-validation".
   [string]$ConfirmB2Upload = "",
   # Stops before anything if the binary's SHA-256 differs.
-  [string]$ExpectSha256 = ""
+  [string]$ExpectSha256 = "",
+  # The app records its own S3 requests (a request-recorder build only).
+  [switch]$RecordRequests
 )
 if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build -- --no-bundle)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
@@ -164,6 +172,12 @@ if ($Scenario -and -not $IsLc) { "ABORT: -Scenario is only for -Mode b2-lifecycl
 if ($IsLc -and -not $Scenario) { "ABORT: -Mode b2-lifecycle needs -Scenario multipart, cancel, retry, leave or quit (one per run)"; exit 2 }
 if ($IsLc -and -not $Rehearse -and $ConfirmB2Lifecycle -cne "lifecycle-ui-validation") {
   "ABORT: -Mode b2-lifecycle writes to the Backblaze test bucket; add -ConfirmB2Lifecycle lifecycle-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
+}
+if ($RecordRequests) {
+  if ($Mode -notin "download", "upload", "b2-upload", "b2-lifecycle") { "ABORT: -RecordRequests is only for -Mode download, upload, b2-upload and b2-lifecycle"; exit 2 }
+  if (-not [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($Exe)).Contains("sotyware-request-recorder")) {
+    "ABORT: -RecordRequests needs a request-recorder build (see testing.md); $Exe is a normal build"; exit 2
+  }
 }
 if ($Mode -eq "b2-upload" -and -not $Rehearse -and $ConfirmB2Upload -cne "upload-ui-validation") {
   "ABORT: -Mode b2-upload writes to the Backblaze test bucket; add -ConfirmB2Upload upload-ui-validation (or -Rehearse for the local server). Nothing was run."; exit 2
@@ -390,7 +404,7 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 "os: $((Get-CimInstance Win32_OperatingSystem).Caption) $($cv.DisplayVersion) build $($cv.CurrentBuild).$($cv.UBR)"
 "binary: $Exe"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
-if ($Mode -eq "upload" -or ($IsLc -and $Scenario -eq "quit")) {
+if ($Mode -eq "upload" -or ($IsLc -and $Scenario -eq "quit") -or $RecordRequests) {
   # The tray Quit needs real clicks, which reach only the input desktop with
   # a taskbar (as in windows.ps1); stop before starting anything otherwise.
   $inputDesk = [CloudUiW]::DesktopName([CloudUiW]::OpenInputDesktop(0, $false, 0x0001))
@@ -410,6 +424,11 @@ if ($Mode -eq "b2-upload") {
 }
 
 $run = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff")
+if ($RecordRequests) {
+  $RecDir = Join-Path $env:TEMP "sotyware-recording-$Mode-$run"
+  New-Item -ItemType Directory $RecDir | Out-Null
+  "request recorder: the app records into $RecDir (kept afterwards)"
+}
 if ($Mode -eq "b2-upload") {
   # The local files, before anything else (the rehearsal server is seeded
   # with seed\existing.txt; the Backblaze prepare test uploads it). .NET
@@ -507,11 +526,12 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # The rehearsal's bucket holds only the seed, under the run's key.
   if ($Mode -eq "b2-upload") { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}existing.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
   if ($IsLc) { $env:SOTYWARE_UI_UPLOAD_SEED_KEY = "${UiPrefix}anchor.txt"; $env:SOTYWARE_UI_UPLOAD_SEED_FILE = $UiSeed }
+  if ($RecordRequests) { $env:SOTYWARE_UI_RECORDING_DIR = $RecDir }
   $srv = Start-Process cargo -ArgumentList "test", "--quiet", "--lib", "cloud::test_server::$Helper", "--", "--ignored", "--nocapture" `
     -WorkingDirectory (Join-Path $PSScriptRoot "..\..\src-tauri") -NoNewWindow -PassThru -RedirectStandardOutput $SrvOut -RedirectStandardError "$SrvOut.err"
   $null = $srv.Handle  # without a cached handle, ExitCode stays empty after the exit
   Remove-Item Env:SOTYWARE_UI_SERVER_FILE
-  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE, Env:SOTYWARE_UI_UPLOAD_SEED_KEY, Env:SOTYWARE_UI_UPLOAD_SEED_FILE -EA SilentlyContinue
+  Remove-Item Env:SOTYWARE_UI_UPLOAD_RATE, Env:SOTYWARE_UI_UPLOAD_SEED_KEY, Env:SOTYWARE_UI_UPLOAD_SEED_FILE, Env:SOTYWARE_UI_RECORDING_DIR -EA SilentlyContinue
   if (-not (WaitFor { (Test-Path $SrvFile) -and (Get-Content $SrvFile -Raw) } 900)) { "ABORT: the listing server did not start"; Get-Content "$SrvOut.err" -Tail 20; exit 2 }
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
@@ -531,6 +551,15 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Key1 = "e2eKeyIdOne000000000001"; $Secret1 = "e2e-Secret-One-0123456789abcdef"
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
+}
+# Set after the helper server started, so only the app (started from here)
+# records; a later cargo test child ignores them (no recorder in test builds
+# without the feature).
+if ($RecordRequests) {
+  $env:SOTYWARE_REQUEST_RECORD_DIR = $RecDir
+  $env:SOTYWARE_REQUEST_RECORD_RUN = "ui-$Mode-$run"
+  $env:SOTYWARE_REQUEST_RECORD_SCOPE = $(if ($UiPrefix) { $UiPrefix } else { "inbox/" })
+  $env:SOTYWARE_REQUEST_RECORD_ACCOUNT = "sotyware-e2e-$run"
 }
 $script:redact = @(@($Secret1, "<secret>"), @($Secret2, "<secret2>"), @($Key1, "<keyID>"), @($Key2, "<keyID2>"), @($Bucket, "<bucket>"))
 if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download" -or ($IsB2Up -and -not $Rehearse)) { $script:redact += , @($WriteSecret, "<write-secret>"); $script:redact += , @($WriteKey, "<write-keyID>") }
@@ -1828,6 +1857,14 @@ try {
   Check "cmdkey no longer lists the entry" ((CmdkeyEntries (Target $id)) -eq 0)
   $p.Refresh()
   Check "process still running and responding" (-not $p.HasExited -and $p.Responding)
+  if ($RecordRequests) {
+    # A recording is complete only after an orderly exit (RunEvent::Exit
+    # writes its end line); the finally below would kill the app. In tray
+    # mode the orderly exit is the tray Quit, with the real mouse.
+    $quitSent = TrayQuit
+    $exited = $quitSent -and $p.WaitForExit(45000)
+    Check "request recorder: tray Quit (real mouse) ends the app with exit 0, so it can write its end line" ($exited -and $p.ExitCode -eq 0) "sent=$quitSent $script:why"
+  }
 } finally {
   Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
   $null = WaitFor { (Procs).Count -eq 0 } 5
@@ -1943,6 +1980,23 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB
   $what = if ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
+}
+if ($RecordRequests) {
+  Remove-Item Env:SOTYWARE_REQUEST_RECORD_DIR, Env:SOTYWARE_REQUEST_RECORD_RUN, Env:SOTYWARE_REQUEST_RECORD_SCOPE, Env:SOTYWARE_REQUEST_RECORD_ACCOUNT -EA SilentlyContinue
+  $recFiles = @(Get-ChildItem -LiteralPath $RecDir -Filter "*.requests.jsonl" -EA SilentlyContinue)
+  $recTexts = @($recFiles | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) })
+  $complete = @($recTexts | Where-Object { $l = @($_.TrimEnd("`n") -split "`n")[-1]; $_.EndsWith("`n") -and $l.Contains('"kind":"end"') -and $l.Contains('"accounting":"complete"') })
+  Check "request recorder: $($recFiles.Count) recording file(s), each complete (end line, accounting complete; otherwise the count is unknown)" ($recFiles.Count -gt 0 -and $complete.Count -eq $recFiles.Count) "$RecDir"
+  $leaks = @(@($Key1, $Secret1, $Key2, $Secret2, $Bucket, $WriteKey, $WriteSecret) | Where-Object { $_ } | Where-Object { $needle = $_; @($recTexts | Where-Object { $_.Contains($needle) }).Count -gt 0 })
+  Check "request recorder: no key id, secret or bucket name in the recordings" ($leaks.Count -eq 0) "$($leaks.Count) found"
+  $recSent = @{}
+  foreach ($t in $recTexts) { foreach ($l in ($t -split "`n")) { if ($l.Contains('"kind":"attempt-start"') -and $l -match '"name":"(\w+)"') { $recSent[$Matches[1]] = 1 + [int]$recSent[$Matches[1]] } } }
+  "  recorder: attempts sent by operation: $((@($recSent.Keys | Sort-Object) | ForEach-Object { "$_ $($recSent[$_])" }) -join ', ')"
+  if ($Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
+    [regex]::Matches("$srvLog", '(?m)^recorder: [^\r\n]*') | ForEach-Object { "  $($_.Value)" }
+    Check "request recorder: the recordings agree with the app's requests on the test server (the helper's own excluded)" ("$srvLog" -match '(?m)^recorder: every answered attempt reached the server') ([regex]::Match("$srvLog", 'MISMATCH[^\r\n]*').Value)
+  }
+  "  recordings kept in $RecDir"
 }
 $after = CmdkeyLines
 Check "Credential Manager: same com.sotyware.desktop lines as before the run" (($after -join "|") -eq ($before -join "|")) "before=$($before.Count) after=$($after.Count)"

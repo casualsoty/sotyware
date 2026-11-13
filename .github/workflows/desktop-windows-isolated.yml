@@ -60,6 +60,9 @@ jobs:
         run: npm run check:rfd-patch
       - name: Build the release binary (no installers)
         run: npm run tauri build -- --no-bundle
+      # The tested binary is never a request-recorder build (ADR-024).
+      - name: check the binary has no request recorder
+        run: node scripts/check-release-binary.mjs src-tauri/target/release/sotyware.exe
 
       # Exit codes of the test: 0 all passed, 1 a check failed, 2 binary missing or
       # already running, 3 the private desktop could not be created or used, 4 the

@@ -1102,3 +1102,279 @@ how to check it in [`src-tauri/patches/`](../../src-tauri/patches/README.md).
   --locked`, on Windows only (the module is Windows-only); they are not
   part of `npm run test:headless`. Linux keeps its separate rfd limitation:
   the GTK 3 backend drops a non-UTF-8 path from the selection (no crash).
+
+## ADR-024: An opt-in request recorder observes the app's own S3 requests through an SDK interceptor, compiled only into a test build
+
+Status: Accepted (2026-11-13; proposed and approved the same day),
+implemented with the deviations listed under **Implementation** at the
+end. Code: `src-tauri/src/cloud/recorder.rs`, `S3Store::new`,
+`scripts/check-release-binary.mjs`; behaviour in
+[cloud-storage.md](cloud-storage.md#request-recorder). **Never run against
+a real provider.**
+
+- **Context:** the five upload lifecycle scenarios at Backblaze through the
+  native Windows 11 dashboard passed (2026-11-13), and the harness counted
+  its own requests (13, 10, 16, 10, 10). The release app's requests were
+  not observed at the provider: their expected counts come only from local
+  rehearsals, where the in-process s3s-fs server sees them. At a real
+  provider nothing on our side records what the app sent, so "the app sent
+  exactly these requests, retried this one, aborted that multipart upload"
+  is unverified there. Facts checked in the code and the locked crates:
+  - Every app request goes through one `aws_sdk_s3::Client`, built in one
+    place, `S3Store::new` (`cloud/s3.rs`), reached from
+    `Accounts::connect` (`cloud/account.rs`); one store per account, its
+    own connection pool. Uploads use a per-operation config override
+    (stalled-stream protection off, `cloud/s3/upload.rs`); it does not
+    replace client-level interceptors. Aborts run `send()` in their own
+    task under `tokio::time::timeout`; the app's stall detection and
+    cancellation (`TransferControl::unless_cancelled`) drop the send
+    future.
+  - The locked runtime (`aws-smithy-runtime` 1.10.0,
+    `aws-smithy-runtime-api` 1.11.3) has the `Intercept` trait with
+    read-only hooks per operation (`read_before_execution`,
+    `read_after_execution`, the latter run in `finally_op` on success and
+    error) and per attempt (`read_before_attempt`, `read_before_transmit`,
+    `read_after_transmit`, `read_after_attempt`). The orchestrator stores
+    `RequestAttempts` (attempt number) and the operation `Metadata`
+    (operation name) in the `ConfigBag`; hooks get `&mut ConfigBag`, so an
+    interceptor can store its own per-operation value there. The
+    operation input is a type-erased box with `downcast_ref` (available
+    before serialisation). An `Err` from any hook **halts the request**.
+  - Interceptors already work against this SDK: the opt-in tests add them
+    with `S3Store::with_interceptor` (`#[cfg(test)]`, `integration.rs`
+    `Requests`, `integration/upload.rs` `RunScope`). They only exist in
+    test builds of the library, not in the release binary the Windows
+    dashboard tests drive.
+  - There is no logging crate (`eprintln!` only), the release profile has
+    `panic = "abort"`, and `serde_json` is only a dev-dependency (it is in
+    the runtime tree through Tauri).
+- **Considered approaches:**
+  1. **SDK interceptor added in `S3Store::new`** (chosen). Sees every
+     request of every app code path (check, browse, HEAD, PUT, multipart,
+     abort, download), each retry as a separate attempt of the same
+     operation, the typed input before signing, the status and selected
+     response headers. Read-only hooks cannot change retries, timeouts,
+     order or bodies as long as they never return `Err`.
+  2. Wrapping the HTTP client (`HttpClient`/`HttpConnector`): sees raw
+     attempts, including connection failures, but loses the operation
+     name, the attempt number and the typed input, must pass bodies
+     through and sits inside the TLS stack. More code where a mistake
+     changes transfers. Rejected.
+  3. A `tracing` subscriber on the SDK's spans: a new logging dependency
+     (an architectural decision of its own), span fields are not a stable
+     API and may carry URIs or headers. Rejected.
+  4. A TLS-intercepting proxy: needs a trusted test CA on Windows, changes
+     connection behaviour and timing, and sees authorisation headers and
+     bodies, the opposite of the privacy goal. A non-intercepting proxy
+     or packet capture sees only TLS connections, not requests. Rejected.
+  5. Provider-side logs: not checked during this decision (no provider
+     contact). From what is known, Backblaze offers no per-request S3
+     access log for a bucket; event notifications cover object changes,
+     not HEAD, listings or aborts; transaction reports are daily
+     aggregates. At most a coarse cross-check later, never the record.
+  6. Logging in each `S3Store` method: sees operations, not SDK retries or
+     actual attempts, and needs edits in every request path including the
+     upload code. Rejected.
+  7. A runtime switch (environment variable alone) in the shipped binary:
+     ships recording code and an attack surface to every user. Rejected.
+- **Decision (proposed):**
+  - **Build gate.** A Cargo feature `request-recorder`, not in `default`,
+    enables a new module `src-tauri/src/cloud/recorder.rs` and its
+    optional dependency `serde_json` (`dep:serde_json`, already in the
+    tree). Without the feature the module, its environment reads and the
+    interceptor do not exist: zero code and zero cost in normal builds.
+    The recorder build is made with the release profile into its own
+    target directory (`cargo build --release --features request-recorder
+    --target-dir target/recorder`, through the Tauri CLI's `--features`),
+    so it never replaces `target/release/sotyware`. A guard (like
+    ADR-023's) fails `test:headless` and CI if `default` gains the
+    feature or the normal release build resolves it.
+  - **Runtime gate.** In a recorder build, recording starts only if
+    `SOTYWARE_REQUEST_RECORD_DIR` (absolute path to an existing directory)
+    and `SOTYWARE_REQUEST_RECORD_RUN` (run id, `[a-z0-9-]{8,64}`) are both
+    set, plus `SOTYWARE_REQUEST_RECORD_SCOPE` (the run's key prefix,
+    required). It is read once in `run()` before `CloudAccounts::load`
+    into a `OnceLock`; `S3Store::new` adds the interceptor only if it is
+    set (one `OnceLock` read per store, none per request). Unset → no
+    file, no thread, no interceptor. Invalid → not recording, one
+    `sotyware: request recorder disabled: …` line, app unchanged.
+  - **Integration point.** One interceptor per store, added last in
+    `S3Store::new`; nothing in upload, download, browse or check code
+    changes. Hooks used: `read_before_execution` (operation start, typed
+    input, stores an operation id and a drop guard in the `ConfigBag`),
+    `read_before_attempt`/`read_after_attempt` (attempt number from
+    `RequestAttempts`, status, duration), `read_after_execution`
+    (outcome). Every hook returns `Ok(())` on every path, including when
+    the recorder itself fails; the module has no `unwrap`/`expect`/
+    indexing panics (`#![deny(clippy::unwrap_used, clippy::expect_used,
+    clippy::indexing_slicing)]`), since a panic aborts the app.
+  - **Harness separation.** The harness runs in its own `cargo test`
+    process with its own clients; only the app process installs the
+    recorder, so a recorded request is app-originated by construction.
+  - **Record format.** JSON Lines, one file per run,
+    `<dir>/<run>.requests.jsonl`, opened with `create_new` (an existing
+    file is refused, so runs never mix). First line: `start` (format
+    version, run id, app version, pid, wall-clock start, scope hash).
+    Then events, each with a global `seq` (atomic counter assigned at the
+    hook), monotonic `t_ms` since start, account label, `op` id, and per
+    kind:
+    - `op-start`: operation name (`Metadata::name`), method, bucket class,
+      object identity, allowlisted parameters;
+    - `attempt-end`: attempt number, HTTP status or failure kind, attempt
+      duration, request `content-length`, hashed `x-amz-version-id`;
+    - `op-end`: outcome `ok` / `service-error` (status, error code when
+      the typed error can be downcast, never the message) / `timeout` /
+      `connector` / `response` / `interceptor` / `other`, attempts,
+      duration;
+    - `op-dropped`: the operation's future was dropped before
+      `read_after_execution` (cancellation, stall detection, abort
+      timeout, quit): emitted by the drop guard's `Drop`;
+    - `gap`: events lost (queue full or write error), with counts;
+    - `end`: written on orderly exit: events emitted, written, dropped,
+      write errors, operations still open.
+  - **Redaction (default and only mode).** Never read: authorisation and
+    any other header except request `content-length` and response
+    `x-amz-version-id`; bodies; credentials (the interceptor never sees
+    the credentials provider); error messages. Bucket: `configured` or
+    `other`, never the name. Account: the account id only if it equals
+    `SOTYWARE_REQUEST_RECORD_ACCOUNT`, else `other`. Object key or list
+    prefix inside the scope: `scope` plus the first 12 bytes (hex) of
+    SHA-256(run id ‖ relative key); the harness computes the same hashes
+    from the names it created. Outside the scope: `outside-scope`, nothing
+    else (and a finding for the harness). Upload ids and version ids:
+    truncated SHA-256(run id ‖ id), enough to tie create/parts/complete/
+    abort together and match the harness's version listing, not
+    reversible (high-entropy values). Query: allowlist (`partNumber`,
+    `max-keys`; presence only for `uploadId`, `continuation-token`,
+    `delimiter`, `versionId`); unknown operations or inputs that cannot be
+    downcast are recorded with name, status and timings only.
+  - **Writer.** Events are built fully in the hook and handed to one
+    writer thread through a bounded channel with `try_send`; a full queue
+    drops the event and counts it (a `seq` gap). The thread writes each
+    line with one `write_all`, without a userspace buffer, so a crash
+    loses at most what is still queued. On a write error it stops
+    writing, counts and logs once; the app continues. In `RunEvent::Exit`
+    the recorder is finished **last**, after the download and upload
+    shutdown waits (so a quit's aborts are recorded), with a bounded wait
+    of 2 s for the queue to drain, then `end`.
+- **Failure behaviour:** initialisation failure → no recording, app
+  unchanged, the harness sees no file and fails the run as "not recorded"
+  (never as "no requests"). Write failure or full queue → `gap`/counts,
+  app unchanged. Crash or kill → no `end` line; the analyser reports the
+  log as partial, ignores an unterminated last line and lists operations
+  without `op-end`/`op-dropped`. SDK retries → several `attempt-end`
+  lines with the same `op` and rising attempt numbers, never mistaken for
+  separate operations. Concurrent transfers → one writer, whole lines,
+  ordered by `seq`; per-account labels and `op` ids keep a download
+  beside an upload apart. Shutdown during multipart → the cancelled
+  `UploadPart` appears as `op-dropped`, the abort as its own operation
+  (`ok`, `service-error` or `op-dropped` at the abort timeout); operations
+  still in flight when the process exits are listed as open in `end`.
+  **A missing event never proves that a request was not sent:** the
+  analyser treats any `gap`, missing `end`, or open operation as "count
+  unknown", and a request can reach the provider after its future was
+  dropped.
+- **Testing requirements (before the recorder is used at a provider):**
+  local only, against the in-process s3s-fs server; the recorder build
+  must also pass the existing suites unchanged.
+  - Disabled: without the feature, `cloud::recorder` does not compile in
+    (`cfg` check) and a store has no extra interceptor; with the feature
+    but no environment, no file is created during a full upload/download
+    round trip.
+  - Opt-in: a scripted check, browse, single PUT, multipart upload,
+    download and abort produce exactly the expected `op-start`/
+    `attempt-end`/`op-end` sequence, compared with the server's own
+    request log.
+  - Secrets: a test with sentinel access key, secret, session token,
+    bucket name, out-of-scope key and body bytes greps the whole file and
+    finds none of them; a test over generated keys (no new dependency) finds no key
+    substring of length ≥ 4 in the output.
+  - Redaction: in-scope keys hash as the harness expects; outside-scope,
+    bucket `other` and account `other` are recorded as such.
+  - Retries: a server that answers 500 then 200 gives one `op` with
+    attempts 1 and 2; a refused request with one attempt is not retried.
+  - Cancellation and multipart: cancel during `UploadPart`, stall timeout,
+    abort that hangs past `abort_timeout`, quit during multipart:
+    `op-dropped` where expected and the abort recorded.
+  - Recorder failure: directory removed, file read-only, disk-full
+    simulation (a writer that fails after n bytes), queue of size 1 under
+    load: uploads, cancels and aborts complete exactly as without the
+    recorder (same outcomes, same server state), `gap` counts match.
+  - Concurrency: many parallel requests over two accounts: every line
+    parses, `seq` is unique and complete, no interleaving.
+  - Behaviour unchanged: the existing upload, download and browse tests
+    run with the recorder enabled and give identical outcomes; a test
+    asserts every hook returns `Ok` even when the writer is gone.
+  - End to end: `windows-cloud-ui.ps1 -Rehearse` and `cloud-ui.sh upload`
+    with the recorder build: the recorded app requests match the s3s-fs
+    server's counts in every scenario before any provider run.
+- **Consequences:** the binary tested at Backblaze with recording on is
+  not byte-identical to the shipped release binary (one feature more); the
+  recording run proves the app code's requests, and the earlier runs of
+  the plain release binary remain the evidence that the shipped build
+  behaves the same. The interceptor adds a little work per request (a few
+  allocations and a channel send) only in recorder builds. The recorder
+  sees only what the SDK hands to interceptors: TCP/TLS connection
+  attempts, connection reuse and bytes already on the wire when a future
+  is dropped are not observable; a status of `op-dropped` does not say
+  whether the provider received the request. Timings are local
+  (request handed to the connector to response headers), not provider
+  timings. The SDK hook semantics are pinned to the locked
+  `aws-smithy-runtime` version; an SDK update must rerun the recorder
+  tests. Adds the module, one feature, one guard script, harness support
+  (`-RecordRequests`) and an analyser in the test code; the
+  documentation (`cloud-storage.md`, `testing.md`, the stack table) is
+  updated with the implementation, not before.
+- **Implementation (2026-11-13), deviations from the proposal above:**
+  - The SDK assumptions were tested first (`cloud/s3/hook_assumptions.rs`,
+    in every build): a value stored in `interceptor_state()` at
+    `read_before_execution` is dropped with a dropped future (and its
+    `Drop` then runs without `read_after_execution`); the client
+    interceptor runs for uploads with their per-operation override; hook
+    order, retries and status/attempt reads behave as assumed. One
+    assumption was wrong: the operation `Metadata` is **not** in the
+    `ConfigBag` at `read_before_execution` (only from the first attempt),
+    so `op-start` names the operation by the typed input's type, and
+    `attempt-start` carries the SDK's own name (`sdk_op`).
+  - An `attempt-start` event (at `read_before_transmit`, with the request
+    `content-length`) was added, so "sent" and "answered" attempts can be
+    told apart when comparing with a server's log.
+  - One file per run **and process**, `<run>.<pid>.requests.jsonl`: a run
+    that relaunches the app (after a quit) would otherwise leave the
+    relaunched process unrecorded (the file exists). Still exclusive
+    creation; the harness reads all files of a run.
+  - `scope` in the `start` line is hashed with the domain `scope`; account
+    labels for other accounts are `other-<n>`; a list prefix that is a
+    parent of the scope is `scope-ancestor`, the empty prefix `root`.
+    Query parameters are never parsed: only typed input fields are read.
+  - Optional dependencies besides `serde_json`: `aws-smithy-runtime-api`
+    and `aws-smithy-types` (already in the tree; aws-sdk-s3 does not
+    re-export `Metadata`, `RequestAttempts`, `Storable`); both are also
+    dev-dependencies for the assumption tests.
+  - Build gate in `build.rs`: the feature fails the build unless the
+    target directory is named `recorder`. Packaging guard
+    `scripts/check-release-binary.mjs`: `--manifest` (in `test:headless`
+    and CI), a binary scan (the manual desktop workflows check the binary
+    they test), and Tauri's `beforeBundleCommand`, which refuses when the
+    build command line of a node/npm/tauri/cargo ancestor asks for the
+    feature or all features, or the binary to be bundled contains the
+    marker. Shown on real builds: a `--bundles deb --features
+    request-recorder` build was refused before Tauri patched or bundled
+    anything; a normal `--bundles deb` build passed. Backstop at runtime:
+    a recorder binary that a bundler patched
+    (`tauri::utils::platform::bundle_type()`) never records.
+  - The in-process test server accepts a second key, which the desktop
+    test helper uses for its own requests, so the comparison counts only
+    requests signed with the app's key (`check_recordings` in
+    `test_server.rs`).
+  - `SOTYWARE_RECORDER_TEST_ALL` (test builds only) records every store of
+    a test process, to run the existing suites with the interceptor
+    installed.
+  - Error codes come from the typed errors of the operations the app uses;
+    a refusal the server sends before reading the body may reach the SDK
+    as a connector error without a status, and is recorded as such.
+  - An orderly exit is needed for the `end` line. On Windows in tray mode
+    that is the tray Quit (real mouse); the Windows driver ends a
+    recording run that way (`-RecordRequests`). A run that kills the app
+    leaves an incomplete recording, which the drivers report as "count
+    unknown" (seen on native Windows 11 before this was added).

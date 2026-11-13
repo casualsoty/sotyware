@@ -62,6 +62,9 @@ jobs:
         run: npm run check:rfd-patch
       - name: Build the release binary (no installers)
         run: npm run tauri build -- --no-bundle
+      # The tested binary is never a request-recorder build (ADR-024).
+      - name: check the binary has no request recorder
+        run: node scripts/check-release-binary.mjs src-tauri/target/release/sotyware
 
       # virtual.sh already fails on any FAIL or SKIP and on a missing dependency
       # (exit 2) or display (exit 3). This step additionally requires the full

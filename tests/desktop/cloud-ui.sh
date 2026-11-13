@@ -10,6 +10,13 @@
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/release/sotyware)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
 #                            (dpkg -x), if gnome-keyring-daemon is not installed
+#   SOTYWARE_CLOUD_UI_RECORD=1  phases download and upload only: the binary must
+#                            be a request-recorder build (ADR-024,
+#                            src-tauri/target/recorder/release/sotyware); the app
+#                            records its S3 requests and the phase fails unless
+#                            the recordings are complete and agree with the
+#                            requests the local server saw signed with the app's
+#                            key (the helper's own requests use another key)
 #
 # local: made-up keys, an endpoint nobody listens on; contacts no provider.
 # hang:  a Secret Service that never answers; the window must stay usable.
@@ -53,6 +60,13 @@ PHASES=("$@")
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/release/sotyware}")
   [ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run tauri build -- --no-bundle)" >&2; exit 2; }
+  if [ -n "${SOTYWARE_CLOUD_UI_RECORD:-}" ]; then
+    grep -qa sotyware-request-recorder "$BIN" \
+      || { echo "SOTYWARE_CLOUD_UI_RECORD needs a request-recorder build (see testing.md): $BIN" >&2; exit 2; }
+    for phase in "${PHASES[@]}"; do
+      case $phase in download|upload) ;; *) echo "SOTYWARE_CLOUD_UI_RECORD: only the download and upload phases record, not $phase" >&2; exit 2 ;; esac
+    done
+  fi
   for cmd in Xvfb openbox python3 dbus-run-session dbus-send; do
     command -v "$cmd" >/dev/null || { echo "missing: $cmd" >&2; exit 2; }
   done
@@ -154,6 +168,27 @@ start_keyring() {
 }
 stop_keyring() { pkill -f -- "^$GK_BIN " 2>/dev/null; wait_owner 1; }
 
+# With SOTYWARE_CLOUD_UI_RECORD: the folder the app records into for one
+# phase, and the variables for the app (never for the helper server).
+REC_DIR="" REC_ENV=()
+record_setup() { # <phase>
+  REC_DIR="" REC_ENV=()
+  [ -n "${SOTYWARE_CLOUD_UI_RECORD:-}" ] || return 0
+  REC_DIR=$WORK/recording-$1
+  mkdir -p "$REC_DIR"
+  REC_ENV=(SOTYWARE_REQUEST_RECORD_DIR="$REC_DIR" SOTYWARE_REQUEST_RECORD_RUN="ui-$1-$(date +%s)"
+           SOTYWARE_REQUEST_RECORD_SCOPE="inbox/")
+}
+record_report() { # <phase> <server log>
+  [ -n "$REC_DIR" ] || return 0
+  grep -E '^recorder: ' "$2" | sed 's/^/  /'
+  if grep -q '^recorder: every answered attempt' "$2"; then
+    echo "[PASS] $1: the app's recordings are complete and agree with the server's app requests ($(ls "$REC_DIR" | wc -l) file(s))"
+  else
+    echo "[FAIL] $1: the app's recordings are missing, incomplete or disagree with the server:"; grep -E 'recorder|MISMATCH' "$2" | tail -5; rc=1
+  fi
+}
+
 for phase in "${PHASES[@]}"; do
   echo "== phase $phase"
   case $phase in
@@ -185,13 +220,14 @@ for phase in "${PHASES[@]}"; do
       SRV_PID="" ;;
     download)
       SRV_FILE=$WORK/download-endpoint
-      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+      record_setup download
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE env ${REC_DIR:+SOTYWARE_UI_RECORDING_DIR=$REC_DIR} cargo test --quiet --lib \
         cloud::test_server::serve_objects_for_ui -- --ignored --nocapture >"$WORK/download-server.log" 2>&1) &
       SRV_PID=$!
       for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
       [ -s "$SRV_FILE" ] || { echo "object server did not start:"; cat "$WORK/download-server.log"; exit 3; }
       start_keyring
-      SOTYWARE_UI_ENDPOINT=$(cat "$SRV_FILE") SOTYWARE_UI_MANIFEST=$SRV_FILE.json \
+      env "${REC_ENV[@]}" SOTYWARE_UI_ENDPOINT="$(cat "$SRV_FILE")" SOTYWARE_UI_MANIFEST="$SRV_FILE.json" \
         python3 "$H/cloud_ui.py" download "$BIN" || rc=1
       stop_keyring
       rm -f -- "$SRV_FILE" "$SRV_FILE.json"
@@ -200,10 +236,12 @@ for phase in "${PHASES[@]}"; do
       else
         echo "[FAIL] download: the object server failed:"; tail -20 "$WORK/download-server.log"; rc=1
       fi
+      record_report download "$WORK/download-server.log"
       SRV_PID="" ;;
     upload)
       SRV_FILE=$WORK/upload-endpoint
-      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+      record_setup upload
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE env ${REC_DIR:+SOTYWARE_UI_RECORDING_DIR=$REC_DIR} cargo test --quiet --lib \
         cloud::test_server::serve_uploads_for_ui -- --ignored --nocapture >"$WORK/upload-server.log" 2>&1) &
       SRV_PID=$!
       for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
@@ -218,7 +256,7 @@ for phase in "${PHASES[@]}"; do
         sleep 0.1
       done
       start_keyring
-      SOTYWARE_UI_ENDPOINT=$(cat "$SRV_FILE") SOTYWARE_UI_MANIFEST=$SRV_FILE.json SOTYWARE_UI_CONTROL=$SRV_FILE \
+      env "${REC_ENV[@]}" SOTYWARE_UI_ENDPOINT="$(cat "$SRV_FILE")" SOTYWARE_UI_MANIFEST="$SRV_FILE.json" SOTYWARE_UI_CONTROL="$SRV_FILE" \
         python3 "$H/cloud_ui.py" upload "$BIN" || rc=1
       stop_keyring
       kill "$SNI_PID" 2>/dev/null; SNI_PID=""
@@ -229,6 +267,7 @@ for phase in "${PHASES[@]}"; do
         echo "[FAIL] upload: the upload server failed:"; tail -20 "$WORK/upload-server.log"; rc=1
       fi
       grep -E '^(cleanup:|left at the end)' "$WORK/upload-server.log" | sed 's/^/  /'
+      record_report upload "$WORK/upload-server.log"
       SRV_PID="" ;;
     b2)
       before=$(fingerprint)

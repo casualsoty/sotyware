@@ -39,7 +39,9 @@ Where things are. Generated and ignored paths are listed in
 ├── package.json              npm scripts and JS dependencies
 ├── scripts/
 │   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
-│   └── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri
+│   ├── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri
+│   ├── check-release-binary.mjs  Guard against shipping the request recorder (ADR-024): --manifest (npm run check:release-binary), a binary scan, and Tauri's beforeBundleCommand (--before-bundle)
+│   └── check-release-binary.test.mjs  Its tests (node --test, npm run test:release-binary-guard)
 ├── package-lock.json         Pinned JS dependency tree
 ├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)
@@ -70,13 +72,15 @@ Where things are. Generated and ignored paths are listed in
 │       │   ├── s3.rs         S3Store (aws-sdk-s3): check_bucket, list, list_folder (one delimited page), upload_file wrapper, download (streamed, progress, TransferControl cancel/commit, temporary file, final move), delete, SHA-256, errors + tests
 │       │   ├── s3/
 │       │   │   ├── upload.rs  S3Store::upload (ADR-021): first hashing pass with per-part SHA-256, destination HEAD, request bodies that re-hash and hold back their last chunk (commit point), stall timeout instead of the read timeout, multipart abort in its own task (open upload id on TransferControl; abort_incomplete_upload), HEAD verification, UploadError/RemoteOutcome, throttled UploadProgress
-│       │   │   └── upload/tests.rs  Upload tests against the in-process S3 server: basics, cancellation at every stage, multipart cleanup, file changes, SDK retries, throttled and stalled links
+│       │   │   ├── upload/tests.rs  Upload tests against the in-process S3 server: basics, cancellation at every stage, multipart cleanup, file changes, SDK retries, throttled and stalled links
+│       │   │   └── hook_assumptions.rs  Tests (every build) of the SDK interceptor behaviour the request recorder relies on (ADR-024), with a probe interceptor
+│       │   ├── recorder.rs   Only with the feature request-recorder (ADR-024): settings from SOTYWARE_REQUEST_RECORD_*, the read-only interceptor installed in S3Store::new, bounded queue and writer thread, redaction, health (tests in recorder/tests.rs)
 │       │   ├── dashboard.rs  CloudAccounts (Tauri state), the six account commands, safe DTOs, CommandError, connection check, listing cursors + tests
 │       │   ├── browser.rs    list_cloud_folder: folder/file DTOs, prefix and breadcrumb rules, error mapping (tests in browser/tests.rs)
 │       │   ├── download.rs   download_cloud_file / cancel / retry: CloudDownloads (one slot), save dialog, progress messages, error mapping (tests in download/tests.rs)
 │       │   ├── upload.rs     upload_cloud_files / cancel / retry (ADR-022): CloudUploads (one batch slot), multi-file dialog, selection checks, sequential batch with HEAD before each file, error sorting, events with seq and one final summary, retry, incomplete multipart ids in memory, bounded shutdown (tests in upload/tests.rs)
 │       │   ├── tests.rs      Storage operations against the in-process S3 server
-│       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs, or an in-memory listing backend with exact keys and continuation tokens; can refuse chosen operations, records them with part numbers, injects faults per operation and part: 500, 403, no answer, a callback), a throttled or stalling TCP relay (ThrottledLink), an object backend with exact keys and slow/stalled/cut bodies, temp-file helpers, the UI tests' listing, object and upload servers (serve_listing_for_ui, serve_objects_for_ui, serve_uploads_for_ui; the last one optionally seeded with one given file), tests only
+│       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs, or an in-memory listing backend with exact keys and continuation tokens; can refuse chosen operations, records them with part numbers, injects faults per operation and part: 500, 403, no answer, a callback), a throttled or stalling TCP relay (ThrottledLink), an object backend with exact keys and slow/stalled/cut bodies, temp-file helpers, the UI tests' listing, object and upload servers (serve_listing_for_ui, serve_objects_for_ui, serve_uploads_for_ui; the last one optionally seeded with one given file; a second key for the helper's own requests; check_recordings compares request recordings with the app's requests), tests only
 │       │   ├── integration.rs  Opt-in (#[ignore]) tests against real Backblaze B2 / Hetzner accounts (round trip, B2 connection check and B2 folder listing with recorded requests, B2 bucket fingerprint) + the same check and listing cases against the test server
 │       │   └── integration/
 │       │       ├── upload.rs  Opt-in B2 upload test (passed at Backblaze 2026-11-13, WSL2 and Windows 11): one batch (empty, Unicode name, 3-part multipart) under sotyware-it/upload-validation/<run>/ through begin_upload/CloudUploads, existing key skipped and refused, multipart cancelled and aborted, downloads through CloudDownloads; RunScope interceptor refuses any request outside the run before it is sent; cleanup by version id and upload id (also by run id) + the same scenario against the test server

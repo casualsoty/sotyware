@@ -33,6 +33,10 @@ pub mod dashboard;
 pub mod download;
 pub mod keyring;
 pub mod provider;
+/// The opt-in request recorder (ADR-024); only in builds with the
+/// `request-recorder` feature, never in a normal build.
+#[cfg(feature = "request-recorder")]
+pub mod recorder;
 pub mod s3;
 pub mod upload;
 

@@ -155,6 +155,7 @@ multipart uploads is the only cleanup then.
 `CreateMultipartUpload` is never dropped in flight, so no upload id can exist
 that sotyware did not learn.
 
+
 **Timeouts:** `PutObject` and `UploadPart` run with a per-operation override
 (connect timeout kept, read timeout and the SDK's stalled-stream protection
 off) and fail with `Timeout` once the body has handed no bytes to the
@@ -912,6 +913,94 @@ on. A download can run beside a batch; neither affects the other.
 Vitest with Tauri's IPC mocks, 2026-11-12,
 [status.md](../status/status.md#cloud-storage-upload-ui-2026-11-12)); no
 desktop run, the native dialog was never opened, no real provider.
+
+## Request recorder
+
+Test builds for controlled integration runs only
+([ADR-024](decisions.md#adr-024-an-opt-in-request-recorder-observes-the-apps-own-s3-requests-through-an-sdk-interceptor-compiled-only-into-a-test-build)).
+**Not in any normal or shipped build**, and never run against a real
+provider so far.
+
+- **Build gate:** the Cargo feature `request-recorder` (off by default;
+  optional `serde_json`, `aws-smithy-runtime-api`, `aws-smithy-types`)
+  compiles `src-tauri/src/cloud/recorder.rs`. Without it the module, the
+  environment reads and the interceptor do not exist. `build.rs` refuses
+  the feature unless the target directory is named `recorder`
+  (`--target-dir target/recorder`), so the recorder binary never replaces
+  `target/release/sotyware`. `scripts/check-release-binary.mjs` checks
+  that no default turns the feature on (`npm run check:release-binary`, in
+  `test:headless` and CI), that the binaries the manual desktop workflows
+  test contain no recorder, and, as Tauri's `beforeBundleCommand`, refuses
+  to package when the `tauri build` command line asks for the feature or
+  the binary to be bundled contains the recorder's marker
+  (`sotyware-request-recorder`). A recorder binary that a bundler patched
+  anyway (`tauri::utils::platform::bundle_type()`) never records.
+- **Runtime gate:** recording starts in `run()`, before any store exists,
+  only if `SOTYWARE_REQUEST_RECORD_DIR` (absolute path of an existing
+  directory, not a symbolic link), `SOTYWARE_REQUEST_RECORD_RUN`
+  (`[a-z0-9-]`, 8 to 64) and `SOTYWARE_REQUEST_RECORD_SCOPE` (a key prefix
+  ending in `/`) are all set and valid; `SOTYWARE_REQUEST_RECORD_ACCOUNT`
+  (an account id) is optional. None set: nothing happens. Some set, or any
+  invalid, or the file cannot be created: no recorder (one `sotyware:` line
+  on stderr); the app runs unchanged. No file, thread or interceptor exists
+  then.
+- **Integration point:** one read-only SDK interceptor per `S3Store`,
+  added in `S3Store::new` (`Intercept` hooks `read_before_execution`,
+  `read_before_transmit`, `read_after_attempt`, `read_after_execution`).
+  It never returns an error, never reads a credential, a body, an error
+  message or a header other than `content-length` (request) and
+  `x-amz-version-id` (response), and changes nothing the client does
+  (retries, timeouts, order, cancellation). What it relies on in the
+  locked SDK is tested in every build (`cloud/s3/hook_assumptions.rs`).
+- **File:** `<dir>/<run>.<pid>.requests.jsonl`, created exclusively (an
+  existing file or symbolic link is refused, never followed; mode 0600 on
+  Unix). One file per process, so a run that relaunches the app gets one
+  file per launch. JSON Lines: `start` (format, run, app version, pid,
+  hashed scope, queue size), then events, each with a global `seq` and
+  `t_us` since start: `op-start` (operation id `op`, name from the typed
+  input, account, bucket class, key or prefix, allow-listed parameters),
+  `attempt-start` (attempt number, the SDK's operation name, request
+  `content-length`), `attempt-end` (status or no status, outcome, duration,
+  hashed version id), `op-end` (outcome `ok` / `service-error` with the
+  provider's error code / `timeout` / `connector` / `response` / `other`,
+  last status, attempts, duration), `op-dropped`, `gap`, and `end` on an
+  orderly exit (counts and `accounting: complete|incomplete` with
+  reasons). An SDK retry is another `attempt-*` pair of the same `op`.
+- **Redaction (the only mode):** bucket `configured` or `other`; account
+  its id only if it equals `SOTYWARE_REQUEST_RECORD_ACCOUNT`, else
+  `other-<n>`; a key or list prefix inside the scope is
+  `scope:` + the first 12 bytes (hex) of SHA-256(run 0 `key` 0 the part after
+  the scope), the root `root`, a parent of the scope `scope-ancestor`,
+  anything else `outside-scope`; upload and version ids are hashed the same
+  way (domains `upload-id`, `version-id`). Only typed input fields are read,
+  never the URL, so there is no query string to leak.
+- **Writer:** each event is built in the hook and handed to one writer
+  thread through a bounded queue (4,096 events) with `try_send`; the hook
+  never waits and never touches the disk. A full queue drops the event
+  (its `seq` becomes a `gap` line), a dead writer counts it
+  (`writer_gone`), a write error stops writing (no `end` line). Quitting
+  finishes the recorder last in `RunEvent::Exit`, after the download and
+  upload shutdowns (so a quit's aborts are recorded), and waits at most 2 s
+  for the `end` line; events after it are counted, not written. The module
+  forbids `unwrap`, `expect`, indexing and `panic!` (the release profile
+  aborts on panic).
+
+What the records mean, and what they do not:
+
+- **`op-dropped`:** the operation's future was dropped before the SDK
+  finished it: cancellation, the upload stall timeout, the abort timeout,
+  leaving the browser or quitting. `in_flight: true` means an attempt had
+  been handed to the HTTP client; whether the provider received it, or even
+  completed it, is **unknown**. A dropped operation is finished for the
+  accounting; it is not an open one.
+- **`gap`:** these sequence numbers were never written (queue full). The
+  requests behind them may have been sent.
+- **Incomplete recording:** no `end` line (crash, kill, write error, the
+  2 s wait ran out), `accounting: incomplete`, a partial last line, a gap,
+  or operations still open at the end. Then the count of requests is
+  unknown; a missing event never proves that a request was not sent.
+- Not observable at all: TCP/TLS connections, connection reuse, bytes on
+  the wire, provider-side timing.
 
 ## Not built (deliberately)
 

@@ -339,6 +339,11 @@ pub fn run() {
     // used when the user adds, changes, removes or checks an account (on
     // Linux it may show an unlock prompt), always off the event loop
     // (ADR-018). A database that cannot be opened is shown by the page.
+    // A recorder build (ADR-024) records the app's S3 requests if the
+    // `SOTYWARE_REQUEST_RECORD_*` variables ask for it; before any store
+    // exists. Normal builds have no such code.
+    #[cfg(feature = "request-recorder")]
+    cloud::recorder::start_from_env();
     app.manage(Arc::new(cloud::dashboard::CloudAccounts::load(
         storage::open_account_store(app.path().app_local_data_dir()),
         Arc::new(cloud::keyring::OsCredentialStore::new()),
@@ -370,6 +375,9 @@ pub fn run() {
             if let Some(uploads) = app.try_state::<Arc<cloud::upload::CloudUploads>>() {
                 uploads.shutdown(cloud::upload::SHUTDOWN_WAIT);
             }
+            // Last, so the aborts of a quit are recorded (bounded wait).
+            #[cfg(feature = "request-recorder")]
+            cloud::recorder::finish_installed();
         }
         _ => {}
     });

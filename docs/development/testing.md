@@ -66,12 +66,15 @@ D-Bus calls and AT-SPI actions instead of clicks).
 ## Headless tests
 
 ```bash
-npm run test:headless        # = npm run check:rfd-patch && npm run test:frontend && npm run test:rust
+npm run test:headless        # = check:rfd-patch && check:release-binary && test:frontend && test:rust
 ```
 
 `check:rfd-patch` is not a test but a guard: it fails if Cargo no longer
 builds rfd from the local patch
 ([patches/README.md](../../src-tauri/patches/README.md), ADR-023).
+`check:release-binary` is another: it fails if a default (or any other
+feature) turns on the request recorder (ADR-024,
+[below](#request-recorder-tests)).
 
 Runs the [Rust unit tests](#rust-unit-tests) and the
 [frontend tests](#frontend-tests). Neither starts sotyware, opens a window or
@@ -1309,6 +1312,86 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 
 The layout checks against the release settings, the run prefix, the
 scope and the final-state check are unit-tested in `lifecycle.rs`.
+
+## Request recorder tests
+
+The request recorder (ADR-024,
+[cloud-storage.md](../architecture/cloud-storage.md#request-recorder)) is
+compiled only with the Cargo feature `request-recorder`, and only into a
+target directory named `recorder` (build.rs refuses any other). None of
+this contacts a provider.
+
+```bash
+cd src-tauri
+cargo test                                                        # default build: no recorder; includes the SDK hook assumptions
+cargo test --features request-recorder --target-dir target/recorder
+SOTYWARE_RECORDER_TEST_ALL=1 cargo test --features request-recorder --target-dir target/recorder   # every store recorded
+cargo clippy --all-targets --features request-recorder --target-dir target/recorder -- -D warnings
+cd .. && npm run check:release-binary && npm run test:release-binary-guard
+```
+
+- `cloud/s3/hook_assumptions.rs` (every build): what the recorder relies on
+  in the locked SDK, with a probe interceptor against the in-process
+  server: per-operation state in the `ConfigBag` is dropped with a dropped
+  future (and only then without `read_after_execution`); client
+  interceptors run for uploads with their per-operation config override;
+  hook order for success, a refused request, a retry and a drop; the typed
+  input at `read_before_execution` (the operation `Metadata` is not there
+  yet); status and attempt numbers without credentials or bodies.
+- `cloud/recorder/tests.rs` (feature build): settings (none → off; partial
+  or invalid → refused, nothing created), the file (fresh, 0600, an
+  existing file or a symbolic link refused and untouched, a missing or
+  read-only directory), no interceptor without a recorder, the connection
+  check, browsing, a single PUT, a multipart upload and a download compared
+  with the server's own request log, a 500-then-200 retry (one operation,
+  attempts 1 and 2), a refused request (error code, no message), an
+  unreachable endpoint, cancelling during a part (the part `op-dropped`,
+  the abort its own operation), the stall timeout and the abort timeout
+  (`op-dropped`), redaction (no key id, secret, bucket name, raw key,
+  body, signature or endpoint; harness-computable hashes; out-of-scope and
+  ancestor prefixes), 128 concurrent operations on two accounts (whole
+  lines, unique `seq` and `op`), a full queue (gaps exactly match the
+  dropped events), a writer failing after 1,500 bytes, a dead writer, a
+  finish that waits only its limit, and hooks that never fail a request.
+  `cloud/upload/tests.rs` adds quitting during a multipart upload in the
+  order `RunEvent::Exit` uses.
+- `SOTYWARE_RECORDER_TEST_ALL=1` (test builds only) records every store of
+  the test process into a discarding sink, so the whole existing suite runs
+  with the interceptor installed and must pass unchanged.
+- `probe_a_part_landing_after_the_abort` (`cloud/s3/upload/tests.rs`,
+  `#[ignore]`, prints its findings, needs no feature): cancels a
+  multipart upload right after part 2 was handed to the connection
+  behind a 1 MiB/s link and reports whether a part of the aborted upload
+  remains on the server
+  ([limitations.md](../status/limitations.md#a-part-can-land-after-the-multipart-abort)).
+  `cargo test --lib part_landing_after_the_abort -- --ignored --nocapture`.
+- `scripts/check-release-binary.test.mjs`: the manifest check against
+  broken copies, the binary scan, and the before-bundle check with made-up
+  command lines and target directories.
+
+**Recorder build and the desktop drivers.** Build it (never packaged; the
+packaging guard refuses a bundle):
+
+```bash
+npm run tauri build -- --no-bundle --features request-recorder -- --target-dir target/recorder
+```
+
+Then the Linux driver records in the `download` and `upload` phases:
+
+```bash
+SOTYWARE_CLOUD_UI_RECORD=1 SOTYWARE_CLOUD_UI_BIN=src-tauri/target/recorder/release/sotyware tests/desktop/cloud-ui.sh download upload
+```
+
+and the Windows driver with `-RecordRequests` (modes `download`, `upload`,
+`b2-upload`, `b2-lifecycle`; `-Exe` must be the recorder build). Against
+the local server, the helper (`check_recordings` in `test_server.rs`)
+fails the phase unless every recording is complete, contains none of the
+keys, and agrees with the requests the server saw signed with the app's
+key: every attempt that got an answer is among them, and the server saw
+nothing the recorder did not see sent. The helper's own requests (seeding,
+`dump`, `delete`) are signed with a second key and never count. A
+recording that is incomplete fails the run as "count unknown", never as
+"no requests".
 
 ## Cloud Storage UI end-to-end test
 

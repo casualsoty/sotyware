@@ -4403,6 +4403,8 @@ version = "0.1.0"
 dependencies = [
  "aws-sdk-s3",
  "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
  "bytes",
  "digest 0.11.0-rc.4",
  "futures-core",
