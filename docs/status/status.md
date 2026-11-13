@@ -129,7 +129,8 @@ script or procedure is not in the repository; it was not repeated.
 
 ### Late-part wait and the remaining recorder rehearsals on native Windows 11 (2026-11-13)
 
-Tree `ad6f69c` + uncommitted test code (`-Scenario settle` in
+Tree `ad6f69c` + test code then uncommitted, committed afterwards
+unchanged as `bf991d0` (`-Scenario settle` in
 `windows-cloud-ui.ps1`; `SOTYWARE_UI_UPLOAD_PACE=buffered` and
 deadline pacing of `Pace::Buffered` in `test_server.rs`; no production
 change). Copy `C:\dev\sotyware-recorder`, recorder build SHA-256
@@ -152,15 +153,27 @@ with the tray Quit (real mouse). **No real provider.**
   mode 4, cancel, quit) was still being handed over (dropped 1.0–13.3 s
   into a part of about 16 s), the abort 0–5 ms later.
 - `-Scenario settle` (new, [testing.md](../development/testing.md#upload-lifecycle-through-the-windows-dashboard-at-backblaze)):
-  first run **38 passed, 4 failed**: the cancel came right after part 3
-  was handed over, the app waited the 5 s bound (part 3 `op-dropped`
-  5,054 ms after the press, abort 204 then), and the part's file was
-  still written after the abort; parts took about 16 s because the
-  relay's per-piece sleep is capped by Windows' ~15.6 ms timer. With
-  deadline pacing in `Pace::Buffered` (parts about 2.7 s): **42/42, 3
-  runs**; each time part 3 was in flight at the press (handed over
-  335–419 ms before), answered 200 at +2,242 to +2,336 ms, abort 204 0 ms
-  after that answer, 12 = 12 app requests, 0 dropped, no part left.
+  first run **failed, 38 passed, 4 failed** (not a validation): the
+  cancel came right after the percentage showed part 3 handed over (part
+  3 started 431 ms before the press), the app waited the 5 s bound (part
+  3 `op-dropped` 5,054 ms after the press, abort 204 then), and the
+  part's file (`.upload_id-….part-3`, s3s-fs) was still written after
+  the abort, so the two "no multipart upload left" checks and two settle
+  checks failed; parts took about 16 s because the relay's per-piece
+  sleep is capped by Windows' ~15.6 ms timer. That file was removed only
+  with the whole temporary server folder when the helper exited (exit 0,
+  checked by the run); afterwards (reviewed the same day) `%TEMP%` held
+  no `sotyware-s3-test-*` folder and no file of that upload id, the
+  run's Credential Manager entry was gone and the account database was
+  back. sotyware's own line for the bound ("part 3 got no answer within
+  5 s …") was not seen: the Windows driver does not keep the app's
+  stderr. With deadline pacing in `Pace::Buffered` (parts about 2.7 s):
+  **42/42 in 3 consecutive runs**; each time part 3 was in flight at the
+  press (started 335–419 ms before it), answered 200 at +2,242 to
+  +2,336 ms, abort 204 0 ms after that answer, 12 = 12 app requests, 0
+  dropped, no part left. The recording marks request start and answer,
+  not the moment a body was handed over completely; that part follows
+  from the buffering link and the percentage.
   WSL2 after the pacing change: `cargo test` 333 passed, 26 ignored; the
   `cloud::s3::upload` tests (with the `Buffered` ones) 37 passed, 3 runs;
   `probe_a_part_landing_after_the_abort` 0 of 3; fmt and clippy clean in

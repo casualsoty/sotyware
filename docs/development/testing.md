@@ -1321,7 +1321,14 @@ checks that exactly one part was in flight at the press, that it ended with
 part was dropped or started after the press, and that the one
 `AbortMultipartUpload` (204) started after that answer, within 1 s. A wait
 that runs into the 5 s bound shows as `op-dropped` about 5 s after the
-press and fails the check.
+press and fails the check. The percentage only times the press; every
+settle check reads the recording. The recording has no event for "body
+handed over completely": that the cancelled part was handed over follows
+from the buffering link and the percentage, so these checks alone would
+not tell the wait apart from a cancel that is ignored until the part ends
+(the `cancel` and `quit` scenarios and the unit tests show a part not
+handed over being dropped at once). The driver does not keep the app's
+stderr, so sotyware's line for a wait that reached the bound is not seen.
 
 The throttled links pace by deadline in `Buffered` mode only:
 `BytesPerSecond` still sleeps once per 16 KiB piece, and Windows timers fire

@@ -545,7 +545,9 @@ server only; no real provider was asked.
   5 s longer. Seen once on native Windows 11 (2026-11-13, the first
   `-Scenario settle` run, whose test link carried only about 1 MiB/s): the
   wait ran into the bound, part 3 was dropped 5.05 s after the cancel, and
-  its file was still written after the 204 abort (local server).
+  its file was still written after the 204 abort (local server; removed
+  only with the test server's folder). sotyware's log line for it was not
+  captured: the Windows UI driver does not keep the app's stderr.
 - **Real providers:** AWS documents that an in-progress part "might or
   might not succeed" after an abort, and that an upload may have to be
   aborted more than once and checked with ListParts
