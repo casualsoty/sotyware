@@ -127,6 +127,37 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### rfd patch guard (2026-11-13)
+
+Uncommitted tree on `207363d`: new `scripts/check-rfd-patch.mjs`
+(`npm run check:rfd-patch`, now the first step of `npm run test:headless`,
+a step after `cargo fetch --locked` in `ci.yml` and before the release
+build in both manual desktop workflows) and its tests
+`scripts/check-rfd-patch.test.mjs` (`npm run test:rfd-patch-guard`, also in
+`ci.yml`). No production code, dependency or patch changed. How it works:
+[patches/README.md](../../src-tauri/patches/README.md), ADR-023.
+
+- **WSL2** (Ubuntu 24.04, Node 24.22.0, cargo 1.99.1): guard on the real
+  tree passed (exit 0, 0.24 s). `test:rfd-patch-guard` **10/10 passed**:
+  real tree from another directory and an unchanged copy pass; temporary
+  copies fail (exit 1) when the patch is unused because its version is
+  0.18.0 (Cargo warned "was not used" and resolved rfd 0.17.2 from
+  crates.io; the guard named the registry source, the registry path, the
+  `[[patch.unused]]` entry and the warning), when the `[patch.crates-io]`
+  entry is removed, when the patch resolves as 0.17.3, when `Cargo.lock` is
+  stale (`--locked` refused), when `patches/rfd` or `com.rs` is missing and
+  when the conversion is reverted to `String::from_utf16(slice).unwrap()`;
+  wrong usage exits 2. `npm run test:headless`: guard ok, frontend 135,
+  Rust 308 passed + 16 ignored; `npm run check` 0/0.
+- **Native Windows 11** (build 26200, Node 24.14.1, cargo 1.99.1; a plain
+  copy of the tree, no `node_modules`): `cargo fetch --locked`, then the
+  guard from `%TEMP%` by absolute path and through `npm run
+  check:rfd-patch` both passed (exit 0, `C:\…\patches\rfd`);
+  `test:rfd-patch-guard` **10/10 passed** (the same cases). `test:headless`
+  was not run there (no `node_modules` in the copy; nothing it tests
+  changed).
+- **Not run:** the CI steps on GitHub; Windows 10.
+
 ### Windows dialog paths with unpaired surrogates (2026-11-13)
 
 Uncommitted tree on `bd704af`: rfd 0.17.2 patched locally

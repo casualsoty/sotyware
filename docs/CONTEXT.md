@@ -133,7 +133,8 @@ src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, command
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
-.github/workflows/   CI: ci.yml (automatic, headless), desktop-*.yml (manual)
+.github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
+scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing, downloads and uploads: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
@@ -182,7 +183,8 @@ Details: [overview.md](architecture/overview.md),
 npm ci
 npm run tauri dev
 npm run check && npm run build
-npm run test:headless                      # frontend + Rust unit tests, no display needed
+npm run test:headless                      # rfd patch guard + frontend + Rust unit tests, no display needed
+npm run check:rfd-patch                    # fails unless Cargo resolves rfd from src-tauri/patches/rfd
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 npm run tauri build -- --no-bundle && tests/desktop/run.sh   # or: npm run test:desktop:virtual
 npm run test:desktop:windows               # Windows, real desktop, moves the mouse
@@ -195,6 +197,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- rfd patch guard (2026-11-13, uncommitted on `207363d`):
+  `npm run check:rfd-patch` (`scripts/check-rfd-patch.mjs`, first step of
+  `test:headless`, in `ci.yml` after `cargo fetch --locked` and before the
+  manual workflows' release builds) fails unless `cargo metadata --locked`
+  resolves rfd once, at 0.17.2, from `src-tauri/patches/rfd`, and `com.rs`
+  keeps `OsString::from_wide`. Its tests (`npm run test:rfd-patch-guard`,
+  temporary broken copies: unused patch, removed entry, other version,
+  stale lock, missing copy or file, reverted conversion) **10/10 on WSL2
+  and 10/10 on native Windows 11**; WSL2 `test:headless` 135 + 308.
+  CI steps not yet run on GitHub.
+  [status.md](status/status.md#rfd-patch-guard-2026-11-13).
 - Windows dialog paths with an unpaired surrogate (2026-11-13,
   uncommitted on `bd704af`): rfd 0.17.2 patched locally
   (`src-tauri/patches/rfd`, `OsString::from_wide` instead of
@@ -537,7 +550,8 @@ desktop with the Windows dialog); on Linux a non-UTF-8 file name
 silently drops out of the dialog's selection (rfd); on Windows names with
 an unpaired surrogate work only through the locally patched rfd (a
 dialog-plugin update that bypasses the patch brings the abort back;
-ADR-023); incomplete multipart uploads whose abort failed are remembered
+ADR-023; `npm run check:rfd-patch` fails then, in `test:headless` and
+CI); incomplete multipart uploads whose abort failed are remembered
 only while sotyware runs (afterwards only a bucket lifecycle rule removes
 them); quitting can take up to 35 s if an abort hangs.
 Full list: [limitations.md](status/limitations.md).
