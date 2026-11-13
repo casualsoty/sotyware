@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-12 (uploads on the native Windows 11 desktop, local server only: [details](#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)). Update this file whenever
+Last updated: 2026-11-13 (upload unit test made portable to Windows; uploads on the native Windows 11 desktop, local server only: [details](#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -227,7 +227,11 @@ appeared on the page. The tray Quit used the real mouse.
   writes a file named `größe test+&?#%.bin`, and Windows refuses `?` in a
   file name, so the test helper's `fs::write` panics
   (`test_server.rs:854`). The upload tests had not run on native Windows
-  before. Not changed. WSL2: `cargo test` 308 passed, 16 ignored; `cargo
+  before. Not changed then; **fixed 2026-11-13**: on Windows the test uses
+  `größe test+&#%.bin` (without `?`), elsewhere still the name with `?`;
+  afterwards native Windows `npm run test:headless` 135 + Rust **298
+  passed, 0 failed**, 16 ignored, and WSL2 `cargo test` 308 passed, 16
+  ignored, fmt and clippy clean. WSL2: `cargo test` 308 passed, 16 ignored; `cargo
   fmt --check` and `cargo clippy --all-targets -- -D warnings` pass (the
   Linux `cloud-ui.sh upload` phase was not rerun after the helper change,
   which only affects `\` separators). `windows.ps1` (real desktop, tray

@@ -206,8 +206,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   dialog ends sotyware (`0xC0000409`, rfd's `unwrap` under `panic =
   "abort"`; not fixed). Regression: `-Mode download` 35/35 (3 runs),
   `local` 19/19, `browse` 29/29; Windows `test:headless` 135 + Rust 297
-  passed, **1 failed** (an existing unit test writes a file name with `?`,
-  which Windows refuses; not changed); WSL2 `cargo test` 308 + 16 ignored.
+  passed, **1 failed** (an existing unit test wrote a file name with `?`,
+  which Windows refuses; fixed 2026-11-13: Windows Rust 298 passed, 0
+  failed); WSL2 `cargo test` 308 + 16 ignored.
   **No real provider, no Windows 10.**
   [status.md](status/status.md#cloud-storage-uploads-on-the-native-windows-11-desktop-2026-11-12).
 - Uploads through the **release binary** on the **WSL2 virtual display**

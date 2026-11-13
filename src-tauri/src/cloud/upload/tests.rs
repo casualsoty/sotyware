@@ -374,11 +374,17 @@ fn a_selection_is_checked_file_by_file_without_failing_as_a_whole() {
     assert_eq!(checked[0].size, Some(10));
     assert_eq!(checked[0].name, "a.txt");
     assert_eq!(checked[0].path, a);
-    // Unicode names are fine; the key is folder + name, unchanged.
-    let b = dir.file("größe test+&?#%.bin", 0, 2);
+    // Unicode names are fine; the key is folder + name, unchanged. Windows
+    // refuses `?` in a file name, so only there the name goes without it.
+    let name = if cfg!(windows) {
+        "größe test+&#%.bin"
+    } else {
+        "größe test+&?#%.bin"
+    };
+    let b = dir.file(name, 0, 2);
     let checked = check_selection("", vec![b], &limits(), &options());
     assert_eq!(reasons(&checked), vec![None]);
-    assert_eq!(checked[0].key.as_deref(), Some("größe test+&?#%.bin"));
+    assert_eq!(checked[0].key.as_deref(), Some(name));
 }
 
 #[test]
