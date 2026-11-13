@@ -803,7 +803,11 @@ the path and are only logged). Provider text is never shown.
 
 **Verified against:** the in-process S3 server only (WSL2, 2026-11-12,
 [status.md](../status/status.md#upload-batches-backend-and-commands-2026-11-12)).
-Not at Backblaze or Hetzner, not on native Windows.
+Later, through the Rust batch path at Backblaze once on WSL2 and once on
+native Windows 11 (2026-11-13,
+[WSL2](../status/status.md#uploads-at-backblaze-2026-11-13),
+[Windows](../status/status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13));
+never at Hetzner.
 
 ### The upload panel
 

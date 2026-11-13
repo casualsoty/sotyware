@@ -127,6 +127,74 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Uploads at Backblaze on native Windows 11 (2026-11-13)
+
+Tree `96c9461` (no change to code or tests; a fresh copy of the clean
+tree at `C:\dev\sotyware-b2upwin`). **`backblaze_b2_upload_batch` passed
+once against the real B2 test bucket on native Windows 11**, first
+attempt, 4.18 s, after explicit approval. This is a separate result from
+the [WSL2 run](#uploads-at-backblaze-2026-11-13); neither stands in for
+the other. Same Rust batch path (`begin_upload`, `CloudUploads`,
+`CloudDownloads`), not the UI or a file dialog.
+
+- **Environment:** Windows 11 Home 25H2, build 26200.9711, x64, not
+  elevated; Windows PowerShell 5.1 (64-bit process), no WSL variables, no
+  container. Rust 1.99.1 `x86_64-pc-windows-msvc`. The test program
+  `target\debug\deps\sotyware_lib-dee1785c274cb1ee.exe` (native x64 PE,
+  `test` profile as on WSL2, built with `--locked`), SHA-256
+  `66ce9ebe43f2c333e668310b927fc82342daedd444302e8e93579533cc885842`; the
+  run script refused to start unless the program still had that hash, and
+  ran it directly from `src-tauri\` (as `cargo test` does). This is a test
+  program, not the app's release binary.
+- **Account:** the same bucket (`eu-central-003`) and the same write key,
+  limited to `sotyware-it/`, as the WSL2 run (compared by hashes of the
+  bucket name and key id; neither shown), read from the DPAPI file
+  `b2.xml` instead of `b2.env`. Run prefix
+  `sotyware-it/upload-validation/1794546792148463900-35800/`, new; the
+  preflight found it empty.
+- **Local checks first, on the same machine, without any `SOTYWARE_*`
+  variable:** `cargo fmt --check`, `cargo clippy --locked --all-targets --
+  -D warnings`; `cloud::integration::upload` 7 passed, 2 ignored; the
+  Backblaze test forced with `--ignored` but without the confirmation
+  stopped before building a client ("nothing was sent"); full lib suite
+  305 passed, 18 ignored.
+- **41 requests, the same sequence and counts as on WSL2**, all inside
+  the run scope (nothing refused):
+
+  | Request | Count |
+  | --- | --- |
+  | `ListObjectVersions` / `ListMultipartUploads` of the run prefix | 3 / 3, all 200 |
+  | `HeadObject` | 18 |
+  | `GetObject` | 3, all 200 |
+  | `PutObject` | 2, both 200 |
+  | `CreateMultipartUpload` / `UploadPart` / `CompleteMultipartUpload` / `AbortMultipartUpload` | 2 / 5 / 1 / 1 (204) |
+  | `DeleteObject` with `versionId` | 3, all 204 |
+
+- **Batch 1** completed: `empty.bin`, `größe +test.bin` (sent as
+  `gr%C3%B6%C3%9Fe%20%2Btest.bin`, read from an NTFS file of that name)
+  and `multipart.bin` (three `UploadPart`s → 200). Each upload: two
+  `HeadObject`s → 404, then a verifying `HeadObject` by version id → 200;
+  `multipart.bin` one more `HeadObject` → 404 before
+  `CompleteMultipartUpload`. Sizes and `sotyware-sha256` matched.
+- **Existing key:** two `HeadObject`s → 200, no `PUT`; the skipped file
+  reported `started: false`, `destination-exists`; `upload_file` returned
+  `AlreadyExists`.
+- **Cancellation:** `cancelled.bin` part 1 → 200, part 2 cut off (no
+  status), `AbortMultipartUpload` → 204, `HeadObject` → 404; remote state
+  `nothing-stored` after 5,242,880 bytes.
+- **Downloads:** three `GetObject`s, each `sha256-verified`, SHA-256 and
+  bytes equal to the source.
+- **Cleanup:** the multipart listing found none; the version listing
+  found exactly the three versions, no delete marker; each deleted by
+  version id (204). Afterwards `versions Ok([])`, `multipart uploads
+  Ok([])`.
+- **Same at the provider as on WSL2:** `ListMultipartUploads` of the run
+  prefix accepted; the completed multipart object's version id equals its
+  upload id. **No platform-specific difference** was seen in requests,
+  statuses or results.
+- **Not run:** the UI and native dialogs at a real provider; Windows 10;
+  Hetzner; `backblaze_b2_upload_cleanup` (not needed). One run only.
+
 ### Uploads at Backblaze (2026-11-13)
 
 Tree `2828582` plus uncommitted doc-comment and documentation changes (no
@@ -177,8 +245,9 @@ UI or a file dialog.
   - The version id of the completed multipart object equals its upload id
     (B2's large-file id).
 - **Not run:** the UI and the native dialogs at a real provider; native
-  Windows 11 for this test; Hetzner; `backblaze_b2_upload_cleanup` (not
-  needed). One run only.
+  Windows 11 for this test (run later the same day:
+  [above](#uploads-at-backblaze-on-native-windows-11-2026-11-13)); Hetzner;
+  `backblaze_b2_upload_cleanup` (not needed). One run only.
 
 ### Upload test at Backblaze: prepared (2026-11-13)
 

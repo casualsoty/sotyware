@@ -793,10 +793,11 @@ toolchain (the two tests are compiled on the first run).
 
 ### Uploads at Backblaze
 
-**Status: passed once against Backblaze (2026-11-13, WSL2, 41 requests,
-cleanup verified empty;
-[status.md](../status/status.md#uploads-at-backblaze-2026-11-13)).
-Never run on native Windows.** `backblaze_b2_upload_batch`
+**Status: passed against Backblaze once on WSL2 and once on native
+Windows 11 (2026-11-13, 41 requests each, cleanup verified empty each
+time;
+[WSL2](../status/status.md#uploads-at-backblaze-2026-11-13),
+[Windows](../status/status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13)).** `backblaze_b2_upload_batch`
 (`cloud/integration/upload.rs`, `#[ignore]`d) sends one controlled upload
 validation to the B2 test bucket through the code behind
 `upload_cloud_files`: `begin_upload` and `CloudUploads` with an in-memory
@@ -984,10 +985,12 @@ part of this test. If the run id is lost, find the run under
 
 **Where it can run.**
 
-- **WSL2:** yes (the other B2 Rust tests ran there).
-- **Native Windows 11:** yes, as a plain `cargo test` in a copy of the tree
-  (the round trip ran there three times on 2026-11-11). No desktop or
-  dialog is involved.
+- **WSL2:** yes; passed once (2026-11-13).
+- **Native Windows 11:** yes, in a copy of the tree, with the PowerShell
+  commands above; passed once (2026-11-13). That run executed the test
+  program (`target\debug\deps\sotyware_lib-*.exe`) directly from
+  `src-tauri\` after checking its SHA-256 against the one approved, with
+  the same arguments. No desktop or dialog is involved.
 - **GitHub CI:** not prepared, on purpose. It would need repository secrets
   and a manual, approval-gated workflow, and its log would be on GitHub.
   Its cost counts against the GitHub Free budget and the B2 caps.

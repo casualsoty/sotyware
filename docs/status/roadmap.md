@@ -119,11 +119,11 @@ order:
    upload and save dialog with an unpaired-surrogate name passed,
    [status.md](status.md#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)).
    Drop the patch once a fixed rfd reaches `tauri-plugin-dialog`.
-   The opt-in Backblaze upload test passed once on WSL2 through the Rust
-   batch path
-   ([status.md](status.md#uploads-at-backblaze-2026-11-13)).
-   **Next:** the same test on native Windows 11; uploads through the
-   dashboard and native dialog at Backblaze
+   The opt-in Backblaze upload test passed through the Rust batch path
+   once on WSL2 and once on native Windows 11
+   ([WSL2](status.md#uploads-at-backblaze-2026-11-13),
+   [Windows](status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13)).
+   **Next:** uploads through the dashboard and native dialog at Backblaze
    ([testing.md](../development/testing.md#uploads-at-backblaze)).
    Later: deletes and folder creation, each with its own
    confirmation design; whether incomplete multipart uploads need a

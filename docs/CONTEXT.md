@@ -210,10 +210,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   inside the `RunScope` (which refuses any request outside the run before
   it is sent). Cleanup deleted the 3 versions by id; afterwards 0 versions
   and 0 multipart uploads under the run prefix. Backblaze accepts
-  `ListMultipartUploads` with the prefix-restricted key. **Not run:**
-  native Windows, the UI at a real provider, Hetzner.
+  `ListMultipartUploads` with the prefix-restricted key. **Native
+  Windows 11** (same day, `96c9461`, separate result): the same test
+  **passed once** (4.18 s) on Windows 11 25H2 build 26200.9711 x64, test
+  program SHA-256 `66ce9ebe…885842`, same bucket and write key; 41
+  requests with the same counts and statuses, nothing refused, 3 versions
+  deleted by id, afterwards 0 versions and 0 multipart uploads; no
+  platform difference seen. **Not run:** the UI at a real provider,
+  Windows 10, Hetzner.
   [testing.md](development/testing.md#uploads-at-backblaze),
-  [status.md](status/status.md#uploads-at-backblaze-2026-11-13).
+  [status.md](status/status.md#uploads-at-backblaze-2026-11-13),
+  [Windows](status/status.md#uploads-at-backblaze-on-native-windows-11-2026-11-13).
 - rfd patch guard (2026-11-13, uncommitted on `207363d`):
   `npm run check:rfd-patch` (`scripts/check-rfd-patch.mjs`, first step of
   `test:headless`, in `ci.yml` after `cargo fetch --locked` and before the
@@ -568,8 +575,9 @@ the native Windows 11 dashboard and save dialog; through the UI on Linux
 only against the local object server; one at a time, without resume; a killed process leaves its hidden
 `.sotyware-partial` file; on file systems without hard links a file
 appearing at a new destination in the last instant could be replaced.
-Uploads ran at a real provider once, through the Rust batch path at
-Backblaze on WSL2 (never through the UI there, never at Hetzner); never
+Uploads ran at a real provider only through the Rust batch path at
+Backblaze, once on WSL2 and once on native Windows 11 (never through the
+UI there, never at Hetzner); never
 on Windows 10 or a real Linux desktop (the release binary only against
 the local server: on the
 WSL2 virtual display with the GTK dialog and on the native Windows 11
@@ -591,7 +599,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze on native Windows 11 and through the UI; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at Backblaze through the UI; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.
