@@ -242,8 +242,10 @@ pub struct UploadFile {
     /// `completed`) bytes; never decreases within a stage.
     pub bytes: u64,
     pub total: u64,
-    /// Whether its upload began (false for skipped files and files the
-    /// batch never reached).
+    /// Whether its upload began. True from the moment the batch takes the
+    /// file, so also while its destination is checked; false for skipped
+    /// files (also those skipped because the key turned out to exist,
+    /// whenever that was found) and files the batch never reached.
     pub started: bool,
     /// Only for "skipped".
     pub skip: Option<Skip>,
@@ -1382,6 +1384,8 @@ async fn upload_one(
     };
     let exists = |file: &mut UploadFile| {
         file.state = FileState::Skipped;
+        // Taken, but not uploaded: like a file skipped at selection.
+        file.started = false;
         file.skip = Some(Skip::new(
             SkipReason::DestinationExists,
             "an object with this name is already in the folder; it was left as it is",

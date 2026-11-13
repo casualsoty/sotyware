@@ -277,7 +277,11 @@ export interface UploadFile {
   /** Hashed, sent or verified bytes of `stage`; never decreases within it. */
   bytes: number;
   total: number;
-  /** Whether its upload began (false for skipped and never-reached files). */
+  /**
+   * Whether its upload began: true from the moment the batch takes the file
+   * (also while its destination is checked); false for skipped files (also
+   * when the key turned out to exist) and never-reached files.
+   */
   started: boolean;
   /** Only for "skipped". */
   skip: UploadSkip | null;

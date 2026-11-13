@@ -796,6 +796,7 @@ async fn an_existing_object_is_skipped_before_the_file_is_read() {
         SkipReason::DestinationExists
     );
     assert!(!skipped.retryable);
+    assert!(!skipped.started, "skipped, so not started");
     assert_eq!(skipped.stage, None, "never hashed");
     // Only the final event for the skipped file: no hashing progress.
     let events = s.sink.file_events(&batch, 0);
@@ -838,6 +839,7 @@ async fn a_conflict_found_by_the_upload_itself_skips_the_file() {
         f.skip.as_ref().unwrap().reason,
         SkipReason::DestinationExists
     );
+    assert!(!f.started, "skipped after hashing, still not started");
     assert_eq!(s.object("race.bin").unwrap(), b"theirs");
 }
 
