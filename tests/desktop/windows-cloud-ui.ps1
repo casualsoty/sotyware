@@ -958,6 +958,20 @@ try {
     Check "a file without a stored SHA-256: completed, and only the size is claimed" ($ok -and ((PageText) -notlike "*checksum stored with the file matched*") -and (Sha (Join-Path $Out "foreign.txt")) -eq $script:objects["foreign.txt"].sha256) (PageText)
     $null = Press "Dismiss"
 
+    # A destination name with an unpaired surrogate (NTFS allows it; it is not
+    # valid Unicode): the save dialog's path must reach sotyware unchanged
+    # (ADR-023; with upstream rfd 0.17.2 the conversion panicked here) and the
+    # file is saved under exactly that name. .NET, not cmdlets, for the name.
+    $LoneSave = "lone-$([char]0xD800)-copy.txt"
+    $loneDest = Join-Path $Out $LoneSave
+    $dlg = OpenSave "readme.txt"
+    $ok = $dlg -and (SaveAs $dlg $loneDest)
+    $died = WaitFor { $p.HasExited } 5
+    $ok = $ok -and -not $died -and (Says @("Downloaded", "matched"))
+    $loneSha = if ([System.IO.File]::Exists($loneDest)) { ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($loneDest))) -replace "-", "").ToLowerInvariant() } else { "" }
+    Check "a destination name with an unpaired surrogate in the save dialog: sotyware keeps running and saves under exactly that name, SHA-256 verified" ($ok -and $loneSha -eq $script:objects["readme.txt"].sha256 -and @(Saved | Where-Object { $_ -like "*sotyware-partial" }).Count -eq 0) "exited=$died$(if ($died) { ' 0x{0:X8}' -f $p.ExitCode }) | $(Saved) | $(PageText)"
+    $null = Press "Dismiss"
+
     $ok = (PressFolder "slow") -and (WaitFor { (PageText) -like "*large.bin*" } 20)
     $dlg = if ($ok) { OpenSave "large.bin" } else { $null }
     $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "large.bin")) -and (Says @("% ", "of 16 MiB") 20)
@@ -979,7 +993,8 @@ try {
     $ok = $dlg -and (SaveAs $dlg (Join-Path $Out "tampered.bin")) -and (Says @("Download failed", "did not pass the integrity check") 30)
     Check "content that does not match its SHA-256 is never saved" ($ok -and @(Saved | Where-Object { $_ -like "*tampered*" }).Count -eq 0) "$(Saved) | $(PageText)"
     $null = Press "Dismiss"
-    Check "the saved files are exactly the completed downloads" (((Saved) -join "|") -eq "Bericht 2024 $([char]0xFC) & co.pdf|existing.txt|foreign.txt|readme copy.txt") "$(Saved)"
+    $expected = @("Bericht 2024 $([char]0xFC) & co.pdf", "existing.txt", "foreign.txt", $LoneSave, "readme copy.txt") | Sort-Object
+    Check "the saved files are exactly the completed downloads" (((Saved) -join "|") -eq ($expected -join "|")) "$(Saved)"
    } catch {
     # Still go on to remove the account, so no test key stays behind.
     Check "download steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
@@ -1394,7 +1409,8 @@ try {
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
-  if (($Mode -eq "download" -or $Mode -eq "upload") -and (Test-Path $Out)) { Remove-Item -Recurse -Force $Out }
+  # .NET, not Remove-Item: download mode saves a name with an unpaired surrogate.
+  if (($Mode -eq "download" -or $Mode -eq "upload") -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
   if ($Mode -eq "upload" -and (Test-Path -LiteralPath $UpSrc)) {
     # .NET, not Remove-Item: the folder holds a name with an unpaired surrogate.
     [System.IO.Directory]::Delete($UpSrc, $true)
