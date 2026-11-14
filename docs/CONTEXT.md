@@ -14,10 +14,10 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 ## What works today
 
 The desktop runtime, the foundation for built-in features, cloud storage
-account management, bucket browsing, single-file downloads and upload
-batches into the folder shown (UI tested with mocked commands only); **no
-overwrite, no other changes to objects, backups or other product features
-exist**.
+account management, bucket browsing, single-file downloads, upload batches
+into the folder shown, and file management (ADR-026, 2026-11-14: headless
+tests only, never at a real provider or on a desktop); **no overwrite,
+backups or other product features exist**.
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -124,13 +124,36 @@ exist**.
   [cloud-storage.md](architecture/cloud-storage.md#dashboard),
   [cloud-providers.md](architecture/cloud-providers.md), ADR-016, ADR-017.
 
+- **File management** (both modes; ADR-026,
+  [cloud-storage.md](architecture/cloud-storage.md#file-management)):
+  new folder (marker), rename / copy / move / delete of files and folders
+  and restore of deleted files as **reviewed plans** (`plan_cloud_operation`
+  reads only; the review shows items, object counts, conflicts with a
+  `name (n)` alternative and what a delete means on this bucket; then
+  `start_cloud_operation`, events with `seq`, cancel, retry of what is
+  left, `partial` states named). Folders are prefixes ending in `/`
+  enumerated when planning (≤ 50,000 objects); copies are `CopyObject`
+  with metadata and the planned ETag, verified by `HeadObject`; moves delete
+  originals only after every copy is verified; deletes add delete markers on
+  versioned buckets (restorable from Deleted items) and say which objects
+  are gone for good; never overwrite or merge; nothing above 5 GiB is
+  copied. Also: destination picker, search (names in Rust or key prefix at
+  the provider, cursors in Rust), client-side sort and filters, selection
+  with keyboard and context menu, internal copy/cut/paste, properties,
+  previews (≤ 256 KiB text as text, raster images ≤ 10 MiB, never SVG/HTML;
+  CSP `img-src data:`), presigned share links (1 h / 1 day / 7 days),
+  several-item downloads into a picked folder (staging, `name (n)`, safe
+  local names), folder uploads and drag and drop through the upload batch
+  (≤ 1,000 files, paths kept in Rust), favorites and recent items per
+  account (`cloud-places.sqlite3`).
+
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads), CloudUpload.svelte (upload panel), cloud.ts, cloudMessages.ts, format.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the three upload batch commands); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs + test_server.rs (in-process S3), integration.rs (opt-in)
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs; tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
@@ -156,8 +179,10 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`,
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
-  `cancel_cloud_upload` and `retry_cloud_upload` (one `allow-<command>`
-  permission each; no `dialog:`/`fs:` permission) and, in tray
+  `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
+  commands of ADR-026 (38 in all; listed in
+  [overview.md](architecture/overview.md#components-and-boundaries); one
+  `allow-<command>` permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
   runtime). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored
@@ -197,6 +222,22 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **File management** (2026-11-14, uncommitted on `ae11691`, headless
+  only): WSL2 `test:headless` Vitest **173** (38 new), `cargo test`
+  **385 + 26 ignored** (about 52 new, 3 runs), recorder build 412, fmt,
+  clippy (both builds), check, build; native Windows 11 copy: check, fmt,
+  clippy, `test:headless` (173 + Rust 374 + 26 ignored) passed. Against the in-memory versioned S3 backend
+  (`test_server::Versioned`) and s3s-fs only. **No desktop driver, no
+  native folder dialog, no drop from a real file manager, no real
+  provider.** [status.md](status/status.md#file-management-2026-11-14).
+- **ADR-024 Backblaze smoke test: not run** (2026-11-14). Its local
+  rehearsal on native Windows 11 acted on the user's own account (the
+  account database swap had not taken effect): one read-only
+  `ListObjectsV2` of the bucket root with the user's key, then the account
+  was renamed, given a made-up key and removed (account and Credential
+  Manager entry gone; bucket unchanged). `windows-cloud-ui.ps1` now stops
+  unless the window appears and the account list is empty.
+  [status.md](status/status.md#ui-test-acted-on-a-real-account-2026-11-14).
 - **Release-binary guard self-test on Windows** (2026-11-14, test code
   only): `ci.yml` at `d5de7c8` passed on Ubuntu; on Windows two manifest
   tests of `test:release-binary-guard` failed (CRLF checkout, the test's
@@ -685,6 +726,11 @@ them); quitting can take up to 35 s if an abort hangs; a part whose bytes
 were all handed over when cancelling is awaited up to 5 s before the
 abort (ADR-025), past that it can still land after the abort (unchecked
 at real providers).
+File management (ADR-026) ran only against local test servers: no real
+provider, no desktop run; one request of race between a check and a copy
+or delete; copies above 5 GiB refused; deletes only add delete markers
+(hidden versions stay billed) or remove for good on unversioned buckets
+([limitations.md](status/limitations.md#file-management-adr-026)).
 Full list: [limitations.md](status/limitations.md).
 
 ## Milestone and next steps
@@ -695,7 +741,7 @@ simulation (WSL2 is the development environment, not a runtime target). Next:
 the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
-[roadmap.md](status/roadmap.md). Cloud storage next step (uploads at a real provider on Linux and Windows 10; deletes with their own confirmation design; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
+[roadmap.md](status/roadmap.md). Cloud storage next step (desktop driver runs of file management against the local servers; with approval, one Backblaze run per file operation; uploads at a real provider on Linux and Windows 10; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
 Further local persistence (settings, other
 data), a feature-management UI, third-party plugins, sync and autostart are
 undecided ideas, not tasks.

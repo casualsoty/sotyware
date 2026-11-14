@@ -49,7 +49,13 @@ use super::account::ResolvedAccount;
 use super::credentials::Credentials;
 use super::provider::{SdkChecksums, TransferLimits};
 
+mod manage;
 mod upload;
+
+pub use manage::{
+    DeleteOutcome, ListedObject, MAX_COPY_BYTES, MAX_PRESIGN, ObjectHead, ObjectPage,
+    ObjectProperties, VersionInfo, VersionPage, Versioning, copy_source,
+};
 
 #[cfg(test)]
 mod hook_assumptions;

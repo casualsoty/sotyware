@@ -75,7 +75,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through sixteen custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 38 custom commands
   and one built-in call. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -93,8 +93,20 @@ Boundaries that hold today:
   `upload_cloud_files`, `cancel_cloud_upload`, `retry_cloud_upload` (up to
   100 files picked in a dialog that Rust opens, uploaded one after another
   into one folder; events over a per-batch `Channel`; called by the
-  browser's upload panel; [cloud-storage.md](cloud-storage.md#uploading-files)); none returns a
-  stored credential or a local path. The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
+  browser's upload panel; [cloud-storage.md](cloud-storage.md#uploading-files)), and
+  the 22 file-management commands of ADR-026: `plan_cloud_operation`,
+  `discard_cloud_operation_plan`, `start_cloud_operation`,
+  `cancel_cloud_operation`, `retry_cloud_operation` (copy, move, rename,
+  delete, restore as reviewed plans), `create_cloud_folder`,
+  `cloud_object_properties`, `preview_cloud_file`, `search_cloud_folder`,
+  `list_cloud_deleted`, `share_cloud_file`, `upload_cloud_folder`,
+  `download_cloud_items`, `cancel_cloud_items_download`,
+  `retry_cloud_items_download`, `list_cloud_places`, `set_cloud_favorite`,
+  `record_cloud_recent`, `clear_cloud_recent`, `watch_cloud_drops`,
+  `unwatch_cloud_drops`, `upload_cloud_drop`
+  ([cloud-storage.md](cloud-storage.md#file-management)); none returns a
+  stored credential or a local path (a share link carries the access key
+  id, never the secret). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
   tray mode only). There is no other custom command, and there are **no custom
   events** (`emit`/`listen`). Adding either is an architectural change: record
   it in [decisions.md](decisions.md).
@@ -122,11 +134,14 @@ Boundaries that hold today:
   a download started from the browser (one at a time, on the async runtime,
   until it completes, fails or is cancelled; quitting cancels it), and an
   upload batch (likewise, in its own slot; quitting cancels it and aborts
-  incomplete multipart uploads, waiting at most 35 s). The
+  incomplete multipart uploads, waiting at most 35 s), a file operation
+  and a download of several items (each in its own slot; quitting cancels
+  them, waiting at most 15 s and 10 s). The
   databases are read once, before the event loop starts.
 - **Network only on request, no sync, no settings.** Stored: each feature's
-  enabled choice (`preferences.sqlite3`) and the storage accounts'
-  configurations (`cloud-accounts.sqlite3`), both in the app's local data
+  enabled choice (`preferences.sqlite3`), the storage accounts'
+  configurations (`cloud-accounts.sqlite3`) and their favorites and recent
+  items (`cloud-places.sqlite3`), all in the app's local data
   folder, and the accounts' keys in the OS credential store. The only network
   requests are the ones "Check connection" sends (`HeadBucket`, at most one
   `ListObjectsV2` of one key, to the account's bucket) and one
@@ -135,17 +150,22 @@ Boundaries that hold today:
   commands send `HeadObject` and upload requests only for files picked in
   their dialog, when the user chooses Upload files… in the bucket browser;
   nothing is changed otherwise or
-  synchronised.
+  synchronised. The file-management commands send requests only when
+  the user acts in the browser (each listed in
+  [cloud-storage.md](cloud-storage.md#what-s3-means-for-each-action));
+  every change to objects goes through a plan the user reviewed first.
 
 ## Security model
 
-- CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'` (inline styles are
-  needed by Svelte).
+- CSP: `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`
+  (inline styles are needed by Svelte; `data:` images for the file previews,
+  ADR-026; pinned by a test in `lib.rs`).
 - Capability `default` applies to window `main` only and grants
   `allow-operating-mode`, `allow-list-features`,
   `allow-set-feature-enabled`, the six `allow-…-cloud-…` account permissions
   `allow-list-cloud-folder`, the three download and the three upload
-  permissions (the app's sixteen commands) and nothing else, not even
+  permissions and the 22 file-management permissions of ADR-026 (the app's
+  38 commands) and nothing else, not even
   `core:default` or a `dialog:`/`fs:` permission: the save dialog for
   downloads and the file dialog for uploads are opened by Rust, and the
   page never names or receives a local path

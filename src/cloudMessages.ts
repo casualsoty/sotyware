@@ -72,6 +72,9 @@ const ERROR_SUMMARIES: Record<ErrorKind, string> = {
     "A file with this name appeared while downloading. It was not replaced; download again and choose to replace it. Details:",
   "local-file": "The file could not be written. Details:",
   "file-changed": "The file changed while it was being uploaded, so it was not stored. Try again once it is saved. Details:",
+  "remote-changed": "The object changed in the bucket since it was listed, so it was left as it is. Refresh and try again. Details:",
+  "too-large": "The object is too large for this action. Details:",
+  "outdated-plan": "This action was reviewed too long ago or replaced by another one. Start it again to review it. Details:",
   other: "Something went wrong:",
 };
 
@@ -146,6 +149,9 @@ const UPLOAD_ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "destination-exists": "An object with this name is already in the folder; it was left as it is. Details:",
   "local-file": "The file could not be read on this computer. Details:",
   "file-changed": "The file changed while it was being uploaded, so its upload was stopped. Details:",
+  "remote-changed": "The object changed in the bucket meanwhile. Details:",
+  "too-large": "The file is too large. Details:",
+  "outdated-plan": "This action is out of date. Details:",
   other: "Something went wrong:",
 };
 
@@ -160,4 +166,33 @@ export function describeUploadError(e: unknown): string {
 /** The same for an error that came inside an upload event. */
 export function describeUploadFailure(error: TransferError): string {
   return `${UPLOAD_ERROR_SUMMARIES[error.kind]} ${error.message}`;
+}
+
+// File operations, downloads of several items and the other file-manager
+// commands (ADR-026; src-tauri/src/cloud/operations.rs, manage.rs,
+// bulk_download.rs, places.rs).
+
+const OPERATION_ERROR_SUMMARIES: Record<ErrorKind, string> = {
+  ...ERROR_SUMMARIES,
+  "invalid-input": "This cannot be done:",
+  "access-denied":
+    "The key is valid, but the provider refused this change. Check that the key may write and delete in this bucket. Details:",
+  "object-not-found": "The object could not be found. It may have been deleted or renamed meanwhile; refresh the folder. Details:",
+  "destination-exists": "Something with this name already exists there; nothing was replaced. Details:",
+  integrity: "A copy did not match the original, so the original was kept. Details:",
+  busy: "Another action of this kind is running. Wait for it to finish or cancel it first. Details:",
+  "outdated-page": "The account's bucket changed since this folder was listed. Refresh and try again. Details:",
+};
+
+/** A sentence for a file-manager command's rejection or an item's error. */
+export function describeOperationError(e: unknown): string {
+  if (e instanceof CloudCommandError) {
+    return `${OPERATION_ERROR_SUMMARIES[e.kind]} ${e.message}`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** The same for an error that came inside an event. */
+export function describeOperationFailure(error: TransferError): string {
+  return `${OPERATION_ERROR_SUMMARIES[error.kind]} ${error.message}`;
 }

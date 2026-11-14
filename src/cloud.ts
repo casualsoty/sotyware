@@ -83,6 +83,9 @@ export const ERROR_KINDS = [
   "destination-exists",
   "local-file",
   "file-changed",
+  "remote-changed",
+  "too-large",
+  "outdated-plan",
   "other",
 ] as const;
 
@@ -681,7 +684,9 @@ export function toCommandError(rejection: unknown): Error {
   return rejection instanceof Error ? rejection : new Error(String(rejection));
 }
 
-async function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+/** Invokes `cmd`; a rejection becomes a `CloudCommandError` when it has
+ * Rust's `CommandError` shape. */
+export async function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   try {
     return await invoke<unknown>(cmd, args);
   } catch (e) {

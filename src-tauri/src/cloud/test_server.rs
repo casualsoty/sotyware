@@ -26,6 +26,9 @@ use tokio::task::JoinHandle;
 use super::account::{AccountConfig, ResolvedAccount};
 use super::credentials::{Credentials, Secret};
 
+mod versioned;
+pub use versioned::Versioned;
+
 /// A running test server. Stopped and its folder removed on drop.
 pub struct TestServer {
     pub endpoint: String,
@@ -594,6 +597,19 @@ impl TestServer {
                 .insert(object.key.clone(), object.data.len() as u64);
         }
         Self::serve(backend, fresh_root(), access_key_id, secret, &[]).await
+    }
+
+    /// A server on the in-memory [`Versioned`] backend: `buckets` are
+    /// `(name, versioning enabled)`. The returned handle reads and changes
+    /// the stored versions directly (as another client would).
+    pub async fn start_versioned(
+        access_key_id: &str,
+        secret: &str,
+        buckets: &[(&str, bool)],
+    ) -> (Self, Versioned) {
+        let backend = Versioned::new(buckets);
+        let server = Self::serve(backend.clone(), fresh_root(), access_key_id, secret, &[]).await;
+        (server, backend)
     }
 
     async fn serve(

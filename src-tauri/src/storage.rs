@@ -318,6 +318,133 @@ impl AccountStore for SqliteAccountStore {
     }
 }
 
+/// The file manager's local places (favorites and recent items, ADR-026),
+/// separate from the accounts so the two schemas evolve independently.
+pub const PLACES_FILE_NAME: &str = "cloud-places.sqlite3";
+
+/// Schema of [`PLACES_FILE_NAME`]; append only. Only keys, prefixes and
+/// times: no object content, no credential.
+pub const PLACES_MIGRATIONS: &[&str] = &[
+    // 1: one row per account, kind and key (or folder prefix).
+    "CREATE TABLE places (
+        account_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('favorite', 'recent')),
+        path TEXT NOT NULL,
+        bucket TEXT NOT NULL,
+        touched_ms INTEGER NOT NULL,
+        PRIMARY KEY (account_id, kind, path)
+    ) STRICT;",
+];
+
+/// One stored place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaceRow {
+    pub kind: String,
+    pub path: String,
+    pub bucket: String,
+    pub touched_ms: i64,
+}
+
+/// Favorites and recent items in a SQLite database.
+pub struct SqlitePlacesStore {
+    conn: Connection,
+}
+
+impl SqlitePlacesStore {
+    /// Opens (creating it if needed) the database at `path`.
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, PLACES_MIGRATIONS).map(|conn| Self { conn })
+    }
+
+    /// Every place of `account`, newest first.
+    pub fn list(&self, account: &str) -> Result<Vec<PlaceRow>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<PlaceRow>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT kind, path, bucket, touched_ms FROM places
+                 WHERE account_id = ?1 ORDER BY touched_ms DESC, path",
+            )?;
+            stmt.query_map([account], |r| {
+                Ok(PlaceRow {
+                    kind: r.get(0)?,
+                    path: r.get(1)?,
+                    bucket: r.get(2)?,
+                    touched_ms: r.get(3)?,
+                })
+            })?
+            .collect()
+        };
+        read().map_err(sql_error("cannot read the places"))
+    }
+
+    /// Adds or refreshes a place; for `recent`, keeps only the `keep`
+    /// newest of the account.
+    pub fn put(
+        &mut self,
+        account: &str,
+        kind: &str,
+        path: &str,
+        bucket: &str,
+        now_ms: i64,
+        keep: usize,
+    ) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            tx.execute(
+                "INSERT INTO places (account_id, kind, path, bucket, touched_ms) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (account_id, kind, path) DO UPDATE SET bucket = excluded.bucket,
+                     touched_ms = excluded.touched_ms",
+                params![account, kind, path, bucket, now_ms],
+            )?;
+            if kind == "recent" {
+                tx.execute(
+                    "DELETE FROM places WHERE account_id = ?1 AND kind = 'recent' AND path NOT IN (
+                         SELECT path FROM places WHERE account_id = ?1 AND kind = 'recent'
+                         ORDER BY touched_ms DESC, path LIMIT ?2)",
+                    params![account, i64::try_from(keep).unwrap_or(i64::MAX)],
+                )?;
+            }
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot save the place"))
+    }
+
+    /// Removes one place (`path`) or, without one, every place of `kind`.
+    pub fn remove(
+        &mut self,
+        account: &str,
+        kind: &str,
+        path: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let r = match path {
+            Some(p) => self.conn.execute(
+                "DELETE FROM places WHERE account_id = ?1 AND kind = ?2 AND path = ?3",
+                params![account, kind, p],
+            ),
+            None => self.conn.execute(
+                "DELETE FROM places WHERE account_id = ?1 AND kind = ?2",
+                params![account, kind],
+            ),
+        };
+        r.map(drop).map_err(sql_error("cannot remove the place"))
+    }
+
+    /// Forgets everything of `account` (it was removed).
+    pub fn forget(&mut self, account: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM places WHERE account_id = ?1", [account])
+            .map(drop)
+            .map_err(sql_error("cannot remove the places"))
+    }
+}
+
+/// The places store `run()` uses: [`PLACES_FILE_NAME`] in `dir`.
+pub fn open_places_store(dir: tauri::Result<PathBuf>) -> Result<SqlitePlacesStore, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    SqlitePlacesStore::open(&dir.join(PLACES_FILE_NAME))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};

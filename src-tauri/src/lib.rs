@@ -246,6 +246,15 @@ pub fn run() {
         .manage(Arc::new(cloud::download::CloudDownloads::new()))
         // Its own slot: one upload batch can run beside one download.
         .manage(Arc::new(cloud::upload::CloudUploads::new()))
+        // Its own slot: one file operation (copy, move, rename, delete,
+        // restore) can run beside the transfers (ADR-026).
+        .manage(Arc::new(cloud::operations::CloudOperations::new()))
+        // Continuation tokens of searches, behind cursors (ADR-026).
+        .manage(Arc::new(cloud::manage::CloudSearches::default()))
+        // Its own slot: one download of several files or folders (ADR-026).
+        .manage(Arc::new(cloud::bulk_download::BulkDownloads::new()))
+        // Paths of files dropped on the dashboard, kept in Rust (ADR-026).
+        .manage(Arc::new(cloud::drop::CloudDrops::default()))
         .invoke_handler(tauri::generate_handler![
             operating_mode,
             features::list_features,
@@ -262,7 +271,29 @@ pub fn run() {
             cloud::download::retry_cloud_download,
             cloud::upload::upload_cloud_files,
             cloud::upload::cancel_cloud_upload,
-            cloud::upload::retry_cloud_upload
+            cloud::upload::retry_cloud_upload,
+            cloud::operations::plan_cloud_operation,
+            cloud::operations::discard_cloud_operation_plan,
+            cloud::operations::start_cloud_operation,
+            cloud::operations::cancel_cloud_operation,
+            cloud::operations::retry_cloud_operation,
+            cloud::manage::create_cloud_folder,
+            cloud::manage::cloud_object_properties,
+            cloud::manage::preview_cloud_file,
+            cloud::manage::search_cloud_folder,
+            cloud::manage::list_cloud_deleted,
+            cloud::manage::share_cloud_file,
+            cloud::upload::upload_cloud_folder,
+            cloud::bulk_download::download_cloud_items,
+            cloud::bulk_download::cancel_cloud_items_download,
+            cloud::bulk_download::retry_cloud_items_download,
+            cloud::places::list_cloud_places,
+            cloud::places::set_cloud_favorite,
+            cloud::places::record_cloud_recent,
+            cloud::places::clear_cloud_recent,
+            cloud::drop::watch_cloud_drops,
+            cloud::drop::unwatch_cloud_drops,
+            cloud::drop::upload_cloud_drop
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -293,6 +324,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Dropped files: their paths go to the drop store only; the page
+            // hears names and counts if it shows a bucket (ADR-026).
+            if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                if let Some(drops) = window.try_state::<Arc<cloud::drop::CloudDrops>>() {
+                    drops.dropped(paths.clone());
+                }
+                return;
+            }
             let WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
@@ -349,6 +388,11 @@ pub fn run() {
         Arc::new(cloud::keyring::OsCredentialStore::new()),
         cloud::s3::ClientOptions::default(),
     )));
+    // Favorites and recent items (ADR-026): a separate small database; an
+    // unusable one only disables those lists.
+    app.manage(Arc::new(cloud::places::CloudPlaces::load(
+        storage::open_places_store(app.path().app_local_data_dir()),
+    )));
 
     app.run(|app, event| match event {
         RunEvent::ExitRequested { code, api, .. } if !exit_allowed(code) => {
@@ -374,6 +418,16 @@ pub fn run() {
             // uploads are aborted (bounded wait, ADR-022).
             if let Some(uploads) = app.try_state::<Arc<cloud::upload::CloudUploads>>() {
                 uploads.shutdown(cloud::upload::SHUTDOWN_WAIT);
+            }
+            // A running download of several files is cancelled and its
+            // staging folder removed (bounded wait, ADR-026).
+            if let Some(bulk) = app.try_state::<Arc<cloud::bulk_download::BulkDownloads>>() {
+                bulk.shutdown(cloud::bulk_download::SHUTDOWN_WAIT);
+            }
+            // A running file operation stops after its requests in flight
+            // (bounded wait, ADR-026).
+            if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
+                ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
             }
             // Last, so the aborts of a quit are recorded (bounded wait).
             #[cfg(feature = "request-recorder")]
@@ -599,6 +653,20 @@ mod tests {
     }
 
     #[test]
+    fn the_content_security_policy_allows_only_bundled_code_and_data_images() {
+        // Widening it is a design decision (ADR-026: `img-src data:` for the
+        // raster previews Rust recognised by their bytes; never scripts,
+        // frames or remote content).
+        let conf = read_json("tauri.conf.json");
+        assert_eq!(
+            conf["app"]["security"]["csp"],
+            serde_json::json!(
+                "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+            )
+        );
+    }
+
+    #[test]
     fn dashboard_starts_visible() {
         // In both modes the dashboard is on screen at startup; in dashboard-only
         // mode it is the only way to reach sotyware.
@@ -634,7 +702,29 @@ mod tests {
                 "allow-retry-cloud-download",
                 "allow-upload-cloud-files",
                 "allow-cancel-cloud-upload",
-                "allow-retry-cloud-upload"
+                "allow-retry-cloud-upload",
+                "allow-plan-cloud-operation",
+                "allow-discard-cloud-operation-plan",
+                "allow-start-cloud-operation",
+                "allow-cancel-cloud-operation",
+                "allow-retry-cloud-operation",
+                "allow-create-cloud-folder",
+                "allow-cloud-object-properties",
+                "allow-preview-cloud-file",
+                "allow-search-cloud-folder",
+                "allow-list-cloud-deleted",
+                "allow-share-cloud-file",
+                "allow-upload-cloud-folder",
+                "allow-download-cloud-items",
+                "allow-cancel-cloud-items-download",
+                "allow-retry-cloud-items-download",
+                "allow-list-cloud-places",
+                "allow-set-cloud-favorite",
+                "allow-record-cloud-recent",
+                "allow-clear-cloud-recent",
+                "allow-watch-cloud-drops",
+                "allow-unwatch-cloud-drops",
+                "allow-upload-cloud-drop"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

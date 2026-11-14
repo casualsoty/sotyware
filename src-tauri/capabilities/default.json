@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Dashboard window: may read the operating mode, list built-in features and enable or disable them, list, add, change, remove and check cloud storage accounts (never reading credentials back), list the folders and files of an account's bucket, download one file at a time to a path the user picks in a save dialog that Rust opens, and upload up to 100 files the user picks in a file dialog that Rust opens, without ever receiving their paths (the window gets no dialog or file system permission). Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
+  "description": "Dashboard window: may read the operating mode, list built-in features and enable or disable them, list, add, change, remove and check cloud storage accounts (never reading credentials back), list the folders and files of an account's bucket, download one file at a time to a path the user picks in a save dialog that Rust opens, upload up to 100 files the user picks in a file dialog that Rust opens, without ever receiving their paths, and manage files (ADR-026): plan, start, cancel and retry copy, move, rename, delete and restore; create folders; read properties, previews and share links; search; list deleted items; download several items into a folder and upload a folder through dialogs Rust opens; upload dropped files whose paths stay in Rust; keep favorites and recent items (the window gets no dialog or file system permission). Hiding is granted at runtime in tray mode only (capability tray-mode, see lib.rs).",
   "windows": [
     "main"
   ],
@@ -21,6 +21,28 @@
     "allow-retry-cloud-download",
     "allow-upload-cloud-files",
     "allow-cancel-cloud-upload",
-    "allow-retry-cloud-upload"
+    "allow-retry-cloud-upload",
+    "allow-plan-cloud-operation",
+    "allow-discard-cloud-operation-plan",
+    "allow-start-cloud-operation",
+    "allow-cancel-cloud-operation",
+    "allow-retry-cloud-operation",
+    "allow-create-cloud-folder",
+    "allow-cloud-object-properties",
+    "allow-preview-cloud-file",
+    "allow-search-cloud-folder",
+    "allow-list-cloud-deleted",
+    "allow-share-cloud-file",
+    "allow-upload-cloud-folder",
+    "allow-download-cloud-items",
+    "allow-cancel-cloud-items-download",
+    "allow-retry-cloud-items-download",
+    "allow-list-cloud-places",
+    "allow-set-cloud-favorite",
+    "allow-record-cloud-recent",
+    "allow-clear-cloud-recent",
+    "allow-watch-cloud-drops",
+    "allow-unwatch-cloud-drops",
+    "allow-upload-cloud-drop"
   ]
 }

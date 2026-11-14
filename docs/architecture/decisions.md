@@ -1430,3 +1430,106 @@ code: `drive` in `src-tauri/src/cloud/s3/upload.rs`,
   (`part_settle_timeout` zero) the part remains every time, and the wait
   ends at its bound.
 
+
+## ADR-026: File management runs as reviewed plans in Rust, with S3 semantics made explicit
+
+Status: Accepted (2026-11-14). Extends
+[ADR-018](#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)
+to
+[ADR-022](#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust);
+code: `src-tauri/src/cloud/operations.rs` (+ `operations/names.rs`),
+`cloud/manage.rs`, `cloud/bulk_download.rs`, `cloud/places.rs`,
+`cloud/drop.rs`, `cloud/s3/manage.rs`, the folder upload in
+`cloud/upload.rs`; frontend `src/cloudFiles.ts`, `src/fileList.ts`,
+`src/CloudOperation.svelte`, `src/CloudFolderPicker.svelte`,
+`src/CloudProperties.svelte`, `src/CloudBulkDownload.svelte`,
+`src/CloudDeleted.svelte`, `src/Modal.svelte` and `src/CloudBrowser.svelte`.
+
+- **Context:** the browser could list, download one file and upload
+  batches. A file manager needs rename, move, copy, delete, folders,
+  search, recovery and several-item transfers. S3 has none of a file
+  system's operations: no folders (prefixes, sometimes a zero-byte marker),
+  no rename (copy then delete), deletes that may only hide (versioned
+  buckets add a delete marker), copies whose metadata handling depends on a
+  header, and no search beyond key prefixes.
+- **Decision:**
+  - **One engine for remote changes** (`CloudOperations`, its own slot):
+    the page asks for a plan (`plan_cloud_operation`: reads only), shows
+    it (items, object counts, sizes, conflicts with a proposed free name,
+    and what a delete means on this bucket from `GetBucketVersioning`), and
+    starts it only on confirmation (`start_cloud_operation` with a
+    conflict policy, skip or numbered name; never overwrite or merge). The
+    plan, ETags and version ids stay in Rust; a plan expires after 15
+    minutes or when replaced. Events with `seq`, one `finished` after the
+    slot is free, cancel between requests, bounded shutdown, retry of what
+    is left (as the upload batch).
+  - **Folders are prefixes ending in `/`**, enumerated once when planning
+    (at most 50,000 objects per plan); `photos/` never matches
+    `photos-backup/`. Only the planned keys are touched.
+  - **Copy** is `CopyObject` with `MetadataDirective::COPY` (content type,
+    cache and encoding headers, user metadata including
+    `sotyware-sha256`), conditional on the ETag seen when planning; a
+    `HeadObject` on the destination first (an existing object is skipped,
+    never replaced) and after (same size; same ETag when the source ETag is
+    a plain MD5). Objects above 5 GiB are refused (no multipart copy).
+  - **Move and rename** copy and verify every object of an item first and
+    delete the sources only then, each after a `HeadObject` that its ETag
+    is unchanged. A failed copy keeps every original; a failed delete makes
+    the item `partial` ("copied, original kept"), retry deletes only the
+    originals left after re-checking their copies. A move with a
+    non-retryable copy failure is not retried at all (it would split).
+  - **Delete** is `DeleteObject` without a version id; the provider's
+    answer says per object whether a delete marker was added (restorable)
+    or the object is gone, and both are reported. No version is ever
+    deleted permanently, except delete markers removed by a restore.
+  - **Restore** removes exactly the delete markers newer than a key's
+    newest version (ids from `ListObjectVersions`), then checks the object
+    is back. The deleted-items view is the provider's version listing;
+    there is no trash of sotyware's own.
+  - **Single requests** (`cloud/manage.rs`): create a folder (marker, only
+    if nothing is at or under the prefix), properties (`HeadObject`),
+    preview (ranged `GetObject`: text ≤ 256 KiB shown as text, raster
+    images ≤ 10 MiB recognised by their bytes, never SVG or HTML), search
+    (recursive listing, names matched in Rust or a provider-side key
+    prefix; ≤ 10 pages per call, cursor in Rust), deleted items, share
+    links (presigned `GetObject`, 1 h / 1 day / 7 days, signed locally).
+  - **Several-item downloads** (`BulkDownloads`): Rust opens a folder
+    dialog, downloads into a hidden staging folder in it through
+    `S3Store::download` (size and SHA-256 as before), and moves each item
+    into place once all its files are verified, under its name or the
+    first free `name (n)`; key segments become safe local names on both
+    systems; a failed item is removed, never left half-written.
+  - **Folder uploads and drops** reuse the upload batch (same checks,
+    `HeadObject` before each file, never overwrite) with keys
+    `prefix + folder/…`, at most 1,000 files; symbolic links are not
+    followed. Dropped paths stay in Rust (`CloudDrops`); the page hears
+    counts and names through a channel and confirms.
+  - **Favorites and recent items** are local, per account, in
+    `cloud-places.sqlite3` (own schema, append-only migrations); never
+    objects in the bucket. Removing an account forgets them.
+  - **Sorting and filtering** happen in the page on what is loaded (the
+    provider cannot sort or filter by size, date or type); the default
+    keeps the provider's key order.
+  - **CSP** gains `img-src 'self' data:` for the image previews; nothing
+    else (still no remote content, no scripts but the bundle).
+  - **Share links carry the access key id** (never the secret) and a
+    signature; the page says that anyone with a link can download until it
+    expires and that it cannot be withdrawn except by removing the key.
+- **Rejected:** a trash folder of sotyware's own (moving objects to a
+  hidden prefix would double storage and fight lifecycle rules; the
+  provider's versions already are the recovery mechanism); merging folders
+  on conflict (could overwrite); deleting versions permanently from the
+  app (irreversible; left to the provider's console); multipart copy for
+  objects above 5 GiB (not needed yet); a ZIP download (no archive
+  dependency; folder download keeps the structure instead); `DeleteObjects`
+  batches (per-object results and the ETag check are simpler with one
+  request per object; four in flight per item).
+- **Consequences:** every change in the bucket is reviewed before it
+  starts, and partial results are named as such. A concurrent writer can
+  still slip between a `HeadObject` and the following `CopyObject` or
+  `DeleteObject` (S3 has no conditional delete at Backblaze); the window
+  is one request. Large folders cost three requests per object to copy and
+  two per object to delete. None of this ran against a real provider: the
+  tests use an in-memory versioned S3 backend (`test_server::Versioned`)
+  and s3s-fs, which model S3's documented behaviour, not Backblaze's or
+  Hetzner's. 22 more commands (38 in all), each with its own permission.

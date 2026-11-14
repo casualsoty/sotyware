@@ -137,6 +137,8 @@ beforeEach(() => {
     switch (cmd) {
       case LIST_CLOUD_PROVIDERS:
         return [];
+      case "list_cloud_places":
+        return { favorites: [], recent: [] };
       case LIST_CLOUD_ACCOUNTS:
         listCalls++;
         return { accounts, storageError: null };
@@ -240,7 +242,9 @@ async function openBucket(root: HTMLElement, id = "photos"): Promise<HTMLElement
  * download tests). */
 function rows(root: ParentNode): string[] {
   return [...root.querySelectorAll("tbody tr")].map((tr) =>
-    [...tr.querySelectorAll("td:not(.row-actions):not(:last-child)")].map((td) => text(td)).join(" | "),
+    // Name, size and date: the first three cells, as the desktop drivers
+    // read them (type, selection and actions follow).
+    [...tr.querySelectorAll("td")].slice(0, 3).map((td) => text(td)).join(" | "),
   );
 }
 

@@ -103,6 +103,8 @@ beforeEach(() => {
     switch (cmd) {
       case LIST_CLOUD_PROVIDERS:
         return [];
+      case "list_cloud_places":
+        return { favorites: [], recent: [] };
       case LIST_CLOUD_ACCOUNTS:
         return { accounts, storageError: null };
       case LIST_CLOUD_FOLDER: {
@@ -357,7 +359,14 @@ describe("upload action", () => {
   it("is offered beside Up and Refresh and sends the browsed account, bucket and folder", async () => {
     const { b } = await opened();
     const actions = b.querySelector(".actions");
-    expect(buttons(actions!).map((x) => text(x))).toEqual(["Up one folder", "Refresh", "Upload files…"]);
+    expect(buttons(actions!).map((x) => text(x))).toEqual([
+      "Up one folder",
+      "Refresh",
+      "Upload files…",
+      "Upload folder…",
+      "New folder…",
+      "Deleted items",
+    ]);
     expect(button(b, "Upload files…").disabled).toBe(false);
     await click(b, "Upload files…");
     expect(uploadCalls.map(({ id, bucket, prefix }) => ({ id, bucket, prefix }))).toEqual([

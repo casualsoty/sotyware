@@ -246,14 +246,12 @@ Design and rationale: [features.md](../architecture/features.md#persistence),
 Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 [cloud-providers.md](../architecture/cloud-providers.md).
 
-- **Accounts, browsing, single-file downloads and upload batches only.** The
-  dashboard manages accounts, checks their connection, lists their buckets
-  one folder at a time, downloads one file at a time and uploads up to 100
-  picked files into the folder shown; it cannot overwrite, upload folders
-  or by drag and drop, rename, move, delete or create anything, download
-  folders or several files at once, and has no transfer queue, upload or
-  download history, backups or sync
-  ([cloud-storage.md](../architecture/cloud-storage.md#downloading-a-file)).
+- **No overwrite, no history, no backups.** The dashboard manages
+  accounts, browses buckets, transfers files (single and several-item
+  downloads, file, folder and drag-and-drop uploads) and manages files
+  (ADR-026, below); it never overwrites, and has no transfer queue, upload
+  or download history, backups or sync
+  ([cloud-storage.md](../architecture/cloud-storage.md#file-management)).
 - **Downloads at a real provider: three single Backblaze runs** (2026-11-12).
   One through the app's download code in Rust (WSL2, no UI): `GetObject`
   returned `Content-Length` and the stored `sotyware-sha256`, the file was
@@ -586,6 +584,64 @@ server only; no real provider was asked.
   process tree; where that fails it checks every recorder binary at least
   as new as the normal one, which may refuse a normal bundle next to a
   newer recorder build (remove `src-tauri/target/recorder` then).
+
+### File management (ADR-026)
+
+- **No real provider has seen any of it.** Copy, move, rename, delete,
+  restore, deleted items, search, previews, share links, several-item
+  downloads, folder uploads and drops ran only against the in-memory
+  versioned test backend and s3s-fs. Whether Backblaze accepts
+  `x-amz-copy-source-if-match`, returns `x-amz-delete-marker`, lets a
+  restricted key call `GetBucketVersioning` or `ListObjectVersions`, and
+  how Hetzner behaves, is unverified.
+- **Not on a desktop yet.** No desktop driver run on this tree; the native
+  folder dialogs (downloads into a folder, folder uploads) and drag and drop
+  from a real file manager have not been exercised; neither Windows nor
+  Linux.
+- **One request of race.** Between the `HeadObject` that checks a source or
+  destination and the `CopyObject` or `DeleteObject` that follows, another
+  client can change the object (S3 offers no conditional delete at
+  Backblaze). The copy itself is conditional on the planned ETag.
+- **Copies above 5 GiB are refused** (no multipart copy); such items are
+  left out of a plan with the reason.
+- **A copy is verified by size, and by ETag only for plain-MD5 ETags**
+  (single-part uploads); content is not re-read. Copies get a new date and
+  version id and may get another storage class.
+- **Delete markers only.** Deleting never removes a version permanently;
+  on a versioned bucket hidden versions stay billed until a lifecycle rule
+  or the provider's console removes them. On a bucket without versions a
+  delete is final. Whether versions are kept is shown as "unknown" when the
+  key may not ask.
+- **Deleted items read at most 5,000 versions** per folder view; deeper
+  folders must be opened. A file deleted in an unversioned bucket never
+  appears there.
+- **Search lists keys**, at most 10 pages (10,000 objects) per call, then
+  "Search further"; it cannot search contents, and a whole-bucket name
+  search reads every key (requests are billed by the provider).
+- **Several-item downloads**: at most 10,000 files; one file after
+  another; a killed process leaves its hidden staging folder
+  (`.sotyware-download-<pid>-<n>`) in the chosen folder; on a file system
+  without hard links, a file appearing under the same name in the last
+  instant could be replaced by the final rename (as for single downloads).
+  No ZIP option. A key that is also a folder prefix (`a/b` next to
+  `a/b/c`) cannot be both a file and a folder on disk: that item fails
+  ("a folder could not be created") and nothing of it is kept.
+- **Folder uploads and drops**: at most 1,000 files; empty folders are not
+  created; symbolic links are skipped; a drop is kept 2 minutes.
+- **Share links** contain the access key id and cannot be withdrawn before
+  they expire except by removing the key at the provider.
+- **Previews**: text up to 256 KiB, PNG/JPEG/GIF/WebP/BMP up to 10 MiB;
+  no PDF, SVG or HTML preview.
+- **Sorting and filtering** apply to the entries loaded (one page plus
+  "Load more"), not to the whole folder.
+- **Favorites and recent items** may point at something deleted meanwhile;
+  opening it shows an empty folder or "the file no longer exists".
+- **Test-server limitation:** s3s cannot copy keys containing `?` (it
+  splits the copy source after decoding); the tests avoid `?` in copied
+  keys.
+- **The Windows Cloud Storage UI driver** must never run with a non-empty
+  account list; it now stops if one is visible (2026-11-14 incident,
+  [status.md](status.md#ui-test-acted-on-a-real-account-2026-11-14)).
 
 ## General
 

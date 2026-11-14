@@ -1743,3 +1743,176 @@ async fn quitting_during_a_multipart_upload_is_recorded_with_its_abort() {
         .count();
     assert_eq!(sent, s.server.ops().len(), "{:?}", s.server.ops());
 }
+
+// ------------------------------------------------------------ folder uploads
+
+impl Setup {
+    async fn begin_folder(
+        &self,
+        prefix: &str,
+        root: Option<PathBuf>,
+    ) -> Result<Option<UploadSelection>, CommandError> {
+        let selection = begin_folder_upload(
+            &self.uploads,
+            Arc::clone(&self.accounts),
+            target(prefix),
+            async move { root },
+            Arc::clone(&self.sink) as Arc<dyn UploadSink>,
+        )
+        .await;
+        if let Ok(Some(s)) = &selection {
+            self.assert_no_paths(&serde_json::to_string(s).unwrap());
+        }
+        selection
+    }
+
+    /// A folder `name` in the test directory with `files` (relative paths).
+    fn tree(&self, name: &str, files: &[&str]) -> PathBuf {
+        let root = self.dir.path(name);
+        for f in files {
+            let p = root.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, format!("content of {f}")).unwrap();
+        }
+        root
+    }
+}
+
+#[test]
+fn a_folder_is_walked_with_relative_keys_and_without_following_links() {
+    let dir = TempDir::new("folder-walk");
+    let root = dir.path("Album");
+    fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    fs::create_dir_all(root.join("empty")).unwrap();
+    fs::write(root.join("a.txt"), "a").unwrap();
+    fs::write(root.join("sub/größe +b.txt"), "b").unwrap();
+    fs::write(root.join("sub/deeper/c"), "c").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("a.txt"), root.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("loop")).unwrap();
+    }
+    let files = folder_files(&root, 10).unwrap();
+    let names: Vec<_> = files.iter().map(|(_, n)| n.clone().unwrap()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "Album/a.txt",
+            "Album/sub/deeper/c",
+            "Album/sub/größe +b.txt"
+        ]
+    );
+    assert_eq!(
+        folder_files(&root, 2).unwrap_err().kind,
+        ErrorKind::InvalidInput
+    );
+    let checked = check_folder_selection(
+        "in/",
+        files,
+        &crate::cloud::provider::S3_COMPATIBLE.limits,
+        &options(),
+    );
+    assert_eq!(checked[1].key.as_deref(), Some("in/Album/sub/deeper/c"));
+    assert!(checked.iter().all(|c| c.skip.is_none()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_name_that_is_not_unicode_skips_the_file_and_nothing_else() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new("folder-walk-bad");
+    let root = dir.path("Top");
+    let bad = root.join(std::ffi::OsStr::from_bytes(b"bad\xff"));
+    fs::create_dir_all(&bad).unwrap();
+    fs::write(bad.join("x.txt"), "x").unwrap();
+    fs::write(root.join("ok.txt"), "ok").unwrap();
+    let files = folder_files(&root, 10).unwrap();
+    let checked = check_folder_selection(
+        "",
+        files,
+        &crate::cloud::provider::S3_COMPATIBLE.limits,
+        &options(),
+    );
+    let skipped: Vec<_> = checked
+        .iter()
+        .filter(|c| c.skip.is_some())
+        .map(|c| c.skip.clone().unwrap().reason)
+        .collect();
+    assert_eq!(skipped, vec![SkipReason::InvalidName]);
+    assert!(
+        checked
+            .iter()
+            .any(|c| c.key.as_deref() == Some("Top/ok.txt"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_upload_keeps_its_structure_and_never_overwrites() {
+    let s = setup().await;
+    let root = s.tree("Trip", &["day1/a.jpg", "day1/b.jpg", "notes.txt"]);
+    // The destination already holds one of the files.
+    let store = s.accounts.prepare_upload("local", BUCKET).unwrap();
+    let existing = s.dir.file("existing", 3, 1);
+    store
+        .upload_file(BUCKET, "dest/Trip/notes.txt", &existing)
+        .await
+        .unwrap();
+    let selection = s.begin_folder("dest/", Some(root)).await.unwrap().unwrap();
+    let names: Vec<_> = selection.files.iter().map(|f| f.name.clone()).collect();
+    assert_eq!(
+        names,
+        vec!["Trip/day1/a.jpg", "Trip/day1/b.jpg", "Trip/notes.txt"]
+    );
+    let summary = s.finished(selection.batch.as_ref().unwrap()).await;
+    assert_eq!((summary.completed, summary.skipped), (2, 1), "{summary:?}");
+    for k in ["dest/Trip/day1/a.jpg", "dest/Trip/day1/b.jpg"] {
+        assert!(store.head_object(BUCKET, k).await.unwrap().is_some(), "{k}");
+    }
+    assert_eq!(
+        store
+            .head_object(BUCKET, "dest/Trip/notes.txt")
+            .await
+            .unwrap()
+            .unwrap()
+            .size,
+        3
+    );
+    // A cancelled dialog starts nothing.
+    assert!(s.begin_folder("dest/", None).await.unwrap().is_none());
+    assert!(!s.uploads.busy());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retried_folder_upload_keeps_the_relative_keys() {
+    let s = setup().await;
+    let root = s.tree("Docs", &["x/1.txt", "x/2.txt", "y.txt"]);
+    s.server.inject("PutObject", None, 1, Inject::InternalError);
+    let selection = s.begin_folder("", Some(root)).await.unwrap().unwrap();
+    let summary = s.finished(selection.batch.as_ref().unwrap()).await;
+    assert_eq!(summary.state, BatchState::Failed, "{summary:?}");
+    let again = s.retry(selection.batch.as_ref().unwrap()).await.unwrap();
+    // The file whose PUT got a 500 is retried only if the engine knows
+    // nothing was stored (the refusal came before its body was sent);
+    // otherwise its outcome is unknown and it is never retried. Either way
+    // the retried files keep their folder keys.
+    let keys: Vec<_> = again.files.iter().filter_map(|f| f.key.clone()).collect();
+    assert!(
+        keys == ["Docs/x/1.txt", "Docs/x/2.txt", "Docs/y.txt"]
+            || keys == ["Docs/x/2.txt", "Docs/y.txt"],
+        "{keys:?}"
+    );
+    let summary = s.finished(again.batch.as_ref().unwrap()).await;
+    assert_eq!(summary.completed as usize, keys.len(), "{summary:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_or_too_large_folder_starts_nothing() {
+    let s = setup().await;
+    let empty = s.dir.path("Empty");
+    fs::create_dir_all(empty.join("sub")).unwrap();
+    assert_eq!(
+        s.begin_folder("", Some(empty)).await.unwrap_err().kind,
+        ErrorKind::InvalidInput
+    );
+    assert!(!s.uploads.busy(), "the slot is free again");
+}

@@ -1346,6 +1346,74 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-
 The layout checks against the release settings, the run prefix, the
 scope and the final-state check are unit-tested in `lifecycle.rs`.
 
+## File management tests
+
+ADR-026 ([cloud-storage.md](../architecture/cloud-storage.md#file-management)).
+All headless (part of `npm run test:headless`); **no real provider, no
+desktop**.
+
+- **The versioned test backend** (`cloud/test_server/versioned.rs`,
+  `TestServer::start_versioned`): an in-memory s3s backend with S3's
+  versioning semantics (delete markers on versioned buckets, `null`
+  versions otherwise, `ListObjectVersions` with markers and pages,
+  `GetBucketVersioning`, `CopyObject` with metadata directive and
+  `copy-source-if-match`, ranged `GetObject`), exact keys, and the same
+  fault injection as the other servers (`inject`: 500, 403, no answer, a
+  callback). The returned handle reads and changes stored versions, as a
+  second client would. It models S3's documented behaviour; it does not
+  prove Backblaze's or Hetzner's. Limitation found: s3s decodes
+  `x-amz-copy-source` before splitting off `?versionId`, so it cannot copy a
+  key containing `?` (S3 decodes after splitting; sotyware encodes `?` as
+  `%3F` either way). The copy tests therefore use `#%+&` but not `?`.
+- `cloud/operations/tests.rs` (19): metadata and content type kept by a
+  copy; conflicts shown, skipped or renamed, never overwritten; copying
+  into the same folder; move on versioned (delete marker) and unversioned
+  buckets; rename and refusal of an existing or invalid name; folder rename
+  with markers, `//`, `..`, `#%+&` and neighbours (`photos-backup/`,
+  `photosx`) untouched; into-itself and in-place moves refused; folder
+  delete counts (hidden vs removed); a source changed after review is not
+  copied and no original is deleted; a failed delete of a move keeps the
+  original and retry finishes it without copying again; a copy stopped by a
+  5xx retried without duplicates; cancel before the next item; a file
+  changed after review is not deleted; restore removes exactly the delete
+  markers; 2,150 objects across pages; plans expire when used, replaced or
+  discarded; invalid requests send nothing; shutdown cancels and refuses;
+  event shapes. Pure rules: `cloud/operations/names.rs` (7).
+- `cloud/manage/tests.rs` (8): folder creation (and refusal of an existing
+  one or an invalid name); properties; previews (size limits, SVG shown as
+  text, binary unsupported, truncated text); base64 and text detection;
+  name and prefix search across 10,501 objects with a one-time cursor;
+  deleted items (restorable or not, neighbour folder not included); share
+  links (signature, expiry, no secret, downloads the file without
+  credentials, invalid lifetime refused).
+- `cloud/bulk_download/tests.rs` (6): safe local names; structure and
+  markers kept; an existing name never replaced or merged (`name (n)`); a
+  failed file leaves nothing of its item and no staging folder, retry
+  finishes; cancel during a stalled file removes the current item and keeps
+  saved ones; a cancelled dialog or a missing file starts nothing; no local
+  path in any event.
+- `cloud/upload/tests.rs` (5 new): folder walk with relative keys and
+  without following links; a non-Unicode name skips only that file (Unix);
+  folder upload keeps its structure and never overwrites; a retried folder
+  upload keeps relative keys; an empty folder starts nothing.
+- `cloud/places.rs` (2), `cloud/drop.rs` (2), the CSP pin in `lib.rs`.
+- Frontend: `src/fileList.test.ts` (13: sorting incl. bucket order,
+  categories, filters, selection modes, focus moves, shortcuts and typing
+  fields) and `src/CloudFileManager.test.ts` (25: selection by click,
+  Ctrl, Shift, checkboxes, Ctrl+A, Escape; shortcuts left to an open
+  dialog; delete review with counts and the
+  versioning note, events, stale events ignored, refresh; Cancel discards
+  the plan; partial failure and Try again; picker, conflicts and "Keep
+  both"; folder creation in the picker; rename with F2; plan errors; new
+  folder; search with Clear; sorting and filters; deleted items and
+  restore; versions not listable; properties with text never rendered as
+  markup; SVG refused as image; allowed image; share link; several-item
+  download; single file keeps the save dialog; context menu and favorites;
+  folder upload; drop banner and unwatch on leaving).
+
+Commands: `cargo test --lib operations`, `cargo test --lib cloud::manage`,
+`cargo test --lib bulk_download`, `npx vitest run src/CloudFileManager.test.ts`.
+
 ## Request recorder tests
 
 The request recorder (ADR-024,
@@ -1439,6 +1507,16 @@ recording that is incomplete fails the run as "count unknown", never as
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a
+
+**Safety stop (2026-11-14):** `windows-cloud-ui.ps1` presses buttons by
+name (the first Edit, Remove, Open bucket). It now aborts (`throw`, no
+further step; the `finally` block still restores the database) when the
+dashboard window does not appear within 20 s or when the Cloud Storage page
+is not empty at startup. Before this, a run whose account database swap
+had not taken effect acted on the user's own account
+([status.md](../status/status.md#ui-test-acted-on-a-real-account-2026-11-14)).
+Check `cmdkey /list` and the account database before any run.
+
 user would, with the credential store checked from outside the app. Two
 scripts, one per platform; each has a mode that contacts no provider and a
 `b2` mode against the Backblaze test bucket of the

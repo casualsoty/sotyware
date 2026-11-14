@@ -274,6 +274,15 @@ pub enum ErrorKind {
     LocalFile,
     /// A file changed while it was being uploaded; nothing was stored.
     FileChanged,
+    /// A remote object changed (or appeared) after the operation was
+    /// reviewed; it was left as it is.
+    RemoteChanged,
+    /// The object is larger than the operation can handle (a server-side
+    /// copy above 5 GiB).
+    TooLarge,
+    /// A file-management plan that is no longer valid (expired, replaced or
+    /// already started): review the operation again.
+    OutdatedPlan,
     /// Anything else.
     Other,
 }
@@ -1045,9 +1054,17 @@ pub async fn update_cloud_account(
 #[tauri::command]
 pub async fn remove_cloud_account(
     state: State<'_, Arc<CloudAccounts>>,
+    places: State<'_, Arc<super::places::CloudPlaces>>,
     id: String,
 ) -> Result<(), CommandError> {
-    remove_account(Arc::clone(&state), id).await
+    remove_account(Arc::clone(&state), id.clone()).await?;
+    // Its favorites and recent items go with it (local data only).
+    let places = Arc::clone(&places);
+    blocking(move || {
+        places.forget(&id);
+        Ok(())
+    })
+    .await
 }
 
 /// Checks the account's connection against its configured bucket and returns

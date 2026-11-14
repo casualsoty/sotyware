@@ -17,6 +17,7 @@
     type UploadStage,
     type UploadSummary,
   } from "./cloud";
+  import { uploadDrop, uploadFolder } from "./cloudFiles";
   import {
     FIXED_BY_EDITING,
     REMOTE_NOTES,
@@ -249,14 +250,39 @@
   /** Opens the file dialog for an upload into `prefix` of `bucket` (the
    * folder shown now); that folder stays the destination. */
   export async function start(bucket: string, prefix: string, crumbs: Breadcrumb[]): Promise<void> {
+    await begin(bucket, prefix, crumbs, uploadFiles);
+  }
+
+  /** The same for a whole folder: Rust opens the folder dialog and walks it
+   * (ADR-026); the batch, its events and its rules are the same. */
+  export async function startFolder(bucket: string, prefix: string, crumbs: Breadcrumb[]): Promise<void> {
+    await begin(bucket, prefix, crumbs, uploadFolder);
+  }
+
+  /** Uploads what was dropped on the window (drop `drop`, announced by
+   * Rust with names only) into the folder shown (ADR-026). */
+  export async function startDrop(bucket: string, prefix: string, crumbs: Breadcrumb[], drop: number): Promise<void> {
+    await begin(bucket, prefix, crumbs, (id, b, p, onEvent, onInvalid) => uploadDrop(id, b, p, drop, onEvent, onInvalid));
+  }
+
+  /** Whether the dialog now open is the folder dialog. */
+  let folderPick = $state(false);
+
+  async function begin(
+    bucket: string,
+    prefix: string,
+    crumbs: Breadcrumb[],
+    pick: typeof uploadFiles,
+  ): Promise<void> {
     if (active || destroyed) {
       return;
     }
     const previous = upload;
     const seq = ++uploadSeq;
+    folderPick = pick === uploadFolder;
     upload = fresh(seq, { bucket, prefix, crumbs: [...crumbs] }, "choosing", false);
     try {
-      const selection = await uploadFiles(
+      const selection = await pick(
         account.id,
         bucket,
         prefix,
@@ -467,7 +493,7 @@
     </p>
 
     {#if upload.phase === "choosing"}
-      <p role="status">Choose the files to upload…</p>
+      <p role="status">{folderPick ? "Choose the folder to upload…" : "Choose the files to upload…"}</p>
     {:else if upload.phase === "starting"}
       <p role="status">Starting the retry…</p>
     {:else if upload.phase === "refused"}

@@ -75,8 +75,12 @@ use super::s3::{
     UploadProgress, UploadStage, plan_upload,
 };
 
-/// Most files one batch may hold.
+/// Most files one batch of picked files may hold.
 pub const MAX_FILES: usize = 100;
+
+/// Most files a folder upload may hold (every file under the picked
+/// folder, at any depth).
+pub const MAX_FOLDER_FILES: usize = 1_000;
 
 /// How long quitting waits for a cancelled batch and for multipart aborts:
 /// the default abort timeout (30 s, `ClientOptions::abort_timeout`) plus
@@ -481,17 +485,149 @@ pub fn check_selection(
     limits: &TransferLimits,
     options: &ClientOptions,
 ) -> Vec<Candidate> {
-    let mut candidates: Vec<Candidate> = paths
+    check_named_selection(
+        prefix,
+        paths.into_iter().map(|p| (p, None)).collect(),
+        limits,
+        options,
+    )
+}
+
+/// [`check_selection`] for files whose key below `prefix` is given
+/// (`Some`, with `/` between folders: a folder upload, or a retry) instead
+/// of being the file's own name.
+pub fn check_named_selection(
+    prefix: &str,
+    files: Vec<(PathBuf, Option<String>)>,
+    limits: &TransferLimits,
+    options: &ClientOptions,
+) -> Vec<Candidate> {
+    let mut candidates: Vec<Candidate> = files
         .into_iter()
-        .map(|path| check_file(prefix, path, limits, options))
+        .map(|(path, name)| check_file(prefix, path, name.as_deref(), limits, options))
         .collect();
+    mark_duplicates(&mut candidates);
+    candidates
+}
+
+/// A file found under a folder picked for upload: its key below the
+/// destination, or (`Err`) the name shown when a folder or file name on
+/// the way is not valid Unicode (the file is skipped).
+pub type FolderFile = (PathBuf, Result<String, String>);
+
+/// Every regular file under `root`, at any depth, with its key below the
+/// destination: `<root's name>/<folders>/<file>`, `/` between them, sorted.
+/// Links are not followed (neither to files nor to folders), so a link
+/// cannot pull in content from elsewhere or loop. Empty folders add
+/// nothing (S3 folders exist only through their objects). Refused as a
+/// whole above `max` files.
+pub fn folder_files(root: &std::path::Path, max: usize) -> Result<Vec<FolderFile>, CommandError> {
+    let invalid = |m: &str| CommandError::new(ErrorKind::InvalidInput, m.to_owned());
+    let name = root
+        .file_name()
+        .ok_or_else(|| invalid("this folder cannot be uploaded"))?
+        .to_str()
+        .ok_or_else(|| {
+            invalid("the folder's name is not valid Unicode, so it cannot be part of an object key")
+        })?
+        .to_owned();
+    if name.chars().any(char::is_control) {
+        return Err(invalid("the folder's name contains control characters"));
+    }
+    let mut out = Vec::new();
+    // (directory, its key below the destination, whether every name on the
+    // way is valid Unicode)
+    let mut stack = vec![(root.to_path_buf(), Ok::<String, String>(name))];
+    while let Some((dir, rel)) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|e| {
+            eprintln!(
+                "sotyware: cannot read {} for a folder upload: {e}",
+                dir.display()
+            );
+            CommandError::new(
+                ErrorKind::LocalFile,
+                "a folder inside could not be read; nothing was uploaded",
+            )
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|_| {
+                CommandError::new(
+                    ErrorKind::LocalFile,
+                    "a folder inside could not be read; nothing was uploaded",
+                )
+            })?;
+            let kind = entry.file_type().map_err(|_| {
+                CommandError::new(
+                    ErrorKind::LocalFile,
+                    "a file inside could not be read; nothing was uploaded",
+                )
+            })?;
+            if kind.is_symlink() {
+                continue;
+            }
+            let os = entry.file_name();
+            let child = match (&rel, os.to_str()) {
+                (Ok(r), Some(n)) => Ok(format!("{r}/{n}")),
+                (Ok(r), None) | (Err(r), None) => Err(format!("{r}/{}", os.to_string_lossy())),
+                (Err(r), Some(n)) => Err(format!("{r}/{n}")),
+            };
+            if kind.is_dir() {
+                stack.push((entry.path(), child));
+            } else if kind.is_file() {
+                out.push((entry.path(), child));
+                if out.len() > max {
+                    return Err(invalid(&format!(
+                        "the folder holds more than {max} files; upload it in parts"
+                    )));
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        let key = |f: &FolderFile| match &f.1 {
+            Ok(s) | Err(s) => s.clone(),
+        };
+        key(a).cmp(&key(b))
+    });
+    Ok(out)
+}
+
+/// [`check_selection`] for the files of a folder upload.
+pub fn check_folder_selection(
+    prefix: &str,
+    files: Vec<FolderFile>,
+    limits: &TransferLimits,
+    options: &ClientOptions,
+) -> Vec<Candidate> {
+    let mut candidates: Vec<Candidate> = files
+        .into_iter()
+        .map(|(path, name)| match name {
+            Ok(n) => check_file(prefix, path, Some(&n), limits, options),
+            Err(shown) => Candidate {
+                name: shown,
+                key: None,
+                path,
+                size: None,
+                skip: Some(Skip::new(
+                    SkipReason::InvalidName,
+                    "a folder or file name on its path is not valid Unicode, so it cannot be an object key",
+                )),
+            },
+        })
+        .collect();
+    mark_duplicates(&mut candidates);
+    candidates
+}
+
+/// Skips every file whose key another checked file has too.
+fn mark_duplicates(candidates: &mut [Candidate]) {
     let mut keys: HashMap<String, usize> = HashMap::new();
     for c in candidates.iter().filter(|c| c.skip.is_none()) {
         if let Some(key) = &c.key {
             *keys.entry(key.clone()).or_default() += 1;
         }
     }
-    for c in &mut candidates {
+    for c in candidates.iter_mut() {
         if c.skip.is_none()
             && let Some(key) = &c.key
             && keys.get(key).copied().unwrap_or(0) > 1
@@ -502,16 +638,19 @@ pub fn check_selection(
             ));
         }
     }
-    candidates
 }
 
 fn check_file(
     prefix: &str,
     path: PathBuf,
+    relative: Option<&str>,
     limits: &TransferLimits,
     options: &ClientOptions,
 ) -> Candidate {
-    let raw_name = path.file_name().map(|n| n.to_owned());
+    let raw_name = match relative {
+        Some(r) => Some(std::ffi::OsString::from(r)),
+        None => path.file_name().map(|n| n.to_owned()),
+    };
     let name = raw_name
         .as_ref()
         .map(|n| n.to_string_lossy().into_owned())
@@ -606,7 +745,8 @@ struct Planned {
 /// The files of a finished batch a retry would upload, and where.
 struct RetryPlan {
     target: Target,
-    files: Vec<PathBuf>,
+    /// Each file with its key below the target's prefix.
+    files: Vec<(PathBuf, Option<String>)>,
 }
 
 /// A multipart upload whose abort failed. The store is the one the upload
@@ -1021,10 +1161,17 @@ impl CloudUploads {
             },
             files,
         };
-        let retry: Vec<PathBuf> = entries
+        let retry: Vec<(PathBuf, Option<String>)> = entries
             .into_iter()
             .filter(|e| e.file.retryable)
-            .filter_map(|e| e.planned.map(|p| p.path))
+            .filter_map(|e| e.planned)
+            .map(|p| {
+                let name = p
+                    .key
+                    .strip_prefix(target.prefix.as_str())
+                    .map(str::to_owned);
+                (p.path, name)
+            })
             .collect();
         {
             let mut inner = self.lock();
@@ -1197,7 +1344,12 @@ impl CloudUploads {
             let files = plan.files.clone();
             blocking(move || {
                 let (limits, options) = accounts.upload_limits(&target.account, &target.bucket)?;
-                Ok(check_selection(&target.prefix, files, &limits, &options))
+                Ok(check_named_selection(
+                    &target.prefix,
+                    files,
+                    &limits,
+                    &options,
+                ))
             })
             .await
         };
@@ -1581,6 +1733,96 @@ pub async fn upload_cloud_files(
             prefix,
         },
         choose_files(&window),
+        Arc::new(on_event),
+    )
+    .await
+}
+
+/// `upload_cloud_folder` without Tauri: `pick` stands for the folder
+/// dialog. `Ok(None)` if it was cancelled.
+pub async fn begin_folder_upload(
+    uploads: &Arc<CloudUploads>,
+    accounts: Arc<CloudAccounts>,
+    target: Target,
+    pick: impl Future<Output = Option<PathBuf>>,
+    sink: Arc<dyn UploadSink>,
+) -> Result<Option<UploadSelection>, CommandError> {
+    validate_prefix(&target.prefix)?;
+    let reservation = uploads.reserve()?;
+    let (limits, options) = {
+        let accounts = Arc::clone(&accounts);
+        let (id, bucket) = (target.account.clone(), target.bucket.clone());
+        blocking(move || accounts.upload_limits(&id, &bucket)).await?
+    };
+    let Some(root) = pick.await else {
+        return Ok(None);
+    };
+    let prefix = target.prefix.clone();
+    let candidates = blocking(move || {
+        let files = folder_files(&root, MAX_FOLDER_FILES)?;
+        if files.is_empty() {
+            return Err(CommandError::new(
+                ErrorKind::InvalidInput,
+                "the folder holds no files (empty folders are not uploaded)",
+            ));
+        }
+        Ok(check_folder_selection(&prefix, files, &limits, &options))
+    })
+    .await?;
+    uploads
+        .start(reservation, accounts, target, candidates, sink)
+        .map(Some)
+}
+
+#[cfg(desktop)]
+async fn choose_folder(window: &tauri::WebviewWindow) -> Option<PathBuf> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .dialog()
+        .file()
+        .set_parent(window)
+        .set_title("Choose a folder to upload")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    match rx.await.ok().flatten()?.into_path() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("sotyware: the folder dialog returned no folder path: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(not(desktop))]
+async fn choose_folder(_window: &tauri::WebviewWindow) -> Option<PathBuf> {
+    None
+}
+
+/// Asks for a folder in the native folder dialog and uploads every file in
+/// it (any depth, at most 1,000) into `prefix` + the folder's name, as one
+/// batch with the same rules as `upload_cloud_files`. The folder's path
+/// stays in Rust. Allowed by `allow-upload-cloud-folder`.
+#[tauri::command]
+pub async fn upload_cloud_folder(
+    window: tauri::WebviewWindow,
+    accounts: State<'_, Arc<CloudAccounts>>,
+    uploads: State<'_, Arc<CloudUploads>>,
+    id: String,
+    bucket: String,
+    prefix: String,
+    on_event: Channel<UploadEvent>,
+) -> Result<Option<UploadSelection>, CommandError> {
+    begin_folder_upload(
+        &uploads,
+        Arc::clone(&accounts),
+        Target {
+            account: id,
+            bucket,
+            prefix,
+        },
+        choose_folder(&window),
         Arc::new(on_event),
     )
     .await

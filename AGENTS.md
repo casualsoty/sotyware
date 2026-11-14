@@ -16,10 +16,13 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 - **Current scope:** the desktop runtime (window, tray, lifecycle, single
   instance) and the foundation for built-in features (registry, lifecycle,
   enable/disable from the dashboard, one example feature), and cloud storage
-  in the dashboard: account management (add, edit, check, remove), read-only
-  bucket browsing, downloading one file at a time and uploading batches of
-  up to 100 files into the folder shown (never overwriting; no other
-  changes to objects). No other product features exist yet. Current milestone and status:
+  in the dashboard: account management (add, edit, check, remove), bucket
+  browsing, downloading one file at a time, uploading batches of up to 100
+  files into the folder shown, and file management (ADR-026): folders,
+  rename, copy, move, delete and restore as reviewed plans, search,
+  sorting and filters, properties, previews, share links, several-item
+  downloads, folder and drag-and-drop uploads, favorites and recent items
+  (never overwriting). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -40,6 +43,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | feature preference | the user's saved enable/disable choice for one feature, keyed by its ID, in `preferences.sqlite3`; absent until the user switches the feature |
 | storage account | one set of credentials at one cloud storage provider (`AccountConfig`, kebab-case ID); two keys at the same provider are two accounts |
 | provider profile | what sotyware knows about one S3-compatible provider, as data (`ProviderProfile`); not code |
+| plan (file operation) | what a copy, move, rename, delete or restore would do, computed by Rust with reads only and shown for review before anything changes (`PlanSummary`, ADR-026) |
+| delete marker | what a delete adds on a versioned bucket instead of removing the object; the versions stay and the file can be restored |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -171,7 +176,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   takes only eligible files; multipart ids whose abort failed are kept in
   memory and aborted again on retry and on quit (bounded wait). The
   browser's upload panel (`src/CloudUpload.svelte`) calls them and only
-  shows what the events say
+  shows what the events say. File management (ADR-026): `cloud/operations.rs`
+  (`CloudOperations`, its own slot: plan / discard / start / cancel / retry of
+  copy, move, rename, delete and restore; folders are prefixes enumerated
+  when planning; copies are `CopyObject` with metadata and the planned ETag,
+  verified; moves delete sources only after every copy is verified; deletes
+  report delete markers; restore removes exactly the newer delete markers),
+  `cloud/manage.rs` (create folder, properties, previews, search with
+  cursors in Rust, deleted items, presigned share links),
+  `cloud/bulk_download.rs` (`BulkDownloads`: several files and folders into
+  a picked folder via a staging folder, never replacing), the folder upload
+  in `cloud/upload.rs`, `cloud/drop.rs` (`CloudDrops`: dropped paths kept in
+  Rust), `cloud/places.rs` (`CloudPlaces`: favorites and recent items in
+  `cloud-places.sqlite3`) and `cloud/s3/manage.rs` (the requests)
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
@@ -191,35 +208,47 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 - **Frontend:** `src/App.svelte` (navigation links: Overview, Cloud Storage)
   with `src/Features.svelte` and `src/CloudStorage.svelte`
   (+ `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`,
-  `src/CloudUpload.svelte`). Its only
+  `src/CloudUpload.svelte`, `src/CloudOperation.svelte`,
+  `src/CloudFolderPicker.svelte`, `src/CloudProperties.svelte`,
+  `src/CloudBulkDownload.svelte`, `src/CloudDeleted.svelte`,
+  `src/Modal.svelte`; pure list logic in `src/fileList.ts`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
   `update_cloud_account`, `remove_cloud_account`, `check_cloud_account`,
   `list_cloud_folder`, `download_cloud_file`, `cancel_cloud_download`,
-  `retry_cloud_download`, `upload_cloud_files`, `cancel_cloud_upload` and
-  `retry_cloud_upload`
+  `retry_cloud_download`, `upload_cloud_files`, `cancel_cloud_upload`,
+  `retry_cloud_upload` and the 22 file-management commands of ADR-026
+  (`plan_cloud_operation`, `discard_cloud_operation_plan`,
+  `start_cloud_operation`, `cancel_cloud_operation`, `retry_cloud_operation`,
+  `create_cloud_folder`, `cloud_object_properties`, `preview_cloud_file`,
+  `search_cloud_folder`, `list_cloud_deleted`, `share_cloud_file`,
+  `upload_cloud_folder`, `download_cloud_items`,
+  `cancel_cloud_items_download`, `retry_cloud_items_download`,
+  `list_cloud_places`, `set_cloud_favorite`, `record_cloud_recent`,
+  `clear_cloud_recent`, `watch_cloud_drops`, `unwatch_cloud_drops`,
+  `upload_cloud_drop`)
   (one `allow-<command>` permission each in
-  `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`
-  and `src/cloud.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
+  `src/cloud.ts` and `src/cloudFiles.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
-  `setup`). No other custom command, no custom events (download progress
-  and upload events use per-call Tauri channels, not events), no `dialog:` or
-  `fs:` permission.
+  `setup`). No other custom command, no custom events (download progress,
+  upload, operation, several-item download and drop notices use per-call
+  Tauri channels, not events), no `dialog:` or `fs:` permission. CSP:
+  `img-src 'self' data:` added for previews (ADR-026).
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
-persistence other than the feature enabled/disabled choices and the cloud
-storage accounts, no settings, autostart,
+persistence other than the feature enabled/disabled choices, the cloud
+storage accounts and their favorites and recent items, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
-tray fallback, file operations in the cloud browser other than downloading
-one file at a time and uploading batches into the folder shown (no overwrite,
-parallel uploads, folder uploads, folder or multiple downloads, rename, delete
-or folder creation), transfer queue UI or download history, persistent
-record of incomplete multipart uploads, credential
+tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
+multipart copies above 5 GiB, permanent deletion of versions, a trash of
+sotyware's own, content search, transfer queue UI or download history,
+persistent record of incomplete multipart uploads, credential
 import or any credential fallback outside the OS store, backups
 or restic integration, cost estimator, custom event, or custom command besides
-the sixteen listed above. Never describe these as existing.
+the 38 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -327,7 +356,8 @@ Every coding agent must:
    `TrayAction`, `Feature`/`FeatureRegistry`, `FeaturePreferences`/
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
    `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
-   `CloudUploads`,
+   `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
+   `CloudDrops`, `test_server::Versioned`,
    the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-13 (Windows dialog paths with unpaired surrogates no longer end sotyware: rfd patched locally, native Windows 11 and WSL2 runs: [details](#windows-dialog-paths-with-unpaired-surrogates-2026-11-13)). Update this file whenever
+Last updated: 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -82,6 +82,7 @@ verified byte for byte; the object was deleted again by its version id
 | Upload panel in the bucket browser (Upload files… into the folder shown; batch and per-file progress by stage with bytes, a percentage only for a known non-zero total; per-file list with skip reasons, conflicts, errors and remote outcome notes; Cancel by batch id with `finishing`/`not-active` explained; Try again only for `retryable` files as a new batch; cleanup results apart from the files; final summary; stale events dropped by start, batch id and per-file `seq`; leaving the browser cancels) | `src/CloudUpload.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` (`uploadFiles`, `cancelUpload`, `retryUpload`, parsers), `src/cloudMessages.ts`, `src/format.ts` ([cloud-storage.md](../architecture/cloud-storage.md#the-upload-panel)) |
 | Upload batches, backend and commands: `upload_cloud_files` (native multi-file dialog opened by Rust, at most 100 files, every file checked before anything is sent and skipped with a reason if unusable, destination folder fixed when the dialog opens), `cancel_cloud_upload`, `retry_cloud_upload`; one file after another, one batch at a time in its own slot (a download can run meanwhile), `HeadObject` before each file so nothing is overwritten, per-file failures continue while credential, access, configuration and connection failures stop the batch, events with `seq` on a per-batch Tauri channel and one final summary, retry of eligible files only, incomplete multipart uploads kept in memory and aborted again on retry and on quit (bounded) | `src-tauri/src/cloud/upload.rs`, `upload_limits`/`prepare_upload` in `cloud/dashboard.rs`, `open_multipart`/`abort_incomplete_upload` in `cloud/s3.rs` and `cloud/s3/upload.rs`, `run()` in `lib.rs` (managed state, shutdown), `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#uploading-files), [ADR-022](../architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)) |
 | Cloud storage backend (changes to objects other than upload batches not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account; the upload lifecycle `S3Store::upload` (existing key refused, cancellable until one commit point, bytes re-hashed while sent, multipart aborted on failure, `HeadObject` verification, stall timeout instead of the read timeout, throttled progress by stage) | `src-tauri/src/cloud/`, `cloud/s3/upload.rs`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store), [ADR-021](../architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)) |
+| File management in the bucket browser (ADR-026): new folder; rename, copy, move and delete of files and folders and restore of deleted files as reviewed plans (review with object counts, conflicts with a numbered alternative, what a delete means on this bucket; start, progress, cancel, retry of what is left; partial results named); destination picker; deleted items (delete markers); search (names in Rust, or key prefix at the provider; recursive, paginated); client-side sorting and filters; selection (click, Ctrl, Shift, checkboxes, keyboard), context menu, selection bar, internal copy/cut/paste, shortcuts; properties, size-limited previews (text as text, raster images), presigned share links; downloads of several files and folders into a picked folder (staging, never replacing); folder uploads and drag and drop through the upload batch; favorites and recent items per account (`cloud-places.sqlite3`) | `src-tauri/src/cloud/operations.rs`, `manage.rs`, `bulk_download.rs`, `places.rs`, `drop.rs`, `s3/manage.rs`, folder upload in `upload.rs`, `SqlitePlacesStore` in `storage.rs`, `run()` in `lib.rs`; `src/CloudBrowser.svelte`, `CloudOperation.svelte`, `CloudFolderPicker.svelte`, `CloudProperties.svelte`, `CloudBulkDownload.svelte`, `CloudDeleted.svelte`, `Modal.svelte`, `cloudFiles.ts`, `fileList.ts` ([cloud-storage.md](../architecture/cloud-storage.md#file-management), [ADR-026](../architecture/decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
@@ -99,16 +100,14 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
 Nothing else exists: no product features (only the example feature and
-cloud storage accounts, browsing, single-file downloads and upload batches),
-no settings, no persistence other than the feature choices and the cloud
-storage accounts, no file operations in the bucket browser other than
-downloading one file at a time and uploading batches into the folder shown
-(no overwrite, folder or multiple downloads, rename or delete), no transfer
-queue UI or download history, no backups, no sync, no custom Tauri events,
-no feature-management UI, no third-party plugins, and no custom command other
-than `operating_mode`, `list_features`, `set_feature_enabled`, the six cloud
-account commands, `list_cloud_folder`, the three download commands and the
-three upload commands.
+cloud storage: accounts, browsing, transfers and the file management of
+ADR-026), no settings, no persistence other than the feature choices, the
+cloud storage accounts and their favorites and recent items, no overwriting
+uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
+own, content search, transfer queue UI or download history, no backups, no
+sync, no custom Tauri events, no feature-management UI, no third-party
+plugins, and no custom command other than the 38 listed in
+[overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
 
@@ -126,6 +125,75 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### File management (2026-11-14)
+
+ADR-026, uncommitted on `ae11691` (nothing staged or committed, as asked).
+**Headless only; no desktop run, no native dialog, no real provider.**
+
+- **WSL2** (Ubuntu 24.04, Rust 1.99.1, Node 24.22.0): `cargo fmt --check`,
+  `cargo clippy --all-targets -D warnings` (default and `--features
+  request-recorder --target-dir target/recorder`), `npm run check` 0/0,
+  `npm run build`; `npm run test:headless`: rfd guard ok, release-binary
+  guard ok, Vitest **173 passed** (7 files; 38 new in `fileList.test.ts`
+  and `CloudFileManager.test.ts`; existing tests changed only where the UI
+  changed on purpose: the row helper reads the first three cells as the
+  desktop drivers do, the mocks answer `list_cloud_places`, the toolbar
+  test lists the three new buttons), `cargo test` **385 passed, 26
+  ignored** (3 consecutive runs; about 52 new); recorder build 412 passed.
+  The first `test:headless` run failed once in a new test
+  (`a_retried_folder_upload_keeps_the_relative_keys`): it assumed one of
+  two correct outcomes of a PUT answered 500 (retried only when nothing was
+  stored); the test now accepts both, 5/5 afterwards.
+- **Native Windows 11** 25H2 build 26200, fresh copy
+  `C:\dev\sotyware-filemgr`: `npm ci`, `npm run check`, `npm run build`,
+  `cargo clippy --all-targets -D warnings`, `npm run test:headless`
+  (Vitest 172, Rust **374 passed**, 26 ignored; the Linux-only tests do not
+  run there) passed; `cargo fmt --check` failed on the unformatted test
+  edit above. Final tree (05:51): `npm run check`, `cargo fmt --check`,
+  clippy and `test:headless` (Vitest **173**, Rust **374**, 26 ignored)
+  all passed.
+- Bugs found and fixed by the new tests before they passed: a failed
+  delete in a move overwrote the "copied" state of its object (a retry
+  would have copied again); a move whose copy needed review would have
+  been retried as a half move; skipped items sent no event; the page
+  discarded every plan (it compared a `$state` proxy with the request by
+  identity); dialogs read a closed dialog's fields.
+- Not run: the desktop drivers (`run.sh`, `virtual.sh`, `cloud-ui.sh`,
+  `windows*.ps1`) on this tree; any native folder dialog; drag and drop
+  from a real file manager; any real provider (Backblaze, Hetzner). The
+  local servers model S3's documented semantics, not a provider's.
+
+### UI test acted on a real account (2026-11-14)
+
+The ADR-024 recorder smoke test at Backblaze (authorised: one small object,
+list, upload, download, exact-version cleanup) was prepared as an
+uncommitted `-Smoke` variant of `windows-cloud-ui.ps1 -Mode b2-upload`
+with a provider helper (`smoke.rs`) in a separate copy
+(`C:\dev\sotyware-smoke`), recorder binary SHA-256
+`e77974c6…3f18e34d`. **It was not run at Backblaze.** Its local rehearsal
+(`-Rehearse`, native Windows 11) ran twice:
+
+- Run 1: the dashboard window was not found within 20 s; the script went
+  on and every check failed; at the end the account database could not be
+  removed (still open).
+- Run 2: at startup the page already showed the user's own account
+  "sotyware-it" (Backblaze B2, eu-central-003), although the script had
+  moved the account database aside. The driver then pressed the first
+  "Open bucket", "Edit" and "Remove" buttons, which belonged to that
+  account: **one read-only `ListObjectsV2` of the bucket root was sent to
+  Backblaze with the user's key** (recorded by the request recorder as
+  account `other-1`, status 200), the account was renamed, given the
+  driver's made-up key, and removed. **The user's account and its
+  Credential Manager entry are gone.** Nothing in the bucket was changed.
+  Afterwards: no sotyware process, the 2026-11-11 account database file in
+  place (no accounts), no backup file left; the test's own leftover
+  Credential Manager entry was deleted with `cmdkey`. Why the moved
+  database was still in use is not established.
+- Since then `windows-cloud-ui.ps1` stops when the window does not appear
+  or the Cloud Storage page is not empty at startup
+  ([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test)).
+  To restore: add the account again in sotyware with its key.
 
 ### The release-binary guard's self-test on a Windows checkout (2026-11-14)
 

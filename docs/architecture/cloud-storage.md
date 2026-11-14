@@ -11,24 +11,31 @@ From the browser one file at a time can be downloaded to a place the user
 picks in the native save dialog ([Downloading a file](#downloading-a-file),
 [ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel)).
 Uploads of up to 100 picked files into one folder, one file after another,
-have three commands ([Uploading files](#uploading-files),
-[ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust))
-but **no control in the page yet**; deletes, renames and every other change
-to objects are not reachable from the app. Each file goes through the
-backend's upload lifecycle (commit point, cancellation, re-hashing,
-verification, stall timeout;
+run from the browser's upload panel ([Uploading files](#uploading-files),
+[ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
+Each file goes through the backend's upload lifecycle (commit point,
+cancellation, re-hashing, verification, stall timeout;
 [Uploads and integrity](#uploads-and-integrity),
 [ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)).
+File management (folders, rename, move, copy, delete, restore, search,
+properties, previews, share links, several-item downloads, folder uploads,
+drag and drop, favorites; [File management](#file-management),
+[ADR-026](decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit))
+changes objects only through reviewed plans.
 Both are tested against the in-process server only. Decision and rationale of
 the backend: [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter).
 The provider research, prices and the recommendation are in
 [cloud-providers.md](cloud-providers.md).
 
 Code: `src-tauri/src/cloud/` (`provider.rs`, `account.rs`, `credentials.rs`,
-`keyring.rs`, `s3.rs` with `s3/upload.rs`, `dashboard.rs`, `browser.rs`, `download.rs`, `upload.rs`) and `SqliteAccountStore` in
-`src-tauri/src/storage.rs`; the page is `src/CloudStorage.svelte` with
-`src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts` and
-`src/cloudMessages.ts`.
+`keyring.rs`, `s3.rs` with `s3/upload.rs` and `s3/manage.rs`, `dashboard.rs`,
+`browser.rs`, `download.rs`, `upload.rs`, `operations.rs`, `manage.rs`,
+`bulk_download.rs`, `places.rs`, `drop.rs`) and `SqliteAccountStore` /
+`SqlitePlacesStore` in `src-tauri/src/storage.rs`; the page is
+`src/CloudStorage.svelte` with `src/CloudAccountForm.svelte`,
+`src/CloudBrowser.svelte` (and the file-manager components listed under
+[File management](#file-management)), `src/cloud.ts`, `src/cloudFiles.ts`,
+`src/fileList.ts` and `src/cloudMessages.ts`.
 Credentials: [ADR-017](decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store).
 
 ## Pieces
@@ -924,6 +931,98 @@ Vitest with Tauri's IPC mocks, 2026-11-12,
 [status.md](../status/status.md#cloud-storage-upload-ui-2026-11-12)); no
 desktop run, the native dialog was never opened, no real provider.
 
+## File management
+
+[ADR-026](decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit).
+Tested against an in-memory versioned S3 backend (`test_server::Versioned`)
+and s3s-fs only; **never against a real provider**.
+
+### What S3 means for each action
+
+| Action | Requests | What it means |
+| --- | --- | --- |
+| New folder | `ListObjectsV2` (1 key) under `prefix/name/`, then `PutObject` of the zero-byte marker | refused if anything is already at or under that prefix; a folder exists only through its objects, the marker makes an empty one visible |
+| Copy | per object: `HeadObject` (destination must not exist), `CopyObject` (`MetadataDirective: COPY`, `x-amz-copy-source-if-match` = planned ETag), `HeadObject` (verify) | content type, `Cache-Control`, `Content-Encoding`, `Content-Disposition` and user metadata (including `sotyware-sha256`) are copied; the copy gets a new date, a new version id and may get another storage class; above 5 GiB refused |
+| Move, rename | copy as above for every object of the item, then per object `HeadObject` (source ETag unchanged) and `DeleteObject` | originals deleted only after every copy is verified; on a versioned bucket they stay restorable |
+| Delete | per object `HeadObject` (ETag unchanged) and `DeleteObject` without version id | versioned bucket: delete marker, restorable; otherwise gone; the answer (`x-amz-delete-marker`) is reported per object |
+| Restore | planning: `ListObjectVersions` of the key; then `DeleteObject` with each newer delete marker's version id, `HeadObject` | the newest kept version becomes current; nothing else changes |
+| Deleted items | `ListObjectVersions` under the folder (≤ 5,000 entries) | keys whose latest entry is a delete marker; restorable if an older version exists |
+| Search | `ListObjectsV2` without delimiter, ≤ 10 pages per call | `name`: file and folder names containing the text, case-insensitive, matched in Rust; `prefix`: keys starting with folder + text, filtered by the provider; never file contents |
+| Properties | `HeadObject` | size, date, content type, ETag, version id, storage class, headers, user metadata, stored SHA-256 |
+| Preview | `HeadObject`, ranged `GetObject` | ≤ 256 KiB of text (shown as text); raster images ≤ 10 MiB by their first bytes (PNG, JPEG, GIF, WebP, BMP); never SVG, HTML or PDF |
+| Share link | `HeadObject`, then local signing | presigned `GetObject` URL, 1 h, 1 day or 7 days; carries the key id and a signature, never the secret; cannot be withdrawn |
+
+### Plans, items and states
+
+A plan names items (selected files and folders; a file inside a selected
+folder is part of the folder). Each item has its objects (keys, sizes,
+ETags) and, for copy and move, its destination; an item whose destination
+exists has a conflict and, if one was found within 20 lookups, a free
+`name (n)` (`report (1).pdf`, `photos (1)/`). Problems (moving into
+itself, already there, gone, over 5 GiB, a key that would exceed 1,024
+bytes) leave an item out; the review shows why.
+
+Item states: `pending`, `running`, `completed`, `skipped`, `failed`,
+`partial` (with a note: `copied-original-kept`,
+`original-kept-copy-incomplete`, `incomplete`), `cancelled`. Operation
+states: `completed`, `partial`, `cancelled`, `failed` (stopped by an error
+that would fail every further request: credentials, access, connection,
+timeouts, provider 5xx/429). Errors carry an `ErrorKind`, including the
+new `remote-changed` (an object changed or appeared after the review),
+`too-large` and `outdated-plan`.
+
+Retry starts a new operation with: objects that failed with a retryable
+error or never started; for moves, the originals of fully copied items
+(their copies are checked again first). A destination that exists on a
+retry counts as copied only with the source's size and ETag. Conflicts,
+changed objects and integrity failures are never retried; a move with such
+a failure is not retried at all.
+
+### Downloads of several items
+
+`download_cloud_items` (selected files and folders, ≤ 10,000 files): Rust
+opens a folder dialog; files go into `.sotyware-download-<pid>-<n>` inside
+the chosen folder through `S3Store::download`; an item moves into place
+(hard link for a file, refusing an existing name atomically, else rename;
+a folder by rename after an existence check) once all its files are
+verified, under its own name or `name (n)`. Key segments become local names
+with `< > : " / \ | ? *` and control characters replaced by `_`, trailing
+dots and spaces removed, reserved device names (`CON`, `NUL`, `COM1`, …)
+prefixed with `_`, `.`, `..` and empty names as `_`; clashes (also by case)
+are numbered. Events carry names below the chosen folder, never its path.
+
+### Folder uploads and drag and drop
+
+`upload_cloud_folder` opens a folder dialog and builds one upload batch from
+every regular file below it (≤ 1,000; symbolic links skipped, empty folders
+add nothing) with keys `prefix + <folder name>/<path>`; a name that is not
+valid Unicode anywhere on the path skips that file. Dropped files and
+folders (`WindowEvent::DragDrop`) are kept in `CloudDrops` for 2 minutes;
+while a bucket is shown the page subscribes (`watch_cloud_drops`), sees
+counts and names, and confirms with `upload_cloud_drop` into the folder
+shown. Everything else is the upload batch of
+[Uploading files](#uploading-files).
+
+### The page
+
+`CloudBrowser.svelte` keeps its first three columns (Name, Size, Last
+modified, as the desktop drivers read them) and adds Type, a selection
+checkbox and actions (Download, a menu). Selection: click, Ctrl/⌘-click,
+Shift-click (range from the last clicked row), the checkboxes, Ctrl+A;
+arrow keys move it (Shift extends). A selection bar and a context menu
+(right-click or ⋯) offer Download, Copy to…, Move to…, Copy/Cut (internal
+clipboard; Paste in another folder), Rename (F2), Delete (Del),
+Properties, favorites and, for search hits, Show in folder. Shortcuts are
+ignored while typing in a field (Escape still closes). Sorting (bucket
+order, name, size, date, type) and filters (files/folders, categories,
+extensions, size and date ranges) apply to the loaded entries only.
+`CloudOperation.svelte` shows the review and the progress;
+`CloudFolderPicker.svelte` picks destinations (and creates folders);
+`CloudProperties.svelte` shows properties, the preview and share links;
+`CloudBulkDownload.svelte` the several-item downloads; `CloudDeleted.svelte`
+the deleted items. Favorites and recent items (folders opened, files
+previewed or downloaded; 30 kept) live in `cloud-places.sqlite3`.
+
 ## Request recorder
 
 Test builds for controlled integration runs only
@@ -1014,13 +1113,14 @@ What the records mean, and what they do not:
 
 ## Not built (deliberately)
 
-No overwriting uploads, parallel uploads, folder uploads, drag and drop,
-folder downloads, several downloads at once, upload or download history,
-file operations in the browser (rename, delete, create folder, move),
-transfer queue UI, custom event or feature; no synchronisation, folder watching,
-scheduled backups, retention, restic integration, client-side encryption,
-sharing or public links, virtual filesystem, retrying queue, parallel parts
-within one file, resumable uploads, credential import from environment
-variables or files, automatic provider or bucket discovery, cost estimator,
-or a credential fallback outside the OS store. See
+No overwriting uploads, parallel uploads, upload or download history,
+transfer queue UI, ZIP downloads, multipart copies above 5 GiB, permanent
+deletion of versions from the app, a trash of sotyware's own, merging
+folders on conflict, previews of PDF, SVG or HTML, content search, custom
+event or feature; no synchronisation, folder watching, scheduled backups,
+retention, restic integration, client-side encryption, public ACLs or
+bucket permission changes, virtual filesystem, retrying queue, parallel
+parts within one file, resumable uploads, credential import from
+environment variables or files, automatic provider or bucket discovery,
+cost estimator, or a credential fallback outside the OS store. See
 [roadmap.md](../status/roadmap.md).

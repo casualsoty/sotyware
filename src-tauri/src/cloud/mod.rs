@@ -18,20 +18,31 @@
 //! - [`download`]: downloading one file at a time from the browser to a path
 //!   chosen in the native save dialog, with progress and cancellation
 //!   (ADR-020).
-//! - [`upload`]: uploading a batch of up to 100 picked files, one after
-//!   another, into one folder, never overwriting, with progress,
-//!   cancellation and retry (ADR-022). Backend and commands only; the
-//!   dashboard has no upload control yet. Deletes and backups are not
-//!   reachable from the app.
+//! - [`upload`]: uploading a batch of up to 100 picked files (or a folder
+//!   of up to 1,000) one after another into one folder, never overwriting,
+//!   with progress, cancellation and retry (ADR-022, ADR-026).
+//! - [`operations`]: copy, move, rename, delete and restore as reviewed
+//!   plans in their own slot (ADR-026).
+//! - [`manage`]: folders, properties, previews, search, deleted items and
+//!   share links (ADR-026).
+//! - [`bulk_download`]: several files and folders into a picked folder
+//!   (ADR-026).
+//! - [`places`]: favorites and recent items (ADR-026).
+//! - [`drop`]: files dropped on the dashboard, paths kept in Rust (ADR-026).
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
 pub mod account;
 pub mod browser;
+pub mod bulk_download;
 pub mod credentials;
 pub mod dashboard;
 pub mod download;
+pub mod drop;
 pub mod keyring;
+pub mod manage;
+pub mod operations;
+pub mod places;
 pub mod provider;
 /// The opt-in request recorder (ADR-024); only in builds with the
 /// `request-recorder` feature, never in a normal build.

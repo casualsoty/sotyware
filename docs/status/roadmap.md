@@ -128,15 +128,30 @@ order:
    [status.md](status.md#dashboard-upload-at-backblaze-on-native-windows-11-rerun-passed-2026-11-13)).
    **Next:** the same at a real provider on a real Linux desktop and on
    Windows 10.
-   Later: deletes and folder creation, each with its own
-   confirmation design; whether incomplete multipart uploads need a
-   persistent registry or a documented lifecycle rule.
-8. restic orchestration (child process, `--json`, exit codes), tried first
+   Later: whether incomplete multipart uploads need a persistent registry
+   or a documented lifecycle rule.
+8. File management (ADR-026: folders, rename, copy, move, delete,
+   restore, search, previews, share links, several-item downloads, folder
+   uploads, drag and drop, favorites): implemented 2026-11-14, headless
+   only on WSL2 and native Windows 11
+   ([status.md](status.md#file-management-2026-11-14)). **Next:**
+   - extend the desktop drivers (`cloud-ui.sh`, `windows-cloud-ui.ps1`)
+     with copy, move, delete, restore, the folder dialogs and a drop, against
+     the local servers (the Windows driver must keep its new empty-page
+     stop);
+   - with the user's approval and a disposable test prefix, one run at
+     Backblaze per operation (does it accept `x-amz-copy-source-if-match`,
+     return `x-amz-delete-marker`, allow `GetBucketVersioning` and
+     `ListObjectVersions` with the test keys); Hetzner later;
+   - decide on multipart copy above 5 GiB and a ZIP download only if
+     needed.
+9. restic orchestration (child process, `--json`, exit codes), tried first
    against the B2 test bucket.
-9. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+10. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
 
-Synchronisation, folder watching, scheduled backups, retention, sharing and a
-virtual filesystem stay ideas until then.
+Synchronisation, folder watching, scheduled backups, retention and a
+virtual filesystem stay ideas until then (temporary share links exist,
+ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)
 
