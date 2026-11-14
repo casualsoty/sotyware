@@ -1639,3 +1639,46 @@ and put it back" setup of the desktop drivers; code:
   may still write outside the profile where they ignore the data folder
   they are given (not seen: the fingerprints of the user's folders were
   unchanged in every run so far).
+
+## ADR-028: Release binaries are built with the build machine's paths remapped
+
+Status: Accepted (2026-11-14). Code: `scripts/build-release.mjs`
+(`npm run build:release`), `localPrefixes`/`localPathIn` and the
+`--local-paths` mode in `scripts/check-release-binary.mjs` (also run by
+Tauri's `beforeBundleCommand`), `.github/workflows/release-build.yml`.
+How to build: [release.md](../development/release.md#building-a-release).
+
+- **Context:** the release-candidate audit found 601 absolute paths such as
+  `C:\Users\<name>\.cargo\registry\src\…` in the normal Windows release
+  binary (746 `/home/<name>/.cargo/…` in the Linux one). They are panic
+  locations (`file!()`, `#[track_caller]`) of crates.io dependencies,
+  which rustc records with absolute paths; `strip = true` removes symbols,
+  not these strings. They give away the builder's user name and folder
+  layout, and differ between machines, so two builds of one commit differ.
+- **Decision:** release builds go through `npm run build:release`, which
+  runs `tauri build` with rustc's `--remap-path-prefix` for the home
+  directory (`~`), RUSTUP_HOME (`rustup`), CARGO_HOME (`cargo`) and the
+  checkout (`sotyware`), shortest first because rustc applies the last
+  matching remap. The flags travel in `CARGO_ENCODED_RUSTFLAGS`, appended
+  to what the caller set. After the build the binary is checked for those
+  directories (either separator, any case). The bundling guard refuses to
+  package a binary that names them, so a plain `tauri build` can no longer
+  produce an installer with them. The wrapper refuses `--features`,
+  `--target`, `--target-dir`, `--debug` and `--config`: it is for the
+  normal release only.
+- **Rejected:** Cargo's `trim-paths` profile option (what this wants, but
+  still unstable in Cargo 1.99.1: "feature `trim-paths` is required"); a
+  committed `.cargo/config.toml` with `[build] rustflags` (it cannot name a
+  machine's own paths, and would change every debug and test build's
+  flags and fingerprints); `RUSTFLAGS` documented as a manual step (one
+  forgotten variable ships the paths again).
+- **Consequences:** panic messages in release builds keep the crate,
+  version and file (`cargo/registry/src/index.crates.io-…/tokio-1.54.1/src/…`)
+  but no machine path. Debug, test, test-profile and recorder builds are
+  unchanged and keep full paths. The remapped release build has its own
+  Cargo fingerprints: switching between `npm run build:release` and
+  `tauri build --no-bundle` in one target directory recompiles. A
+  `[build] rustflags` in a Cargo config file is overridden while
+  `build:release` runs. Strings that a dependency builds from
+  `env!("CARGO_MANIFEST_DIR")` would not be remapped; the check after the
+  build would refuse them (none found).

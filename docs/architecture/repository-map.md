@@ -13,11 +13,12 @@ Where things are. Generated and ignored paths are listed in
 │       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, guard self-tests, fmt, clippy (default and test-profile build), test:headless
 │       ├── isolation-guard.yml  Automatic for changes to tests/desktop/** or the guard (which ci.yml skips): desktop isolation guard, its self-test, the Python profile helpers' tests
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
-│       └── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
+│       ├── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
+│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary; nothing signed or uploaded
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions)
-│   ├── development/          Setup, commands, testing, cross-platform rules
+│   ├── development/          Setup, commands, testing, cross-platform rules, release builds and installer testing (release.md)
 │   └── status/               What is implemented and validated, limitations, roadmap
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
@@ -51,7 +52,9 @@ Where things are. Generated and ignored paths are listed in
 ├── scripts/
 │   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
 │   ├── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri
-│   ├── check-release-binary.mjs  Guard against shipping a test build, the request recorder (ADR-024) or a test profile (ADR-027): --manifest (npm run check:release-binary), a binary scan, and Tauri's beforeBundleCommand (--before-bundle)
+│   ├── build-release.mjs  The normal release build (npm run build:release): tauri build with --remap-path-prefix for home, RUSTUP_HOME, CARGO_HOME and the checkout, then --local-paths on the binary (ADR-028)
+│   ├── build-release.test.mjs  Its tests (in npm run test:release-binary-guard)
+│   ├── check-release-binary.mjs  Guard against shipping a test build, the request recorder (ADR-024) or a test profile (ADR-027), or a binary naming the build machine's paths (ADR-028): --manifest (npm run check:release-binary), a binary scan, --local-paths, and Tauri's beforeBundleCommand (--before-bundle)
 │   ├── check-release-binary.test.mjs  Its tests (node --test, npm run test:release-binary-guard)
 │   ├── check-desktop-isolation.mjs  Static check of tests/desktop (npm run check:desktop-isolation, in test:headless): no driver names the user's app folder or credential namespace, moves or deletes a database, deletes a credential directly, or launches without the test-profile checks (ADR-027)
 │   └── check-desktop-isolation.test.mjs  Its tests (node --test, npm run test:desktop-isolation-guard)

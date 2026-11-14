@@ -88,10 +88,13 @@ are in it):
 git clone https://github.com/casualsoty/sotyware.git C:\dev\sotyware
 cd C:\dev\sotyware
 npm ci
-npm run tauri build
+npm run build:release
 ```
 
-The first `npm run tauri build` downloads WiX 3.14 and NSIS 3.13 for the bundles.
+The first build with bundles downloads WiX 3.14 and NSIS 3.13. Release builds
+go through `npm run build:release`
+([release.md](release.md#building-a-release)); a plain `npm run tauri build`
+leaves the build machine's paths in the binary and its bundling is refused.
 
 ### Testing unpushed commits on Windows
 

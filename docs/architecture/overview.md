@@ -190,6 +190,10 @@ Boundaries that hold today:
   credentials (`CredentialNamespace::normal()` is not compiled in). Normal
   builds contain none of it; the packaging guard refuses such binaries
   ([ADR-027](decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
+- Release builds: `npm run build:release` remaps the build machine's
+  directories out of the binary, and the packaging guard refuses a binary
+  that still names them
+  ([ADR-028](decisions.md#adr-028-release-binaries-are-built-with-the-build-machines-paths-remapped)).
 
 ## Further reading
 

@@ -30,11 +30,18 @@
 // A recorder binary that a bundler patched anyway refuses to record at
 // runtime (src-tauri/src/cloud/recorder.rs, `bundle_type()`).
 //
+// It also keeps the build machine's directories out of what is packaged
+// (ADR-028): `--before-bundle` refuses the binary about to be bundled, and
+// `--local-paths <binary>...` refuses any binary, that contains the home
+// directory, CARGO_HOME, RUSTUP_HOME or the checkout's absolute path.
+// `npm run build:release` (scripts/build-release.mjs) builds without them.
+//
 // Exit 0: fine; 1: refused or not checkable; 2: wrong usage. Only Node
 // built-ins; `cargo` on PATH for --manifest and --before-bundle.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,6 +82,58 @@ export function markerIn(path) {
 /** @param {string} path @returns {boolean} */
 export function containsMarker(path) {
   return markerIn(path) !== null;
+}
+
+/**
+ * The build machine's directories that a release binary must not name
+ * (ADR-028): home, CARGO_HOME, RUSTUP_HOME, the checkout and a target
+ * directory set by CARGO_TARGET_DIR. Filesystem roots are left out.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {string[]}
+ */
+export function localPrefixes(env = process.env) {
+  const home = homedir();
+  const list = [
+    home,
+    env.CARGO_HOME || join(home, ".cargo"),
+    env.RUSTUP_HOME || join(home, ".rustup"),
+    resolve(srcTauri, ".."),
+  ];
+  if (env.CARGO_TARGET_DIR) list.push(resolve(srcTauri, env.CARGO_TARGET_DIR));
+  return [...new Set(list.map((p) => resolve(p)))].filter((p) => dirname(p) !== p);
+}
+
+/**
+ * The first local directory (from `localPrefixes`) found in the file, with
+ * either separator and ignoring case (Windows paths), or null.
+ * @param {string} path
+ * @param {string[]} prefixes
+ * @returns {{ prefix: string, count: number } | null}
+ */
+export function localPathIn(path, prefixes = localPrefixes()) {
+  const text = readFileSync(path).toString("latin1").toLowerCase();
+  for (const prefix of prefixes) {
+    const forms = new Set();
+    for (const p of [prefix.replace(/\\/g, "/"), prefix.replace(/\//g, "\\")]) {
+      forms.add(`${p}/`.toLowerCase());
+      forms.add(`${p}\\`.toLowerCase());
+    }
+    let count = 0;
+    for (const form of forms) count += text.split(form).length - 1;
+    if (count > 0) return { prefix, count };
+  }
+  return null;
+}
+
+/** @param {string} b */
+function refuseLocalPaths(b) {
+  const found = localPathIn(b);
+  if (found) {
+    fail(
+      `${b} names ${found.prefix} ${found.count} time(s); build release binaries with ` +
+        "npm run build:release, which remaps local paths (ADR-028)",
+    );
+  }
 }
 
 /** @param {string} manifest */
@@ -205,7 +264,20 @@ function beforeBundle() {
     }
   }
   if (checked.length === 0) fail(`no ${profile} binary found to check`);
+  // The binary that is bundled: --target-dir on the command line, else
+  // CARGO_TARGET_DIR, else the default. Other binaries above are checked
+  // only for test markers.
+  let bundled = defaultTarget;
+  if (process.env.CARGO_TARGET_DIR) bundled = resolve(srcTauri, process.env.CARGO_TARGET_DIR);
+  for (const line of lines ?? []) {
+    const t = targetDirOf(line);
+    if (t) bundled = resolve(srcTauri, t);
+  }
+  const bundledBinaries = binariesIn(bundled, profile);
+  if (bundledBinaries.length === 0) fail(`no ${profile} binary found in ${bundled}`);
+  for (const b of bundledBinaries) refuseLocalPaths(b);
   console.log(`${PREFIX}ok: no test build in ${checked.join(", ")}`);
+  console.log(`${PREFIX}ok: no local path in ${bundledBinaries.join(", ")}`);
 }
 
 function main(argv) {
@@ -213,6 +285,14 @@ function main(argv) {
     checkManifest(argv[1] ?? join(srcTauri, "Cargo.toml"));
   } else if (argv[0] === "--before-bundle" && argv.length === 1) {
     beforeBundle();
+  } else if (argv[0] === "--local-paths" && argv.length > 1) {
+    for (const b of argv.slice(1)) {
+      if (!existsSync(b)) fail(`${b} does not exist`);
+      const found = markerIn(b);
+      if (found) fail(`${b} is a ${found} build (ADR-024, ADR-027)`);
+      refuseLocalPaths(b);
+    }
+    console.log(`${PREFIX}ok: no test build and no local path in ${argv.slice(1).join(", ")}`);
   } else if (argv.length > 0 && !argv[0].startsWith("--")) {
     for (const b of argv) {
       if (!existsSync(b)) fail(`${b} does not exist`);
@@ -222,7 +302,7 @@ function main(argv) {
     console.log(`${PREFIX}ok: no test build in ${argv.join(", ")}`);
   } else {
     console.error(
-      "usage: check-release-binary.mjs --manifest [Cargo.toml] | --before-bundle | <binary>...",
+      "usage: check-release-binary.mjs --manifest [Cargo.toml] | --before-bundle | --local-paths <binary>... | <binary>...",
     );
     process.exit(2);
   }

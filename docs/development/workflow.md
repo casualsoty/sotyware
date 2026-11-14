@@ -74,9 +74,15 @@ headless tests on Linux and Windows for every pull request to `main` and push to
 ## Production build
 
 ```bash
-npm run tauri build                         # binary + all bundles for the host OS
-npm run tauri build -- --no-bundle          # release binary only (fast; needed by the desktop test)
+npm run build:release                       # binary + all bundles for the host OS (ADR-028)
+npm run build:release -- --no-bundle        # release binary only
 ```
+
+`build:release` keeps the build machine's paths out of the binary; a plain
+`npm run tauri build` compiles but its bundling is refused for that reason.
+Release scope, signing and the installer test plan:
+[release.md](release.md). Desktop tests use a test-profile build instead
+(`npm run build:test-profile`, ADR-027).
 
 Outputs under `src-tauri/target/release/`:
 
@@ -88,7 +94,7 @@ Under WSL the AppImage step needs the `PATH` filter from [setup.md](setup.md#wsl
 ## Desktop test (Linux, simulated)
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run build:test-profile                # desktop tests run a test-profile build (ADR-027)
 tests/desktop/run.sh                        # optional argument: path to another binary
 ```
 
@@ -98,7 +104,7 @@ Needs an X11 display. Details, prerequisites and how to read the results:
 ## Desktop test (Linux, virtual display)
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run build:test-profile                # desktop tests run a test-profile build (ADR-027)
 npm run test:desktop:virtual                # optional argument: path to another binary
 ```
 
@@ -109,7 +115,7 @@ session and leaves your display alone. Details:
 ## Desktop test (Windows, real desktop)
 
 ```powershell
-npm run tauri build -- --no-bundle
+npm run build:test-profile                # desktop tests run a test-profile build (ADR-027)
 npm run test:desktop:windows                # = powershell ... -File tests\desktop\windows.ps1 [-Exe <path>]
 ```
 
@@ -121,7 +127,7 @@ Details: [testing.md](testing.md#windows-desktop-test).
 ## Desktop test (Windows, private desktop)
 
 ```powershell
-npm run tauri build -- --no-bundle
+npm run build:test-profile                # desktop tests run a test-profile build (ADR-027)
 npm run test:desktop:windows:isolated       # = powershell ... -File tests\desktop\windows-isolated.ps1 [-Exe <path>]
 ```
 

@@ -2328,9 +2328,10 @@ Findings:
 GitHub Actions, in `.github/workflows/`. The repository is **private on GitHub
 Free**, so hosted-runner time comes out of a small monthly allowance (see
 [GitHub Free budget](#github-free-budget)). Only the headless workflow runs
-automatically; the desktop tests run only when started by hand. Nothing in CI
-builds installers, uploads artifacts, runs on a schedule, uses secrets, or uses a
-runner other than standard `ubuntu-latest` and `windows-latest`.
+automatically; the desktop tests and the release build run only when started
+by hand. Nothing in CI signs, uploads artifacts, publishes a release, runs on a
+schedule, uses secrets, or uses a runner other than standard `ubuntu-latest`
+and `windows-latest`; only the manual `release-build.yml` builds installers.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
@@ -2339,6 +2340,7 @@ runner other than standard `ubuntu-latest` and `windows-latest`.
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**` or the guard (which `ci.yml` skips) | `ubuntu-latest` | `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests (Node and Python only, about a minute) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
+| `release-build.yml` | **manual only**; never run on GitHub yet | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`. Nothing signed, uploaded or published | release artifacts (no install) |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2350,6 +2352,10 @@ gh workflow run desktop-virtual.yml --ref main
 
 ```bash
 gh workflow run desktop-windows-isolated.yml --ref main
+```
+
+```bash
+gh workflow run release-build.yml --ref main
 ```
 
 ### Automatic headless workflow (`ci.yml`)

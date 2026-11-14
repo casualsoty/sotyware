@@ -1,0 +1,104 @@
+# Manual only: build the Windows release binary and both installers exactly
+# as a release would (npm run build:release, ADR-028) and check what they
+# contain. Nothing is signed, uploaded, attached or published.
+#
+# What it shows that ci.yml does not: the LTO release build compiles with the
+# path remaps, Tauri's beforeBundleCommand guard accepts it (no test build,
+# no build-machine path), WiX and NSIS produce the MSI and the setup program,
+# and the sotyware.exe inside each installer is the checked binary (equal
+# except for the bundle-type marker Tauri patches in before each bundle). The installers are extracted, never installed: an MSI
+# administrative image (msiexec /a) and 7-Zip for the NSIS program.
+#
+# Windows runner time is billed at a higher rate and an LTO build takes a
+# while, so it never runs on pushes or pull requests. Start it before a
+# release from the Actions tab or with
+#   gh workflow run release-build.yml --ref <branch>
+name: release-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-installers:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version && cargo --version
+
+      - run: npm ci
+      - name: cargo fetch --locked
+        working-directory: src-tauri
+        run: cargo fetch --locked
+      - name: check the rfd patch is applied
+        run: npm run check:rfd-patch
+      - name: check the test features are off by default
+        run: npm run check:release-binary
+      - name: test the release binary guard
+        run: npm run test:release-binary-guard
+
+      # Compiles with the path remaps, runs the beforeBundleCommand guard
+      # (refuses a test build or a binary naming this machine's paths),
+      # bundles MSI and NSIS, then checks the binary again.
+      - name: Build the release binary and installers
+        run: npm run build:release
+
+      - name: Check the installers contain exactly the checked binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = 'src-tauri\target\release\sotyware.exe'
+          $msi = @(Get-ChildItem 'src-tauri\target\release\bundle\msi\*.msi')
+          $nsis = @(Get-ChildItem 'src-tauri\target\release\bundle\nsis\*-setup.exe')
+          if ($msi.Count -ne 1 -or $nsis.Count -ne 1) { throw "expected one MSI and one NSIS installer, got $($msi.Count) and $($nsis.Count)" }
+          # Tauri patches a bundle-type marker into sotyware.exe before each
+          # bundle (__TAURI_BUNDLE_TYPE_VAR_UNK -> _MSI, _NSS), so the copies
+          # differ there only: compare with that marker normalised.
+          function Normalized([string]$path) {
+            $t = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($path))
+            $t = $t -creplace '__TAURI_BUNDLE_TYPE_VAR_[A-Z]{3}', '__TAURI_BUNDLE_TYPE_VAR_XXX'
+            $sha = [Security.Cryptography.SHA256]::Create()
+            [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::GetEncoding(28591).GetBytes($t)))
+          }
+          $want = Normalized (Resolve-Path $exe).Path
+          "sotyware.exe $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "$($msi[0].Name) $((Get-FileHash $msi[0].FullName -Algorithm SHA256).Hash)"
+          "$($nsis[0].Name) $((Get-FileHash $nsis[0].FullName -Algorithm SHA256).Hash)"
+          $out = Join-Path $env:RUNNER_TEMP 'installers'
+          # Administrative image: unpacks the MSI's files, installs nothing.
+          $p = Start-Process msiexec.exe -ArgumentList '/a', "`"$($msi[0].FullName)`"", '/qn', "TARGETDIR=`"$out\msi`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /a exited $($p.ExitCode)" }
+          & 7z x -y "-o$out\nsis" $nsis[0].FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z exited $LASTEXITCODE" }
+          foreach ($kind in 'msi', 'nsis') {
+            $found = @(Get-ChildItem "$out\$kind" -Recurse -Filter sotyware.exe)
+            if ($found.Count -ne 1) { throw "${kind}: expected one sotyware.exe, found $($found.Count)" }
+            "${kind}: packaged sotyware.exe $((Get-FileHash $found[0].FullName -Algorithm SHA256).Hash)"
+            if ((Normalized $found[0].FullName) -ne $want) { throw "${kind}: packaged sotyware.exe differs from the checked binary beyond the bundle-type marker" }
+            node scripts/check-release-binary.mjs --local-paths $found[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "${kind}: the packaged binary failed the guard" }
+            "${kind}: packaged sotyware.exe is the checked binary (bundle-type marker aside)"
+          }

@@ -8,7 +8,7 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -191,5 +191,50 @@ describe("--before-bundle", () => {
     const t = target("t-normal", "a normal binary");
     const r = run(["--before-bundle"], { CARGO_TARGET_DIR: t });
     assert.equal(r.status, 0, r.out);
+  });
+  test("a bundled binary that names the cargo registry is refused (ADR-028)", {
+    skip: defaultIsRecorder && "the real target/release binary is a recorder build",
+  }, () => {
+    const t = target("t-paths", `panic at ${join(homedir(), ".cargo", "registry", "src", "x.rs")}`);
+    const r = run(["--before-bundle"], { CARGO_TARGET_DIR: t });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /npm run build:release/);
+  });
+});
+
+describe("--local-paths (ADR-028)", () => {
+  function bin(name, content) {
+    const p = join(tmp, name);
+    writeFileSync(p, Buffer.concat([Buffer.alloc(256, 0), Buffer.from(content, "latin1"), Buffer.alloc(16)]));
+    return p;
+  }
+  const home = homedir();
+  const checkout = resolve(here, "..");
+  test("a remapped binary passes", () => {
+    const b = bin("remapped.bin", "cargo/registry/src/index.crates.io-1/tokio-1/src/lib.rs sotyware/src-tauri/target");
+    const r = run(["--local-paths", b]);
+    assert.equal(r.status, 0, r.out);
+  });
+  test("the home directory is refused", () => {
+    const r = run(["--local-paths", bin("home.bin", `${home}/x`)]);
+    assert.equal(r.status, 1, r.out);
+  });
+  test("CARGO_HOME is refused, with the other separator and another case", () => {
+    const cargo = resolve(tmp, "Cargo-Home");
+    const flipped = cargo.includes("\\") ? cargo.replace(/\\/g, "/") : cargo.replace(/\//g, "\\");
+    const r = run(["--local-paths", bin("cargo.bin", `${flipped.toUpperCase()}\\registry`)], { CARGO_HOME: cargo });
+    assert.equal(r.status, 1, r.out);
+  });
+  test("the checkout is refused", () => {
+    const r = run(["--local-paths", bin("checkout.bin", join(checkout, "src-tauri", "target", "x"))]);
+    assert.equal(r.status, 1, r.out);
+  });
+  test("a test build is refused here too", () => {
+    const r = run(["--local-paths", bin("marker.bin", PROFILE_MARKER)]);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /test-profile build/);
+  });
+  test("without a binary it is a usage error", () => {
+    assert.equal(run(["--local-paths"]).status, 2);
   });
 });
