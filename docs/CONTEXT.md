@@ -230,7 +230,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- **Installer icon verification** (2026-11-14, committed on `b90bcb3`,
+- **Hosted runs at `00c7872`** (2026-11-15,
+  [status.md](status/status.md#hosted-runs-at-00c7872-and-the-upload-shutdown-test-race-2026-11-15)):
+  `release-build.yml` (43649816381) passed, with the installer icon check
+  7/7 on the real MSI, image and NSIS setup; `isolation-guard.yml`
+  (43649813923) passed; `ci.yml` (43649807439) failed on Ubuntu twice on
+  a race in the upload shutdown test (the final event is sent after the
+  slot is freed); the test now waits for it. Hosted runs of the fix
+  pending.
+- **Installer icon verification** (2026-11-14, committed as `00c7872`,
   [status.md](status/status.md#installer-icon-verification-in-release-builds-2026-11-14),
   [icons.md](development/icons.md#installer-icons)):
   `scripts/check-installer-icons.mjs` reads the MSI (`ARPPRODUCTICON` →
@@ -239,8 +247,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   applied in memory) and every `sotyware.exe`, and compares their icons
   with `icon.ico` byte for byte; run by `release-build.yml`, tests (28)
   in `ci.yml`. Native Windows 11 `build:release` + check passed, a
-  stale-icon control failed everywhere; nothing installed or run. Not
-  yet on GitHub.
+  stale-icon control failed everywhere; nothing installed or run. Passed
+  on GitHub at `00c7872` (above).
 - **Application icons** (2026-11-14, [status.md](status/status.md#application-icons-2026-11-14),
   [icons.md](development/icons.md)): placeholders replaced by a cube on a
   blue-to-teal tile from three SVG sources (`npm run icons`, check

@@ -127,6 +127,52 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `00c7872` and the upload shutdown test race (2026-11-15)
+
+`main` was pushed as a fast-forward from `f9a0c71` to `00c7872` (with
+`b90bcb3`). Every job checked out `00c7872`.
+
+- **`release-build.yml`** run 43649816381 (manual): passed.
+  `test:installer-icons` 28/28, `check:icons`, guards 39/39;
+  `build:release` (4 remaps, guard before bundling); MSI
+  `sotyware_0.1.0_x64_en-US.msi` `638BAB5C…51E6EB05`, NSIS
+  `sotyware_0.1.0_x64-setup.exe` `2999A9B3…29DB731FE`, `sotyware.exe`
+  `71FBD33E…9E3E2714`; `msiexec /a` and 7z unpacked both; each packaged
+  `sotyware.exe` equal to the checked one apart from the bundle-type
+  marker and passing `--local-paths`; **the installer icon check passed
+  all seven on the real artefacts** (MSI, image MSI, image
+  `sotyware.exe`, image, NSIS setup, uninstaller rebuilt in memory,
+  built `sotyware.exe`). 0 artifacts; nothing installed, run or signed.
+- **`isolation-guard.yml`** run 43649813923 (manual; the push touched
+  none of its paths): guard 9/9, Python helpers 10/10, desktop-workflow
+  check, PowerShell helpers 20/20.
+- **`ci.yml`** run 43649807439 (push): Windows passed (guards, icons
+  9/9, installer icons 28/28, Vitest 179, Rust 399). **Ubuntu failed in
+  both attempts** on
+  `cloud::upload::tests::shutdown_cancels_the_batch_and_waits_for_the_multipart_abort`
+  ("finished before shutdown returned"): attempt 1 in the default build
+  (411 + 1 failed), attempt 2 (failed job rerun) in the recorder build
+  (439 + 1 failed, default 412/412). Everything else, including
+  installer icons 28/28 and Vitest 179, passed.
+
+**Cause: a race in the test, not in the app.** A batch frees its slot
+before it sends its final event (so the page can start the next batch
+as soon as it reads it), and `CloudUploads::shutdown` returns once the
+slot is free; the test looked for the final event right after
+`shutdown` returned. No Rust changed since `f9a0c71`, whose CI passed.
+Reproduced on WSL2 at `00c7872` pinned to one CPU: 28 of 30 runs failed.
+The test now waits for the final event with the existing `finished`
+helper (≤ 30 s; also checks the slot was freed first and nothing
+follows the final event); every other assertion is unchanged. After the
+fix, WSL2: that test 30/30 on one CPU; fmt, clippy; `cargo test` 412 +
+27 ignored; recorder build 440 + 27 ignored, and 3 × 440 pinned to two
+CPUs. Pinned to one CPU, two other upload tests
+(`a_conflict_found_by_the_upload_itself_skips_the_file`,
+`a_download_runs_while_a_batch_is_uploading`) fail every time, also at
+`00c7872` without the fix (a blocking wait on the only runtime worker);
+they never failed on GitHub. The hosted runs of the fix are recorded
+separately.
+
 ### Installer icon verification in release builds (2026-11-14)
 
 New `scripts/check-installer-icons.mjs` (Node built-ins only) and its
@@ -135,7 +181,8 @@ test:installer-icons`, in `ci.yml` and `release-build.yml`);
 `release-build.yml` now runs the check on the real installers after
 unpacking them, plus `check:icons`. What is compared and how:
 [icons.md](../development/icons.md#installer-icons). No application code,
-icon or existing guard changed. **Not yet run on GitHub** (not pushed).
+icon or existing guard changed. On GitHub at `00c7872`:
+[hosted runs](#hosted-runs-at-00c7872-and-the-upload-shutdown-test-race-2026-11-15).
 
 - **Tests:** 28/28 on WSL2 and on native Windows 11 (Node 24.22.0 /
   24.14.1). In-memory PE files, MSI compound files and NSIS setup

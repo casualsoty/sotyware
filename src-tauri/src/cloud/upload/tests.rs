@@ -1539,9 +1539,10 @@ async fn shutdown_cancels_the_batch_and_waits_for_the_multipart_abort() {
     assert!(took < Duration::from_secs(10), "{took:?}");
     assert_eq!(s.server.open_multipart_files(), Vec::<String>::new());
     assert!(s.uploads.unresolved().is_empty());
-    let summary = s
-        .of_finished(&batch)
-        .expect("finished before shutdown returned");
+    // The batch frees the slot before it sends its final event (so the page
+    // can start the next batch on reading it), and `shutdown` returns once
+    // the slot is free: the event may still be on its way.
+    let summary = s.finished(&batch).await;
     assert_eq!(summary.state, BatchState::Cancelled);
     assert_eq!(file(&summary, 0).remote, Some(RemoteState::NothingStored));
     assert!(!file(&summary, 1).started);
