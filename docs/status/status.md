@@ -170,8 +170,21 @@ CPUs. Pinned to one CPU, two other upload tests
 (`a_conflict_found_by_the_upload_itself_skips_the_file`,
 `a_download_runs_while_a_batch_is_uploading`) fail every time, also at
 `00c7872` without the fix (a blocking wait on the only runtime worker);
-they never failed on GitHub. The hosted runs of the fix are recorded
-separately.
+they never failed on GitHub.
+
+**Hosted runs at `82b17c6`** (the fix, pushed as a fast-forward from
+`00c7872`; every job checked out `82b17c6`; all passed, 0 artifacts):
+`ci.yml` run 43653244431 (push): Ubuntu Rust 412 + recorder build 440,
+Windows 399 (27 ignored each), the shutdown test ok in all three, Vitest
+179 on both, installer icons 28/28, icons 9/9, guards 39/39, rfd guard
+10/10, isolation guard 9/9. `isolation-guard.yml` run 43653245468
+(manual): guard 9/9, Python helpers 10/10, PowerShell helpers 20/20.
+`release-build.yml` run 43653247634 (manual): guard before bundling and
+on both packaged `sotyware.exe` (each the checked binary apart from the
+bundle-type marker), installer icon check 7/7 on the real artefacts;
+MSI `sotyware_0.1.0_x64_en-US.msi` `68417720…ADDD1BB69`, NSIS
+`sotyware_0.1.0_x64-setup.exe` `F0C4BAB6…AFCCE67D5`, `sotyware.exe`
+`629381DA…4921FAE`. Nothing installed, run, signed or published.
 
 ### Installer icon verification in release builds (2026-11-14)
 

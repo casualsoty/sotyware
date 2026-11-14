@@ -236,8 +236,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   7/7 on the real MSI, image and NSIS setup; `isolation-guard.yml`
   (43649813923) passed; `ci.yml` (43649807439) failed on Ubuntu twice on
   a race in the upload shutdown test (the final event is sent after the
-  slot is freed); the test now waits for it. Hosted runs of the fix
-  pending.
+  slot is freed); the test now waits for it. At `82b17c6` all three
+  passed (`ci.yml` 43653244431, `isolation-guard.yml` 43653245468,
+  `release-build.yml` 43653247634, icon check 7/7).
 - **Installer icon verification** (2026-11-14, committed as `00c7872`,
   [status.md](status/status.md#installer-icon-verification-in-release-builds-2026-11-14),
   [icons.md](development/icons.md#installer-icons)):
