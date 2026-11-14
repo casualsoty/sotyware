@@ -313,6 +313,47 @@ describe("selection", () => {
     expect(argsOf("start_cloud_operation")).toHaveLength(0);
   });
 
+  it("opens no review when every item is left out (a folder pasted into itself) and says why", async () => {
+    handlers["plan_cloud_operation"] = () =>
+      plan("move", [{ name: "docs", folder: true, source: "docs/", destination: "docs/docs/", objects: 2, problem: "a folder cannot be put inside itself" }], {
+        destination: "docs/",
+      });
+    const root = await opened();
+    await clickRow(root, "docs/");
+    await key("x", { ctrlKey: true });
+    row(root, "docs/").querySelector("button")!.click();
+    await settle();
+    await key("v", { ctrlKey: true });
+    expect(argsOf("plan_cloud_operation")).toHaveLength(1);
+    expect(root.querySelector('[role="dialog"]')).toBeNull();
+    const alert = root.querySelector<HTMLElement>('[role="alert"][aria-label="File operation"]')!;
+    expect(text(alert)).toContain("Nothing to move.");
+    expect(text(alert)).toContain("“docs”: a folder cannot be put inside itself");
+    expect(argsOf("discard_cloud_operation_plan")).toEqual([{ plan: "plan-1" }]);
+    expect(argsOf("start_cloud_operation")).toHaveLength(0);
+  });
+
+  it("still opens the review when only some items are left out", async () => {
+    handlers["plan_cloud_operation"] = () =>
+      plan(
+        "move",
+        [
+          { name: "docs", folder: true, source: "docs/", destination: "docs/docs/", objects: 2, problem: "a folder cannot be put inside itself" },
+          { name: "b.txt", source: "b.txt", destination: "docs/b.txt" },
+        ],
+        { destination: "docs/" },
+      );
+    const root = await opened();
+    await clickRow(root, "docs/");
+    await clickRow(root, "b.txt", { ctrlKey: true });
+    await key("x", { ctrlKey: true });
+    row(root, "docs/").querySelector("button")!.click();
+    await settle();
+    await key("v", { ctrlKey: true });
+    expect(text(dialog(root))).toContain("Left out: a folder cannot be put inside itself.");
+    expect(argsOf("discard_cloud_operation_plan")).toHaveLength(0);
+  });
+
   it("takes shortcuts again once a reviewed operation has finished and its panel is dismissed", async () => {
     handlers["plan_cloud_operation"] = () => plan("copy", [{ name: "b.txt", source: "b.txt", destination: "docs/b.txt" }], { destination: "docs/" });
     let channel: FakeChannel | undefined;

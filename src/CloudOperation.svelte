@@ -79,6 +79,15 @@
         void discardPlan(plan.plan).catch(() => undefined);
         return;
       }
+      // Every item left out (a folder pasted into itself, a file moved
+      // into its own folder, items gone since): nothing to review or
+      // start, so say why instead of opening an empty "Move 0 items" review.
+      if (plan.items.length > 0 && plan.items.every((i) => i.problem !== null)) {
+        void discardPlan(plan.plan).catch(() => undefined);
+        phase = { step: "idle" };
+        planError = new Error(nothingToDo(plan));
+        return;
+      }
       phase = { step: "review", request, plan, policy: "skip", starting: false, error: null };
     } catch (e) {
       if (!destroyed && phase.step === "planning" && mine === planRequest) {
@@ -243,6 +252,16 @@
 
   function where(path: string | null): string {
     return path === null || path === "" ? `the root of ${bucket}` : path;
+  }
+
+  /** Why a plan whose items were all left out does nothing. */
+  function nothingToDo(p: PlanSummary): string {
+    const reasons = p.items
+      .slice(0, 3)
+      .map((i) => `“${shownName(i.name)}”: ${i.problem ?? ""}`)
+      .join("; ");
+    const more = p.items.length > 3 ? `; and ${p.items.length - 3} more` : "";
+    return `Nothing to ${p.kind}. ${reasons}${more}.`;
   }
 
   function reviewTitle(p: PlanSummary): string {
