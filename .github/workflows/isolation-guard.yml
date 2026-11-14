@@ -3,9 +3,13 @@
 # ci.yml ignores tests/desktop/** (its headless jobs do not run the desktop
 # drivers), so a change to the drivers alone would never meet
 # scripts/check-desktop-isolation.mjs, which scans exactly those files.
-# This job is cheap (Node and Python only, no Rust, no npm install): the
-# static check of the drivers, its own tests and the test-profile helpers'
-# tests.
+# ci.yml also skips the desktop workflows, which are the only place the
+# drivers run in CI: a change there must keep building the test-profile
+# binary and running the guard first.
+#
+# Cheap (no Rust, no npm install): the static check of the drivers, its own
+# tests, the desktop workflows' preconditions and the Python test-profile
+# helpers' tests on Linux; the PowerShell helpers' self-test on Windows.
 name: isolation-guard
 
 on:
@@ -15,12 +19,14 @@ on:
       - "tests/desktop/**"
       - "scripts/check-desktop-isolation*.mjs"
       - ".github/workflows/isolation-guard.yml"
+      - ".github/workflows/desktop-*.yml"
   push:
     branches: [main]
     paths:
       - "tests/desktop/**"
       - "scripts/check-desktop-isolation*.mjs"
       - ".github/workflows/isolation-guard.yml"
+      - ".github/workflows/desktop-*.yml"
   workflow_dispatch:
 
 permissions:
@@ -47,3 +53,30 @@ jobs:
         run: node --test scripts/check-desktop-isolation.test.mjs
       - name: test the test-profile helpers
         run: python3 -m unittest tests/desktop/test_profile_test.py
+      # Each workflow that runs a desktop driver must run the isolation
+      # guard and build the test-profile binary (ADR-027), and must not
+      # build a plain release binary for it.
+      - name: check the desktop workflows run the guard and a test-profile build
+        shell: bash
+        run: |
+          fail=0
+          for f in .github/workflows/desktop-*.yml; do
+            grep -q 'npm run test:desktop' "$f" || continue
+            for need in 'npm run check:desktop-isolation' 'npm run build:test-profile'; do
+              grep -qF "$need" "$f" || { echo "::error file=$f::missing: $need"; fail=1; }
+            done
+            if grep -nE 'tauri build|build:release' "$f"; then
+              echo "::error file=$f::builds a non-test-profile binary"; fail=1
+            fi
+          done
+          exit $fail
+
+  powershell-helpers:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: test the PowerShell test-profile helpers (TestProfile.psm1)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/test-profile-selftest.ps1

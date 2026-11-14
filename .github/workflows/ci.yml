@@ -138,3 +138,14 @@ jobs:
         run: cargo clippy --locked --all-targets --features test-profile --target-dir target/test-profile -- -D warnings
 
       - run: npm run test:headless
+
+      # The test-profile (ADR-027) and request-recorder (ADR-024) unit tests.
+      # build.rs puts each feature in its own target directory, so each is a
+      # full extra compile; request-recorder turns test-profile on and no code
+      # is compiled only without the recorder, so this one build runs both
+      # suites. Linux only, to keep Windows runner time down: on Windows the
+      # test-profile build is type-checked by the clippy step above.
+      - name: cargo test (request-recorder build, includes test-profile)
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo test --locked --features request-recorder --target-dir target/recorder

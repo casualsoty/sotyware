@@ -2335,9 +2335,9 @@ and `windows-latest`; only the manual `release-build.yml` builds installers.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`, type-check only), `npm run test:headless` | A. headless |
-| `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands, native Windows (MSVC Rust, no WSL); does not start sotyware | A. headless |
-| `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**` or the guard (which `ci.yml` skips) | `ubuntu-latest` | `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests (Node and Python only, about a minute) | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
+| `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands except the recorder-build `cargo test`, native Windows (MSVC Rust, no WSL), the PowerShell test-profile helpers' self-test instead of the Python one; does not start sotyware | A. headless |
+| `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; never run on GitHub yet | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`. Nothing signed, uploaded or published | release artifacts (no install) |
@@ -2394,9 +2394,16 @@ gh workflow run release-build.yml --ref main
   refuses the feature in any other target directory), so the code only that
   build compiles (its identifier, the profile's paths, no normal credential
   namespace; ADR-027) is type-checked on both platforms. Added 2026-11-14:
-  before, CI never compiled it. Its unit tests run locally only
-  (`cargo test --lib --features test-profile --target-dir target/test-profile`);
-  the recorder build is not compiled in CI.
+  before, CI never compiled it.
+- **Recorder and test-profile tests (Linux only).** After `test:headless`,
+  the Linux job runs `cargo test --locked --features request-recorder
+  --target-dir target/recorder`. build.rs gives each feature its own target
+  directory, so each suite is a full extra compile; that is why they were
+  left out of CI at first. `request-recorder` turns `test-profile` on and no
+  code is compiled only without the recorder, so this one build runs both
+  suites (440 tests locally on WSL2, 2026-11-14). Windows runs neither suite
+  in CI (Windows runner time); its test-profile build is type-checked only.
+  Added 2026-11-14, not yet run on GitHub.
 - **Linux packages.** Only the Tauri build libraries from
   [setup.md](setup.md#linux-system-packages); no display server, window manager,
   tray host or D-Bus session.

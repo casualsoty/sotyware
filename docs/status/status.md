@@ -126,6 +126,28 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### CI coverage of the test-profile and recorder tests (2026-11-14)
+
+Workflow change only; **not yet run on GitHub** (the push was not possible:
+no GitHub credentials in this WSL2 environment, `git fetch` refused, no
+`gh`). The test-profile and recorder suites were left out of CI because
+build.rs gives each feature its own target directory, so each is a full
+extra compile.
+
+- `ci.yml` (Linux job only): `cargo test --locked --features
+  request-recorder --target-dir target/recorder` after `test:headless`;
+  the recorder feature turns test-profile on, so one build runs both
+  suites. WSL2: 440 passed, 0 failed, 27 ignored.
+- `isolation-guard.yml`: also triggered by `.github/workflows/desktop-*.yml`
+  (which `ci.yml` skips); a step fails unless each desktop workflow that
+  runs a driver runs `check:desktop-isolation` and `build:test-profile`
+  and no plain `tauri build`/`build:release` (WSL2: passes on both
+  workflows, fails on an edited copy that builds with `tauri build`); a
+  Windows job runs `test-profile-selftest.ps1`, so a change only to
+  `TestProfile.psm1` is tested (that script not run locally for this
+  change; the module is unchanged). YAML parsed; guard 9/9, Python
+  helpers OK.
+
 ### Release hardening (2026-11-14)
 
 Uncommitted on `b1ae386` (10 commits ahead of the last known

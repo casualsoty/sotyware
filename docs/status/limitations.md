@@ -805,12 +805,9 @@ server only; no real provider was asked.
   with Explorer and the mouse), the manual checklist, Windows 10, real Linux
   desktops, installing the installers. Building and unpacking them is the
   manual `release-build.yml`, never run on GitHub yet.
-- **Automatic CI never runs the test-profile or recorder tests**, only
-  compiles the test-profile build with clippy; both test suites run locally.
-- **A change only to `tests/desktop/TestProfile.psm1` runs no PowerShell
-  test in CI:** `ci.yml` skips `tests/desktop/**`, and `isolation-guard.yml`
-  (Linux) runs the static guard and the Python helpers' tests, not
-  `test-profile-selftest.ps1`.
+- **The test-profile and recorder tests run in CI on Linux only** (one
+  recorder build, which includes test-profile; added 2026-11-14, not yet
+  run on GitHub). On Windows CI only type-checks the test-profile build.
 - **Docs-only changes skip CI** (`paths-ignore`), so a required status check
   would never report on such a pull request; branch protection is not
   configured.
