@@ -237,7 +237,10 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   icons set. WSL2 checks and `test:headless` passed; native Windows 11
   `npm run build:release` passed, MSI and NSIS unpacked without
   installing: every icon resource equals `icon.ico`, the packaged binaries
-  are the checked one. Not seen in a running app or on a real Linux desktop.
+  are the checked one. Seen running (test-profile build, Windows 11 25H2
+  at 100 %, [status](status/status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14)):
+  title bar, taskbar button and tray flyout show the cube, also after hide
+  and reopen; Explorer, Start menu, other scalings and Linux not seen.
 - **Release hardening** (2026-11-14, uncommitted on `b1ae386`,
   [status.md](status/status.md#release-hardening-2026-11-14)): release
   builds go through `npm run build:release` (`--remap-path-prefix`,

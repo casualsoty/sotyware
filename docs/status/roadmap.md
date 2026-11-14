@@ -48,8 +48,11 @@ Not started unless status.md says so. Scope and procedures:
    with real input once (the manual procedure in release.md, test-profile
    build only).
 5. Done 2026-11-14: the placeholder icons are replaced
-   ([status.md](status.md#application-icons-2026-11-14)); seeing them in
-   the running app and installers is part of the installation test (3).
+   ([status.md](status.md#application-icons-2026-11-14)); seen in the
+   running test-profile app on Windows 11 at 100 % (window, taskbar, tray,
+   [status](status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14));
+   Explorer, Start menu, other scalings and the installers are part of the
+   installation test (3).
 
 Fixes found during validation come before anything below.
 

@@ -52,6 +52,14 @@ system's large-icon size (`SM_CXICON`: 32 px at 100 % scaling, 48 at
 scaled to 16 px. On Linux it is `32x32.png`. There is no separate tray
 image.
 
+**Seen at runtime** (2026-11-14, Windows 11 25H2 at 100 %, a test-profile
+build): the title bar, the running taskbar button and the tray icon in the
+hidden-icons flyout show the cube; the window's live small icon is the
+32 px entry. Not yet seen: other scalings, Explorer, the Start menu, Linux
+([status](../status/status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14)).
+A taskbar pin made from an older build keeps its old icon: it points at
+another executable.
+
 The frontend uses no icon: the dashboard has no logo, and the webview has
 no favicon.
 

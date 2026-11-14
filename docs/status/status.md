@@ -171,11 +171,65 @@ test:icons` (in `ci.yml`). No Rust or frontend code changed.
   a bare file name). Windows logged "installed the product" events for
   WiX validation and for the administrative image; the installed sotyware
   (InstallDate 2026-11-13, executable dated 2026-11-13) was not changed.
-- **Not checked:** the icon in a running app (window, taskbar, tray at
-  real DPI), Explorer, Start menu or Add/Remove Programs; a person's look on
+- **Not checked then:** the icon in a running app (window, taskbar, tray;
+  observed afterwards, [below](#application-icons-in-the-running-app-on-native-windows-11-2026-11-14)),
+  Explorer, Start menu or Add/Remove Programs; a person's look on
   a real Windows 11 desktop (installation test plan); any Linux package or
   desktop; macOS (`icon.icns` not looked at). Nothing installed, signed,
   uploaded or published; no provider contacted.
+
+### Application icons in the running app on native Windows 11 (2026-11-14)
+
+Runtime observation of the icons of `32fcd3a` in a **test-profile build**
+(ADR-027) on the user's real, unlocked Windows 11 Home 25H2 desktop (build
+26200.9711), main display 3440 × 1440 at **100 %** (96 dpi; a second
+display above it was not used). Build: `npm run build:test-profile` in the
+copy `C:\dev\sotyware-relpath` synced to `32fcd3a` (code files equal to
+the commit), `sotyware.exe` SHA-256 `3e46ff84…431224`. Driven by a one-off
+script outside the repository that uses only `tests/desktop/TestProfile.psm1`
+for isolation, in the order `windows.ps1` uses it; no account added, no
+provider contacted. Input: UI Automation Invoke of "Show Hidden Icons" and
+Esc to close it, and the real mouse only for the tray **Quit** (both agreed
+with the user beforehand). **22 checks passed, 0 failed, one run.** These
+are observations of the running app (screen captures and the window's live
+icon handle), not the resource inspection recorded above.
+
+| Surface | Result | Evidence |
+| --- | --- | --- |
+| Window (title bar) | **pass** | screen capture of the title bar after reopening: the cube tile left of "sotyware"; `WM_GETICON` small icon of the live window rendered: the 32 px cube (no big or class icon set). At startup the window was not in the foreground and its title bar was covered by another window; the capture after the second launch, in the foreground, is the evidence |
+| Taskbar | **pass** | the running button ("sotyware - 1 running window") shows the cube with the running indicator, at startup and after reopening. The user's own pin ("sotyware pinned", a normal build of an older commit) beside it still shows the old placeholder: a different executable, expected, left alone |
+| Notification area | **pass** at 100 % | the icon sits in the hidden-icons flyout (not on the taskbar itself); exactly one "sotyware test profile" icon, its 40 × 40 slot showing the cube on a dark flyout, recognisable; same after hiding |
+| Hide and reopen | **pass** | `WM_CLOSE` hid the window (tray mode), the tray icon stayed; a second launch exited 0 and showed the same process's window, whose title bar, live icon handle and taskbar button still showed the cube |
+| Scaling | 100 % only | other scalings not tried (that changes display settings); left to the installation test |
+| Explorer, Start menu, Add/Remove Programs | **not run** | see below |
+
+Isolation and cleanup (all passed): the binary carries the test-profile
+marker; launched without `SOTYWARE_TEST_PROFILE` and with an invalid
+marker it exited 3 with no window and wrote nothing; the acknowledgement
+matched run, nonce and pid, identifier `com.sotyware.desktop.test`, the
+three databases in `<profile>\data`, the webview data in
+`<profile>\webview`, credential service `com.sotyware.desktop.test` with
+the run's nonce as prefix (no credential was written; Credential Manager
+was not listed). Tray Quit exited 0; no test process left; only the run's
+profile removed. The user's real app folder, read through WMI outside the
+agent's MSIX-virtualized process tree before and after (422 files: names,
+sizes, write times, SHA-256), was unchanged, and so were (names, sizes and
+write times, also read through WMI; the script's hash column came out
+empty there) the taskbar pin `sotyware.lnk` and its target
+`C:\dev\sotyware\…\release\sotyware.exe`, the Start menu entry
+`sotyware\sotyware.lnk`, the MSI's uninstall entry (0.1.0, installed at
+`D:\Program Files\sotyware`) and its `sotyware.exe`. No sotyware process
+of any other path ran before, during or after. Screen captures stay on
+the development machine (`C:\dev\sotyware-iconrt-logs\`); they show other
+applications too and are not committed.
+
+**Not run, deferred to the [installation test](../development/release.md#installation-test-plan-disposable-windows-11):**
+Explorer and the Start menu. A Start menu entry for the test build would
+mean writing a shortcut into the user's Start menu, and a launch from it
+carries no `SOTYWARE_TEST_PROFILE`, so the build refuses to start (exit 3);
+the existing infrastructure has no safe way to expose it. Also deferred:
+a higher display scaling, a light taskbar, Add/Remove Programs, the
+installers' and installed copy's icons.
 
 ### CI coverage of the test-profile and recorder tests (2026-11-14)
 

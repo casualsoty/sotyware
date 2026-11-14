@@ -144,7 +144,12 @@ seen (screenshots for dialogs), and pass/fail.
    version, publisher), that no profile folder exists yet, that WebView2 is
    present or installed by the bootstrapper. The sotyware icon
    ([icons.md](icons.md)) on the setup program, the Start menu entry and
-   the uninstall entry, at 100 % and at a higher display scaling.
+   the uninstall entry, Explorer, at 100 % and at a higher display scaling.
+   (Window, taskbar and tray icons were already seen in a test-profile
+   build at 100 % on the development machine,
+   [status](../status/status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14);
+   Explorer and Start menu need this installation, because a test-profile
+   build refuses to start from a shortcut without its profile.)
 2. **First launch.** Start from the Start menu. Tray icon (in the
    hidden-icons flyout; the cube, legible on a light and a dark taskbar),
    taskbar and title-bar icon, dashboard opens, close hides, tray Open Dashboard,
