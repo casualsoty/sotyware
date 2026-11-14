@@ -595,14 +595,42 @@ server only; no real provider was asked.
   restricted key call `GetBucketVersioning` or `ListObjectVersions`, and
   how Hetzner behaves, is unverified.
 - **Desktop coverage is partial** (2026-11-14, local servers only,
-  [status](status.md#file-management-desktop-tests-and-audit-2026-11-14)):
-  the Linux virtual display (`cloud-ui.sh files`, GTK dialogs, not a real
-  desktop) and the native Windows 11 driver (`windows-cloud-ui.ps1 -Mode
-  files`, without the folder dialogs). Not driven on any desktop: drag and
-  drop from another program, the system clipboard, choosing a folder in the
-  GTK or Windows folder dialog (so several-item downloads and folder
-  uploads through them; the Rust tests cover both behind the dialog), and
-  Ctrl/Shift-click with the pointer on Linux (keyboard and Vitest only).
+  [status](status.md#native-folder-dialogs-drag-and-drop-clipboard-and-final-audit-2026-11-14)):
+  the Linux virtual display (`cloud-ui.sh files`: Xvfb + openbox, GTK 3.24
+  dialogs, **not a real GNOME, KDE or XFCE desktop**) and the native
+  Windows 11 25H2 desktop (`windows-cloud-ui.ps1 -Mode files`, UI
+  Automation). Folder uploads and several-item downloads through the
+  native folder dialogs were driven on both. Still not driven:
+  - **drag and drop on Windows** (dropping from Explorer needs a real
+    pointer drag on the user's desktop; not done) and on any real Linux
+    desktop; on the virtual display a drop came from a small GTK program
+    over XDND (`drag_source.py`), not from a file manager;
+  - **the system clipboard:** Ctrl+C, Ctrl+X and Ctrl+V act on sotyware's
+    own clipboard of items by design and never touch the system's; the
+    only system-clipboard write is Copy link in Properties
+    (`navigator.clipboard.writeText`), read back nowhere (no clipboard
+    manager on Xvfb; not done on Windows to leave the user's clipboard
+    alone). The keyboard shortcuts were driven with real keys on the
+    virtual display only; Windows has component tests for them, no native
+    key run;
+  - cancelling a folder upload while a file is sent (the same batch code
+    as Upload files…, whose cancel the `upload` phases drive);
+  - Ctrl/Shift-click with the pointer on Linux (XTest modifiers are not
+    seen by WebKitGTK on Xvfb; keyboard and Vitest only).
+- **Empty folders are not uploaded.** A folder upload sends files only
+  (S3 folders exist through their objects), so an empty local folder
+  leaves no trace and a folder holding only empty folders is refused
+  ("the folder holds no files").
+- **A file refused with access denied is not retried** by Try again in an
+  upload batch or Download the rest again: access, credential and
+  connection errors stop the batch, and only files not started (or failed
+  for a transient reason) are offered again. Fix the account, then upload
+  or download again (existing objects and files are skipped or numbered).
+- **Pasting a folder into itself** is refused with "a folder cannot be put
+  inside itself", but a review still opens, titled "Move 0 items to …?"
+  (0 objects, 0 B; seen on the virtual display, 2026-11-14). The driver
+  cancelled it and the bucket was unchanged; whether its Move button is
+  disabled was not checked.
 - **One request of race.** Between the `HeadObject` that checks a source or
   destination and the `CopyObject` or `DeleteObject` that follows, another
   client can change the object (S3 offers no conditional delete at

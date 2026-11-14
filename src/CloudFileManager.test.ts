@@ -291,6 +291,53 @@ describe("selection", () => {
     expect(selectedIds(root)).toEqual([]);
   });
 
+  it("copies with Ctrl+C and pastes with Ctrl+V only into a reviewed plan; a second Ctrl+V under the review does nothing", async () => {
+    handlers["plan_cloud_operation"] = () => plan("copy", [{ name: "b.txt", source: "b.txt", destination: "docs/b.txt" }], { destination: "docs/" });
+    const root = await opened();
+    await clickRow(root, "b.txt");
+    await key("c", { ctrlKey: true });
+    expect(text(root)).toContain("1 item copied");
+    expect([...root.querySelectorAll("button")].map((b) => b.textContent?.trim())).toContain("Paste copy (1)");
+    // Nothing is sent by a copy to the clipboard.
+    expect(argsOf("plan_cloud_operation")).toHaveLength(0);
+    row(root, "docs/").querySelector("button")!.click();
+    await settle();
+    await key("v", { ctrlKey: true });
+    expect(argsOf("plan_cloud_operation")).toHaveLength(1);
+    expect(argsOf("plan_cloud_operation")[0]!["request"]).toEqual({ kind: "copy", items: [{ type: "file", key: "b.txt" }], destination: "docs/" });
+    expect(text(dialog(root))).toContain("b.txt");
+    await key("v", { ctrlKey: true });
+    expect(argsOf("plan_cloud_operation")).toHaveLength(1);
+    expect(argsOf("start_cloud_operation")).toHaveLength(0);
+    await click(dialog(root), "Cancel");
+    expect(argsOf("start_cloud_operation")).toHaveLength(0);
+  });
+
+  it("takes shortcuts again once a reviewed operation has finished and its panel is dismissed", async () => {
+    handlers["plan_cloud_operation"] = () => plan("copy", [{ name: "b.txt", source: "b.txt", destination: "docs/b.txt" }], { destination: "docs/" });
+    let channel: FakeChannel | undefined;
+    handlers["start_cloud_operation"] = (args) => {
+      channel = args["onEvent"] as FakeChannel;
+      return { operation: "op-1", kind: "copy", items: [report(0, "b.txt")] };
+    };
+    const root = await opened();
+    await clickRow(root, "b.txt");
+    await key("c", { ctrlKey: true });
+    row(root, "docs/").querySelector("button")!.click();
+    await settle();
+    await key("v", { ctrlKey: true });
+    await click(dialog(root), "Copy");
+    channel!.onmessage({ operation: "op-1", seq: 1, body: { type: "item", item: report(0, "b.txt", { state: "completed", objectsDone: 1 }) } });
+    channel!.onmessage({ operation: "op-1", seq: 2, body: { type: "finished", summary: summary("copy", "completed") } });
+    await settle();
+    expect(root.querySelector('[role="dialog"]')).toBeNull();
+    await click(root.querySelector<HTMLElement>('[aria-label="File operation"]')!, "Dismiss");
+    await click(root, "Up one folder");
+    await clickRow(root, "b.txt");
+    await key("x", { ctrlKey: true });
+    expect(text(root)).toContain("marked to move");
+  });
+
   it("does not take shortcuts while typing in the search field", async () => {
     const root = await opened();
     const input = root.querySelector<HTMLInputElement>('input[aria-label="Search"]')!;

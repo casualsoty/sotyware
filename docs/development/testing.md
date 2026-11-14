@@ -98,12 +98,17 @@ is a test-profile build too. Neither can be packaged
   exit 3, fingerprints of the user's own folders (and, on Windows, of the
   user's `com.sotyware.desktop/` Credential Manager lines) before and after,
   and cleanup of the run's own profile and credentials only. Any mismatch
-  stops the run before the window is touched.
+  stops the run before the window is touched. On Windows the drivers also
+  read the user's real app folders through a process WMI starts outside
+  their own (possibly MSIX-virtualized) process tree, before and after;
+  if that read fails they **stop before launching** (since 2026-11-14).
 - Checks without a desktop: `npm run test:profile-helpers` (Python helper,
   10 tests), `tests/desktop/test-profile-selftest.ps1` (PowerShell helper,
   20 checks, Windows), `npm run check:desktop-isolation` (static check of
-  every driver, part of `test:headless`) and its self-test
-  `npm run test:desktop-isolation-guard`, and the Rust unit tests of
+  every driver, part of `test:headless`, and of `isolation-guard.yml` for
+  changes to the drivers alone) and its self-test
+  `npm run test:desktop-isolation-guard` (9 tests, including the bypasses
+  an audit found on 2026-11-14), and the Rust unit tests of
   `test_profile.rs` and `CredentialNamespace` (also with
   `--features test-profile --target-dir target/test-profile`).
 - **On Windows from a coding agent:** the agent's processes may run inside
@@ -1637,19 +1642,36 @@ Ctrl+A, context menu, reset on navigation), sorting and filters, search
 (folder, whole bucket with Search further, key prefix), Load more,
 previews (text, JSON, a text starting with "BM", HTML and SVG as text, a
 cut text, a PNG, an image over 10 MiB), a share link fetched without
-credentials, the GTK folder dialog of a several-item download (it must
-open; Cancel must start and write nothing; choosing a folder in it could
-not be driven through AT-SPI/XTest, so the downloads themselves are
-reported as not tested when that fails, and are covered by the Rust tests)
-and a delete on the unversioned bucket. After each step it
-reads the server's state (`dump`: every key's current object and versions)
-instead of trusting the page; the helper fails at the end if a real
-version of the versioned bucket was ever removed by id or the app sent a
-request the file manager does not use. It does not test a drag and drop
-from another program or the system clipboard (no source or clipboard
-manager on the virtual display), nor Ctrl/Shift-click with the pointer
-(XTest modifiers are not seen by WebKitGTK on Xvfb; Shift+Down and the
-checkboxes are), and says so.
+credentials, sotyware's own clipboard with real X key events (Ctrl+X,
+Ctrl+C, Ctrl+V opening the reviewed plan, a second Ctrl+V under the review
+ignored, Cancel, a conflict skipped by default, a folder pasted into
+itself refused, the keys left to the search box while typing), **folder
+uploads through the native GTK folder dialog** (a Unicode folder with
+`&`, `#`, `%`, `+`, nested and empty folders: exact keys, content and
+stored SHA-256; the same folder again skipped; a refused PUT stopping the
+batch, Try again, the rest), **several-item downloads through it**
+(unsafe names and case clashes made safe and numbered, a second download
+to `dlx (1)`, an existing local file never replaced, a refused file
+stopping the batch and Download the rest again, Cancel while a GET is held
+open and the retry), **a drop from another program** (`drag_source.py`, a
+GTK drag source, dragged with the XTest pointer over XDND: a file and a
+folder announced by name, Upload here, the same drop skipped, Ignore) and
+a delete on the unversioned bucket. After each step it reads the server's
+state (`dump`: every key's current object and versions) instead of
+trusting the page; the helper fails at the end if a real version of the
+versioned bucket was ever removed by id or the app sent a request the
+file manager does not use. How the folder dialog is driven: GTK's chooser
+starts in "Recent", where Open is disabled (AT-SPI's press of a disabled
+button does nothing; that is why the earlier driver failed), so the driver
+clicks Home in the sidebar, then puts the path with a trailing `/` into the
+location bar (AT-SPI EditableText: the Xvfb keymap has no `ö` or `ß`),
+removes GTK's inline completion and presses Return, which accepts the
+folder. It does not test the system clipboard (no clipboard manager),
+Ctrl/Shift-click with the pointer (XTest modifiers are not seen by
+WebKitGTK on Xvfb), or cancelling a folder upload while a file is sent
+(the same batch code as Upload files…, cancelled in the `upload` phase),
+and says so. The server's `hang <Operation> <n>` holds requests open for
+the cancel step.
 
 For `b2`, the same four variables as the integration test, entered at
 prompts (or loaded from your own 0600 file, as described there) so they
@@ -1668,7 +1690,13 @@ tests/desktop/cloud-ui.sh b2
 **Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|files|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`;
 `files`: the file manager against `serve_files_for_ui`, UI Automation
 only, as the Linux `files` phase minus selection by pointer, search, the
-folder dialogs and downloads):
+clipboard keys and the drop; with folder uploads and several-item
+downloads through the **native Windows folder dialog** (found as the
+`#32770` window of sotyware's process; the Folder box is the classic
+Edit 1148, set with `WM_SETTEXT`, and Select Folder is button 1, pressed
+with `BM_CLICK`); the server's dump is read with `JavaScriptSerializer`
+because Windows PowerShell's `ConvertFrom-Json` refuses keys that differ
+only in case):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
 on the desktop; it is driven through UI Automation too, not clicked).
@@ -2306,10 +2334,11 @@ runner other than standard `ubuntu-latest` and `windows-latest`.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `npm run test:headless` | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`, type-check only), `npm run test:headless` | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands, native Windows (MSVC Rust, no WSL); does not start sotyware | A. headless |
-| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
-| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
+| `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**` or the guard (which `ci.yml` skips) | `ubuntu-latest` | `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests (Node and Python only, about a minute) | A. headless |
+| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
+| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2332,7 +2361,10 @@ gh workflow run desktop-windows-isolated.yml --ref main
   tested by that same `push` trigger.
 - **Skipped paths.** A commit or pull request that changes only `docs/**`,
   `**/*.md`, `tests/desktop/**` or the two `desktop-*.yml` workflows starts no
-  run: the headless jobs do not exercise any of them. If branch protection ever
+  run: the headless jobs do not exercise any of them. Because the desktop
+  isolation guard scans exactly `tests/desktop/**`, `isolation-guard.yml`
+  runs it (and its self-test) for such changes (added 2026-11-14; before,
+  a change to the drivers alone met no guard in CI). If branch protection ever
   makes this check required, such a pull request would wait for a check that
   never starts; drop `paths-ignore` or add a path filter job then.
 - **Concurrency.** One run per pull request (or per branch for pushes); a newer
@@ -2351,6 +2383,14 @@ gh workflow run desktop-windows-isolated.yml --ref main
   `npm run test:rfd-patch-guard` runs the guard against broken temporary
   copies of `src-tauri` (it re-resolves rfd from crates.io there; a few
   seconds).
+- **Test-profile build.** Clippy runs a second time with
+  `--features test-profile --target-dir target/test-profile` (build.rs
+  refuses the feature in any other target directory), so the code only that
+  build compiles (its identifier, the profile's paths, no normal credential
+  namespace; ADR-027) is type-checked on both platforms. Added 2026-11-14:
+  before, CI never compiled it. Its unit tests run locally only
+  (`cargo test --lib --features test-profile --target-dir target/test-profile`);
+  the recorder build is not compiled in CI.
 - **Linux packages.** Only the Tauri build libraries from
   [setup.md](setup.md#linux-system-packages); no display server, window manager,
   tray host or D-Bus session.

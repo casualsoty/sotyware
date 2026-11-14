@@ -243,6 +243,14 @@ public static class CloudUiW {
       return true; }, IntPtr.Zero);
     return found;
   }
+  // Every descendant window of `parent` as "class#id 'text'" (diagnostics).
+  public static string[] Children(IntPtr parent) {
+    var res = new System.Collections.Generic.List<string>();
+    EnumChildWindows(parent, (h, l) => {
+      var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256);
+      res.Add(sb.ToString() + "#" + GetDlgCtrlID(h) + " '" + GetText(h) + "'"); return true; }, IntPtr.Zero);
+    return res.ToArray();
+  }
   public static IntPtr[] Find(string cls, uint[] pids) {
     var res = new System.Collections.Generic.List<IntPtr>();
     EnumWindows((h, l) => { uint pid; GetWindowThreadProcessId(h, out pid);
@@ -731,6 +739,14 @@ $Prof = New-TestProfile $ProfileParent "cloud-$Mode-$run"
 # The user's real folder, seen from outside this (possibly MSIX-virtualized) process tree.
 $RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
 "user's real app folder (outside this process tree): $(if ($null -eq $RealBefore) { 'could not be read' } else { "$(@($RealBefore).Count) line(s)" })"
+# Fail closed: inside an MSIX package (the Claude desktop app) this
+# process's own view of AppData is virtual, so without the real one nothing
+# could show the run left the user's data alone (ADR-027).
+if ($null -eq $RealBefore) {
+  Check "the user's real app folder can be read from outside this process tree before the run" $false "WMI could not start the reader"
+  Remove-TestProfile $Prof
+  "ABORT: isolation cannot be proven; nothing was started"; exit 1
+}
 $env:SOTYWARE_TEST_PROFILE = $Prof.Root
 "test profile: $($Prof.Root) (credentials under $($Prof.TargetPrefix))"
 $CloudDb = Join-Path $Prof.DataDir "cloud-accounts.sqlite3"
@@ -752,10 +768,8 @@ function ProfileCleanup {
   if (Test-Path -LiteralPath $Prof.Root) { Remove-TestProfile $Prof }
   Check "cleanup: this run's test profile removed" (-not (Test-Path -LiteralPath $Prof.Root))
   Check "the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|"))
-  if ($null -ne $RealBefore) {
-    $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
-    Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
-  }
+  $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
+  Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
 }
 # Unique names: a step that reused $before once made this check compare the
 # wrong thing (2026-11-14, files mode).
@@ -1019,10 +1033,17 @@ function FState([string]$bucket = "files-versioned") {
   $f = "$SrvFile.state.json"
   if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f }
   if (-not (Ctl @("dump")) -or -not (WaitFor { Test-Path -LiteralPath $f } 10)) { throw "the files server did not answer dump" }
-  $j = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  # JavaScriptSerializer, not ConvertFrom-Json: Windows PowerShell 5.1's
+  # ConvertFrom-Json refuses keys that differ only in case (dlx/Case.txt and
+  # dlx/case.txt), which the folder-download step needs. Values are
+  # dictionaries; PowerShell reads their keys as properties.
+  Add-Type -AssemblyName System.Web.Extensions
+  $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $ser.MaxJsonLength = [int]::MaxValue
+  $j = $ser.DeserializeObject([System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8))
   Remove-Item -LiteralPath $f
   $keys = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
-  foreach ($p in $j.buckets.$bucket.keys.PSObject.Properties) { $keys[$p.Name] = $p.Value }
+  foreach ($kv in $j["buckets"][$bucket]["keys"].GetEnumerator()) { $keys[$kv.Key] = $kv.Value }
   $keys
 }
 function FCurrent($keys, [string]$prefix = "") { @($keys.Keys | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) -and $null -ne $keys[$_].current } | Sort-Object) -join "|" }
@@ -1496,6 +1517,207 @@ try {
     Check "preview: a PNG is shown as an image" ($ok -and (WaitFor { $null -ne (Named "Preview of pixel.png" $CT::Image) } 20))
     $null = Press "Close"
     Recover
+    # ---- the native Windows folder dialog (IFileOpenDialog, pick folders) ----
+    # Rust opens it (tauri-plugin-dialog / rfd); the page never sees a path.
+    # Its Folder box is the classic Edit 1148 and Select Folder is button 1
+    # (found by control id, as for the open and save dialogs). A full path
+    # typed there and Select Folder choose that folder; if the dialog only
+    # goes into it, a second Select Folder with the box empty chooses the
+    # folder shown. Every result is checked on disk or at the server.
+    # The Folder box: the open dialog's File name edit (1148) where present;
+    # else the first Edit inside a ComboBox, else the first Edit with an id
+    # (the dialog's children are printed once when none is found).
+    function FolderBox($dlg) {
+      $h = OpenNameBox $dlg; if ($h) { return $h }
+      foreach ($id in @(1152, 1001)) { $c = [CloudUiW]::ChildById((Hwnd $dlg), $id, "Edit"); if ($c -ne [IntPtr]::Zero) { return $c } }
+      $null
+    }
+    $script:dumped = $false
+    function FolderDlg([string]$title) {
+      $d = DialogNamed $title
+      if (-not $d) { return $null }
+      if (FolderBox $d) { return $d }
+      if (-not $script:dumped) { $script:dumped = $true; Write-Host "  folder dialog '$title' without a known Folder box; children: $(([CloudUiW]::Children((Hwnd $d)) | Select-Object -First 60) -join ' ; ')" }
+      $null
+    }
+    function CancelFolderDlg([string]$title) {
+      $script:fdlg = $null
+      if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
+        Write-Host "  no folder dialog '$title' with a Folder box"
+        $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
+        return $false
+      }
+      CancelDialog $script:fdlg
+      WaitFor { $null -eq (DialogNamed $title) } 10
+    }
+    function ChooseFolder([string]$title, [string]$path) {
+      $script:fdlg = $null
+      if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
+        Write-Host "  no folder dialog '$title' with a Folder box"
+        $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
+        return $false
+      }
+      $dlg = $script:fdlg; $box = FolderBox $dlg; $sel = DialogButton $dlg 1
+      if (-not $sel) { Write-Host "  folder dialog: no Select Folder button"; CancelDialog $dlg; return $false }
+      # The box can exist a moment before the dialog stops resetting it:
+      # set it again until it keeps the path.
+      if (-not (WaitFor { if ([CloudUiW]::GetText($box) -ne $path) { [CloudUiW]::SetText($box, $path); Start-Sleep -Milliseconds 300 }; [CloudUiW]::GetText($box) -eq $path } 8)) { Write-Host "  folder dialog: Folder box says '$([CloudUiW]::GetText($box))'"; CancelDialog $dlg; return $false }
+      [void][CloudUiW]::Click($sel)
+      if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
+      Write-Host "  folder dialog: still open after Select Folder (shows '$(DialogFolder $dlg)'); pressing it again with the box empty"
+      $box = FolderBox $dlg
+      if ($box) { [CloudUiW]::SetText($box, "") }
+      [void][CloudUiW]::Click((DialogButton $dlg 1))
+      if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
+      Write-Host "  folder dialog: still open; cancelled"; CancelDialog $dlg; $false
+    }
+    function WriteUtf8([string]$path, [string]$body) {
+      $dir = [System.IO.Path]::GetDirectoryName($path)
+      if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
+      [System.IO.File]::WriteAllText($path, $body, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    function ReadUtf8([string]$path) { if ([System.IO.File]::Exists($path)) { [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) } else { $null } }
+    # Relative paths of every file and folder under $dir ("a/", "a/b.txt"), sorted ordinally.
+    function LocalTree([string]$dir) {
+      $root = [System.IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
+      $items = @([System.IO.Directory]::GetFileSystemEntries($dir, "*", [System.IO.SearchOption]::AllDirectories) | ForEach-Object {
+        $rel = $_.Substring($root.Length).Replace('\', '/')
+        if ([System.IO.Directory]::Exists($_)) { "$rel/" } else { $rel } })
+      [Array]::Sort($items, [StringComparer]::Ordinal)
+      $items -join "|"
+    }
+    function LocalDigest([string]$dir) {
+      $d = @{}
+      foreach ($f in [System.IO.Directory]::GetFiles($dir, "*", [System.IO.SearchOption]::AllDirectories)) {
+        $d[$f] = "$([System.IO.File]::GetLastWriteTimeUtc($f).Ticks) $((Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash)"
+      }
+      $d
+    }
+    function SortedJoin([string[]]$xs) { $a = @($xs); [Array]::Sort($a, [StringComparer]::Ordinal); $a -join "|" }
+    $UpFolderButton = "Upload folder$([char]0x2026)"
+    function FuDone { $t = PageText; ($t.Contains("Upload finished") -or $t.Contains("Upload stopped") -or $t.Contains("Upload cancelled")) -and $null -ne (Named "Dismiss" $CT::Button) }
+    function FuSummary { $m = [regex]::Match((PageText), 'Upload (finished|stopped after an error|cancelled)\. [^.|]*\.'); if ($m.Success) { $m.Value } else { $t = PageText; $t.Substring([Math]::Max(0, $t.Length - 300)) } }
+    function FuDismiss { if (Named "Dismiss" $CT::Button) { $null = Press "Dismiss" }; Start-Sleep -Milliseconds 400 }
+    function FdDone { ($null -ne (Named "Dismiss" $CT::Button)) -and ($null -eq (Named "Cancel download" $CT::Button)) }
+    function FdSummary { $m = [regex]::Match((PageText), 'Download (finished with problems|finished|cancelled|stopped after an error): .*?\(\d[\d,]* files?, [^)]*\)\.'); if ($m.Success) { $m.Value } else { "" } }
+    # What the panel and any folder dialog show, for a failed step.
+    function FdWhy {
+      $r = @((Dash).FindAll($S::Descendants, (PCN "Download of several items")) | Where-Object { $_.Current.ControlType -ne $CT::Text })[0]
+      $panel = if ($r) { AllNames $r } else { "(no panel)" }
+      $open = if (DialogNamed $FolderDlTitle) { "; the folder dialog is still open (shows '$(DialogFolder (DialogNamed $FolderDlTitle))')" } else { "" }
+      "panel: $panel$open"
+    }
+    $FolderUpTitle = "Choose a folder to upload"; $FolderDlTitle = "Choose a folder to download into"
+    $q1 = [string][char]0x201C; $q2 = [string][char]0x201D
+
+    # ---- folder uploads through the native Windows folder dialog ----
+    $FuName = "Ordner gr$([char]0xF6)$([char]0xDF)e +1"
+    $FuRoot = Join-Path (Join-Path $Out "upload-src") $FuName
+    $FuFiles = [ordered]@{
+      "top.txt" = "top level`n"
+      "a&b#c%.txt" = "special characters`n"
+      "gr$([char]0xF6)$([char]0xDF)e $([char]0xFC) +.txt" = "unicode name`n"
+      "nested/deep/inner.txt" = "two levels down`n"
+    }
+    foreach ($rel in $FuFiles.Keys) { WriteUtf8 (Join-Path $FuRoot ($rel.Replace('/', '\'))) $FuFiles[$rel] }
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $FuRoot "nested\empty"))
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $FuRoot "only-empty\inside"))
+    $FuKeys = SortedJoin @($FuFiles.Keys | ForEach-Object { "$FuName/$_" })
+    Recover
+    $fkBefore = FCurrent (FState)
+    $ok = (FRoot) -and (Press $UpFolderButton) -and (CancelFolderDlg $FolderUpTitle)
+    Start-Sleep -Milliseconds 800
+    Check "folder upload: Upload folder$([char]0x2026) opens the native Windows folder dialog; Cancel in it sends nothing" ($ok -and (FCurrent (FState)) -eq $fkBefore -and $null -eq (Named "Cancel upload" $CT::Button))
+    FuDismiss
+    $ok = (Press $UpFolderButton) -and (ChooseFolder $FolderUpTitle $FuRoot)
+    Check "folder upload: a folder is chosen through the native Windows folder dialog (Folder box, Select Folder)" $ok
+    $ok = $ok -and (WaitFor { FuDone } 60)
+    $k = FState
+    Check "folder upload: exactly the 4 files arrive under the folder's name, nested folders kept, empty folders add nothing" ($ok -and (FCurrent $k "$FuName/") -eq $FuKeys -and (FuSummary) -eq "Upload finished. 4 files: 4 uploaded.") "$(FCurrent $k "$FuName/") | $(FuSummary)"
+    $contentOk = $true
+    foreach ($rel in $FuFiles.Keys) { $o = $k["$FuName/$rel"]; if (-not $o -or -not $o.current -or [string]$o.current.text -ne $FuFiles[$rel] -or $o.current.sha256Metadata -ne $o.current.sha256) { $contentOk = $false } }
+    Check "folder upload: every object holds its file's content and the stored SHA-256 of it" $contentOk
+    FuDismiss
+    $ok = (Press $UpFolderButton) -and (ChooseFolder $FolderUpTitle $FuRoot) -and (WaitFor { FuDone } 60)
+    $k2 = FState
+    $same = $true; foreach ($rel in $FuFiles.Keys) { $kk = "$FuName/$rel"; if (@(FVersions $k2 $kk).Count -ne 1 -or (FText $k2 $kk) -ne (FText $k $kk)) { $same = $false } }
+    Check "folder upload: the same folder again skips all 4; nothing replaced, no new version" ($ok -and (FuSummary) -eq "Upload finished. 4 files: 0 uploaded, 4 skipped." -and $same) (FuSummary)
+    FuDismiss
+    WriteUtf8 (Join-Path $FuRoot "new1.txt") "new1.txt body`n"; WriteUtf8 (Join-Path $FuRoot "new2.txt") "new2.txt body`n"
+    $ok = (Ctl @("fail PutObject 1")) -and (Press $UpFolderButton) -and (ChooseFolder $FolderUpTitle $FuRoot) -and (WaitFor { FuDone } 60)
+    $k3 = FState; $fuFirst = FuSummary
+    # Key order: 3 existing skipped, new1.txt refused, the batch stops (access
+    # errors stop it): new2.txt and top.txt not started. Try again takes only
+    # the not-started ones (an access-denied file is not retried).
+    Check "folder upload: a refused PUT stops the batch and says so (3 skipped, 1 failed, 2 not started); nothing new stored" ($ok -and $fuFirst -eq "Upload stopped after an error. 6 files: 0 uploaded, 3 skipped, 1 failed, 2 not started." -and $null -eq (FText $k3 "$FuName/new1.txt") -and $null -eq (FText $k3 "$FuName/new2.txt")) $fuFirst
+    $ok = (Press "Try 2 files again") -and (WaitFor { (FuDone) -and (FuSummary) -ne $fuFirst } 60)
+    $k4 = FState
+    Check "folder upload: Try again takes only the two not started: new2.txt sent, top.txt skipped as existing" ($ok -and (FuSummary) -eq "Upload finished. 2 files: 1 uploaded, 1 skipped." -and $null -eq (FText $k4 "$FuName/new1.txt") -and (FText $k4 "$FuName/new2.txt") -eq "new2.txt body`n" -and @(FVersions $k4 "$FuName/top.txt").Count -eq 1) (FuSummary)
+    FuDismiss
+    $ok = (Press $UpFolderButton) -and (ChooseFolder $FolderUpTitle $FuRoot) -and (WaitFor { FuDone } 60)
+    $k5 = FState
+    Check "folder upload: the folder once more sends only new1.txt; the other five skipped, none gets a new version" ($ok -and (FuSummary) -eq "Upload finished. 6 files: 1 uploaded, 5 skipped." -and (FText $k5 "$FuName/new1.txt") -eq "new1.txt body`n" -and @(FVersions $k5 "$FuName/new2.txt").Count -eq 1) (FuSummary)
+    FuDismiss
+    "  NOT TESTED  cancelling a folder upload while a file is sent (same batch code as Upload files$([char]0x2026), whose cancel -Mode upload drives)"
+
+    # ---- several-item downloads through the native Windows folder dialog ----
+    Recover
+    $fd1 = Join-Path $Out "batch"; [void][System.IO.Directory]::CreateDirectory($fd1)
+    $ok = (FGo "unusual/") -and (Sel "con.txt") -and (Sel "a?b#c%.txt") -and (Sel "gr$([char]0xF6)$([char]0xDF)e +test.txt") -and (WaitFor { (SelectedCount) -eq 3 } 5) -and (Press "Download") -and (CancelFolderDlg $FolderDlTitle)
+    Start-Sleep -Milliseconds 800
+    Check "download: the native Windows folder dialog opens; Cancel in it starts nothing and writes nothing" ($ok -and (LocalTree $fd1) -eq "" -and $null -eq (Named "Cancel download" $CT::Button)) (LocalTree $fd1)
+    if (Named "Dismiss" $CT::Button) { $null = Press "Dismiss" }
+    $ok = (WaitFor { (SelectedCount) -eq 3 } 5) -and (Press "Download") -and (ChooseFolder $FolderDlTitle $fd1) -and (WaitFor { FdDone } 60)
+    Check "download: a folder chosen in the native Windows folder dialog; three unusual names saved with safe local names" ($ok -and (LocalTree $fd1) -eq (SortedJoin @("a_b#c%.txt", "gr$([char]0xF6)$([char]0xDF)e +test.txt", "_con.txt")) -and (ReadUtf8 (Join-Path $fd1 "_con.txt")) -eq "content of unusual/con.txt`n") "$(LocalTree $fd1) | $(FdSummary)"
+    $null = Press "Dismiss"
+    # Nested remote folders whose names need safe local names on Windows.
+    $dlxKeys = @("dlx/sub:dir/x?.txt", "dlx/sub_dir/x_.txt", "dlx/CON/aux.txt", "dlx/trail./end .txt", "dlx/Case.txt", "dlx/case.txt")
+    $null = Ctl @($dlxKeys | ForEach-Object { "add $Bucket $_" })
+    $fdx = Join-Path $Out "nested"; [void][System.IO.Directory]::CreateDirectory($fdx)
+    Recover
+    $ok = Chain "nested download" @({ FRoot }, { Press "Refresh" }, { WaitFor { (PageText).Contains("dlx") } 20 }, { Sel "dlx" }, { WaitFor { (SelectedCount) -eq 1 } 5 }, { Press "Download" }, { ChooseFolder $FolderDlTitle $fdx }, { WaitFor { FdDone } 60 })
+    $wantX = SortedJoin @("dlx/", "dlx/Case.txt", "dlx/case (1).txt", "dlx/_CON/", "dlx/_CON/_aux.txt", "dlx/sub_dir/", "dlx/sub_dir/x_.txt", "dlx/sub_dir/x_ (1).txt", "dlx/trail/", "dlx/trail/end .txt")
+    $gotX = LocalTree $fdx
+    Check "download: a nested folder keeps its structure; names Windows refuses (: ? CON, trailing dot) made safe; clashes, also by case, numbered" ($ok -and $gotX -eq $wantX) "$gotX | $(FdSummary) | $(FdWhy)"
+    $pair = SortedJoin @((ReadUtf8 (Join-Path $fdx "dlx\sub_dir\x_.txt")), (ReadUtf8 (Join-Path $fdx "dlx\sub_dir\x_ (1).txt")))
+    Check "download: the two keys that share a local name are both saved, each with its own content" ($pair -eq (SortedJoin @("added later: dlx/sub:dir/x?.txt`n", "added later: dlx/sub_dir/x_.txt`n")))
+    $null = Press "Dismiss"
+    $dgBefore = LocalDigest $fdx
+    $ok = Chain "nested download again" @({ WaitFor { (SelectedCount) -eq 1 } 5 }, { Press "Download" }, { ChooseFolder $FolderDlTitle $fdx }, { WaitFor { FdDone } 60 })
+    $dgAfter = LocalDigest $fdx
+    $kept = $true; foreach ($f in $dgBefore.Keys) { if ($dgAfter[$f] -ne $dgBefore[$f]) { $kept = $false } }
+    Check "download: the same folder again goes to dlx (1); every existing local file unchanged (content and time)" ($ok -and (PageText).Contains("Saved as ${q1}dlx (1)${q2}") -and $kept -and (LocalTree $fdx).Contains("dlx (1)/sub_dir/x_ (1).txt")) "$(LocalTree $fdx) | $(FdSummary)"
+    $null = Press "Dismiss"
+    # A local file already has the name: numbered, the local file untouched.
+    $fd2 = Join-Path $Out "folders"; WriteUtf8 (Join-Path $fd2 "one.txt") "my own local file`n"
+    Recover
+    $ok = Chain "download beside a local one.txt" @({ FGo "dl/" }, { Sel "tree" }, { Sel "one.txt" }, { WaitFor { (SelectedCount) -eq 2 } 5 }, { Press "Download" }, { ChooseFolder $FolderDlTitle $fd2 }, { WaitFor { FdDone } 60 })
+    $wantDl = @("one.txt", "tree/", "tree/a.txt", "tree/deep/", "tree/deep/b.txt")
+    Check "download: an existing local one.txt is never replaced; the download is saved as one (1).txt" ($ok -and (LocalTree $fd2) -eq (SortedJoin ($wantDl + "one (1).txt")) -and (ReadUtf8 (Join-Path $fd2 "one.txt")) -eq "my own local file`n" -and (ReadUtf8 (Join-Path $fd2 "one (1).txt")) -eq "content of dl/one.txt`n" -and (ReadUtf8 (Join-Path $fd2 "tree\deep\b.txt")) -eq "content of dl/tree/deep/b.txt`n") "$(LocalTree $fd2) | $(FdSummary) | $(FdWhy)"
+    $null = Press "Dismiss"
+    # A refused GetObject: that item fails and leaves nothing; retry.
+    $fd3 = Join-Path $Out "retry"; [void][System.IO.Directory]::CreateDirectory($fd3)
+    Recover
+    $ok = Chain "refused download" @({ FGo "dl/" }, { Sel "tree" }, { Sel "one.txt" }, { WaitFor { (SelectedCount) -eq 2 } 5 }, { Ctl @("fail GetObject 1") }, { Press "Download" }, { ChooseFolder $FolderDlTitle $fd3 }, { WaitFor { $null -ne (Named "Download the rest again" $CT::Button) } 60 })
+    $first3 = LocalTree $fd3
+    # Access errors stop the batch: the refused item fails, the other is not started.
+    Check "download: a refused file stops the batch and says so (0 saved, 1 failed, 1 not saved); nothing left, no staging folder" ($ok -and $first3 -eq "" -and (FdSummary).StartsWith("Download stopped after an error: 0 saved, 1 failed, 1 not saved (cancelled)")) "$first3 | $(FdSummary) | $(FdWhy)"
+    $ok = (Press "Download the rest again") -and (WaitFor { ($null -eq (Named "Download the rest again" $CT::Button)) -and (FdDone) } 60)
+    Check "download: Download the rest again completes it" ($ok -and (LocalTree $fd3) -eq (SortedJoin $wantDl)) (LocalTree $fd3)
+    $null = Press "Dismiss"
+    # Cancel while a file is fetched (the server holds its GET open).
+    $fd4 = Join-Path $Out "cancel"; [void][System.IO.Directory]::CreateDirectory($fd4)
+    Recover
+    $ok = Chain "cancelled download" @({ FGo "dl/" }, { Sel "tree" }, { Sel "one.txt" }, { WaitFor { (SelectedCount) -eq 2 } 5 }, { Ctl @("hang GetObject 1") }, { Press "Download" }, { ChooseFolder $FolderDlTitle $fd4 })
+    $running = $ok -and (WaitFor { ($null -ne (Named "Cancel download" $CT::Button)) -and (PageText).Contains("0 of 3 files") } 20)
+    Check "download: while a file is fetched the panel shows progress (0 of 3 files) and Cancel download" $running
+    $t0 = Get-Date
+    $ok = $running -and (Press "Cancel download") -and (WaitFor { (PageText).Contains("Download cancelled") -and (FdDone) } 30)
+    Check "download: Cancel download stops it promptly; nothing is left in the chosen folder (no staging folder)" ($ok -and @([System.IO.Directory]::GetFileSystemEntries($fd4)).Count -eq 0) "$([int]((Get-Date) - $t0).TotalSeconds) s | $(LocalTree $fd4) | $(FdSummary)"
+    $ok = $ok -and (Press "Download the rest again") -and (WaitFor { ($null -eq (Named "Download the rest again" $CT::Button)) -and (FdDone) } 60)
+    Check "download: after the cancel, Download the rest again saves everything" ($ok -and (LocalTree $fd4) -eq (SortedJoin $wantDl)) (LocalTree $fd4)
+    $null = Press "Dismiss"
+    Recover
     # The unversioned bucket: a delete warns that it is final.
     $ok = Chain "plain account" @(
       { Press "$([char]0x2190) Back to accounts" },
@@ -1524,8 +1746,7 @@ try {
     Check "plain: the second account is removed again" (RemoveCard "Plain")
     # The common steps below start inside the first account's bucket.
     $null = (Press "Open bucket") -and (WaitFor { (PageText).Contains("Root of the bucket") } 30)
-    "  NOT TESTED  several-item downloads and folder uploads through the native Windows folder dialog (not driven by this mode yet; covered on Linux by cloud-ui.sh files and by the Rust tests)"
-    "  NOT TESTED  drag and drop from Explorer; the system clipboard"
+    "  NOT TESTED  drag and drop from Explorer (no drag source is driven); Ctrl+C/X/V with real keys (this mode sends no keystrokes; driven on Linux); Copy link to the system clipboard"
    } catch {
     Check "files steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
     Recover

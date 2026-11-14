@@ -168,8 +168,33 @@ def close_windows(pid):
     X.XSync(dpy, 0)
 
 
+class _WinAttrs(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_int), ("y", ctypes.c_int), ("width", ctypes.c_int), ("height", ctypes.c_int),
+                ("border_width", ctypes.c_int), ("depth", ctypes.c_int), ("visual", ctypes.c_void_p),
+                ("root", W), ("class_", ctypes.c_int), ("bit_gravity", ctypes.c_int),
+                ("win_gravity", ctypes.c_int), ("backing_store", ctypes.c_int),
+                ("backing_planes", ctypes.c_ulong), ("backing_pixel", ctypes.c_ulong),
+                ("save_under", ctypes.c_int), ("colormap", W), ("map_installed", ctypes.c_int),
+                ("map_state", ctypes.c_int), ("all_event_masks", ctypes.c_long),
+                ("your_event_mask", ctypes.c_long), ("do_not_propagate_mask", ctypes.c_long),
+                ("override_redirect", ctypes.c_int), ("screen", ctypes.c_void_p)]
+
+
+X.XGetWindowAttributes.argtypes = [ctypes.c_void_p, W, ctypes.POINTER(_WinAttrs)]
+
+
 def focus_window(pid):
+    """Gives the X input focus to the process's viewable windows, the
+    largest last (the dashboard, or a native dialog above it). Windows that
+    are not mapped are skipped: GTK keeps a closed dialog's or popup menu's
+    window, and focusing it last sent every later key nowhere (seen
+    2026-11-14 after a right-click menu and the native folder dialogs)."""
+    shown = []
     for w in windows_of(pid):
+        a = _WinAttrs()
+        if X.XGetWindowAttributes(dpy, w, ctypes.byref(a)) and a.map_state == 2 and not a.override_redirect:
+            shown.append((a.width * a.height, w))
+    for _, w in sorted(shown):
         X.XRaiseWindow(dpy, w)
         X.XSetInputFocus(dpy, w, 2, 0)
     X.XSync(dpy, 0)
@@ -1052,7 +1077,9 @@ try:
             exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_ui_files.py"),
                       encoding="utf-8").read())
             check("the files phase ran to its end", True)
-        except Exception as e:  # noqa: BLE001
+        # SystemExit too: a helper that gives up (type_text) must fail the
+        # phase visibly, not end the driver without this line.
+        except (Exception, SystemExit) as e:  # noqa: BLE001
             import traceback
             check("the files phase ran to its end", False, f"{type(e).__name__}: {e}")
             traceback.print_exc()

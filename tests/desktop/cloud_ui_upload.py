@@ -276,19 +276,8 @@ def dismiss():
 
 
 # ---- X: is the dashboard mapped? ----
-class XWindowAttributes(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_int), ("y", ctypes.c_int), ("width", ctypes.c_int), ("height", ctypes.c_int),
-                ("border_width", ctypes.c_int), ("depth", ctypes.c_int), ("visual", ctypes.c_void_p),
-                ("root", W), ("class_", ctypes.c_int), ("bit_gravity", ctypes.c_int),
-                ("win_gravity", ctypes.c_int), ("backing_store", ctypes.c_int),
-                ("backing_planes", ctypes.c_ulong), ("backing_pixel", ctypes.c_ulong),
-                ("save_under", ctypes.c_int), ("colormap", W), ("map_installed", ctypes.c_int),
-                ("map_state", ctypes.c_int), ("all_event_masks", ctypes.c_long),
-                ("your_event_mask", ctypes.c_long), ("do_not_propagate_mask", ctypes.c_long),
-                ("override_redirect", ctypes.c_int), ("screen", ctypes.c_void_p)]
-
-
-X.XGetWindowAttributes.argtypes = [ctypes.c_void_p, W, ctypes.POINTER(XWindowAttributes)]
+# The structure (and XGetWindowAttributes' argument types) come from cloud_ui.py.
+XWindowAttributes = _WinAttrs
 
 
 def dashboard_viewable():

@@ -12,9 +12,12 @@
 # not only what the page says. The helper itself fails at the end if any
 # real version of the versioned bucket was deleted for good.
 #
-# What it cannot drive here (reported as not tested, never as passed): a
-# drag and drop from another program (no drag source on this virtual
-# display) and the system clipboard (no clipboard manager).
+# Native dialogs and other programs: folder uploads and several-item
+# downloads through the GTK folder dialog (choose_folder), a drag and drop
+# from another GTK program over XDND (drag_source.py, XTest pointer), and
+# Ctrl+C/X/V with real X key events on sotyware's own clipboard. What it
+# cannot drive here is reported as NOT TESTED, never as passed: the system
+# clipboard (no clipboard manager), Ctrl/Shift-click with the pointer.
 import hashlib
 import re
 import urllib.request
@@ -426,66 +429,81 @@ def folder_chooser(title):
     return None
 
 
+def accept_button(dlg):
+    """The folder dialog's accept button ("Open" with GTK 3.24 here, as rfd
+    passes no label; "Select" in some versions)."""
+    for label in ("Open", "_Open", "Select", "_Select"):
+        found = find(dlg, Atspi.Role.PUSH_BUTTON, label)
+        if found:
+            return found[0]
+    return None
+
+
 def choose_folder(title, path):
-    """In the GTK folder dialog: goes to the parent of `path` through the
-    location bar, selects `path`'s row in the file list and presses Open
-    (how GTK's folder mode accepts a folder)."""
+    """In the GTK folder dialog (GtkFileChooserNative, folder mode): leaves
+    "Recent", where the dialog starts and where Open stays disabled (a
+    probe on this virtual display showed AT-SPI's press of a disabled Open
+    does nothing, which is why earlier drivers could not choose a folder),
+    by a real click on Home in the sidebar; then Ctrl+L, the folder's path
+    with a trailing "/" and Return, which in folder mode accepts that
+    folder. The caller checks the result on disk or at the server, never
+    only what the dialog showed."""
     dlg = wait_for(lambda: folder_chooser(title), 20)
     if dlg is None:
         print(f"  no folder dialog {title!r}: choosers "
               f"{[n for r, n, _, _ in nodes(pid) if r in (Atspi.Role.FILE_CHOOSER, Atspi.Role.DIALOG)]}", flush=True)
         return False
     focus_window(pid)
-    parent, name = os.path.split(path.rstrip("/"))
-    table = wait_for(lambda: (find(dlg, Atspi.Role.TABLE) or [None])[0], 5)
-    if table is not None:
-        Atspi.Component.grab_focus(table)
-        wait_for(lambda: table.get_state_set().contains(Atspi.StateType.FOCUSED), 3)
+    open_btn = wait_for(lambda: accept_button(dlg), 5)
+    home = wait_for(lambda: next(iter(find(dlg, Atspi.Role.LABEL, "Home")), None), 5)
+    if open_btn is None or home is None:
+        print(f"  folder dialog: no Open button ({open_btn is not None}) or no Home place ({home is not None})", flush=True)
+        close_choosers()
+        return False
+    x, y, w, h = extents(home)
+    click_xy(x + w // 2, y + h // 2)
+    if not wait_for(lambda: open_btn.get_state_set().contains(Atspi.StateType.ENABLED), 5):
+        print("  folder dialog: Open still disabled after Home", flush=True)
+        close_choosers()
+        return False
     ctrl("l")
     entry = wait_for(lambda: next((e for e in find(dlg, Atspi.Role.TEXT)
                                    if e.get_state_set().contains(Atspi.StateType.SHOWING)
                                    and e.get_state_set().contains(Atspi.StateType.EDITABLE)), None), 5)
     if entry is None:
         print("  folder dialog: no location bar", flush=True)
+        close_choosers()
         return False
-    Atspi.Component.grab_focus(entry)
-    ctrl("a")
-    type_text(parent + "/")
-    if wait_for(lambda: Atspi.Text.get_text(entry, 0, -1) != parent + "/", 1.5):
+    want = path.rstrip("/") + "/"
+    # Set through AT-SPI (EditableText): Xvfb's keymap has no key for "ö"
+    # or "ß", and typing would race GTK's inline completion.
+    Atspi.EditableText.set_text_contents(entry, want)
+    Atspi.Text.set_caret_offset(entry, len(want))
+    if not wait_for(lambda: Atspi.Text.get_text(entry, 0, -1) == want, 5):
+        print(f"  folder dialog: location bar {Atspi.Text.get_text(entry, 0, -1)!r}", flush=True)
+        close_choosers()
+        return False
+    # GTK completes a unique child's name inline (selected text after the
+    # cursor, "dlx/" in a folder that holds only dlx): Delete removes it,
+    # or Return would choose that child (seen 2026-11-14).
+    time.sleep(0.8)
+    if Atspi.Text.get_text(entry, 0, -1) != want:
         key(keysym("Delete"))
-    time.sleep(0.7)
-    key(keysym("Return"))
-
-    def row_index():
-        t = (find(dlg, Atspi.Role.TABLE) or [None])[0]
-        if t is None:
-            return None
-        cells = [c for c in find(t, Atspi.Role.TABLE_CELL) if c.get_text_iface() is not None]
-        for c in cells:
-            if Atspi.Text.get_text(c, 0, -1) == name:
-                return t, c
-        return None
-    found = wait_for(row_index, 10)
-    if found is None:
-        print(f"  folder dialog: no row {name!r} in {parent!r}", flush=True)
+    if not wait_for(lambda: Atspi.Text.get_text(entry, 0, -1) == want, 3):
+        print(f"  folder dialog: location bar completed to {Atspi.Text.get_text(entry, 0, -1)!r}", flush=True)
+        close_choosers()
         return False
-    t, cell = found
-    # Select the folder's row: through its cell's parent row index.
-    try:
-        idx = cell.get_index_in_parent()
-        cols = max(1, Atspi.Table.get_n_columns(t))
-        Atspi.Table.add_row_selection(t, idx // cols)
-    except Exception:  # noqa: BLE001
-        Atspi.Component.grab_focus(cell)
-        key(keysym("space"))
-    time.sleep(0.4)
-    for b in find(dlg, Atspi.Role.PUSH_BUTTON, "Open"):
-        Atspi.Action.do_action(b, 0)
+    key(keysym("Return"))
+    if wait_for(lambda: folder_chooser(title) is None, 6):
+        return True
+    # Return went into the folder instead: Open (enabled there) chooses it.
+    if open_btn.get_state_set().contains(Atspi.StateType.ENABLED):
+        Atspi.EditableText.set_text_contents(entry, "")
+        Atspi.Action.do_action(open_btn, 0)
         if wait_for(lambda: folder_chooser(title) is None, 6):
             return True
-    print(f"  folder dialog: still open after Open (row {name!r} selected?)", flush=True)
-    for b in find(dlg, Atspi.Role.PUSH_BUTTON, "Cancel"):
-        Atspi.Action.do_action(b, 0)
+    print(f"  folder dialog: still open; location bar {Atspi.Text.get_text(entry, 0, -1)!r}", flush=True)
+    close_choosers()
     return False
 
 
@@ -750,6 +768,165 @@ keystroke("a", ("Control_L",))
 ok2 = wait_for(lambda: selected_count() == 3, 5)
 check("selection: Escape clears, Ctrl+A selects all shown", bool(ok and ok2), f"{selected_count()} selected")
 
+# ======================================================== internal clipboard, real keys
+# Ctrl+C / Ctrl+X / Ctrl+V act on sotyware's own clipboard (a list of
+# items in the page), never on the system clipboard; a paste only opens the
+# reviewed plan. Keys are real X key events (XTest) on this virtual display.
+# On sort/ (read only here) and a folder clip/ made for it.
+def ctrl_key(letter):
+    keystroke(letter, ("Control_L",))
+
+
+control(f"add {BUCKET} clip/keep.txt")
+recover()
+keys0, _ = state()
+ok = go("sort/") and click_row("alpha.txt") and wait_for(lambda: selected_count() == 1, 5)
+# Ctrl+X first: it tells a key that never reaches the page from a broken
+# copy (Ctrl+C), if only one of them works.
+ctrl_key("x")
+cut_works = ok and wait_for(lambda: "marked to move" in text(pid) and "Move here (1)" in buttons(pid), 5)
+check("clipboard: a real Ctrl+X on a selected file marks it to move (Move here (1)); nothing is sent",
+      bool(cut_works) and current(state()[0]) == current(keys0), text(pid)[-200:])
+if "Clear clipboard" in buttons(pid):
+    press(pid, "Clear clipboard")
+ok = ok and click_row("alpha.txt") and wait_for(lambda: selected_count() == 1, 5)
+ctrl_key("c")
+copied = ok and wait_for(lambda: "1 item copied" in text(pid) and "Paste copy (1)" in buttons(pid), 5)
+check("clipboard: a real Ctrl+C on a selected file puts it on sotyware's clipboard (Paste copy (1)); nothing is sent",
+      bool(copied) and current(state()[0]) == current(keys0), text(pid)[-200:])
+if ok and not copied:
+    # Go on with the same clipboard through the row's menu (Copy), so that
+    # Ctrl+V and the rest are still exercised.
+    more = next((node for _, n, _, node in nodes(pid) if n == "More actions for alpha.txt"), None)
+    if more is not None and Atspi.Action.do_action(more, 0) and wait_for(lambda: any(n == "Copy (Ctrl+C)" for r, n, _, _ in nodes(pid) if r == Atspi.Role.MENU_ITEM), 5):
+        item = next((node for r, n, _, node in nodes(pid) if r == Atspi.Role.MENU_ITEM and n == "Copy (Ctrl+C)"), None)
+        if item is not None:
+            Atspi.Action.do_action(item, 0)
+    copied = wait_for(lambda: "Paste copy (1)" in buttons(pid), 5)
+    print(f"  clipboard: Ctrl+C did not act; the menu's Copy {'did' if copied else 'did not either'}", flush=True)
+ok = copied and go_root() and press(pid, "Refresh") and wait_for(lambda: "clip" in text(pid), 20) and go("clip/")
+ctrl_key("v")
+review = ok and wait_for(lambda: review_dialog("Copy"), 15)
+ctrl_key("v")
+time.sleep(1)
+dialogs = [n for r, n, _, _ in nodes(pid) if r == Atspi.Role.DIALOG]
+check("clipboard: Ctrl+V opens the review of a copy; a second Ctrl+V while it is open opens nothing; nothing changed yet",
+      bool(review) and len(dialogs) == 1 and current(state()[0]) == current(keys0), str(dialogs))
+if review:
+    press_in(review, "Cancel")
+wait_for(lambda: review_dialog("Copy") is None, 5)
+check("clipboard: Cancel in that review changes nothing", current(state()[0]) == current(keys0))
+ctrl_key("v")
+res = run_reviewed("Copy")
+k, _ = state()
+check("clipboard: Ctrl+V and Copy in the review copy alpha.txt into clip/; the original stays",
+      bool(res) and content(k, "clip/alpha.txt") == "a" * 30 and content(k, "sort/alpha.txt") == "a" * 30, str(res)[:300])
+dismiss_operation()
+# Cut, then paste where the name exists: the review shows the conflict and
+# skips it by default; nothing is replaced.
+def clear_clipboard():
+    if "Clear clipboard" in buttons(pid):
+        press(pid, "Clear clipboard")
+    return wait_for(lambda: "Clear clipboard" not in buttons(pid), 5)
+
+
+def close_any_review():
+    d = dialog()
+    if d is not None:
+        print(f"  clipboard: closing an unexpected dialog: {cell_text(d)[:120]!r}", flush=True)
+        press_in(d, "Cancel") or press_in(d, "Close")
+        wait_for(lambda: dialog() is None, 5)
+
+
+recover()
+close_any_review()
+clear_clipboard()
+ok = go("clip/") and toggle("Select alpha.txt") and wait_for(lambda: selected_count() == 1, 5)
+ctrl_key("x")
+cut = ok and wait_for(lambda: "marked to move" in text(pid) and "Move here (1)" in buttons(pid), 5)
+check("clipboard: a real Ctrl+X after a finished copy marks clip/alpha.txt to move", bool(cut),
+      f"navigated and selected: {bool(ok)}; {selected_count()} selected; buttons {[b for b in buttons(pid) if 'clip' in b.lower() or 'here' in b.lower()]}")
+ok = cut and go("sort/")
+ctrl_key("v")
+review = ok and wait_for(lambda: review_dialog("Move"), 15)
+rtext = cell_text(review) if review else ""
+start_enabled = review and any(b.get_state_set().contains(Atspi.StateType.ENABLED) for b in find(review, Atspi.Role.PUSH_BUTTON, "Move"))
+if review:
+    press_in(review, "Cancel")
+wait_for(lambda: review_dialog("Move") is None, 5)
+close_any_review()
+k2, _ = state()
+check("clipboard: Ctrl+V of that cut where alpha.txt exists: the review names the conflict, Move cannot start with Skip; nothing replaced",
+      bool(review) and "already exist" in rtext and not start_enabled and current(k2) == current(k)
+      and len(k2["sort/alpha.txt"]["versions"]) == 1, rtext[:300])
+# A folder cut and pasted into itself is refused before anything runs.
+recover()
+clear_clipboard()
+ok = go_root() and toggle("Select clip") and wait_for(lambda: selected_count() == 1, 5)
+ctrl_key("x")
+ok = ok and wait_for(lambda: "marked to move" in text(pid), 5) and go("clip/")
+ctrl_key("v")
+refused = ok and wait_for(lambda: "cannot be put inside itself" in text(pid), 15)
+close_any_review()
+check("clipboard: a folder pasted into itself is refused; nothing changed",
+      bool(refused) and current(state()[0]) == current(k), f"navigated, cut and opened: {bool(ok)}; {text(pid)[-200:]}")
+recover()
+dismiss_operation()
+# While typing in the search box the shortcuts belong to the box; a file
+# is on sotyware's clipboard meanwhile, so a paste would have something to do.
+recover()
+close_any_review()
+on_clip = go("sort/") and toggle("Select beta.pdf") and wait_for(lambda: selected_count() == 1, 5)
+ctrl_key("c")
+on_clip = on_clip and wait_for(lambda: "Paste copy (1)" in buttons(pid), 5)
+toggle("Select beta.pdf", False)
+search_box = next((n for r, nm, _, n in nodes(pid) if nm == "Search" and n.get_text_iface() is not None
+                   and r != Atspi.Role.PUSH_BUTTON), None)
+typed_ok = False
+if search_box is not None:
+    sx, sy, sw, sh = extents(search_box)
+    focus_window(pid)
+    click_xy(sx + sw / 2, sy + sh / 2)
+    wait_for(lambda: search_box.get_state_set().contains(Atspi.StateType.FOCUSED), 3)
+    type_text("zz")
+    ctrl_key("a")
+    ctrl_key("v")
+    ctrl_key("x")
+    time.sleep(1)
+    typed_ok = review_dialog("Copy") is None and review_dialog("Move") is None and selected_count() == 0 \
+        and "marked to move" not in text(pid)
+    ctrl_key("a")
+    key(keysym("BackSpace"))
+    keystroke("Escape")
+check("clipboard: in the search box Ctrl+A, Ctrl+V and Ctrl+X edit the text: no paste (with a file on the clipboard), no selection, nothing cut",
+      bool(on_clip) and typed_ok, f"file on the clipboard: {bool(on_clip)}; search box found: {search_box is not None}")
+# Then: does a real click on a row give the keyboard back to the list?
+close_any_review()
+went = go("sort/")
+ok = went and click_row("alpha.txt") and wait_for(lambda: selected_count() == 1, 5)
+keystroke("a", ("Control_L",))
+back = ok and wait_for(lambda: selected_count() == 3, 5)
+detail = f"in sort/: {bool(went)}; clicked: {bool(ok)}; {selected_count()} selected after the click and Ctrl+A"
+if ok and not back:
+    row = row_node("alpha.txt")
+    if row is not None:
+        Atspi.Component.grab_focus(row)
+        time.sleep(0.5)
+        keystroke("a", ("Control_L",))
+        detail += f"; after focusing the row through AT-SPI: {selected_count()} selected"
+check("clipboard: after typing in the search box, a real click on a row gives the keyboard back to the list (Ctrl+A)",
+      bool(back), detail)
+keystroke("Escape")
+recover()
+dismiss_operation()
+if "Clear clipboard" in buttons(pid):
+    press(pid, "Clear clipboard")
+go("sort/")
+not_tested.append("the system clipboard: Ctrl+C/X/V never use it (by design); Copy link in Properties writes the link "
+                  "to it, which cannot be read back here (no clipboard manager on this virtual display)")
+
+
+
 
 def menu_items():
     return [n for r, n, _, _ in nodes(pid) if r == Atspi.Role.MENU_ITEM and n not in SELECTS["Sort by"]
@@ -865,67 +1042,378 @@ if link_url:
     except Exception as e:  # noqa: BLE001
         body = repr(e).encode()
     check("share: the link downloads the file without credentials", body == b"Hello from the readme.\n", str(body[:80]))
-not_tested.append("copying the link to the system clipboard (no clipboard manager on this virtual display)")
 if dialog() is not None:
     press_dialog("Close")
 
 recover()
-# ======================================================== downloads of several items
+# ======================================================== folder uploads (native GTK folder dialog)
+# The folder is chosen in the native folder dialog that Rust opens; its
+# path never reaches the page. Checked at the server: exact keys, content,
+# the stored SHA-256; empty folders add nothing (S3 folders exist only
+# through their objects); a second upload of the same folder skips every
+# existing object and replaces nothing.
+UP_NAME = "Ordner größe +1"
+UP = os.path.join(SRC, UP_NAME)
+up_files = {
+    "top.txt": "top level\n",
+    "a&b#c%.txt": "special characters\n",
+    "größe ü +.txt": "unicode name\n",
+    "nested/deep/inner.txt": "two levels down\n",
+}
+for rel, body in up_files.items():
+    os.makedirs(os.path.dirname(os.path.join(UP, rel)), exist_ok=True)
+    with open(os.path.join(UP, rel), "w", encoding="utf-8") as fh:
+        fh.write(body)
+os.makedirs(os.path.join(UP, "nested", "empty"))
+os.makedirs(os.path.join(UP, "only-empty", "inside"))
+want_keys = sorted(f"{UP_NAME}/{rel}" for rel in up_files)
+
+
+def upload_done(t=None):
+    t = text(pid) if t is None else t
+    return ("Upload finished" in t or "Upload stopped" in t or "Upload cancelled" in t) and "Dismiss" in buttons(pid)
+
+
+def upload_summary():
+    t = text(pid)
+    m = re.search(r"Upload (finished|stopped after an error|cancelled)\. [^.]*\.", t)
+    return m.group(0) if m else t[-300:]
+
+
+def dismiss_upload():
+    if "Dismiss" in buttons(pid):
+        press(pid, "Dismiss")
+    wait_for(lambda: "Upload folder…" in buttons(pid), 5)
+
+
+recover()
+go_root()
+keys_before, _ = state()
+ok = press(pid, "Upload folder…") and wait_for(lambda: folder_chooser("Choose a folder to upload") is not None, 20)
+if ok:
+    close_choosers()
+gone = ok and wait_for(lambda: folder_chooser("Choose a folder to upload") is None, 10)
+time.sleep(1)
+keys_after, _ = state()
+check("folder upload: Upload folder… opens the native GTK folder dialog; Cancel in it sends nothing",
+      bool(gone) and current(keys_after) == current(keys_before) and "Cancel upload" not in buttons(pid))
+dismiss_upload()
+
+ok = press(pid, "Upload folder…") and choose_folder("Choose a folder to upload", UP)
+check("folder upload: a folder is chosen through the native GTK folder dialog (location bar, Select)", bool(ok))
+ok = ok and wait_for(upload_done, 60)
+keys, _ = state()
+got = under(keys, UP_NAME + "/")
+check("folder upload: exactly the 4 files arrive under “Ordner größe +1/”, nested folders kept, empty folders add nothing",
+      bool(ok) and got == want_keys and "Upload finished. 4 files: 4 uploaded." in text(pid), f"{got} | {upload_summary()}")
+check("folder upload: every object holds its file's content and the stored SHA-256 of it",
+      all(content(keys, f"{UP_NAME}/{rel}") == body
+          and keys[f"{UP_NAME}/{rel}"]["current"]["sha256Metadata"] == keys[f"{UP_NAME}/{rel}"]["current"]["sha256"]
+          for rel, body in up_files.items()), str({k: keys.get(k, {}).get("current") for k in want_keys})[:400])
+dismiss_upload()
+ok = press(pid, "Upload folder…") and choose_folder("Choose a folder to upload", UP) and wait_for(upload_done, 60)
+keys2, _ = state()
+check("folder upload: the same folder again skips all 4 (already in this folder); nothing replaced, no new version",
+      bool(ok) and "Upload finished. 4 files: 0 uploaded, 4 skipped." in text(pid)
+      and all(len(keys2[k]["versions"]) == 1 and content(keys2, k) == content(keys, k) for k in want_keys),
+      upload_summary())
+dismiss_upload()
+# A refused PUT in the middle: in key order the three existing files are
+# skipped, new1.txt is refused, and the batch stops there (access errors
+# stop it): new2.txt and top.txt are not started. Try again offers only the
+# files not started (an access-denied file is not retried: the account
+# needs fixing first); top.txt is then skipped as existing. A third upload
+# of the folder sends new1.txt and skips the other five.
+for n in ("new1.txt", "new2.txt"):
+    with open(os.path.join(UP, n), "w", encoding="utf-8") as fh:
+        fh.write(f"{n} body\n")
+ok = control("fail PutObject 1") and press(pid, "Upload folder…") and choose_folder("Choose a folder to upload", UP) \
+    and wait_for(upload_done, 60)
+keys3, _ = state()
+first = upload_summary()
+check("folder upload: a refused PUT stops the batch and says so (3 skipped, 1 failed, 2 not started); nothing new stored",
+      bool(ok) and "Upload stopped after an error. 6 files: 0 uploaded, 3 skipped, 1 failed, 2 not started." == first
+      and f"{UP_NAME}/new1.txt" not in current(keys3) and f"{UP_NAME}/new2.txt" not in current(keys3), first)
+retry_btn = next((b for b in buttons(pid) if b.startswith("Try ") and b.endswith(" again")), None)
+ok = retry_btn is not None and press(pid, retry_btn) and wait_for(lambda: upload_done() and upload_summary() != first, 60)
+keys4, _ = state()
+check("folder upload: Try again takes only the two not started: new2.txt is sent, top.txt skipped as existing",
+      bool(ok) and retry_btn == "Try 2 files again" and upload_summary() == "Upload finished. 2 files: 1 uploaded, 1 skipped."
+      and content(keys4, f"{UP_NAME}/new2.txt") == "new2.txt body\n" and f"{UP_NAME}/new1.txt" not in current(keys4)
+      and all(len(keys4[k]["versions"]) == 1 for k in want_keys), f"{retry_btn} | {upload_summary()}")
+dismiss_upload()
+ok = press(pid, "Upload folder…") and choose_folder("Choose a folder to upload", UP) and wait_for(upload_done, 60)
+keys5, _ = state()
+check("folder upload: the folder once more sends only new1.txt; the other five are skipped, none gets a new version",
+      bool(ok) and upload_summary() == "Upload finished. 6 files: 1 uploaded, 5 skipped."
+      and content(keys5, f"{UP_NAME}/new1.txt") == "new1.txt body\n"
+      and all(len(keys5[k]["versions"]) == 1 for k in want_keys + [f"{UP_NAME}/new2.txt"]), upload_summary())
+dismiss_upload()
+not_tested.append("cancelling a folder upload while a file is sent (the same batch code as Upload files…, "
+                  "whose cancel the upload phase drives; only the dialog's Cancel is driven here)")
+
+# ======================================================== downloads of several items (native GTK folder dialog)
+def bulk_done():
+    b = buttons(pid)
+    return "Dismiss" in b and "Cancel download" not in b
+
+
+def bulk_summary():
+    m = re.search(r"Download (finished|finished with problems|cancelled|stopped after an error): .*?\(\d[\d,]* files?, [^)]*\)\.", text(pid))
+    return m.group(0) if m else text(pid)[-300:]
+
+
+def no_staging(dest):
+    return not any(".sotyware-download" in x for x in tree(dest))
+
+
+def digest(dest):
+    out = {}
+    for x in tree(dest):
+        p = os.path.join(dest, x)
+        if os.path.isfile(p):
+            st = os.stat(p)
+            with open(p, "rb") as fh:
+                out[x] = (st.st_mtime_ns, hashlib.sha256(fh.read()).hexdigest())
+    return out
+
+
+recover()
 dest = os.path.join(OUT, "batch")
 os.makedirs(dest)
-ok = chain("download unusual", lambda: go("unusual/"), lambda: keystroke("a", ("Control_L",)) or True,
-           lambda: wait_for(lambda: selected_count() == 3, 5), lambda: press(pid, "Download"))
-dialog_driven = ok and choose_folder("Choose a folder to download into", dest)
-if ok and not dialog_driven:
-    # The folder dialog opened (Rust asked for it), but this virtual display's
-    # AT-SPI/XTest could not choose a folder in it: the rest of this section
-    # is reported as not tested, never as passed or failed.
+ok = chain("download dialog cancel", lambda: go("unusual/"), lambda: keystroke("a", ("Control_L",)) or True,
+           lambda: wait_for(lambda: selected_count() == 3, 5), lambda: press(pid, "Download"),
+           lambda: wait_for(lambda: folder_chooser("Choose a folder to download into") is not None, 20))
+if ok:
     close_choosers()
-    gone = wait_for(lambda: folder_chooser("Choose a folder to download into") is None, 10)
-    time.sleep(1)
-    check("download: the native GTK folder dialog opens (titled, folder mode); Cancel in it starts nothing and writes nothing",
-          bool(gone) and tree(dest) == [] and "Cancel download" not in buttons(pid), str(tree(dest)))
-    dismiss_bulk = [b for b in buttons(pid) if b == "Dismiss"]
-    if dismiss_bulk:
-        press(pid, "Dismiss")
-    not_tested.append("several-item downloads through the GTK folder dialog (the dialog opened; it could not be "
-                      "driven through AT-SPI/XTest on this virtual display); covered by the Rust tests")
-else:
-    ok = ok and wait_for(lambda: "Downloaded" in text(pid) or "saved" in text(pid).lower(), 60)
-    check("download: three unusual names are saved with safe local names",
-          bool(ok) and tree(dest) == sorted(["a_b#c%.txt", "größe +test.txt", "_con.txt"]), str(tree(dest)))
+gone = ok and wait_for(lambda: folder_chooser("Choose a folder to download into") is None, 10)
+time.sleep(1)
+check("download: the native GTK folder dialog opens (titled, folder mode); Cancel in it starts nothing and writes nothing",
+      bool(gone) and tree(dest) == [] and "Cancel download" not in buttons(pid), str(tree(dest)))
+if "Dismiss" in buttons(pid):
     press(pid, "Dismiss")
-    recover()
-    # A folder and a file: structure kept; a second time, numbered names.
-    dest2 = os.path.join(OUT, "folders")
-    os.makedirs(dest2)
-    for round_ in (1, 2):
-        ok = go("dl/") and toggle("Select tree") and toggle("Select one.txt") and wait_for(lambda: selected_count() == 2, 5) \
-            and press(pid, "Download") and choose_folder("Choose a folder to download into", dest2)
-        ok = ok and wait_for(lambda: "Dismiss" in buttons(pid) and "Cancel download" not in buttons(pid), 60)
-        press(pid, "Dismiss")
-    want = ["one.txt", "tree/", "tree/a.txt", "tree/deep/", "tree/deep/b.txt"]
-    want2 = sorted(want + ["one (1).txt", "tree (1)/", "tree (1)/a.txt", "tree (1)/deep/", "tree (1)/deep/b.txt"])
-    check("download: a folder keeps its structure; a second download is numbered, nothing replaced",
-          bool(ok) and tree(dest2) == want2
-          and open(os.path.join(dest2, "tree", "deep", "b.txt"), encoding="utf-8").read() == "content of dl/tree/deep/b.txt\n",
-          str(tree(dest2)))
-    recover()
-    # A refused GetObject: that item fails, nothing of it is left; retry.
-    dest3 = os.path.join(OUT, "retry")
-    os.makedirs(dest3)
-    ok = go("dl/") and toggle("Select tree") and toggle("Select one.txt") and control("fail GetObject 1") \
-        and press(pid, "Download") and choose_folder("Choose a folder to download into", dest3)
-    ok = ok and wait_for(lambda: "Download the rest again" in buttons(pid), 60)
-    first = tree(dest3)
-    check("download: a refused file fails its item, which leaves nothing; the other item is saved",
-          bool(ok) and len([x for x in first if "/" not in x.rstrip("/")]) == 1 and not any(".sotyware" in x for x in first), str(first))
-    ok = press(pid, "Download the rest again") and wait_for(lambda: "Download the rest again" not in buttons(pid)
-                                                             and "Cancel download" not in buttons(pid), 60)
-    check("download: Download the rest again completes it", bool(ok) and tree(dest3) == want, str(tree(dest3)))
-    press(pid, "Dismiss")
+ok = wait_for(lambda: selected_count() == 3, 5) and press(pid, "Download") \
+    and choose_folder("Choose a folder to download into", dest) and wait_for(bulk_done, 60)
+check("download: a folder is chosen through the native GTK folder dialog; three unusual names saved with safe local names",
+      bool(ok) and tree(dest) == sorted(["a_b#c%.txt", "größe +test.txt", "_con.txt"])
+      and open(os.path.join(dest, "_con.txt"), encoding="utf-8").read() == "content of unusual/con.txt\n",
+      f"{tree(dest)} | {bulk_summary()}")
+press(pid, "Dismiss")
 
+# Nested remote folders whose names need safe local names: characters
+# Windows refuses, a reserved device name, a trailing dot, two keys that
+# differ only in case, and two keys that become one local name.
+dlx = ["dlx/sub:dir/x?.txt", "dlx/sub_dir/x_.txt", "dlx/CON/aux.txt", "dlx/trail./end .txt",
+       "dlx/Case.txt", "dlx/case.txt"]
+control(*[f"add {BUCKET} {k}" for k in dlx])
+dest_x = os.path.join(OUT, "nested")
+os.makedirs(dest_x)
+recover()
+ok = go_root() and press(pid, "Refresh") and wait_for(lambda: "dlx" in text(pid), 20) and toggle("Select dlx") \
+    and wait_for(lambda: selected_count() == 1, 5) and press(pid, "Download") \
+    and choose_folder("Choose a folder to download into", dest_x) and wait_for(bulk_done, 60)
+got = tree(dest_x)
+want_x = sorted(["dlx/", "dlx/Case.txt", "dlx/case (1).txt", "dlx/_CON/", "dlx/_CON/_aux.txt",
+                 "dlx/sub_dir/", "dlx/sub_dir/x_.txt", "dlx/sub_dir/x_ (1).txt", "dlx/trail/", "dlx/trail/end .txt"])
+check("download: a nested folder keeps its structure; unsafe names are made safe and clashes (also by case) numbered",
+      bool(ok) and got == want_x and no_staging(dest_x), f"{got} | {bulk_summary()}")
+texts = sorted(open(os.path.join(dest_x, "dlx", "sub_dir", n), encoding="utf-8").read()
+               for n in ("x_.txt", "x_ (1).txt")) if ok and got == want_x else []
+check("download: the two keys that share a local name are both saved, each with its own content",
+      texts == ["added later: dlx/sub:dir/x?.txt\n", "added later: dlx/sub_dir/x_.txt\n"], str(texts))
+press(pid, "Dismiss")
+before = digest(dest_x)
+ok = wait_for(lambda: selected_count() == 1, 5) and press(pid, "Download") \
+    and choose_folder("Choose a folder to download into", dest_x) and wait_for(bulk_done, 60)
+got2 = tree(dest_x)
+check("download: the same folder again goes to “dlx (1)”; every existing local file unchanged (content and time)",
+      bool(ok) and "Saved as “dlx (1)”" in text(pid) and all(x in got2 for x in want_x)
+      and "dlx (1)/sub_dir/x_ (1).txt" in got2 and {k: v for k, v in digest(dest_x).items() if k in before} == before,
+      f"{got2} | {bulk_summary()}")
+press(pid, "Dismiss")
+
+# A local file already has the name: the download is numbered, the local
+# file is left as it is.
+dest2 = os.path.join(OUT, "folders")
+os.makedirs(dest2)
+with open(os.path.join(dest2, "one.txt"), "w", encoding="utf-8") as fh:
+    fh.write("my own local file\n")
+recover()
+ok = go("dl/") and toggle("Select tree") and toggle("Select one.txt") and wait_for(lambda: selected_count() == 2, 5) \
+    and press(pid, "Download") and choose_folder("Choose a folder to download into", dest2) and wait_for(bulk_done, 60)
+want = ["one.txt", "tree/", "tree/a.txt", "tree/deep/", "tree/deep/b.txt"]
+check("download: an existing local one.txt is never replaced; the download is saved as “one (1).txt”",
+      bool(ok) and tree(dest2) == sorted(want + ["one (1).txt"])
+      and open(os.path.join(dest2, "one.txt"), encoding="utf-8").read() == "my own local file\n"
+      and open(os.path.join(dest2, "one (1).txt"), encoding="utf-8").read() == "content of dl/one.txt\n"
+      and open(os.path.join(dest2, "tree", "deep", "b.txt"), encoding="utf-8").read() == "content of dl/tree/deep/b.txt\n",
+      f"{tree(dest2)} | {bulk_summary()}")
+press(pid, "Dismiss")
+
+# A refused GetObject: access errors stop the batch, so the refused item
+# fails and the other is not started; nothing of either is left; retry.
+recover()
+dest3 = os.path.join(OUT, "retry")
+os.makedirs(dest3)
+ok = go("dl/") and toggle("Select tree") and toggle("Select one.txt") and control("fail GetObject 1") \
+    and press(pid, "Download") and choose_folder("Choose a folder to download into", dest3)
+ok = ok and wait_for(lambda: "Download the rest again" in buttons(pid), 60)
+first = tree(dest3)
+check("download: a refused file stops the batch and says so (0 saved, 1 failed, 1 not saved); nothing is left, no staging folder",
+      bool(ok) and first == [] and os.listdir(dest3) == []
+      and bulk_summary().startswith("Download stopped after an error: 0 saved, 1 failed, 1 not saved (cancelled)"),
+      f"{first} | {bulk_summary()}")
+ok = press(pid, "Download the rest again") and wait_for(lambda: "Download the rest again" not in buttons(pid) and bulk_done(), 60)
+check("download: Download the rest again completes it", bool(ok) and tree(dest3) == want, str(tree(dest3)))
+press(pid, "Dismiss")
+
+# Cancel while a file is being fetched (the server holds its GET open):
+# progress shows 0 files done, nothing is left behind, retry finishes it.
+recover()
+dest4 = os.path.join(OUT, "cancel")
+os.makedirs(dest4)
+ok = go("dl/") and toggle("Select tree") and toggle("Select one.txt") and control("hang GetObject 1") \
+    and press(pid, "Download") and choose_folder("Choose a folder to download into", dest4)
+running = ok and wait_for(lambda: "Cancel download" in buttons(pid) and "0 of 3 files" in text(pid), 20)
+check("download: while a file is fetched the panel shows progress (0 of 3 files) and Cancel download", bool(running), text(pid)[-300:])
+t0 = time.time()
+ok = running and press(pid, "Cancel download") and wait_for(lambda: "Download cancelled" in text(pid) and bulk_done(), 30)
+check("download: Cancel download stops it promptly; nothing is left in the chosen folder (no staging folder)",
+      bool(ok) and tree(dest4) == [] and os.listdir(dest4) == [], f"{time.time() - t0:.1f} s | {os.listdir(dest4)} | {bulk_summary()}")
+ok = ok and "Download the rest again" in buttons(pid) and press(pid, "Download the rest again") \
+    and wait_for(lambda: "Download the rest again" not in buttons(pid) and bulk_done(), 60)
+check("download: after the cancel, Download the rest again saves everything", bool(ok) and tree(dest4) == want, str(tree(dest4)))
+press(pid, "Dismiss")
+recover()
+# ======================================================== do real keys still reach the page?
+def keys_still_work(after):
     recover()
+    # Selected through its checkbox: late in the run the panels above the
+    # list push its rows out of the visible area, where a pointer click
+    # lands on nothing (seen 2026-11-14). The keys are real.
+    ok = go("dl/") and toggle("Select one.txt") and wait_for(lambda: selected_count() == 1, 5)
+    keystroke("a", ("Control_L",))
+    all_ = ok and wait_for(lambda: selected_count() == 2, 5)
+    keystroke("Escape")
+    cleared = all_ and wait_for(lambda: selected_count() == 0, 5)
+    focused = [f"{r.value_nick}:{n[:40]}" for r, n, _, node in nodes(pid)
+               if node.get_state_set().contains(Atspi.StateType.FOCUSED)]
+    check(f"keys: after {after}, a real Ctrl+A selects every row (and Escape clears)",
+          bool(cleared), f"selected one: {bool(ok)}; {selected_count()} selected; focused: {focused}")
+
+
+keys_still_work("the native GTK folder dialogs")
+
+# ======================================================== drag and drop from another program
+# A real drop over XDND: drag_source.py (another GTK program) offers the
+# paths as text/uri-list, and the X pointer is moved by XTest from its
+# button onto sotyware's window and released. sotyware keeps the paths in
+# Rust; the page only shows names and counts and offers Upload here, which
+# runs the normal upload batch (checked, existing objects skipped).
+DROP = os.path.join(SRC, "drops")
+for rel, body in (("drop-a.txt", "dropped file a\n"), ("drop-b.txt", "dropped file b\n"),
+                  ("dropdir/inner/z.txt", "inside a dropped folder\n")):
+    os.makedirs(os.path.dirname(os.path.join(DROP, rel)), exist_ok=True)
+    with open(os.path.join(DROP, rel), "w", encoding="utf-8") as fh:
+        fh.write(body)
+
+
+def page_extents():
+    for role, _, _, n in nodes(pid):
+        if role == Atspi.Role.DOCUMENT_WEB:
+            e = n.get_extents(Atspi.CoordType.SCREEN)
+            return e.x, e.y, e.width, e.height
+    return None
+
+
+def drag_drop(paths):
+    """Drags `paths` from drag_source.py onto the middle of sotyware's page.
+    Returns whether the source was asked for the data (the drop happened)."""
+    page = page_extents()
+    if page is None:
+        print("  drag: no page extents", flush=True)
+        return False
+    # cloud_ui.py runs this file with exec(): __file__ is cloud_ui.py, in the same folder.
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drag_source.py")
+    src = subprocess.Popen([sys.executable, helper, "5", "5", *paths],
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        line = src.stdout.readline().split()
+        if not line or line[0] != "ready":
+            print(f"  drag: the drag source did not start ({line})", flush=True)
+            return False
+        bx, by, bw, bh = (int(v) for v in line[1:5])
+        sx, sy = bx + bw // 2, by + bh // 2
+        tx, ty = page[0] + page[2] // 2, page[1] + page[3] // 2
+        XT.XTestFakeMotionEvent(dpy, -1, sx, sy, 0)
+        X.XSync(dpy, 0)
+        time.sleep(0.3)
+        XT.XTestFakeButtonEvent(dpy, 1, 1, 0)
+        X.XSync(dpy, 0)
+        steps = 25
+        for i in range(1, steps + 1):
+            XT.XTestFakeMotionEvent(dpy, -1, sx + (tx - sx) * i // steps, sy + (ty - sy) * i // steps, 0)
+            X.XSync(dpy, 0)
+            time.sleep(0.04)
+        # XDND needs a few motion events over the target before the drop.
+        for d in (3, -3, 3):
+            XT.XTestFakeMotionEvent(dpy, -1, tx + d, ty, 0)
+            X.XSync(dpy, 0)
+            time.sleep(0.15)
+        XT.XTestFakeButtonEvent(dpy, 1, 0, 0)
+        X.XSync(dpy, 0)
+        sent = False
+        end = time.time() + 5
+        while time.time() < end:
+            import select
+            r, _, _ = select.select([src.stdout], [], [], 0.2)
+            if r:
+                out = src.stdout.readline()
+                if out.startswith("sent"):
+                    sent = True
+                    break
+        return sent
+    finally:
+        try:
+            src.stdin.close()
+        except OSError:
+            pass
+        try:
+            src.wait(5)
+        except subprocess.TimeoutExpired:
+            src.kill()
+
+
+recover()
+ok = go_root()
+drop_files = [os.path.join(DROP, "drop-a.txt"), os.path.join(DROP, "dropdir")]
+sent = ok and drag_drop(drop_files)
+notice = sent and wait_for(lambda: "Dropped: 1 file and 1 folder" in text(pid) and "Upload here" in buttons(pid), 10)
+check("drag and drop: a file and a folder dragged from another program (XDND over XTest) are announced by name; nothing sent yet",
+      bool(notice) and "drop-a.txt" in text(pid) and "dropdir" in text(pid)
+      and not any(k.startswith(("drop-a.txt", "dropdir/")) for k in current(state()[0])),
+      f"source asked for data: {sent} | {text(pid)[-300:]}")
+ok = notice and press(pid, "Upload here") and wait_for(upload_done, 60)
+kd, _ = state()
+check("drag and drop: Upload here runs the upload batch into the folder shown; the folder keeps its structure",
+      bool(ok) and content(kd, "drop-a.txt") == "dropped file a\n" and content(kd, "dropdir/inner/z.txt") == "inside a dropped folder\n"
+      and "2 files: 2 uploaded" in upload_summary(), upload_summary())
+dismiss_upload()
+sent = drag_drop(drop_files)
+ok = sent and wait_for(lambda: "Upload here" in buttons(pid), 10) and press(pid, "Upload here") and wait_for(upload_done, 60)
+kd2, _ = state()
+check("drag and drop: the same drop again skips both (existing objects are never replaced)",
+      bool(ok) and "2 files: 0 uploaded, 2 skipped" in upload_summary() and len(kd2["drop-a.txt"]["versions"]) == 1,
+      upload_summary())
+dismiss_upload()
+sent = drag_drop([os.path.join(DROP, "drop-a.txt"), os.path.join(DROP, "drop-b.txt")])
+notice = sent and wait_for(lambda: "Dropped: 2 files" in text(pid), 10)
+ok = notice and press(pid, "Ignore") and wait_for(lambda: "Upload here" not in buttons(pid), 5)
+time.sleep(1)
+check("drag and drop: two files are announced; Ignore uploads nothing",
+      bool(ok) and "drop-b.txt" not in current(state()[0]), text(pid)[-200:])
+keys_still_work("a drop from another program")
+
 close_choosers()
 # ======================================================== unversioned bucket
 press(pid, "← Back to accounts")
@@ -945,6 +1433,5 @@ keys, _ = state("files-plain")
 check("plain: deleting on a bucket without versions warns that it is final, and the object is gone",
       bool(review) and "gone for good" in review and "files/one.txt" not in keys, str(review)[:300])
 
-not_tested.append("drag and drop from another program (no drag source on this virtual display)")
 for n in not_tested:
     print(f"NOT TESTED  {n}", flush=True)

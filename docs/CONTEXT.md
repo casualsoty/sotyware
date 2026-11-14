@@ -224,6 +224,20 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Native folder dialogs, drag and drop, clipboard, final audit**
+  (2026-11-14, uncommitted on `124364c`, local servers only,
+  [status.md](status/status.md#native-folder-dialogs-drag-and-drop-clipboard-and-final-audit-2026-11-14)):
+  folder uploads and several-item downloads through the **native Windows
+  folder dialog** (`windows-cloud-ui.ps1 -Mode files` 65/0, twice) and the
+  **GTK folder dialog** on the virtual display (`cloud-ui.sh files` 97/0,
+  with a drop from another GTK program over XDND and the in-app clipboard
+  with real keys; not a real Linux desktop). One defect fixed (a long
+  local name cut to end in `.`/space). The isolation guard was tightened
+  (it passed the incident-era `cloud_ui.py`), Windows drivers stop if the
+  real folder cannot be read through WMI, CI now type-checks the
+  test-profile build and runs the guard for driver-only changes
+  (`isolation-guard.yml`; not yet run on GitHub). Not tested: drop from
+  Explorer, the system clipboard, real keys on Windows, `windows.ps1`.
 - **Test isolation incident and fix** (2026-11-14,
   [status.md](status/status.md#test-isolation-incident-root-cause-and-fix-2026-11-14)):
   root cause established: the agent's Windows processes run inside the
@@ -749,8 +763,9 @@ were all handed over when cancelling is awaited up to 5 s before the
 abort (ADR-025), past that it can still land after the abort (unchecked
 at real providers).
 File management (ADR-026) ran only against local test servers: no real
-provider; desktop runs on the Linux virtual display and native Windows 11
-(no drag and drop, clipboard or Windows folder dialog); one request of
+provider; desktop runs on the Linux virtual display and native Windows 11,
+folder dialogs included (no drop from Explorer or a real file manager,
+no system clipboard, clipboard keys only on the virtual display); one request of
 race between a check and a copy or delete; copies above 5 GiB refused; deletes only add delete markers
 (hidden versions stay billed) or remove for good on unversioned buckets
 ([limitations.md](status/limitations.md#file-management-adr-026)).

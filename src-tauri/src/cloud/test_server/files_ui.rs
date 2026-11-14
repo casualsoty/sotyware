@@ -16,6 +16,8 @@
 //!   removed by id;
 //! - `fail <Operation> <n>`: the next `n` requests of that operation are
 //!   refused with `AccessDenied` (a partial failure the app must report);
+//! - `hang <Operation> <n>`: the next `n` requests of that operation are
+//!   never answered (a transfer the driver cancels while it runs);
 //! - `add <bucket> <key>`: stores a new object (another client's change
 //!   between the review and the start).
 //!
@@ -253,15 +255,20 @@ async fn serve_files_for_ui() {
                         fs::write(&tmp, serde_json::to_string_pretty(&state).unwrap()).unwrap();
                         fs::rename(&tmp, format!("{file}.state.json")).unwrap();
                     }
-                    ["fail", op, n] => {
+                    [verb @ ("fail" | "hang"), op, n] => {
                         let op: &'static str = match *op {
                             "CopyObject" => "CopyObject",
                             "DeleteObject" => "DeleteObject",
                             "GetObject" => "GetObject",
                             "PutObject" => "PutObject",
-                            other => panic!("fail: unknown operation {other}"),
+                            other => panic!("{verb}: unknown operation {other}"),
                         };
-                        server.inject(op, None, n.parse().unwrap(), super::Inject::Deny);
+                        let action = if *verb == "fail" {
+                            super::Inject::Deny
+                        } else {
+                            super::Inject::Hang
+                        };
+                        server.inject(op, None, n.parse().unwrap(), action);
                     }
                     ["add", bucket, key] => {
                         data.lock().put(

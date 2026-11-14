@@ -126,6 +126,125 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Native folder dialogs, drag and drop, clipboard and final audit (2026-11-14)
+
+Uncommitted on `124364c` (nothing staged or committed). **Local servers
+only; no real provider was contacted; no production account, credential
+or database was read or changed.** Every desktop run used a fresh test
+profile (ADR-027) whose acknowledgement was checked before the window was
+touched; the user's own folders (and on Windows the real folder read
+through WMI, and the `com.sotyware.desktop/` Credential Manager lines)
+were fingerprinted before and after and unchanged in every run.
+
+- **Native Windows 11 25H2** (build 26200, real desktop, UI Automation,
+  no mouse or keys; test-profile build in a copy of the tree):
+  `windows-cloud-ui.ps1 -Mode files` **65 passed, 0 failed, twice in a
+  row** (runs 4 and 5), with new checks for **folder uploads through the
+  native Windows folder dialog** (dialog Cancel sends nothing; a Unicode
+  folder `Ordner größe +1` with `&`, `#`, `%`, `+`, nested and empty
+  folders: exactly 4 keys, content and stored SHA-256, empty folders add
+  nothing; the same folder again: 4 skipped, no new version; a refused PUT
+  stops the batch: 3 skipped, 1 failed, 2 not started; Try 2 files again:
+  1 uploaded, 1 skipped; the folder once more: 1 uploaded, 5 skipped) and
+  **several-item downloads through it** (dialog Cancel writes nothing;
+  three unusual names saved as `a_b#c%.txt`, `_con.txt`, `größe +test.txt`;
+  a nested folder with `:`, `?`, `CON`, a trailing dot and two keys that
+  differ only in case saved as `_CON/_aux.txt`, `sub_dir/x_.txt` +
+  `x_ (1).txt`, `trail/`, `Case.txt` + `case (1).txt`, each with its own
+  content; the same folder again to `dlx (1)` with every existing local
+  file unchanged in content and time; an existing local `one.txt` kept, the
+  download saved as `one (1).txt`; a refused GET stops the batch, nothing
+  left, no staging folder, Download the rest again completes it; Cancel
+  while a GET is held open leaves the folder empty, the retry saves
+  everything). Earlier attempts this session, all driver problems, fixed
+  before runs 4 and 5: run 1 44/20 (the dialog was looked for with a box
+  check that timed out; one dialog left open blocked the rest), run 2 56/9
+  (Windows PowerShell's `ConvertFrom-Json` refuses keys that differ only
+  in case; the dump is now read with `JavaScriptSerializer`), run 3 59/6
+  (the Folder box was reset after `WM_SETTEXT`, now retried; the summary
+  regex missed "(cancelled)"; one download beside a local `one.txt` did
+  not finish within 60 s, cause not found, passed in runs 4 and 5).
+  `windows-isolated.ps1` **57 passed, 0 failed** with its new real-folder
+  check. Headless: `npm run check`, `npm run build`, fmt, clippy (default
+  and test-profile build), `test:headless` (Vitest 175 then, Rust **398
+  passed, 27 ignored**), test-profile `cargo test --lib` **397 passed, 27
+  ignored**, release guard 19/19, isolation guard self-test 9/9 and the
+  guard itself, profile helper self-test 20/0, PowerShell variable check;
+  on the final tree again check, Vitest **177**, the isolation guard and
+  its self-test, the variable check and the profile self-test.
+  `windows.ps1` was **not run** (it moves the mouse; only parsed).
+- **WSL2 virtual display** (Xvfb + openbox, GTK 3.24, WebKitGTK; **not a
+  real Linux desktop**): `cloud-ui.sh files` **97 passed, 0 failed**
+  (run 12), the server helper confirming no real version was removed and
+  only file-manager requests were sent. New: the same folder-upload and
+  folder-download checks through the **native GTK folder dialog**, **a
+  drop from another program** (a GTK drag source, `drag_source.py`, dragged
+  with the XTest pointer over XDND: a file and a folder announced by name
+  with nothing sent, Upload here uploads both with the folder's structure,
+  the same drop again skips both, two files and Ignore send nothing), and
+  **sotyware's own clipboard with real keys** (Ctrl+X and Ctrl+C mark
+  items without a request; Ctrl+V opens the reviewed plan; a second Ctrl+V
+  under it does nothing; Cancel changes nothing; Copy copies; a cut pasted
+  where the name exists shows the conflict and cannot start with Skip; a
+  folder pasted into itself is refused; in the search box Ctrl+A/V/X edit
+  the text while a file is on the clipboard; keys still work after the
+  native dialogs and after a drop). Eleven earlier runs of this session
+  failed on driver problems found one by one: XTest cannot type `ö`/`ß`
+  (run 1, which also showed a helper's `SystemExit` skipping the phase's
+  own failure line, now caught); GTK's folder chooser starts in "Recent",
+  where **Open is disabled** and AT-SPI's press of it does nothing, which
+  is why the earlier driver never chose a folder (found with a standalone
+  GTK probe); GTK's inline completion appended a child folder; expectations
+  that an access-denied file is retried (it is not; the batch stops);
+  `focus_window` focused hidden windows (it now focuses viewable ones
+  only); a stray clipboard entry; rows below the visible area. Regression
+  after the shared `focus_window` change: `cloud-ui.sh` local 16, hang 8,
+  browse 17, download 22, upload 51, all 0 failed; `virtual.sh` **138/0/0**.
+  Headless: check, build, `test:headless` (Vitest **177**, Rust **411
+  passed, 27 ignored**), test-profile `cargo test --lib` **410**, recorder
+  **439** (27 ignored each), fmt, clippy for the default, test-profile and
+  recorder builds, rfd guard self-test 10/10, release guard 19/19,
+  isolation guard self-test 9/9, profile helpers 10, and the release guard
+  refusing the test-profile binary.
+- **Unit and component tests added:** a long local name cut at 200 bytes
+  no longer ends in a dot or space (`local_names_are_safe_on_windows_and_linux`);
+  Ctrl+C then Ctrl+V only into a reviewed plan; shortcuts work again after
+  a finished operation (Vitest); five new self-tests of the isolation guard.
+- **Defect fixed (ADR-026):** `local_segment` cut long names *after*
+  trimming trailing dots and spaces, so a cut could end in `.` or ` `,
+  which Windows drops: two different keys could then name one local file
+  in a several-item download. It now cuts first, then trims.
+- **ADR-027 audit:** the runtime side held (no fallback, exit 3 before any
+  window, own identifier, lock, databases, webview folder and credential
+  namespace, the normal namespace not compiled into the test build, the
+  acknowledgement checked by every driver after each primary launch,
+  cleanup limited to the profile and its prefix). Fixed: the static guard
+  passed the incident-era `cloud_ui.py` (an `exec(` anywhere satisfied all
+  three launch checks), counted checks named only in comments, missed
+  `Start-Process -FilePath $Exe`, `& $Exe`, `subprocess.run/call([BIN`,
+  shell launches, `%APPDATA%` / `ApplicationData`, the bare identifier as
+  a string (`os.path.join(data, "com.sotyware.desktop", …)`) and
+  `secret-tool clear`; the Windows drivers went on when the WMI read of the
+  real folder failed (now they stop before launching); CI never compiled
+  the test-profile build (clippy step added) and never ran the guard for a
+  change to the drivers alone (`ci.yml` skips `tests/desktop/**`;
+  `isolation-guard.yml` added; the manual desktop workflows run the guard
+  too). **Not run on GitHub:** nothing was pushed, so the changed and new
+  workflows are unverified there.
+- **ADR-026 audit**, beyond the fix above: prefix boundaries (`in_folder`,
+  `into_itself` with trailing `/`), copy verification (size, plain-MD5
+  ETag, `CopyObject` conditional on the planned ETag), moves (sources
+  deleted only after every copy is verified), partial states and
+  `operation_state` (a partial result is never reported completed),
+  restorable-delete accounting and the documented one-request race were
+  read and found as documented; no further defect found. Observed only:
+  pasting a folder into itself also opens a "Move 0 items" review
+  ([limitations](limitations.md#file-management-adr-026)).
+- Not tested: drag and drop from Explorer on Windows and from a file
+  manager on any real Linux desktop; the system clipboard (Copy link);
+  Ctrl+C/X/V with real keys on Windows; cancelling a folder upload while a
+  file is sent; `windows.ps1`; Windows 10; CI on GitHub; any real provider.
+
 ### File management (2026-11-14)
 
 ADR-026, uncommitted on `ae11691` (nothing staged or committed, as asked).
