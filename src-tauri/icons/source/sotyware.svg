@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- sotyware application icon, master (48 px and up): a stored object,
+       an isometric cube in three separated panels, white in three
+       strengths on a blue-to-teal tile. 16 and 32 px have their own
+       sources (sotyware-16.svg, sotyware-32.svg). Regenerate with
+       `npm run icons`. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b6cf0"/>
+      <stop offset="1" stop-color="#0f8b8d"/>
+    </linearGradient>
+    <mask id="seams" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <path d="M512 512 L226 347 M512 512 L798 347 M512 512 V842" stroke="#000" stroke-width="56" stroke-linecap="square"/>
+    </mask>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#tile)"/>
+  <g mask="url(#seams)" fill="#fff" stroke="#fff" stroke-width="40" stroke-linejoin="round">
+    <path d="M512 182 L798 347 L512 512 L226 347 Z"/>
+    <path opacity=".78" d="M226 347 L512 512 V842 L226 677 Z"/>
+    <path opacity=".54" d="M798 347 L512 512 V842 L798 677 Z"/>
+  </g>
+</svg>

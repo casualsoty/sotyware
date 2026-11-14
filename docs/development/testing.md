@@ -120,7 +120,7 @@ is a test-profile build too. Neither can be packaged
 ## Headless tests
 
 ```bash
-npm run test:headless        # = check:rfd-patch && check:release-binary && test:frontend && test:rust
+npm run test:headless        # = check:rfd-patch && check:release-binary && check:desktop-isolation && check:icons && test:frontend && test:rust
 ```
 
 `check:rfd-patch` is not a test but a guard: it fails if Cargo no longer
@@ -2335,7 +2335,7 @@ and `windows-latest`; only the manual `release-build.yml` builds installers.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands except the recorder-build `cargo test`, native Windows (MSVC Rust, no WSL), the PowerShell test-profile helpers' self-test instead of the Python one; does not start sotyware | A. headless |
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |

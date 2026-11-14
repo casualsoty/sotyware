@@ -47,7 +47,9 @@ Not started unless status.md says so. Scope and procedures:
 4. Drive Windows drag and drop from Explorer and the keyboard shortcuts
    with real input once (the manual procedure in release.md, test-profile
    build only).
-5. Replace the placeholder icons.
+5. Done 2026-11-14: the placeholder icons are replaced
+   ([status.md](status.md#application-icons-2026-11-14)); seeing them in
+   the running app and installers is part of the installation test (3).
 
 Fixes found during validation come before anything below.
 
@@ -184,7 +186,6 @@ ADR-026; public ACLs do not).
 - Possibly, a separate decision: making the headless check required by branch
   protection (needs `paths-ignore` reworked), or the real-desktop Windows test on
   a self-hosted runner in a logged-on session (security review first).
-- Replace the placeholder icons.
 - Drop `libayatana-appindicator3-1` from the `.deb` dependencies: the binary
   never loads it since `12a6185` ([limitations.md](limitations.md#linux-tray)).
   Separate packaging task, unrelated to dashboard-only mode.

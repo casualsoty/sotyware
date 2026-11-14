@@ -142,9 +142,12 @@ seen (screenshots for dialogs), and pass/fail.
    dialog. On a second snapshot run the MSI (per-machine, needs elevation).
    Check: install location, Start menu entry, uninstall entry (name,
    version, publisher), that no profile folder exists yet, that WebView2 is
-   present or installed by the bootstrapper.
+   present or installed by the bootstrapper. The sotyware icon
+   ([icons.md](icons.md)) on the setup program, the Start menu entry and
+   the uninstall entry, at 100 % and at a higher display scaling.
 2. **First launch.** Start from the Start menu. Tray icon (in the
-   hidden-icons flyout), dashboard opens, close hides, tray Open Dashboard,
+   hidden-icons flyout; the cube, legible on a light and a dark taskbar),
+   taskbar and title-bar icon, dashboard opens, close hides, tray Open Dashboard,
    a second launch shows the existing window, tray Quit ends the process.
    The profile folder now holds `preferences.sqlite3` (if a feature was
    switched), `cloud-accounts.sqlite3`, `cloud-places.sqlite3` and

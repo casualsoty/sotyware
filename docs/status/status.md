@@ -84,6 +84,7 @@ verified byte for byte; the object was deleted again by its version id
 | Cloud storage backend (changes to objects other than upload batches not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account; the upload lifecycle `S3Store::upload` (existing key refused, cancellable until one commit point, bytes re-hashed while sent, multipart aborted on failure, `HeadObject` verification, stall timeout instead of the read timeout, throttled progress by stage) | `src-tauri/src/cloud/`, `cloud/s3/upload.rs`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store), [ADR-021](../architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)) |
 | File management in the bucket browser (ADR-026): new folder; rename, copy, move and delete of files and folders and restore of deleted files as reviewed plans (review with object counts, conflicts with a numbered alternative, what a delete means on this bucket; start, progress, cancel, retry of what is left; partial results named); destination picker; deleted items (delete markers); search (names in Rust, or key prefix at the provider; recursive, paginated); client-side sorting and filters; selection (click, Ctrl, Shift, checkboxes, keyboard), context menu, selection bar, internal copy/cut/paste, shortcuts; properties, size-limited previews (text as text, raster images), presigned share links; downloads of several files and folders into a picked folder (staging, never replacing); folder uploads and drag and drop through the upload batch; favorites and recent items per account (`cloud-places.sqlite3`) | `src-tauri/src/cloud/operations.rs`, `manage.rs`, `bulk_download.rs`, `places.rs`, `drop.rs`, `s3/manage.rs`, folder upload in `upload.rs`, `SqlitePlacesStore` in `storage.rs`, `run()` in `lib.rs`; `src/CloudBrowser.svelte`, `CloudOperation.svelte`, `CloudFolderPicker.svelte`, `CloudProperties.svelte`, `CloudBulkDownload.svelte`, `CloudDeleted.svelte`, `Modal.svelte`, `cloudFiles.ts`, `fileList.ts` ([cloud-storage.md](../architecture/cloud-storage.md#file-management), [ADR-026](../architecture/decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
+| Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
 | Hide-on-close lifecycle (tray mode) | `on_window_event` in `lib.rs` |
 | Only explicit exits (tray Quit; close in dashboard-only mode); implicit exits blocked | `app.run` closure and `on_window_event` in `lib.rs`, `tray.rs` |
@@ -125,6 +126,56 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Application icons (2026-11-14)
+
+Tauri's placeholder icons replaced, on `0864765` (committed as `build:
+replace placeholder application icons`). Design, sources and regeneration:
+[icons.md](../development/icons.md). Three SVG sources
+(`src-tauri/icons/source/`); `npm run icons` (`scripts/icons.mjs`, through
+the existing `tauri icon`) writes `icon.ico` (16, 24, 32, 48, 64, 256 px as
+PNG entries; 16 and 24/32 from hand-fitted small sources), `32x32.png`,
+`128x128.png`, `128x128@2x.png`, `icon.png` and `icon.icns`. The ten
+Windows Store logos (`Square*Logo.png`, `StoreLogo.png`), never referenced,
+were removed. `bundle.windows.nsis.installerIcon`/`uninstallerIcon` added:
+the first build showed NSIS's stock icon on the setup program. New check
+`npm run check:icons` (in `test:headless`) and its tests `npm run
+test:icons` (in `ci.yml`). No Rust or frontend code changed.
+
+- **WSL2:** `npm run check` 0/0, `npm run build`, `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `test:icons` 9/9,
+  `test:release-binary-guard` 39/39, `test:headless` (icons ok, Vitest
+  179, Rust 412 + 27 ignored). The 16–256 px renders were inspected by eye,
+  enlarged, on light and dark backgrounds. Regenerating twice gave
+  identical PNG and ICO bytes (not `icon.icns`).
+- **Native Windows 11 (copy `C:\dev\sotyware-relpath`, Node 24.14.1):**
+  `check:icons`, `test:icons` 9/9, `check:rfd-patch`,
+  `check:release-binary`, `test:release-binary-guard` 39/39; `npm run
+  build:release` passed (guard before bundling and after). Artefacts
+  (SHA-256): `sotyware.exe` `2a627810…468c10`, MSI
+  `sotyware_0.1.0_x64_en-US.msi` `d6074ec6…b25266`, NSIS
+  `sotyware_0.1.0_x64-setup.exe` `e7d01dd2…64a4d2`.
+- **Installers inspected without installing:** MSI unpacked as an
+  administrative image (`msiexec /a`, as `release-build.yml`); its Icon
+  table's `ProductIcon` (also `ARPPRODUCTICON` and the shortcut icon in
+  the generated WiX source) is byte-equal to `icon.ico`. NSIS unpacked by a
+  read-only script (solid LZMA; 7-Zip is not installed there). The built
+  `sotyware.exe`, the MSI's and the NSIS installer's copies, and the
+  setup program carry exactly the six `icon.ico` entries (resource bytes
+  equal); each entry occurs a second time in the NSIS data (the
+  uninstaller icon). Both packaged `sotyware.exe` equal the built one
+  apart from the bundle-type marker (`_MSI`, `_NSS`); the release-binary
+  guard (test-build markers, `--local-paths`) passes on the built and the
+  MSI copy; no test-profile, recorder, test-server, `s3s-fs` or
+  build-machine path string in the binary (`sotyware.pdb` appears once as
+  a bare file name). Windows logged "installed the product" events for
+  WiX validation and for the administrative image; the installed sotyware
+  (InstallDate 2026-11-13, executable dated 2026-11-13) was not changed.
+- **Not checked:** the icon in a running app (window, taskbar, tray at
+  real DPI), Explorer, Start menu or Add/Remove Programs; a person's look on
+  a real Windows 11 desktop (installation test plan); any Linux package or
+  desktop; macOS (`icon.icns` not looked at). Nothing installed, signed,
+  uploaded or published; no provider contacted.
 
 ### CI coverage of the test-profile and recorder tests (2026-11-14)
 

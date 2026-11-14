@@ -720,7 +720,6 @@ server only; no real provider was asked.
 
 ## General
 
-- **Placeholder icons.** `src-tauri/icons/` contains Tauri's default icons.
 - **No autostart** on login.
 - **Logging is `eprintln!` only.** No log files, levels or subscriber; output is
   lost when started from a desktop launcher.

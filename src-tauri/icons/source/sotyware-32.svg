@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- sotyware application icon, 24 and 32 px (also the tray icon): the
+       master's cube without the seams, edges on the 32 px grid. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b6cf0"/>
+      <stop offset="1" stop-color="#0f8b8d"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#tile)"/>
+  <path d="M16 5 L26 10 L16 15 L6 10 Z" fill="#fff"/>
+  <path d="M6 10 L16 15 V27 L6 22 Z" fill="#fff" fill-opacity=".78"/>
+  <path d="M26 10 L16 15 V27 L26 22 Z" fill="#fff" fill-opacity=".54"/>
+</svg>

@@ -109,6 +109,10 @@ jobs:
         run: npm run check:release-binary
       - name: test the release binary guard
         run: npm run test:release-binary-guard
+      # The application icons' check (npm run check:icons) is part of
+      # test:headless; this is its own test.
+      - name: test the icon check
+        run: npm run test:icons
       # Desktop tests run in test profiles only (ADR-027): the static check
       # of the drivers is part of test:headless; these are the guards' and
       # helpers' own tests.

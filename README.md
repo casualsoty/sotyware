@@ -71,6 +71,6 @@ leaves the build machine's paths in the binary and is refused when bundling;
 | --- | --- |
 | [docs/CONTEXT.md](docs/CONTEXT.md) | One-page summary of the project's current state |
 | [docs/architecture/](docs/architecture/overview.md) | Architecture, [repository map](docs/architecture/repository-map.md), [lifecycle and tray](docs/architecture/lifecycle.md), [built-in features](docs/architecture/features.md), [single instance](docs/architecture/single-instance.md), [decisions](docs/architecture/decisions.md) |
-| [docs/development/](docs/development/workflow.md) | [Setup](docs/development/setup.md), [commands](docs/development/workflow.md), [testing](docs/development/testing.md), [cross-platform rules](docs/development/cross-platform.md), [release builds, signing and installer testing](docs/development/release.md) |
+| [docs/development/](docs/development/workflow.md) | [Setup](docs/development/setup.md), [commands](docs/development/workflow.md), [testing](docs/development/testing.md), [cross-platform rules](docs/development/cross-platform.md), [release builds, signing and installer testing](docs/development/release.md), [application icons](docs/development/icons.md) |
 | [docs/status/](docs/status/status.md) | [Status and validation matrix](docs/status/status.md), [known limitations](docs/status/limitations.md), [roadmap](docs/status/roadmap.md) |
 | [AGENTS.md](AGENTS.md) | Conventions and rules for contributors and coding agents |

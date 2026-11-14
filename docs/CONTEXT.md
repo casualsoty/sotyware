@@ -162,7 +162,7 @@ src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, feat
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs; tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
-src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
+src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/ (generated from icons/source/*.svg, npm run icons), patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
 scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd; check-release-binary.mjs (+ .test.mjs): no test build and no build-machine path in a package; build-release.mjs (+ .test.mjs): npm run build:release, the release build with paths remapped (ADR-028)
@@ -230,6 +230,14 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Application icons** (2026-11-14, [status.md](status/status.md#application-icons-2026-11-14),
+  [icons.md](development/icons.md)): placeholders replaced by a cube on a
+  blue-to-teal tile from three SVG sources (`npm run icons`, check
+  `npm run check:icons` in `test:headless`); NSIS setup and uninstaller
+  icons set. WSL2 checks and `test:headless` passed; native Windows 11
+  `npm run build:release` passed, MSI and NSIS unpacked without
+  installing: every icon resource equals `icon.ico`, the packaged binaries
+  are the checked one. Not seen in a running app or on a real Linux desktop.
 - **Release hardening** (2026-11-14, uncommitted on `b1ae386`,
   [status.md](status/status.md#release-hardening-2026-11-14)): release
   builds go through `npm run build:release` (`--remap-path-prefix`,
@@ -758,7 +766,7 @@ session bus sotyware runs dashboard-only and does not run in the background (no
 XEmbed fallback). That has been seen only under the virtual display. Some
 tray-host failures (a watcher that leaves mid-call, other watcher errors) still
 exit 1. Left click needs the tray host to send `Activate`. Single instance
-silently turns off without a D-Bus session bus. Placeholder icons; no autostart.
+silently turns off without a D-Bus session bus. No autostart.
 A corrupt feature-preferences database is never repaired: defaults are used
 until the user moves the file away. Cloud account credentials need the OS
 credential store: Linux without a Secret Service (WSL2, minimal window

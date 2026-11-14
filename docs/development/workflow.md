@@ -41,8 +41,9 @@ cd src-tauri && cargo test
 npm run test:frontend                       # Vitest: dashboard UI with Tauri IPC mocks
 ```
 
-`npm run test:headless` first runs `npm run check:rfd-patch` (below), then
-the frontend tests and `cargo test`; it
+`npm run test:headless` first runs `npm run check:rfd-patch` (below), the
+release-binary, desktop-isolation and icon checks
+([icons.md](icons.md#regenerating)), then the frontend tests and `cargo test`; it
 needs no display, window manager, tray host or D-Bus session
 ([testing.md](testing.md#headless-tests)).
 
