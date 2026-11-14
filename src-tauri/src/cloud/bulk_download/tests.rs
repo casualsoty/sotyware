@@ -328,6 +328,39 @@ async fn a_failed_file_leaves_nothing_of_its_item_and_retry_finishes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_summary_counts_only_files_that_were_saved() {
+    // Review 2026-11-14: f/1 completes, f/2 is refused, so the folder is
+    // removed with f/1; the summary must not count f/1 as downloaded.
+    let s = setup().await;
+    s.seed(&["a", "f/1", "f/2"]);
+    let dest = s.dir.path("dest-count");
+    fs::create_dir_all(&dest).unwrap();
+    s.server
+        .inject("GetObject", None, 2, Inject::Run(Arc::new(|| {})));
+    s.server.inject("GetObject", None, 1, Inject::Deny);
+    let started = s
+        .begin(
+            vec![
+                ItemRef::File { key: "a".into() },
+                ItemRef::Folder {
+                    prefix: "f/".into(),
+                },
+            ],
+            Some(dest.clone()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let (summary, items) = s.finished(&started.batch).await;
+    assert_eq!(items[0].state, ItemState::Saved);
+    assert_eq!(items[1].state, ItemState::Failed);
+    assert_eq!(s.tree(&dest), vec!["a"]);
+    assert_eq!(summary.items_saved, 1);
+    assert_eq!(summary.files_completed, 1, "{summary:?}");
+    assert_eq!(summary.bytes, fs::metadata(dest.join("a")).unwrap().len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cancelling_removes_the_current_item_and_keeps_saved_ones() {
     let s = setup().await;
     s.seed(&["one.txt", "two/1", "two/2"]);

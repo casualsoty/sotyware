@@ -984,13 +984,20 @@ impl BulkDownloads {
                 items_saved: saved,
                 items_failed: failed,
                 items_cancelled: cancelled_items,
+                // Only files that reached the chosen folder: an item that
+                // failed or was cancelled is removed from the staging folder
+                // with the files it had already completed.
                 files_completed: files
                     .iter()
-                    .filter(|f| f.state == FileState::Completed)
+                    .filter(|f| {
+                        f.state == FileState::Completed && items[f.item].state == ItemState::Saved
+                    })
                     .count() as u64,
                 bytes: files
                     .iter()
-                    .filter(|f| f.state == FileState::Completed)
+                    .filter(|f| {
+                        f.state == FileState::Completed && items[f.item].state == ItemState::Saved
+                    })
                     .map(|f| f.bytes)
                     .sum(),
                 retryable: !left.is_empty(),
