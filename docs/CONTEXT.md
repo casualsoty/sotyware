@@ -197,6 +197,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Release-binary guard self-test on Windows** (2026-11-14, test code
+  only): `ci.yml` at `d5de7c8` passed on Ubuntu; on Windows two manifest
+  tests of `test:release-binary-guard` failed (CRLF checkout, the test's
+  `"[features]\n"` edit matched nothing). The test now edits an LF copy
+  and fails on an edit that changes nothing; WSL2 13/13 with CRLF and LF.
+  Not yet on Windows or CI.
+  [status.md](status/status.md#the-release-binary-guards-self-test-on-a-windows-checkout-2026-11-14).
 - **Late-part control on a loaded machine** (2026-11-13, test code only):
   CI failed at `f902efb` on
   `without_the_wait_a_handed_over_part_lands_after_the_abort`; the

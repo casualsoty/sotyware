@@ -34,9 +34,14 @@ function run(args, env = {}) {
 function manifestCopy(name, edit) {
   const dir = join(tmp, name);
   mkdirSync(join(dir, "src"), { recursive: true });
-  let text = readFileSync(realManifest, "utf8");
+  // LF first: Git on Windows (core.autocrlf) checks the manifest out with
+  // CRLF, and the edits below look for "\n".
+  let text = readFileSync(realManifest, "utf8").replace(/\r\n/g, "\n");
   text = text.replace(/\n\[patch\.crates-io\][^[]*/, "\n");
-  text = edit(text);
+  const edited = edit(text);
+  // An edit that matches nothing would test the unchanged manifest.
+  assert.notEqual(edited, text, `the edit for ${name} changed nothing`);
+  text = edited;
   writeFileSync(join(dir, "Cargo.toml"), text);
   writeFileSync(join(dir, "src", "lib.rs"), "");
   writeFileSync(join(dir, "src", "main.rs"), "fn main() {}\n");

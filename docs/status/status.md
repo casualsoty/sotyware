@@ -127,6 +127,25 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### The release-binary guard's self-test on a Windows checkout (2026-11-14)
+
+`ci.yml` at `d5de7c8` (pushed by the user): the **Ubuntu job passed**,
+so the two fixes below ran on CI on Linux. The **Windows job failed**
+before its Rust tests (so neither fix has run on Windows yet) in `npm
+run test:release-binary-guard`: 11 passed, 2 failed, "a default that
+turns the recorder on is refused" and "another feature that turns it on
+is refused" (exit 0 instead of 1). These tests were added with the
+request recorder (`b991445`), after the last Windows CI run. Cause (test
+code only; the guard reads the manifest through `cargo metadata` and is
+unaffected): Git on the runner checks `Cargo.toml` out with CRLF (no
+`.gitattributes`), and the test edited its copy by replacing
+`"[features]\n"`, which then matched nothing, so it tested the unchanged
+manifest. The test now converts its copy to LF before editing and fails
+if an edit changes nothing. WSL2: reproduced with a CRLF copy of
+`src-tauri` (11/2), after the fix 13/13 with CRLF and with the LF
+repository; with one edit made to match nothing the new check fails
+("changed nothing"). Not yet run on Windows or CI.
+
 ### The late-part control test on a loaded machine (2026-11-13)
 
 On `f902efb`, `ci.yml` failed on Linux (Ubuntu 26.04 runner, Rust
