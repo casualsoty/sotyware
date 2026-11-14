@@ -161,6 +161,21 @@ affected.
 
 ## Windows installers
 
+- **Nothing is signed.** There is no code-signing certificate; the MSI, the
+  NSIS setup program and `sotyware.exe` are unsigned, so SmartScreen warns
+  on every download and Smart App Control (where enabled) blocks them.
+  Requirements and verification: [release.md](../development/release.md#signing-not-set-up).
+- **The installers of the current code were never installed.** Fresh
+  install, upgrade with user data, uninstall, app-data deletion,
+  credential leftovers and reinstall need a disposable Windows 11 VM or
+  machine ([plan](../development/release.md#installation-test-plan-disposable-windows-11)).
+  The development machine has a real sotyware installation sharing the
+  MSI's UpgradeCode and the real profile, so it must not be used.
+- **No release support beyond Windows 11.** Windows 10 and Linux are not
+  validated and are not claimed ([scope](../development/release.md#support-scope)).
+- **A release binary must be built with `npm run build:release`** (ADR-028);
+  a plain `tauri build` leaves 601 build-machine paths in the Windows binary
+  and its bundling is refused.
 - **The MSI needs administrator rights.** It installs per machine, so a silent
   (`/qn`) install from a non-elevated shell fails with exit 1603. The NSIS
   installer installs per user and needs no elevation.
@@ -788,7 +803,14 @@ server only; no real provider was asked.
   workflows are manual and may lag behind `main`.
 - **Not in CI at all:** the real-desktop Windows test (needs an unlocked desktop
   with Explorer and the mouse), the manual checklist, Windows 10, real Linux
-  desktops, installers.
+  desktops, installing the installers. Building and unpacking them is the
+  manual `release-build.yml`, never run on GitHub yet.
+- **Automatic CI never runs the test-profile or recorder tests**, only
+  compiles the test-profile build with clippy; both test suites run locally.
+- **A change only to `tests/desktop/TestProfile.psm1` runs no PowerShell
+  test in CI:** `ci.yml` skips `tests/desktop/**`, and `isolation-guard.yml`
+  (Linux) runs the static guard and the Python helpers' tests, not
+  `test-profile-selftest.ps1`.
 - **Docs-only changes skip CI** (`paths-ignore`), so a required status check
   would never report on such a pull request; branch protection is not
   configured.

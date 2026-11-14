@@ -29,7 +29,24 @@ In priority order:
    dashboard. Without a tray host (vanilla GNOME, an XEmbed-only panel), run the
    dashboard-only steps of the manual checklist.
 3. **Install and run the bundles** (`.deb`, `.rpm`, AppImage, the Windows MSI). The
-   NSIS installer is done on Windows 11 (silent mode).
+   NSIS installer is done on Windows 11 (silent mode), at `e8834fd`, before
+   the cloud storage work.
+
+## Next: first release (Windows 11 only)
+
+Not started unless status.md says so. Scope and procedures:
+[release.md](../development/release.md).
+
+1. Publish the local commits so `ci.yml` runs on them (the user decides
+   when), then run `release-build.yml` once by hand.
+2. Choose and obtain code signing (certificate or signing service), wire it
+   into a protected, manual release job, verify the signatures.
+3. Run the [installation test plan](../development/release.md#installation-test-plan-disposable-windows-11)
+   on a disposable Windows 11 VM or machine, with signed installers.
+4. Drive Windows drag and drop from Explorer and the keyboard shortcuts
+   with real input once (the manual procedure in release.md, test-profile
+   build only).
+5. Replace the placeholder icons.
 
 Fixes found during validation come before anything below.
 

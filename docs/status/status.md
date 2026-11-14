@@ -126,6 +126,141 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Release hardening (2026-11-14)
+
+Uncommitted on `b1ae386` (10 commits ahead of the last known
+`origin/main`). No provider was contacted; no account, credential or
+database of the user's was read or changed; the normal app was not
+started; no installer was installed.
+
+- **Build-machine paths (ADR-028).** `npm run build:release`
+  (`scripts/build-release.mjs`) remaps home, RUSTUP_HOME, CARGO_HOME and
+  the checkout; `check-release-binary.mjs --local-paths` and the
+  `beforeBundleCommand` guard refuse a binary that names them.
+  - Native Windows 11 (copy `C:\dev\sotyware-relpath`, Rust 1.99.1 MSVC):
+    plain `npm run tauri build -- --bundles nsis` compiled and was
+    **refused at bundling**: 601 × `C:\Users\<name>`, all
+    `…\.cargo\registry\src\…` (binary `66ec5389…c1dd5d`, 10,412,032 B).
+    `npm run build:release` then built and bundled MSI and NSIS; the guard
+    passed before bundling and after the build. In the binary: 0 home,
+    `.cargo`, `.rustup` or `C:\dev` paths (also none in UTF-16), 601
+    `cargo\registry\src\…` panic locations, 89 `/rustc/<commit>/…` (as
+    before), the PDB by file name only; no test-profile or recorder marker,
+    no `SOTYWARE_TEST_PROFILE`/`SOTYWARE_REQUEST_RECORD`, test identifier,
+    test server, `SOTYWARE_IT_`, `sotyware-it/`, `AKIA` or private-key
+    text. SHA-256 after the NSIS bundle step (Tauri patches a bundle-type
+    marker into the binary before each bundle):
+    `sotyware.exe` `8fa1a55a36374e4e97e2e30aa7c9e53961e327363f749038b4a99f09a4c1dd8b`
+    (10,403,840 B), `sotyware_0.1.0_x64_en-US.msi`
+    `8b6679d461a7f03066d8926d8d3ad9497901e666489952348233afd9c1d11730`,
+    `sotyware_0.1.0_x64-setup.exe`
+    `8bdc11070dbbb858b5f9336b29f511c24a2199b55249b33b32c19baa41736659`.
+    The installers were not unpacked or installed on this machine. WiX's
+    MSI validation wrote a "Windows Installer installed the product" event
+    pair at 22:05:37; the installed product stayed unchanged.
+  - WSL2: `npm run build:release -- --bundles deb` passed both guard
+    steps; the Linux binary went from 746 `/home/<name>/…` paths to 0
+    (SHA-256 `b984b28c…ba01f` → `4bf2134b…dc898`), no test markers.
+- **Support scope and README** narrowed to Windows 11 (subject to installer
+  validation); Windows 10 and Linux not claimed. README describes the
+  implemented Cloud Storage functions and their limits.
+- **CI:** manual `release-build.yml` (Windows: build:release, then MSI and
+  NSIS unpacked with `msiexec /a` and 7-Zip and their `sotyware.exe`
+  compared with the checked binary, bundle-type marker normalised).
+  **Never run on GitHub;** YAML parsed, its PowerShell step parsed with
+  the PowerShell 5.1 parser, the marker normalisation tried on the local
+  binary (equal after patching the marker, unequal after any other byte).
+  GitHub was not reachable (no credentials in WSL), so the remote state is
+  unknown.
+- **Checks, WSL2:** `npm run check` 0/0, `npm run build`, Vitest 179;
+  `cargo fmt --check`; clippy default and test-profile; `cargo test`
+  412 / 411 (test-profile) / 440 (recorder), 27 ignored each, 0 failed;
+  rfd guard + self-test 10/10, release guard, isolation guard + self-test
+  9/9, release-binary guard self-tests 39/39 (20 new), profile
+  helpers 10.
+- **Checks, native Windows 11:** rfd guard, release guard (manifest), isolation guard;
+  release-binary guard self-tests 39/39; test-profile helper self-test
+  20/20; `cargo test --locked` 399 and `--features test-profile` 398, 27
+  ignored each, 0 failed (Node 24.14.1). Windows clippy and fmt were not
+  rerun (no Rust change).
+- **Not done:** installing, unpacking or signing the installers;
+  `release-build.yml` on GitHub; desktop suites (no runtime code changed);
+  Windows drag and drop and real keys (manual procedure in
+  [release.md](../development/release.md#windows-drag-and-drop-and-keyboard-shortcuts)).
+
+### Unexpected activity in the real Windows profile (2026-11-14)
+
+The release-candidate audit saw the user's real profile
+`%LOCALAPPDATA%\com.sotyware.desktop` change at about 21:46: a
+`cloud-accounts.sqlite3` appeared and the `EBWebView` folder changed. No
+test script launched the normal build on purpose. Investigated the same
+evening from metadata only: a process started through WMI (outside the
+Claude app's MSIX virtualization, see the
+[earlier incident](#test-isolation-incident-root-cause-and-fix-2026-11-14))
+listed file names, sizes and times, read the Explorer launch history
+(UserAssist), the taskbar shortcuts and the Application log. No database
+or WebView file was opened, no Credential Manager entry was read, nothing
+in the profile was changed or removed, and sotyware was not started.
+
+What the evidence shows:
+
+- **The normal build was started from its pinned taskbar shortcut at
+  21:46:25.** The taskbar pin `sotyware.lnk` (created 2026-11-13 18:58:36)
+  points to `C:\dev\sotyware\src-tauri\target\release\sotyware.exe`, a
+  normal build of `f902efb` (2026-11-13 18:53; SHA-256 `5d9d767f…ecfc0`),
+  not the installed copy in `D:\Program Files\sotyware`. Explorer's launch
+  history records exactly one launch of that pin and of that executable,
+  both at 21:46:25. Explorer writes this history for launches through its
+  own UI (a click on the taskbar button, Win+number, a jump list, or UI
+  Automation invoking the button); a script's `Start-Process` or
+  `CreateProcess` does not appear there. Which of those it was **cannot be
+  established**: no process-creation auditing (Security 4688) is enabled,
+  and the Prefetch folder and the BAM key need administrator rights that
+  were not used.
+- **It created a new, empty account database; it migrated no existing
+  data.** `cloud-accounts.sqlite3` was created at 21:46:25 and last written
+  in the same second, 20,480 bytes, with no `-journal` or `-wal` file
+  beside it. The user's previous database had been deleted earlier that
+  day ([incident](#test-isolation-incident-root-cause-and-fix-2026-11-14));
+  the app creates a missing database and applies its schema (`open_database`
+  in `storage.rs`). A new file with `f902efb`'s one account migration,
+  made with SQLite in a scratch folder, is also 20,480 bytes. Adding an
+  account writes the file, and it was not written after 21:46:25. That the
+  file holds no account row is inferred from these facts; its content was
+  not read.
+- **`preferences.sqlite3` was not written** (last write 2026-11-13
+  06:31:21, unchanged), so no preference migration or save happened. No
+  `cloud-places.sqlite3` was created: `f902efb` predates ADR-026 (its binary
+  does not contain the name).
+- **WebView2 ran normally for about 7 seconds.** Files under `EBWebView`
+  were written from 21:46:25 to 21:46:32 (a new `Session Storage`, browser
+  state such as `Local State`, `Preferences`, `History`, caches), the
+  pattern of a start and an orderly shutdown. The process was not running
+  at 21:52. How it ended (tray Quit, Task Manager, a script stopping
+  processes by name) is not recorded; there is no crash or hang event.
+- **No credential use is expected:** the app reads no credential at
+  startup and the new database names no account. The Credential Manager
+  was not inspected (out of bounds for this investigation).
+- **Not an installation.** At 21:43:40 and 21:43:56–21:43:59 the
+  Application log has "Windows Installer installed the product" events for
+  the release-candidate MSI in `C:\dev\sotyware-rc` (since removed). The
+  installed product is unchanged (one sotyware entry, install date
+  2026-11-13, `D:\Program Files\sotyware\sotyware.exe` from 2026-11-13
+  18:53:08), so these were not installations. The first matches WiX's
+  validation of an MSI during a build, which writes the same event pair (it did so
+  again at 22:05:37 during this phase's MSI build); the second, a transaction from a
+  client process, matches an administrative unpack (`msiexec /a`) for
+  inspection. Neither touched the profile, which changed only from
+  21:46:25.
+
+Conclusion: the activity is explained as one launch of the pinned
+development build through Explorer at 21:46:25, which created an empty
+account database and wrote WebView2 state, then ended about 7 s later.
+Whether a person or an automated input caused the launch is **not
+established**. The pinned shortcut still points at a development build that
+uses the real profile; removing the pin, or not starting it, is the user's
+decision. The missing Backblaze account was not restored.
+
 ### Final review of ADR-026 and ADR-027 (2026-11-14)
 
 An independent review of `124364c..9d4737d` (23 files: the isolation

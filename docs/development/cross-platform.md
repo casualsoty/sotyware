@@ -1,6 +1,9 @@
 # Cross-platform development
 
-Target platforms: **Windows 10/11 and Linux desktops**. macOS is not a target,
+Code targets: **Windows and Linux desktops**; every change must keep both
+building and working. This is not the release support scope: the first
+release targets Windows 11 only, and Windows 10 and Linux are not validated
+([release.md](release.md#support-scope)). macOS is not a target,
 although the single-instance dependency is also enabled for it (see below).
 Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 `run()` is Tauri template boilerplate.

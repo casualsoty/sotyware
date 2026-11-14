@@ -9,10 +9,16 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 - **Name:** `sotyware`, always lowercase, also at the start of a sentence and in UI
   text. Bundle identifier `com.sotyware.desktop`; Cargo package and binary
   `sotyware`; Rust library `sotyware_lib` ([why](docs/architecture/decisions.md#adr-007-library-crate-named-sotyware_lib)).
-- **Purpose:** a cross-platform desktop app for Windows 10/11 and Linux that runs
-  continuously in the background, stays lightweight, lives in the system tray and
-  opens a dashboard window on demand. Where Linux has no tray host, it runs as a
-  plain window instead (dashboard-only mode).
+- **Purpose:** a desktop app that runs continuously in the background, stays
+  lightweight, lives in the system tray and opens a dashboard window on demand.
+  Where Linux has no tray host, it runs as a plain window instead
+  (dashboard-only mode).
+- **Platforms:** code and builds target Windows and Linux, and every change
+  must keep both working ([cross-platform.md](docs/development/cross-platform.md)).
+  **Release support** is narrower: the first release targets Windows 11 only,
+  subject to installer validation; Windows 10 is not validated and Linux has
+  never run on a real desktop, so neither may be described as supported
+  ([release.md](docs/development/release.md#support-scope)).
 - **Current scope:** the desktop runtime (window, tray, lifecycle, single
   instance) and the foundation for built-in features (registry, lifecycle,
   enable/disable from the dashboard, one example feature), and cloud storage

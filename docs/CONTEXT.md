@@ -6,10 +6,16 @@ the details and win if anything here disagrees. Rules for agents:
 
 ## What it is
 
-A cross-platform (Windows 10/11, Linux) desktop app that runs in the background,
-lives in the system tray and opens a dashboard window on demand. On Linux
-without a tray host it runs as a plain window (dashboard-only mode). Built with
-Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
+A desktop app that runs in the background, lives in the system tray and opens
+a dashboard window on demand. On Linux without a tray host it runs as a plain
+window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
+TypeScript. Version 0.1.0, not yet released. Code and builds target Windows
+and Linux; the **first release targets Windows 11 only**, subject to installer
+validation; Windows 10 is not validated and Linux has not run on a real
+desktop, so neither is claimed as supported
+([release.md](development/release.md#support-scope)). Release binaries are
+built with `npm run build:release`, which keeps the build machine's paths out
+(ADR-028).
 
 ## What works today
 
@@ -159,7 +165,7 @@ src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs,
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/, patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
-scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd; check-release-binary.mjs (+ .test.mjs): no request recorder by default or in a package
+scripts/             check-rfd-patch.mjs (+ .test.mjs): fails unless Cargo builds rfd from src-tauri/patches/rfd; check-release-binary.mjs (+ .test.mjs): no test build and no build-machine path in a package; build-release.mjs (+ .test.mjs): npm run build:release, the release build with paths remapped (ADR-028)
 tests/desktop/       Desktop tests of the release binary (run.sh: Linux/X11 simulated; virtual.sh: same on Xvfb + openbox; windows.ps1: real Windows desktop; windows-isolated.ps1: Windows private desktop; opt-in Cloud Storage end-to-end incl. browsing, downloads and uploads: cloud-ui.sh, windows-cloud-ui.ps1)
 docs/                architecture/, development/, status/
 ```
@@ -224,6 +230,18 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Release hardening** (2026-11-14, uncommitted on `b1ae386`,
+  [status.md](status/status.md#release-hardening-2026-11-14)): release
+  builds go through `npm run build:release` (`--remap-path-prefix`,
+  ADR-028); the bundling guard refuses a binary naming the build
+  machine's paths (it refused the plain Windows build: 601 ×
+  `C:\Users\<name>`). Support scope narrowed to Windows 11 (README,
+  AGENTS, [release.md](development/release.md)); manual
+  `release-build.yml` added (not run on GitHub). The unexpected 21:46
+  activity in the real Windows profile was one launch of the pinned
+  development build through Explorer, which created an empty account
+  database ([status](status/status.md#unexpected-activity-in-the-real-windows-profile-2026-11-14));
+  who or what triggered it is not established.
 - **Final review of ADR-026/027** (2026-11-14, uncommitted on
   `9d4737d`, local servers only,
   [status.md](status/status.md#final-review-of-adr-026-and-adr-027-2026-11-14)):
