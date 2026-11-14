@@ -63,6 +63,65 @@ another executable.
 The frontend uses no icon: the dashboard has no logo, and the webview has
 no favicon.
 
+## Installer icons
+
+`scripts/check-installer-icons.mjs` checks that the Windows installers
+carry `icon.ico`. It reads the files and parses them in memory (Node
+built-ins only, no 7-Zip, WiX or Windows Installer API); it never runs,
+installs or unpacks an installer to disk and writes nothing. What it
+compares:
+
+| Installer | Resource | Compared how |
+| --- | --- | --- |
+| MSI | `Property` `ARPPRODUCTICON` (the Add/Remove Programs icon) → its `Icon` table row (`ProductIcon`) → the stream `Icon.ProductIcon` | byte-equal to `icon.ico` |
+| MSI | every `Shortcut` row: `Icon_` (the Start menu shortcut names `ProductIcon`) | that `Icon` stream byte-equal to `icon.ico`; at least one shortcut must name it |
+| MSI | a shortcut without `Icon_` (the desktop shortcut) | must target the `File` that is `sotyware.exe`, whose icon is then checked in the administrative image (next row); a shortcut to something outside the package (Tauri's "Uninstall sotyware" → `msiexec.exe`) is listed and not checked |
+| MSI administrative image (`msiexec /a`) | the `.msi` copy in it, as above; its `sotyware.exe`'s icon group | as above; as for an executable |
+| NSIS setup program | its PE icon group (`RT_GROUP_ICON`) and icons (`RT_ICON`) | as for an executable |
+| NSIS uninstaller | not a file in the setup program: NSIS writes it at install time from the setup program's header, patched with the uninstaller icon data stored in the compressed data. The check decompresses that data (solid LZMA, Tauri's default; its own decoder), finds the one entry that is icon patch data, applies it in memory and checks the result's icon group. Every icon resource must have been written by that patch, so the setup program's own icon cannot pass for the uninstaller's | as for an executable |
+| `sotyware.exe` (built, and the copy in the MSI image) | PE icon group | as for an executable |
+
+"As for an executable": exactly one icon group; its entries are, in order,
+`icon.ico`'s six entries with the same width, height, colour count, planes,
+bit count and size; each points at an `RT_ICON` resource byte-equal to that
+entry's PNG; no other `RT_ICON` resource exists. A missing, malformed,
+truncated or different icon fails, as does a file or image that is missing
+or cannot be parsed (each with its own message); the command exits 1, or 2
+for a wrong command line.
+
+Run it on a Windows release build (after `npm run build:release`):
+
+```powershell
+# msiexec returns at once unless waited for
+Start-Process msiexec.exe -Wait -ArgumentList '/a', 'src-tauri\target\release\bundle\msi\sotyware_0.1.0_x64_en-US.msi', '/qn', "TARGETDIR=`"$env:TEMP\sotyware-msi-image`""
+node scripts/check-installer-icons.mjs `
+  --msi src-tauri\target\release\bundle\msi\sotyware_0.1.0_x64_en-US.msi `
+  --msi-image "$env:TEMP\sotyware-msi-image" `
+  --nsis src-tauri\target\release\bundle\nsis\sotyware_0.1.0_x64-setup.exe `
+  --exe src-tauri\target\release\sotyware.exe
+npm run test:installer-icons   # its tests: in-memory fixtures, any platform
+```
+
+`--msi`, `--nsis` and `--exe` also work on Linux on copied files;
+`--msi-image` needs the image `msiexec /a` writes (it installs nothing, but
+Windows logs MsiInstaller "installed the product" events for it).
+`--ico` checks against another ICO (default `src-tauri/icons/icon.ico`).
+
+**In CI:** `release-build.yml` runs the check after unpacking both
+installers, on every artifact in the table, and fails the job on any
+problem; `ci.yml` and `release-build.yml` run its tests
+(`npm run test:installer-icons`): PE files, MSI databases and NSIS
+setup programs built in memory, with correct, missing, stale, incomplete
+and malformed icons, an LZMA vector made by liblzma, and checks that the
+files are left unchanged and that the script imports no process, network
+or write API.
+
+**Not covered:** these checks prove which bytes the installers carry, not
+what Windows shows. Explorer, the Start menu, Add/Remove Programs, the
+installed application and other display scalings remain part of the
+[installation test](release.md#installation-test-plan-disposable-windows-11)
+on a disposable Windows 11 VM.
+
 ## Regenerating
 
 ```bash

@@ -14,7 +14,7 @@ Where things are. Generated and ignored paths are listed in
 │       ├── isolation-guard.yml  Automatic for changes to tests/desktop/** or the guard (which ci.yml skips): desktop isolation guard, its self-test, the Python profile helpers' tests
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
 │       ├── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
-│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary; nothing signed or uploaded
+│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); nothing signed or uploaded
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions)
@@ -58,6 +58,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── check-release-binary.test.mjs  Its tests (node --test, npm run test:release-binary-guard)
 │   ├── check-desktop-isolation.mjs  Static check of tests/desktop (npm run check:desktop-isolation, in test:headless): no driver names the user's app folder or credential namespace, moves or deletes a database, deletes a credential directly, or launches without the test-profile checks (ADR-027)
 │   ├── check-desktop-isolation.test.mjs  Its tests (node --test, npm run test:desktop-isolation-guard)
+│   ├── check-installer-icons.mjs  Reads the MSI (compound file, MSI tables), the NSIS setup program (PE resources, solid LZMA data, uninstaller icon patch) and executables, and checks their icons equal src-tauri/icons/icon.ico; run by release-build.yml (docs/development/icons.md#installer-icons)
+│   ├── check-installer-icons.test.mjs  Its tests with in-memory fixtures (node --test, npm run test:installer-icons)
 │   ├── icons.mjs         The application icons from src-tauri/icons/source (npm run icons, through tauri icon; writes icon.ico itself) and their check (npm run check:icons, in test:headless)
 │   └── icons.test.mjs    Its tests (node --test, npm run test:icons)
 ├── package-lock.json         Pinned JS dependency tree

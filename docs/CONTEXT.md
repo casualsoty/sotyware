@@ -230,6 +230,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Installer icon verification** (2026-11-14, committed on `b90bcb3`,
+  [status.md](status/status.md#installer-icon-verification-in-release-builds-2026-11-14),
+  [icons.md](development/icons.md#installer-icons)):
+  `scripts/check-installer-icons.mjs` reads the MSI (`ARPPRODUCTICON` →
+  `ProductIcon`, shortcuts, administrative image), the NSIS setup program
+  and the uninstaller it would write (solid LZMA decoded, icon patch
+  applied in memory) and every `sotyware.exe`, and compares their icons
+  with `icon.ico` byte for byte; run by `release-build.yml`, tests (28)
+  in `ci.yml`. Native Windows 11 `build:release` + check passed, a
+  stale-icon control failed everywhere; nothing installed or run. Not
+  yet on GitHub.
 - **Application icons** (2026-11-14, [status.md](status/status.md#application-icons-2026-11-14),
   [icons.md](development/icons.md)): placeholders replaced by a cube on a
   blue-to-teal tile from three SVG sources (`npm run icons`, check

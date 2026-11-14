@@ -69,7 +69,19 @@ Before a release, also run the manual `release-build.yml` workflow
 ([testing.md](testing.md#ci)): it builds the same way on a clean hosted
 runner, unpacks both installers without installing them and checks that the
 `sotyware.exe` inside each is the checked binary (apart from the
-bundle-type marker Tauri patches in before each bundle).
+bundle-type marker Tauri patches in before each bundle). It then checks the
+installers' own icons by reading their bytes
+(`scripts/check-installer-icons.mjs`, [icons.md](icons.md#installer-icons)):
+the MSI's Add/Remove Programs icon (`ARPPRODUCTICON` → `ProductIcon`) and
+Start menu shortcut icon are byte-equal to `src-tauri/icons/icon.ico`, the
+desktop shortcut takes its icon from `sotyware.exe`, and the icon groups of
+the NSIS setup program, of the uninstaller it would write (rebuilt in
+memory from the setup program's header and the uninstaller icon data) and
+of every `sotyware.exe` hold exactly `icon.ico`'s images. Neither installer
+is run. To run the same check locally after `npm run build:release`, see
+[icons.md](icons.md#installer-icons). What Windows then shows (Explorer,
+Start menu, Add/Remove Programs, other scalings) is still checked only in
+the installation test below.
 
 ## Signing (not set up)
 
@@ -144,7 +156,9 @@ seen (screenshots for dialogs), and pass/fail.
    version, publisher), that no profile folder exists yet, that WebView2 is
    present or installed by the bootstrapper. The sotyware icon
    ([icons.md](icons.md)) on the setup program, the Start menu entry and
-   the uninstall entry, Explorer, at 100 % and at a higher display scaling.
+   the uninstall entry, Explorer, at 100 % and at a higher display scaling
+   (`release-build.yml` checks only the icon bytes the installers carry,
+   [icons.md](icons.md#installer-icons), not what Windows displays).
    (Window, taskbar and tray icons were already seen in a test-profile
    build at 100 % on the development machine,
    [status](../status/status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14);

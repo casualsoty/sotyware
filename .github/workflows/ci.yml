@@ -113,6 +113,10 @@ jobs:
       # test:headless; this is its own test.
       - name: test the icon check
         run: npm run test:icons
+      # The installers' icon check runs on real installers only in
+      # release-build.yml; its tests use fixtures built in memory.
+      - name: test the installer icon check
+        run: npm run test:installer-icons
       # Desktop tests run in test profiles only (ADR-027): the static check
       # of the drivers is part of test:headless; these are the guards' and
       # helpers' own tests.

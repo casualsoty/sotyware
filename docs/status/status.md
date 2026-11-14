@@ -127,6 +127,68 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Installer icon verification in release builds (2026-11-14)
+
+New `scripts/check-installer-icons.mjs` (Node built-ins only) and its
+tests `scripts/check-installer-icons.test.mjs` (`npm run
+test:installer-icons`, in `ci.yml` and `release-build.yml`);
+`release-build.yml` now runs the check on the real installers after
+unpacking them, plus `check:icons`. What is compared and how:
+[icons.md](../development/icons.md#installer-icons). No application code,
+icon or existing guard changed. **Not yet run on GitHub** (not pushed).
+
+- **Tests:** 28/28 on WSL2 and on native Windows 11 (Node 24.22.0 /
+  24.14.1). In-memory PE files, MSI compound files and NSIS setup
+  programs (LZMA by a literal-only encoder in the test): correct icons
+  pass; missing icon group, missing `ARPPRODUCTICON`, Icon row or stream,
+  missing uninstaller icon data, stale image (one byte of the 256 px
+  entry), ICO without its 16 px entry, second group or stray `RT_ICON`,
+  shortcut without icon to another file, uninstaller patch that leaves
+  one setup icon in place, truncated/garbled/zlib/uninstaller/non-NSIS
+  files, a looping FAT, missing files and a wrong command line all fail
+  with their own messages; an LZMA vector from liblzma (matches, repeats,
+  long distances, end marker) decodes exactly; fixture hashes, sizes and
+  write times unchanged after the run; the script imports no process,
+  network or write API.
+- **Native Windows 11** (copy `C:\dev\sotyware-relpath` synced to this
+  tree): `check:icons`, `test:icons` 9/9, `test:installer-icons` 28/28,
+  `check:rfd-patch`, `check:release-binary`, `test:release-binary-guard`
+  39/39; `npm run build:release` passed (4 remaps, guard before bundling
+  and after). Artefacts (SHA-256): `sotyware.exe`
+  `3BE4AF14…23AD8CF4` (as left after bundling), MSI
+  `sotyware_0.1.0_x64_en-US.msi` `612DD71F…F2564C92BF`, NSIS
+  `sotyware_0.1.0_x64-setup.exe` `A404C24C…2049CF7D65`. Administrative
+  image (`msiexec /a`, exit 0): `sotyware_0.1.0_x64_en-US.msi`
+  `E1478683…2FF1282E` and `PFiles\sotyware\sotyware.exe`
+  `587F048C…D1315E1B9`. The check, as the
+  workflow runs it, passed all seven: MSI and image MSI
+  (`ARPPRODUCTICON` → `ProductIcon` and shortcut
+  `ApplicationStartMenuShortcut` → `ProductIcon`, each 15,800 bytes
+  equal to `icon.ico`; `ApplicationDesktopShortcut` has no icon and
+  targets File `Path` = `sotyware.exe`; `UninstallShortcut` targets
+  `msiexec.exe`, not checked), the image's `sotyware.exe`, the NSIS setup
+  program, the uninstaller rebuilt in memory (one patch entry writing the
+  group and all six icons) and the built `sotyware.exe`: one group, six
+  entries equal to `icon.ico`. Negative control: the same files against
+  `icon.ico` with one byte of its 256 px image changed failed on every
+  artefact (exit 1). The three artefacts' hash, size and write time were
+  unchanged afterwards; no setup or uninstaller process ran; the
+  MsiInstaller "installed the product" events are WiX validation and the
+  administrative image; the installed sotyware (0.1.0, InstallDate
+  2026-11-13, executable dated 2026-11-13) was not changed.
+- **WSL2:** the check on the same Windows artefacts and image passed
+  (7/7); `test:icons` 9/9, `test:release-binary-guard` 39/39,
+  `test:desktop-isolation-guard` 9/9, `npm run check` 0/0,
+  `test:headless` (guards, icons, Vitest 179, Rust 412 + 27 ignored).
+  The decoder was also checked once against the earlier build
+  (`e7d01dd2…`): its 10,381,824-byte data entry equals the built
+  `sotyware.exe` apart from the bundle-type marker.
+- **Not covered:** what Windows displays (Explorer, Start menu,
+  Add/Remove Programs, installed app, other scalings) stays in the
+  [installation test](../development/release.md#installation-test-plan-disposable-windows-11).
+  Nothing installed, run, signed, uploaded or published; no provider,
+  profile or Credential Manager touched.
+
 ### Application icons (2026-11-14)
 
 Tauri's placeholder icons replaced, on `0864765` (committed as `build:
@@ -266,7 +328,9 @@ installers' and installed copy's icons.
 resources. Since both packaged `sotyware.exe` equal the binary built from
 `f9a0c71` (marker aside), they carry that build's embedded icon; the MSI's
 `ProductIcon` and the NSIS setup and uninstaller icons were inspected only
-in the native Windows 11 build [above](#application-icons-2026-11-14).
+in the native Windows 11 build [above](#application-icons-2026-11-14);
+`release-build.yml` checks them since the change recorded in
+[Installer icon verification](#installer-icon-verification-in-release-builds-2026-11-14).
 
 ### CI coverage of the test-profile and recorder tests (2026-11-14)
 

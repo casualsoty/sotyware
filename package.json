@@ -21,6 +21,7 @@
     "icons": "node scripts/icons.mjs",
     "check:icons": "node scripts/icons.mjs --check",
     "test:icons": "node --test scripts/icons.test.mjs",
+    "test:installer-icons": "node --test scripts/check-installer-icons.test.mjs",
     "build:test-profile": "tauri build --no-bundle --features test-profile -- --target-dir target/test-profile",
     "test:profile-helpers": "python3 -m unittest tests/desktop/test_profile_test.py",
     "test:desktop:virtual": "bash tests/desktop/virtual.sh",

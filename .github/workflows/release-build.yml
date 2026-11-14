@@ -8,6 +8,10 @@
 # and the sotyware.exe inside each installer is the checked binary (equal
 # except for the bundle-type marker Tauri patches in before each bundle). The installers are extracted, never installed: an MSI
 # administrative image (msiexec /a) and 7-Zip for the NSIS program.
+# Their icons are then checked against src-tauri/icons/icon.ico by reading
+# the files only (scripts/check-installer-icons.mjs, docs/development/icons.md):
+# the MSI's ProductIcon and shortcut icons, the NSIS setup program's and
+# uninstaller's icon groups, and the icon of every sotyware.exe.
 #
 # Windows runner time is billed at a higher rate and an LTO build takes a
 # while, so it never runs on pushes or pull requests. Start it before a
@@ -59,6 +63,10 @@ jobs:
         run: npm run check:release-binary
       - name: test the release binary guard
         run: npm run test:release-binary-guard
+      - name: check the icon files and test the installer icon check
+        run: |
+          npm run check:icons
+          npm run test:installer-icons
 
       # Compiles with the path remaps, runs the beforeBundleCommand guard
       # (refuses a test build or a binary naming this machine's paths),
@@ -102,3 +110,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "${kind}: the packaged binary failed the guard" }
             "${kind}: packaged sotyware.exe is the checked binary (bundle-type marker aside)"
           }
+
+      # Reads the installers and the administrative image unpacked above;
+      # executes, installs and writes nothing. Fails on a missing, malformed
+      # or different icon, and when a file or the image is missing.
+      - name: Check the installers' icons
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = @(Get-ChildItem 'src-tauri\target\release\bundle\msi\*.msi')
+          $nsis = @(Get-ChildItem 'src-tauri\target\release\bundle\nsis\*-setup.exe')
+          if ($msi.Count -ne 1 -or $nsis.Count -ne 1) { throw "expected one MSI and one NSIS installer, got $($msi.Count) and $($nsis.Count)" }
+          $image = Join-Path $env:RUNNER_TEMP 'installers\msi'
+          if (-not (Test-Path $image)) { throw "the MSI administrative image $image is missing" }
+          node scripts/check-installer-icons.mjs --msi $msi[0].FullName --msi-image $image --nsis $nsis[0].FullName --exe 'src-tauri\target\release\sotyware.exe'
+          if ($LASTEXITCODE -ne 0) { throw "installer icon check failed (exit $LASTEXITCODE)" }
