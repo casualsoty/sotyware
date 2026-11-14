@@ -51,6 +51,8 @@ Not started unless status.md says so. Scope and procedures:
    ([status.md](status.md#application-icons-2026-11-14)); seen in the
    running test-profile app on Windows 11 at 100 % (window, taskbar, tray,
    [status](status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14));
+   pushed and passed `ci.yml`, `isolation-guard.yml` and `release-build.yml`
+   at `f9a0c71` ([status](status.md#hosted-runs-at-f9a0c71-icons-pushed-2026-11-14));
    Explorer, Start menu, other scalings and the installers are part of the
    installation test (3).
 

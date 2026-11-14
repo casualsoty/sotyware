@@ -803,7 +803,8 @@ server only; no real provider was asked.
 - **Not in CI at all:** the real-desktop Windows test (needs an unlocked desktop
   with Explorer and the mouse), the manual checklist, Windows 10, real Linux
   desktops, installing the installers. Building and unpacking them is the
-  manual `release-build.yml` (passed once, run 43643326406, 2026-11-14).
+  manual `release-build.yml` (passed twice, runs 43643326406 and
+  43646814979, 2026-11-14); it does not inspect the installers' icons.
 - **The test-profile and recorder tests run in CI on Linux only** (one
   recorder build, which includes test-profile; passed on GitHub
   2026-11-14). On Windows CI only type-checks the test-profile build.

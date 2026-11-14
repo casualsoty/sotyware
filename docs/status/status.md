@@ -231,6 +231,43 @@ the existing infrastructure has no safe way to expose it. Also deferred:
 a higher display scaling, a light taskbar, Add/Remove Programs, the
 installers' and installed copy's icons.
 
+### Hosted runs at `f9a0c71`: icons pushed (2026-11-14)
+
+`main` pushed as a fast-forward from `369d0cb` to `f9a0c71` (`0864765`,
+`32fcd3a`, `f9a0c71`; no tag, no release). Every job fetched exactly
+`f9a0c7137f3e66d27272478203dd22207c8cd343` and succeeded:
+
+- `ci.yml` run 43646805839 (push): `headless (ubuntu-latest)` in
+  8 min 29 s: guard self-tests rfd 10/10, release binary 39/39, isolation
+  9/9, icons 9/9; `check:icons` ok (6 icons, `icon.ico` 16/24/32/48/64/256
+  px); Python test-profile helpers 10/10; Vitest 179/179; `cargo test` 412
+  passed, 27 ignored; recorder build 440 passed, 27 ignored. `headless
+  (windows-latest)` in 6 min 56 s: the same guards and icon check, the
+  PowerShell helpers, Vitest 179/179, `cargo test` 399 passed, 27 ignored;
+  the Linux packages and recorder steps skipped (`if: runner.os ==
+  'Linux'`, by design).
+- `isolation-guard.yml` run 43646812566 (manual; this push touched none of
+  its paths): `guard` (Linux, 7 s): driver check ok, self-test 9/9, Python
+  helpers 10/10, desktop-workflow check; `powershell-helpers` (Windows,
+  22 s): 20 passed, 0 failed.
+- `release-build.yml` run 43646814979 (manual, `windows-latest`,
+  11 min 34 s): rfd guard, manifest check, release-binary guard self-test
+  39/39; `npm run build:release` (4 path remaps: `~`, `sotyware`, `cargo`,
+  `rustup`; release build 9 min 19 s); `beforeBundleCommand` found no test
+  build and no local path; checked `sotyware.exe` `73A22685…45AFA48E`, MSI
+  `sotyware_0.1.0_x64_en-US.msi` `904C76AC…F3C028A0`, NSIS
+  `sotyware_0.1.0_x64-setup.exe` `EB2FA168…45C2A4B1`. Both unpacked, not
+  installed; each held one `sotyware.exe` (MSI `1CD1A63C…70952A89`, NSIS
+  `C9D038F7…799AA2DD`) equal to the
+  checked binary apart from the bundle-type marker, and each passed
+  `--local-paths`. Nothing signed; 0 artifacts; no release.
+
+**Not checked by the hosted run:** the workflow does not inspect icon
+resources. Since both packaged `sotyware.exe` equal the binary built from
+`f9a0c71` (marker aside), they carry that build's embedded icon; the MSI's
+`ProductIcon` and the NSIS setup and uninstaller icons were inspected only
+in the native Windows 11 build [above](#application-icons-2026-11-14).
+
 ### CI coverage of the test-profile and recorder tests (2026-11-14)
 
 Workflow change, committed as `369d0cb` (pushed by the user). The

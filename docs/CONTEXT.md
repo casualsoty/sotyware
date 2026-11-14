@@ -241,6 +241,11 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   at 100 %, [status](status/status.md#application-icons-in-the-running-app-on-native-windows-11-2026-11-14)):
   title bar, taskbar button and tray flyout show the cube, also after hide
   and reopen; Explorer, Start menu, other scalings and Linux not seen.
+  Pushed; on GitHub at `f9a0c71` `ci.yml` (run 43646805839),
+  `isolation-guard.yml` (43646812566) and `release-build.yml`
+  (43646814979: MSI + NSIS unpacked, their `sotyware.exe` equal to the
+  checked binary; icons not inspected there) passed
+  ([status](status/status.md#hosted-runs-at-f9a0c71-icons-pushed-2026-11-14)).
 - **Release hardening** (2026-11-14, uncommitted on `b1ae386`,
   [status.md](status/status.md#release-hardening-2026-11-14)): release
   builds go through `npm run build:release` (`--remap-path-prefix`,
