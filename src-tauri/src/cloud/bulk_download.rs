@@ -72,6 +72,16 @@ pub fn local_segment(segment: &str) -> String {
             c => c,
         })
         .collect();
+    // Long names: most file systems take 255 bytes per name. Cut before
+    // trimming, so a cut never leaves a trailing dot or space (Windows
+    // drops those, and two keys would then name one file).
+    if s.len() > 200 {
+        let mut end = 200;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
     while s.ends_with('.') || s.ends_with(' ') {
         s.pop();
     }
@@ -91,14 +101,6 @@ pub fn local_segment(segment: &str) -> String {
             && stem.as_bytes()[3] != b'0');
     if reserved {
         s.insert(0, '_');
-    }
-    // Long names: most file systems take 255 bytes per name.
-    if s.len() > 200 {
-        let mut end = 200;
-        while !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        s.truncate(end);
     }
     s
 }

@@ -173,6 +173,12 @@ fn local_names_are_safe_on_windows_and_linux() {
     assert_eq!(local_segment("CONSOLE"), "CONSOLE");
     assert_eq!(local_segment("größe +x"), "größe +x");
     assert_eq!(local_segment("a\\b"), "a_b");
+    // Audit 2026-11-14: a long name cut at 200 bytes must not end in a dot
+    // or space (Windows drops them, so `a…a.` and `a…a` were one file).
+    let long = format!("{}.{}", "a".repeat(199), "b".repeat(100));
+    assert_eq!(local_segment(&long), "a".repeat(199));
+    let spaced = format!("{}x {}", "é".repeat(99), "y".repeat(50));
+    assert_eq!(local_segment(&spaced), format!("{}x", "é".repeat(99)));
     let mut paths = vec![
         vec!["d".to_owned(), "A.txt".to_owned()],
         vec!["d".to_owned(), "a.txt".to_owned()],
