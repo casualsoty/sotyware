@@ -1144,14 +1144,24 @@ function UpCleanup {
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
   $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
-  Check "startup: dashboard window" (WaitFor { $null -ne (Dash) } 20)
+  $up = WaitFor { $null -ne (Dash) } 20
+  Check "startup: dashboard window" $up
+  # Every later step presses the first matching button on the page; without
+  # the window nothing below may run (2026-11-14: a run that went on acted
+  # on another account).
+  if (-not $up) { throw "ABORT: no dashboard window; nothing else is run" }
   if ($Mode -eq "upload" -or $IsB2Up) {
     $wpid = [uint32]0; [void][CloudUiW]::GetWindowThreadProcessId((Hwnd (Dash)), [ref]$wpid)
     Check "the dashboard driven is the window of the started release binary (pid $($p.Id), $Exe)" ($wpid -eq $p.Id -and (Procs).Count -eq 1)
     $listen = @(Get-NetTCPConnection -State Listen -LocalPort 1420 -EA SilentlyContinue)
     Check "the page is the bundled frontend: nothing listens on the dev server port 1420" ($listen.Count -eq 0) "$($listen.Count) listener(s)"
   }
-  Check "Cloud Storage link opens the empty page" ((WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { (PageText) -like "*No storage accounts yet*" } 10)) (PageText)
+  $empty = (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { (PageText) -like "*No storage accounts yet*" } 10)
+  Check "Cloud Storage link opens the empty page" $empty (PageText)
+  # Edit, Remove and Open bucket are found by name: with any other account on
+  # the page they would act on it (2026-11-14 the user's own account was
+  # opened at Backblaze, edited and removed this way). Stop instead.
+  if (-not $empty) { throw "ABORT: the Cloud Storage page is not empty (another account is visible); nothing else is run" }
   Check "no entry for this run's id in Credential Manager yet" ([CloudUiW]::Matches((Target $id), "") -eq -1)
 
   $ok = (Press "Add account") -and (WaitFor { (Fields) -contains "Secret access key" } 10)
