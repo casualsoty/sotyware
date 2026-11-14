@@ -745,7 +745,12 @@ $RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
 if ($null -eq $RealBefore) {
   Check "the user's real app folder can be read from outside this process tree before the run" $false "WMI could not start the reader"
   Remove-TestProfile $Prof
-  "ABORT: isolation cannot be proven; nothing was started"; exit 1
+  # The local test server may already run: removing its endpoint file stops it.
+  if ($srv) {
+    Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
+    if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
+  }
+  "ABORT: isolation cannot be proven; sotyware was not started"; exit 1
 }
 $env:SOTYWARE_TEST_PROFILE = $Prof.Root
 "test profile: $($Prof.Root) (credentials under $($Prof.TargetPrefix))"
