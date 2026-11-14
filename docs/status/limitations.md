@@ -626,11 +626,16 @@ server only; no real provider was asked.
   connection errors stop the batch, and only files not started (or failed
   for a transient reason) are offered again. Fix the account, then upload
   or download again (existing objects and files are skipped or numbered).
-- **Pasting a folder into itself** is refused with "a folder cannot be put
-  inside itself", but a review still opens, titled "Move 0 items to …?"
-  (0 objects, 0 B; seen on the virtual display, 2026-11-14). The driver
-  cancelled it and the bucket was unchanged; whether its Move button is
-  disabled was not checked.
+- **An intermittent Windows driver timeout, not explained.** In one of
+  five `windows-cloud-ui.ps1 -Mode files` runs (2026-11-14, run 3) a
+  several-item download beside a local `one.txt` never started: the app
+  planned it (its listing and `HeadObject` reached the test server), the
+  driver chose the folder in the native dialog and the dialog closed, but
+  no `GetObject` followed, no panel and no staging folder appeared, and the
+  next batch started normally, so the dialog most likely returned no
+  folder. The same run showed the dialog resetting its Folder box (fixed in
+  the driver since). Not reproduced; runs 4 and 5 passed
+  ([status](status.md#final-review-of-adr-026-and-adr-027-2026-11-14)).
 - **One request of race.** Between the `HeadObject` that checks a source or
   destination and the `CopyObject` or `DeleteObject` that follows, another
   client can change the object (S3 offers no conditional delete at

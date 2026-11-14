@@ -960,7 +960,9 @@ ETags) and, for copy and move, its destination; an item whose destination
 exists has a conflict and, if one was found within 20 lookups, a free
 `name (n)` (`report (1).pdf`, `photos (1)/`). Problems (moving into
 itself, already there, gone, over 5 GiB, a key that would exceed 1,024
-bytes) leave an item out; the review shows why.
+bytes) leave an item out; the review shows why. When every item is left
+out (a folder pasted into itself, a file moved into its own folder),
+no review opens: the page discards the plan and says why instead.
 
 Item states: `pending`, `running`, `completed`, `skipped`, `failed`,
 `partial` (with a note: `copied-original-kept`,
@@ -987,18 +989,22 @@ a failure is not retried at all.
 ### Downloads of several items
 
 `download_cloud_items` (selected files and folders, ≤ 10,000 files): Rust
-opens a folder dialog; files go into `.sotyware-download-<pid>-<n>` inside
+first lists the selected folders and checks each selected file
+(`ListObjectsV2`, `HeadObject`), then opens a folder dialog (cancelling it
+starts nothing and shows nothing); files go into `.sotyware-download-<pid>-<n>` inside
 the chosen folder through `S3Store::download`; an item moves into place
 (hard link for a file, refusing an existing name atomically, else rename;
 a folder by rename after an existence check) once all its files are
 verified, under its own name or `name (n)`. Key segments become local names
-with `< > : " / \ | ? *` and control characters replaced by `_`, trailing
-dots and spaces removed, reserved device names (`CON`, `NUL`, `COM1`, …)
+with `< > : " / \ | ? *` and control characters replaced by `_`, cut to
+200 bytes and only then trailing dots and spaces removed, reserved device names (`CON`, `NUL`, `COM1`, …)
 prefixed with `_`, `.`, `..` and empty names as `_`; clashes (also by case)
 are numbered, and so is a file whose local path is also a folder's (the
 keys `a/b` and `a/b/c`: `a/b (1)` and `a/b/c`). Events carry names below the
 chosen folder, never its path. A batch is `cancelled` only if an item was
-left undone.
+left undone. The summary's file and byte counts include only files of
+saved items (an item that failed or was cancelled is removed with the
+files it had completed).
 
 ### Folder uploads and drag and drop
 

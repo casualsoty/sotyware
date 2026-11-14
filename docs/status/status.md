@@ -126,6 +126,77 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Final review of ADR-026 and ADR-027 (2026-11-14)
+
+An independent review of `124364c..9d4737d` (23 files: the isolation
+guard, `isolation-guard.yml`, the drivers, `drag_source.py`, the
+several-item download, the docs), uncommitted on `9d4737d`. Local test
+servers only; no provider was contacted and no account, credential or
+database of the user's was touched.
+
+- **Defect fixed: the several-item download summary counted discarded
+  files.** When a file of a folder failed, the folder was removed from the
+  staging folder with the files it had completed, yet the summary still
+  counted them ("0 saved, 1 failed (2 files, …)"). The file and byte
+  counts now include only files of saved items
+  (`the_summary_counts_only_files_that_were_saved`; it fails without the
+  fix: 2 instead of 1).
+- **Fixed: no empty review.** A folder pasted into itself (or any plan in
+  which every item is left out) opened a "Move 0 items" review; the page
+  now discards the plan and says "Nothing to move. “x”: a folder cannot be
+  put inside itself." Reviews with some items left out are unchanged. Two
+  Vitest tests; the first fails without the fix.
+- **Driver fix:** `windows-cloud-ui.ps1` stopped before launching when the
+  real app folder could not be read (WMI), but left its local test server
+  running; it now stops it. Parsed and variable-checked on Windows; not run.
+- **The Windows timeout (run 3 of 5 of `-Mode files`):** the server's
+  counts for that run, against runs 4 and 5, are 3 `GetObject` fewer (the
+  batch's three files) and 4 `HeadObject` fewer, all explained by the
+  folder-upload step that failed earlier in the same run; the listing and
+  the `HeadObject` of the planning, which runs before the dialog opens,
+  were sent. So the app planned the batch, the dialog closed, and no file
+  was requested: no panel, no staging folder, and the next batch started
+  (the slot was free). That matches a dialog that returned no folder, not
+  a deadlock or a hung request; the same run showed the dialog resetting
+  its Folder box, fixed in the driver before runs 4 and 5. Not reproduced
+  or proven: recorded as an unexplained intermittent failure in
+  [limitations](limitations.md#file-management-adr-026). No timeout was
+  lengthened.
+- **Reviewed, no change:** the test-profile build fails closed (exit 3)
+  before any plugin, window or store exists and runs under its own
+  identifier, single-instance lock, data, webview and credential
+  namespace; every launch in the Windows drivers follows the profile
+  check and the acknowledgement; release packaging refuses test-profile
+  and recorder binaries. Remote keys cannot leave the chosen folder
+  (`/`, `\`, `..`, empty and reserved names become safe segments); dropped
+  paths stay in Rust and go through the folder-upload checks; Ignore
+  sends nothing; one batch at a time; the in-app clipboard never touches
+  the system clipboard, and a paste only plans.
+- **Seen, not changed:** the isolation guard reads whole lines, so a
+  required check written in a trailing comment or a string would count,
+  and a launch through a variable (`Popen(cmd)`) is not seen;
+  `TestProfile.psm1`'s own self-test runs in CI only with `ci.yml`
+  (Windows), which skips changes under `tests/desktop/` alone;
+  `isolation-guard.yml` runs only the Python helpers' tests.
+
+Run on WSL2 (Ubuntu 24.04), this tree: `npm run check`, `npm run build`,
+rfd guard and its self-test (10), release guard and its self-test (19),
+isolation guard and its self-test (9), profile helpers (10), Vitest
+**179**, fmt, clippy (default, test-profile, recorder), `cargo test`
+**412 passed, 27 ignored**, test-profile `--lib` **411**, recorder `--lib`
+**440**; workflows parsed as YAML. Test-profile release build, then
+`cloud-ui.sh files` on the virtual display (Xvfb + openbox, not a real
+Linux desktop) **97 passed, 0 failed, first attempt**. Native Windows
+11 25H2, real desktop, UI Automation (no mouse or keys), the same tree in
+a copy, test-profile exe SHA-256 `6c26c9f0…2b8c56`:
+`windows-cloud-ui.ps1 -Mode files` **65 passed, 0 failed, first attempt**
+(the download beside a local `one.txt` passed; the user's own folders,
+the real app folder read through WMI and the Credential Manager entries
+unchanged; the test profile removed). Not rerun: the other Linux phases,
+`windows.ps1`. The workflows have not run on GitHub. Not tested:
+drop from Explorer or a real Linux file manager, the system clipboard,
+real keys on Windows.
+
 ### Native folder dialogs, drag and drop, clipboard and final audit (2026-11-14)
 
 Uncommitted on `124364c` (nothing staged or committed). **Local servers
@@ -239,7 +310,7 @@ were fingerprinted before and after and unchanged in every run.
   restorable-delete accounting and the documented one-request race were
   read and found as documented; no further defect found. Observed only:
   pasting a folder into itself also opens a "Move 0 items" review
-  ([limitations](limitations.md#file-management-adr-026)).
+  (fixed in the [final review](#final-review-of-adr-026-and-adr-027-2026-11-14)).
 - Not tested: drag and drop from Explorer on Windows and from a file
   manager on any real Linux desktop; the system clipboard (Copy link);
   Ctrl+C/X/V with real keys on Windows; cancelling a folder upload while a

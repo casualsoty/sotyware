@@ -224,6 +224,14 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Final review of ADR-026/027** (2026-11-14, uncommitted on
+  `9d4737d`, local servers only,
+  [status.md](status/status.md#final-review-of-adr-026-and-adr-027-2026-11-14)):
+  two defects fixed (the several-item download summary counted files of
+  failed items; a plan with every item left out opened an empty review),
+  the Windows run-3 timeout traced to a dialog that returned no folder
+  (not reproduced). WSL2: Vitest 179, Rust 412/411/440, all guards;
+  `cloud-ui.sh files` 97/0; native Windows 11 `-Mode files` 65/0.
 - **Native folder dialogs, drag and drop, clipboard, final audit**
   (2026-11-14, uncommitted on `124364c`, local servers only,
   [status.md](status/status.md#native-folder-dialogs-drag-and-drop-clipboard-and-final-audit-2026-11-14)):
