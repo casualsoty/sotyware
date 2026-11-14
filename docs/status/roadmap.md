@@ -37,8 +37,9 @@ In priority order:
 Not started unless status.md says so. Scope and procedures:
 [release.md](../development/release.md).
 
-1. Publish the local commits so `ci.yml` runs on them (the user decides
-   when), then run `release-build.yml` once by hand.
+1. Done 2026-11-14 at `369d0cb`: `ci.yml`, `isolation-guard.yml` and a
+   manual `release-build.yml` passed on GitHub
+   ([status.md](status.md#ci-coverage-of-the-test-profile-and-recorder-tests-2026-11-14)).
 2. Choose and obtain code signing (certificate or signing service), wire it
    into a protected, manual release job, verify the signatures.
 3. Run the [installation test plan](../development/release.md#installation-test-plan-disposable-windows-11)

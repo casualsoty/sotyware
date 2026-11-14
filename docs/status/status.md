@@ -128,11 +128,10 @@ script or procedure is not in the repository; it was not repeated.
 
 ### CI coverage of the test-profile and recorder tests (2026-11-14)
 
-Workflow change only; **not yet run on GitHub** (the push was not possible:
-no GitHub credentials in this WSL2 environment, `git fetch` refused, no
-`gh`). The test-profile and recorder suites were left out of CI because
-build.rs gives each feature its own target directory, so each is a full
-extra compile.
+Workflow change, committed as `369d0cb` (pushed by the user). The
+test-profile and recorder suites were left out of CI because build.rs
+gives each feature its own target directory, so each is a full extra
+compile.
 
 - `ci.yml` (Linux job only): `cargo test --locked --features
   request-recorder --target-dir target/recorder` after `test:headless`;
@@ -147,6 +146,35 @@ extra compile.
   `TestProfile.psm1` is tested (that script not run locally for this
   change; the module is unchanged). YAML parsed; guard 9/9, Python
   helpers OK.
+
+**On GitHub at `369d0cb`** (2026-11-14, push to `main`), every step
+succeeded:
+
+- `ci.yml` run 43641836906: `headless (ubuntu-latest)` success in
+  12 min 22 s: guard self-tests rfd 10/10, release binary 39/39,
+  isolation 9/9; Vitest 179/179; `cargo test` 412 passed, 27 ignored;
+  the new recorder-build step 440 passed, 0 failed, 27 ignored (first time
+  the recorder and test-profile suites ran in CI). `headless
+  (windows-latest)` success in 12 min 45 s: the same guards, the
+  PowerShell helpers 20/20, Vitest 179/179, `cargo test` 399 passed,
+  27 ignored; the recorder step skipped (Linux only, by design).
+- `isolation-guard.yml` run 43641836899: `guard` (Linux, 9 s): driver
+  check, its self-test 9/9, Python helpers 10/10, the new desktop-workflow
+  check; `powershell-helpers` (Windows, 20 s): `test-profile-selftest.ps1`
+  20 passed, 0 failed.
+- `release-build.yml` run 43643326406 (manual, first run on GitHub,
+  `windows-latest`, 11 min 57 s): rfd guard, manifest check, release-binary
+  guard self-test 39/39; `npm run build:release` (4 path remaps: `~`,
+  `sotyware`, `cargo`, `rustup`; release build 9 min 23 s);
+  `beforeBundleCommand` found no test build and no local path in
+  `target\release\sotyware.exe`; WiX and NSIS produced
+  `sotyware_0.1.0_x64_en-US.msi` (SHA-256 `16D4320B…F5B2195F`) and
+  `sotyware_0.1.0_x64-setup.exe` (`7C20EDE2…D8B9552C`);
+  checked binary `AF8C479E…B14E8B3B`. The MSI (administrative image) and
+  the NSIS program (7-Zip) were unpacked, not installed; each held one
+  `sotyware.exe` (`652CD6C0…`, `8621370B…`) equal to the checked binary
+  apart from the bundle-type marker, and each passed `--local-paths`.
+  Nothing signed; the run has 0 artifacts; no release exists.
 
 ### Release hardening (2026-11-14)
 

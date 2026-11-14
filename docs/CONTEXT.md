@@ -237,7 +237,12 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   machine's paths (it refused the plain Windows build: 601 ×
   `C:\Users\<name>`). Support scope narrowed to Windows 11 (README,
   AGENTS, [release.md](development/release.md)); manual
-  `release-build.yml` added (not run on GitHub). The unexpected 21:46
+  `release-build.yml` added; passed once on GitHub (run 43643326406 at
+  `369d0cb`: MSI + NSIS built, unpacked, their `sotyware.exe` equal to
+  the checked binary; nothing installed, signed or uploaded). At
+  `369d0cb`, `ci.yml` (run 43641836906) and `isolation-guard.yml`
+  (43641836899) passed too; CI now runs the recorder and test-profile
+  tests on Linux and the PowerShell helpers' self-test. The unexpected 21:46
   activity in the real Windows profile was one launch of the pinned
   development build through Explorer, which created an empty account
   database ([status](status/status.md#unexpected-activity-in-the-real-windows-profile-2026-11-14));
@@ -262,7 +267,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   (it passed the incident-era `cloud_ui.py`), Windows drivers stop if the
   real folder cannot be read through WMI, CI now type-checks the
   test-profile build and runs the guard for driver-only changes
-  (`isolation-guard.yml`; not yet run on GitHub). Not tested: drop from
+  (`isolation-guard.yml`; passed on GitHub 2026-11-14). Not tested: drop from
   Explorer, the system clipboard, real keys on Windows, `windows.ps1`.
 - **Test isolation incident and fix** (2026-11-14,
   [status.md](status/status.md#test-isolation-incident-root-cause-and-fix-2026-11-14)):

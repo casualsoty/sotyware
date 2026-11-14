@@ -2340,7 +2340,7 @@ and `windows-latest`; only the manual `release-build.yml` builds installers.
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
-| `release-build.yml` | **manual only**; never run on GitHub yet | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`. Nothing signed, uploaded or published | release artifacts (no install) |
+| `release-build.yml` | **manual only**; passed once on GitHub (run 43643326406, `369d0cb`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`. Nothing signed, uploaded or published | release artifacts (no install) |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2403,7 +2403,7 @@ gh workflow run release-build.yml --ref main
   code is compiled only without the recorder, so this one build runs both
   suites (440 tests locally on WSL2, 2026-11-14). Windows runs neither suite
   in CI (Windows runner time); its test-profile build is type-checked only.
-  Added 2026-11-14, not yet run on GitHub.
+  Added 2026-11-14; passed on GitHub in run 43641836906 (440 passed).
 - **Linux packages.** Only the Tauri build libraries from
   [setup.md](setup.md#linux-system-packages); no display server, window manager,
   tray host or D-Bus session.

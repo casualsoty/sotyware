@@ -804,10 +804,10 @@ server only; no real provider was asked.
 - **Not in CI at all:** the real-desktop Windows test (needs an unlocked desktop
   with Explorer and the mouse), the manual checklist, Windows 10, real Linux
   desktops, installing the installers. Building and unpacking them is the
-  manual `release-build.yml`, never run on GitHub yet.
+  manual `release-build.yml` (passed once, run 43643326406, 2026-11-14).
 - **The test-profile and recorder tests run in CI on Linux only** (one
-  recorder build, which includes test-profile; added 2026-11-14, not yet
-  run on GitHub). On Windows CI only type-checks the test-profile build.
+  recorder build, which includes test-profile; passed on GitHub
+  2026-11-14). On Windows CI only type-checks the test-profile build.
 - **Docs-only changes skip CI** (`paths-ignore`), so a required status check
   would never report on such a pull request; branch protection is not
   configured.
