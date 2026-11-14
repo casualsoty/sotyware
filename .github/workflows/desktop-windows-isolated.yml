@@ -60,6 +60,10 @@ jobs:
         run: npm run check:rfd-patch
       # Desktop tests run a test-profile build only (ADR-027): it cannot reach
       # the user's data, and the packaging guard refuses it.
+      # The drivers this job runs never name the user's own profile and
+      # check the app's acknowledgement before touching it (ADR-027).
+      - name: check the desktop drivers' isolation
+        run: npm run check:desktop-isolation
       - name: Build the test-profile binary (no installers)
         run: npm run build:test-profile
       - name: check the guard refuses the test-profile binary (never packaged)

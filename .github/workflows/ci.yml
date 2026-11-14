@@ -128,5 +128,13 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
+      # The test-profile build (ADR-027) compiles other code in lib.rs and
+      # cloud/keyring.rs (its own identifier, profile paths, no normal
+      # credential namespace); without this step CI never compiled it.
+      # build.rs refuses the feature outside a target directory named
+      # test-profile. Type-checked only; its tests run locally (testing.md).
+      - name: cargo clippy (test-profile build)
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets --features test-profile --target-dir target/test-profile -- -D warnings
 
       - run: npm run test:headless

@@ -1607,6 +1607,22 @@ and put it back" setup of the desktop drivers; code:
     if a driver names `%LOCALAPPDATA%`, a `com.sotyware.desktop/` path or
     target, moves, copies or deletes a `.sqlite3` file, calls
     `cmdkey /delete`, or launches the app without the profile checks.
+    Tightened on 2026-11-14 after an audit found it passed the
+    incident-era `cloud_ui.py` (any `exec(` stood in for all three launch
+    checks): checks count only in code, not comments; more launch forms
+    (`Start-Process -FilePath`, `& $Exe`, `subprocess.run/call/...([BIN`)
+    and a shell script starting `$BIN` itself are caught; `%APPDATA%`,
+    `ApplicationData` and the bare identifier as a string literal (as in
+    `os.path.join(data, "com.sotyware.desktop", …)`) count as the user's
+    folders; `secret-tool clear` and `delete_password` as credential
+    deletes. It cannot follow a path across variables; the runtime
+    profile is the protection, the guard keeps the incident's patterns
+    out. Since `ci.yml` skips `tests/desktop/**`, `isolation-guard.yml`
+    runs the guard for changes there.
+  - On Windows a driver **stops before launching** if the user's real
+    app folders cannot be read from outside its process tree (WMI); until
+    2026-11-14 it only printed "could not be read" and went on, which is
+    exactly the MSIX case the check exists for.
 - **Rejected:** moving or copying the user's databases (exactly what
   failed); an environment variable that redirects a normal build's data
   folder (one forgotten variable would put the user's data back in reach,

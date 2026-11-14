@@ -126,6 +126,15 @@ if ($OnDesktop -eq "") {
   $NormalCredBefore = Get-NormalCredentialLines
   $Prof = New-TestProfile $ProfileParent ("isolated-" + (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff"))
   "test profile: $($Prof.Root)"
+  # The user's real folder, read by a process WMI starts outside this
+  # (possibly MSIX-virtualized) process tree; fail closed without it (ADR-027).
+  $RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
+  if ($null -eq $RealBefore) {
+    "FAIL  the user's real app folder can be read from outside this process tree before the run  WMI could not start the reader"
+    Remove-TestProfile $Prof
+    "ABORT: isolation cannot be proven; nothing was started"; exit 1
+  }
+  "user's real app folder (outside this process tree): $(@($RealBefore).Count) line(s)"
   # Inherited by the copy on the private desktop and by every app it starts.
   $env:SOTYWARE_TEST_PROFILE = $Prof.Root
   $name = "sotyware-test-$PID"
@@ -154,6 +163,9 @@ if ($OnDesktop -eq "") {
   else { "FAIL  the user's own sotyware folders are unchanged"; $code = 1 }
   if (((Get-NormalCredentialLines) -join "|") -eq ($NormalCredBefore -join "|")) { "PASS  the user's own sotyware credentials are unchanged" }
   else { "FAIL  the user's own sotyware credentials are unchanged"; $code = 1 }
+  $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
+  if ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|")) { "PASS  the user's real app folder, read from outside this process tree, is unchanged" }
+  else { "FAIL  the user's real app folder, read from outside this process tree, is unchanged"; $code = 1 }
   exit $code
 }
 

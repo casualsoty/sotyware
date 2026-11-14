@@ -276,6 +276,14 @@ $Prof = New-TestProfile $ProfileParent ("windows-" + (Get-Date).ToUniversalTime(
 "test profile: $($Prof.Root)"
 $RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
 "user's real app folder (outside this process tree): $(if ($null -eq $RealBefore) { 'could not be read' } else { "$(@($RealBefore).Count) line(s)" })"
+# Fail closed: inside an MSIX package (the Claude desktop app) this
+# process's own view of AppData is virtual, so without the real one nothing
+# could show the run left the user's data alone (ADR-027).
+if ($null -eq $RealBefore) {
+  Check "the user's real app folder can be read from outside this process tree before the run" $false "WMI could not start the reader"
+  Remove-TestProfile $Prof
+  "ABORT: isolation cannot be proven; nothing was started"; exit 1
+}
 $PrefsDb = Join-Path $Prof.DataDir "preferences.sqlite3"
 $CloudDb = Join-Path $Prof.DataDir "cloud-accounts.sqlite3"
 # Stops the whole run unless $proc acknowledges this run's profile: nothing is
@@ -501,10 +509,8 @@ Remove-TestProfile $Prof
 Check "cleanup: this run's test profile removed" (-not (Test-Path -LiteralPath $Prof.Root))
 Check "the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|"))
 Check "the user's own sotyware credentials are unchanged" (((Get-NormalCredentialLines) -join "|") -eq ($NormalCredBefore -join "|"))
-if ($null -ne $RealBefore) {
-  $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
-  Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
-}
+$realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
+Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
 
 ""
 "summary: $script:pass passed, $script:fail failed"
