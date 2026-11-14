@@ -15,9 +15,11 @@ Tauri 2 (Rust) and Svelte 5 + TypeScript. Version 0.1.0.
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
-into the folder shown, and file management (ADR-026, 2026-11-14: headless
-tests only, never at a real provider or on a desktop); **no overwrite,
-backups or other product features exist**.
+into the folder shown, and file management (ADR-026; audited 2026-11-14
+and driven on the Linux virtual display and the native Windows 11 desktop
+against local servers only, never at a real provider); **no overwrite,
+backups or other product features exist**. Desktop tests run only a
+**test-profile build** that cannot reach the user's data (ADR-027).
 
 - Two operating modes, chosen once at startup:
   - **Tray mode**: tray icon with "Open Dashboard" and "Quit"; the dashboard
@@ -208,10 +210,10 @@ Details: [overview.md](architecture/overview.md),
 npm ci
 npm run tauri dev
 npm run check && npm run build
-npm run test:headless                      # rfd patch guard + frontend + Rust unit tests, no display needed
+npm run test:headless                      # rfd patch guard + release/isolation guards + frontend + Rust unit tests, no display needed
 npm run check:rfd-patch                    # fails unless Cargo resolves rfd from src-tauri/patches/rfd
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-npm run tauri build -- --no-bundle && tests/desktop/run.sh   # or: npm run test:desktop:virtual
+npm run build:test-profile && tests/desktop/run.sh   # desktop tests need a test-profile build (ADR-027); or: npm run test:desktop:virtual
 npm run test:desktop:windows               # Windows, real desktop, moves the mouse
 npm run test:desktop:windows:isolated      # Windows, private desktop, unattended (no tray)
 ```
@@ -222,6 +224,26 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Test isolation incident and fix** (2026-11-14,
+  [status.md](status/status.md#test-isolation-incident-root-cause-and-fix-2026-11-14)):
+  root cause established: the agent's Windows processes run inside the
+  Claude desktop app's MSIX package, where `%LOCALAPPDATA%` is virtualized;
+  the driver moved its virtual copy of the account database while the app
+  opened the user's real one, and the driver's cleanup deleted that real
+  file. Fixed by construction (ADR-027): the `test-profile` feature (exit 3
+  without a valid profile, own identifier, databases/webview/credentials in
+  the profile, acknowledgement checked by every driver before touching the
+  window), `check-desktop-isolation.mjs` in `test:headless`. The user's
+  account was not restored and no provider was contacted.
+- **File management audit and desktop tests** (2026-11-14,
+  [status.md](status/status.md#file-management-desktop-tests-and-audit-2026-11-14)):
+  12 defects fixed with regression tests (suspended-versioning deletes,
+  folders that gained objects after review, late cancel, restore retry,
+  BMP-looking text, search cursor, deleted folder markers, several-item
+  download counting and file/folder name clash, shortcuts in Deleted items,
+  WebKitGTK context menu, recorder operation names). Linux virtual display
+  `cloud-ui.sh files` and native Windows 11 `windows-cloud-ui.ps1 -Mode
+  files` against an in-memory versioned server; results there.
 - **File management** (2026-11-14, uncommitted on `ae11691`, headless
   only): WSL2 `test:headless` Vitest **173** (38 new), `cargo test`
   **385 + 26 ignored** (about 52 new, 3 runs), recorder build 412, fmt,
@@ -727,8 +749,9 @@ were all handed over when cancelling is awaited up to 5 s before the
 abort (ADR-025), past that it can still land after the abort (unchecked
 at real providers).
 File management (ADR-026) ran only against local test servers: no real
-provider, no desktop run; one request of race between a check and a copy
-or delete; copies above 5 GiB refused; deletes only add delete markers
+provider; desktop runs on the Linux virtual display and native Windows 11
+(no drag and drop, clipboard or Windows folder dialog); one request of
+race between a check and a copy or delete; copies above 5 GiB refused; deletes only add delete markers
 (hidden versions stay billed) or remove for good on unversioned buckets
 ([limitations.md](status/limitations.md#file-management-adr-026)).
 Full list: [limitations.md](status/limitations.md).

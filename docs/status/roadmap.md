@@ -132,13 +132,14 @@ order:
    or a documented lifecycle rule.
 8. File management (ADR-026: folders, rename, copy, move, delete,
    restore, search, previews, share links, several-item downloads, folder
-   uploads, drag and drop, favorites): implemented 2026-11-14, headless
-   only on WSL2 and native Windows 11
-   ([status.md](status.md#file-management-2026-11-14)). **Next:**
-   - extend the desktop drivers (`cloud-ui.sh`, `windows-cloud-ui.ps1`)
-     with copy, move, delete, restore, the folder dialogs and a drop, against
-     the local servers (the Windows driver must keep its new empty-page
-     stop);
+   uploads, drag and drop, favorites): implemented 2026-11-14; audited
+   and driven on the Linux virtual display and native Windows 11 against
+   local servers, in test profiles
+   ([status.md](status.md#file-management-desktop-tests-and-audit-2026-11-14)).
+   **Next:**
+   - drive what is still not driven: the folder dialogs (GTK and Windows),
+     a drop from a real file manager, the clipboard, Ctrl/Shift-click with
+     the pointer on a real Linux desktop;
    - with the user's approval and a disposable test prefix, one run at
      Backblaze per operation (does it accept `x-amz-copy-source-if-match`,
      return `x-amz-delete-marker`, allow `GetBucketVersioning` and

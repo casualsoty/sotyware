@@ -3,7 +3,7 @@
 # Xvfb display with the openbox window manager, so it needs no monitor and no
 # desktop session, and never touches the display you are using.
 #
-# usage: tests/desktop/virtual.sh [binary]   (default: src-tauri/target/release/sotyware)
+# usage: tests/desktop/virtual.sh [binary]   (default: src-tauri/target/test-profile/release/sotyware)
 #
 # Needs: Xvfb, openbox, and everything run.sh needs (python3, python3-dbus,
 # python3-gi, the AT-SPI typelib and registry, libX11, dbus-run-session).
@@ -16,7 +16,7 @@
 # Logs of Xvfb and openbox are printed when the run does not pass.
 set -euo pipefail
 H=$(dirname "$(readlink -f "$0")")
-BIN=$(readlink -f "${1:-$H/../../src-tauri/target/release/sotyware}")
+BIN=$(readlink -f "${1:-$H/../../src-tauri/target/test-profile/release/sotyware}")
 TIMEOUT=${SOTYWARE_VIRTUAL_TIMEOUT:-300}
 
 missing=()
@@ -31,7 +31,7 @@ if [ ${#missing[@]} -gt 0 ]; then
   echo "install (Debian/Ubuntu): sudo apt install xvfb openbox python3-dbus python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11" >&2
   exit 2
 fi
-[ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run tauri build -- --no-bundle)" >&2; exit 2; }
+[ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run build:test-profile)" >&2; exit 2; }
 
 LOGS=$(mktemp -d)
 XVFB_PID="" WM_PID="" DISP="" rc=0

@@ -177,7 +177,7 @@ fn local_names_are_safe_on_windows_and_linux() {
         vec!["d".to_owned(), "A.txt".to_owned()],
         vec!["d".to_owned(), "a.txt".to_owned()],
     ];
-    dedupe(&mut paths);
+    dedupe(&mut paths, &[false, false]);
     assert_eq!(paths[1], vec!["d".to_owned(), "a (1).txt".to_owned()]);
 }
 
@@ -391,5 +391,112 @@ async fn a_cancelled_dialog_or_a_missing_file_starts_nothing() {
     assert_eq!(e.kind, ErrorKind::ObjectNotFound);
     assert!(!s.bulk.busy());
     let e = s.begin(vec![], Some(s.dir.path("x"))).await.unwrap_err();
+    assert_eq!(e.kind, ErrorKind::InvalidInput);
+}
+
+// ------------------------------------------------- audit fixes (2026-11-14)
+
+/// The keys `d/b` (a file) and `d/b/c` (a file in a folder of the same
+/// name) can both exist; locally the folder wins the name and the file is
+/// numbered, and a folder marker never is.
+#[test]
+fn a_file_named_like_a_folder_is_numbered() {
+    let p = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let mut paths = vec![
+        p(&["d", "b"]),
+        p(&["d", "b", "c"]),
+        p(&["d", "e"]),
+        p(&["d", "E"]),
+    ];
+    dedupe(&mut paths, &[false, false, true, false]);
+    assert_eq!(
+        paths,
+        vec![
+            p(&["d", "b (1)"]),
+            p(&["d", "b", "c"]),
+            p(&["d", "e"]),
+            p(&["d", "E (1)"])
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_with_a_file_and_a_subfolder_of_the_same_name_downloads_both() {
+    let s = setup().await;
+    s.seed(&["clash/b", "clash/b/c.txt"]);
+    let dest = s.dir.path("dest-clash");
+    fs::create_dir_all(&dest).unwrap();
+    let started = s
+        .begin(
+            vec![ItemRef::Folder {
+                prefix: "clash/".into(),
+            }],
+            Some(dest.clone()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let (summary, items) = s.finished(&started.batch).await;
+    assert_eq!(summary.state, BatchState::Completed, "{items:?}");
+    assert_eq!(
+        s.tree(&dest),
+        vec!["clash/", "clash/b (1)", "clash/b/", "clash/b/c.txt"]
+    );
+    assert_eq!(
+        fs::read_to_string(dest.join("clash/b (1)")).unwrap(),
+        "content of clash/b"
+    );
+}
+
+/// A folder of more than 4,000 files (several listing pages) is not
+/// refused: each page is counted once (it was counted again with every
+/// later page, so 5,000 files counted as 15,000).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_over_several_pages_is_counted_once() {
+    let s = setup().await;
+    {
+        let mut st = s.data.lock();
+        for n in 0..5_000 {
+            st.put(
+                BUCKET,
+                &format!("many/{n:05}"),
+                vec![1],
+                None,
+                std::collections::HashMap::new(),
+            );
+        }
+    }
+    let planned = plan_items(
+        &s.accounts.prepare_download("local", BUCKET).unwrap(),
+        BUCKET,
+        vec![ItemRef::Folder {
+            prefix: "many/".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    assert_eq!(planned[0].files.len(), 5_000);
+    // Over the limit is still refused.
+    {
+        let mut st = s.data.lock();
+        for n in 5_000..10_001 {
+            st.put(
+                BUCKET,
+                &format!("many/{n:05}"),
+                vec![1],
+                None,
+                std::collections::HashMap::new(),
+            );
+        }
+    }
+    let e = plan_items(
+        &s.accounts.prepare_download("local", BUCKET).unwrap(),
+        BUCKET,
+        vec![ItemRef::Folder {
+            prefix: "many/".into(),
+        }],
+    )
+    .await
+    .unwrap_err();
     assert_eq!(e.kind, ErrorKind::InvalidInput);
 }

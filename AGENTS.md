@@ -45,6 +45,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | provider profile | what sotyware knows about one S3-compatible provider, as data (`ProviderProfile`); not code |
 | plan (file operation) | what a copy, move, rename, delete or restore would do, computed by Rust with reads only and shown for review before anything changes (`PlanSummary`, ADR-026) |
 | delete marker | what a delete adds on a versioned bucket instead of removing the object; the versions stay and the file can be restored |
+| test profile | a directory a desktop test creates for one run; a test-profile build (Cargo feature `test-profile`) refuses to start without one and keeps its databases, webview data and credentials (own namespace) inside it (ADR-027) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -83,7 +84,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `tokio` (`fs`, `io-util`, `sync`, `rt`, `time`; already in the tree through Tauri) | `1` | 1.54.1 |
 | `http-body` (the upload request body's `Body` trait, ADR-021; already in the tree through `aws-sdk-s3` and hyper) | `1` | 1.1.0 |
 | `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
-| `serde_json`, `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; all already in the tree; the two SDK crates also dev-only for `hook_assumptions.rs`) | `1`, `1`, `1` | 1.0.154, 1.11.3, 1.4.3 |
+| `serde_json`, `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default features `request-recorder` (all three, ADR-024) or `test-profile` (`serde_json`, ADR-027); all already in the tree; the two SDK crates also dev-only for `hook_assumptions.rs`) | `1`, `1`, `1` | 1.0.154, 1.11.3, 1.4.3 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
 | `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
@@ -196,6 +197,22 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   [ADR-019](docs/architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust),
   [ADR-020](docs/architecture/decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel),
   [ADR-022](docs/architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
+- **Test profiles (desktop test builds only, ADR-027):** the
+  off-by-default Cargo feature `test-profile` (also turned on by
+  `request-recorder`) adds `src-tauri/src/test_profile.rs`: the app refuses
+  to start (exit 3) unless `SOTYWARE_TEST_PROFILE` names a profile the
+  driver created, refuses one inside its own folders, runs under the
+  identifier `com.sotyware.desktop.test`, keeps databases and webview data
+  in the profile and credentials in their own namespace
+  (`CredentialNamespace`, service `com.sotyware.desktop.test` + nonce;
+  the app's own namespace is not compiled in), and writes an
+  acknowledgement the drivers check before touching the window. Built
+  only into `--target-dir target/test-profile` (or `target/recorder`),
+  never packaged (`scripts/check-release-binary.mjs`). Every desktop driver
+  uses it (`tests/desktop/test_profile.py`, `TestProfile.psm1`);
+  `scripts/check-desktop-isolation.mjs` (in `test:headless`) keeps them
+  from naming the user's folders or credentials
+  ([ADR-027](docs/architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
 - **Request recorder (test builds only):** the off-by-default Cargo
   feature `request-recorder` adds `src-tauri/src/cloud/recorder.rs`, one
   read-only SDK interceptor per `S3Store` (installed in `S3Store::new`)
@@ -357,8 +374,9 @@ Every coding agent must:
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
    `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
-   `CloudDrops`, `test_server::Versioned`,
-   the capability file) before
+   `CloudDrops`, `test_server::Versioned`, `CredentialNamespace`, the test
+   profile helpers (`test_profile.rs`, `tests/desktop/test_profile.py`,
+   `TestProfile.psm1`), the capability file) before
    introducing new ones. New built-in functionality is a feature in
    `src-tauri/src/features/`, not new code in `lib.rs`.
 3. Avoid unnecessary dependencies.
@@ -366,6 +384,9 @@ Every coding agent must:
    needs, nothing for hypothetical features.
 5. Preserve cross-platform behaviour.
 6. Never weaken, skip or delete tests or checks to make a change pass.
+   Desktop tests run only a test-profile build in a fresh test profile
+   (ADR-027); never move, copy or delete the app's own databases or
+   credentials, and never compute the app's data paths in a driver.
 7. Update documentation in the same change when behaviour or architectural
    decisions change (see [Documentation rules](#documentation-rules)).
 8. Run the relevant checks before committing

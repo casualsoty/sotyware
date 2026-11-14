@@ -5,7 +5,8 @@
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
-#   (default: src-tauri\target\release\sotyware.exe)
+#   (default: src-tauri\target\test-profile\release\sotyware.exe, a test-profile
+#   build: npm run build:test-profile)
 #
 # This runs on your real desktop, not in a sandbox: it moves the mouse and clicks
 # (tray icon, tray menu, the dashboard's button and title-bar close button), and
@@ -13,21 +14,29 @@
 # keyboard while it runs. It needs no extra modules: Windows PowerShell 5.1, UI
 # Automation and user32 only.
 #
-# Feature preferences and cloud storage accounts are stored in
-# %LOCALAPPDATA%\com.sotyware.desktop\ (preferences.sqlite3,
-# cloud-accounts.sqlite3), which Windows does not let a test redirect. So that the
-# run starts from the defaults, existing databases are moved aside first and put
-# back at the end; the paths of the moved copies are printed in case the run is
-# interrupted. The run never adds a cloud account, so it never writes to the
-# Windows Credential Manager.
+# The app runs in a test profile of this run (ADR-027, TestProfile.psm1): a
+# test-profile build that refuses to start without one, keeps its databases
+# and webview data in it (under src-tauri\target\desktop-test-profiles\ by
+# default) and acknowledges it; every launch that becomes the primary
+# instance is checked against that acknowledgement before the window is
+# touched. The user's own %LOCALAPPDATA%\com.sotyware.desktop is never moved,
+# written or deleted (before 2026-11-14 this script moved and deleted the
+# databases there, which is unsafe: see docs/status/status.md). The run never
+# adds a cloud account, so it never writes to the Windows Credential Manager.
 #
 # Each check prints PASS or FAIL; INFO lines record observations that Windows
 # focus rules may legitimately change (which window is in the foreground).
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing or already running,
 # 3 no interactive desktop (not the input desktop, or no taskbar): nothing was run.
-param([string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"))
-if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build)"; exit 2 }
+param(
+  [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\test-profile\release\sotyware.exe"),
+  [string]$ProfileParent = (Join-Path $PSScriptRoot "..\..\src-tauri\target\desktop-test-profiles")
+)
+if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run build:test-profile)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
+Import-Module (Join-Path $PSScriptRoot "TestProfile.psm1") -Force
+$TPC = Get-TestProfileConstants
+if (-not (Test-TestProfileBuild $Exe)) { "ABORT: $Exe is not a test-profile build (ADR-027); run: npm run build:test-profile"; exit 2 }
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $ErrorActionPreference = "Stop"
 Add-Type @"
@@ -151,8 +160,9 @@ function OpenOverflow {
 }
 # sotyware notification-area icons that are actually on screen (stale elements of a
 # closed flyout have an empty rectangle).
+# The test-profile build's tooltip, never an installed sotyware's ("sotyware").
 function TrayIcons {
-  @($root.FindAll($S::Descendants, (New-Object System.Windows.Automation.AndCondition (PC $A::AutomationIdProperty "NotifyItemIcon"), (PC $A::NameProperty "sotyware"))) |
+  @($root.FindAll($S::Descendants, (New-Object System.Windows.Automation.AndCondition (PC $A::AutomationIdProperty "NotifyItemIcon"), (PC $A::NameProperty "sotyware test profile"))) |
     Where-Object { $r = $_.Current.BoundingRectangle; -not $r.IsEmpty -and -not [double]::IsNaN($r.X) })
 }
 function TrayIconCount { OpenOverflow; (TrayIcons).Count }
@@ -259,21 +269,49 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 "binary: $Exe"
 if ((Procs).Count -gt 0) { "ABORT: sotyware from this binary is already running"; exit 2 }
 
-# Tauri's app_local_data_dir (FOLDERID_LocalAppData\<identifier>), as in src-tauri/src/storage.rs.
-$PrefsDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\preferences.sqlite3"
-$PrefsBackup = "$PrefsDb.windows-test-backup"
-$CloudDb = Join-Path (Split-Path $PrefsDb) "cloud-accounts.sqlite3"
-$CloudBackup = "$CloudDb.windows-test-backup"
-foreach ($b in @($PrefsBackup, $CloudBackup)) {
-  if (Test-Path $b) { "ABORT: $b exists (left by an interrupted run?); restore or remove it first"; exit 2 }
+# --- test profile (ADR-027) -------------------------------------------------
+$NormalBefore = Get-NormalProfileFingerprint
+$NormalCredBefore = Get-NormalCredentialLines
+$Prof = New-TestProfile $ProfileParent ("windows-" + (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff"))
+"test profile: $($Prof.Root)"
+$RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
+"user's real app folder (outside this process tree): $(if ($null -eq $RealBefore) { 'could not be read' } else { "$(@($RealBefore).Count) line(s)" })"
+$PrefsDb = Join-Path $Prof.DataDir "preferences.sqlite3"
+$CloudDb = Join-Path $Prof.DataDir "cloud-accounts.sqlite3"
+# Stops the whole run unless $proc acknowledges this run's profile: nothing is
+# clicked in a window whose data is not provably this run's.
+function Verified($proc, [string]$label) {
+  try { $null = Wait-TestProfileAck $Prof $proc.Id 30 $proc }
+  catch {
+    Check "${label}: runs in this run's test profile (acknowledged)" $false "$_"
+    Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
+    "ABORT: the app is not provably isolated; nothing else is run"; exit 1
+  }
+  Check "${label}: runs in this run's test profile (acknowledged)" $true
 }
-foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsDb), $PrefsBackup) } }
-if (Test-Path $PrefsBackup) { "preferences: existing database moved to $PrefsBackup for this run" }
-foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudDb), $CloudBackup) } }
-if (Test-Path $CloudBackup) { "cloud accounts: existing database moved to $CloudBackup for this run" }
+# Fail closed: no profile, or an invalid one, ends the app with exit 3 before
+# any window exists.
+function Refused([string]$label, $value) {
+  $saved = $env:SOTYWARE_TEST_PROFILE
+  if ($null -eq $value) { Remove-Item Env:SOTYWARE_TEST_PROFILE -EA SilentlyContinue } else { $env:SOTYWARE_TEST_PROFILE = $value }
+  try { $r = Start-Process $Exe -PassThru } finally { if ($null -eq $saved) { Remove-Item Env:SOTYWARE_TEST_PROFILE -EA SilentlyContinue } else { $env:SOTYWARE_TEST_PROFILE = $saved } }
+  $null = $r.Handle
+  $done = $r.WaitForExit(15000)
+  if (-not $done) { Stop-Process -Id $r.Id -EA SilentlyContinue }
+  Check "fail closed: ${label}: exits $($TPC.ExitRefused) at once, no window" ($done -and $r.ExitCode -eq $TPC.ExitRefused -and (DashHwnds).Count -eq 0) "exit=$($r.ExitCode)"
+}
+Refused "no SOTYWARE_TEST_PROFILE" $null
+$BadProf = Join-Path $Prof.Parent "$($Prof.Run)-bad"
+New-Item -ItemType Directory $BadProf | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $BadProf $TPC.MarkerFile), ('{"format":1,"purpose":"' + $TPC.Purpose + '","run":"bad","nonce":"not-hex"}'))
+Refused "a profile with an invalid marker" $BadProf
+Check "fail closed: the refused launches created nothing in either profile" ((@(Get-ChildItem -Force $BadProf).Count -eq 1) -and (@(Get-ChildItem -Force $Prof.Root).Count -eq 1))
+[System.IO.Directory]::Delete($BadProf, $true)
+$env:SOTYWARE_TEST_PROFILE = $Prof.Root
 
 # --- startup -------------------------------------------------------------
 $primary = Start-Process $Exe -PassThru
+Verified $primary "startup"
 Check "startup: dashboard window visible" (WaitFor { Visible } 15)
 Check "startup: one process" ((Procs).Count -eq 1)
 Check "startup: one dashboard window" ((DashHwnds).Count -eq 1)
@@ -325,7 +363,7 @@ if ($cloudLink) { $cloudLink.GetCurrentPattern($Invoke).Invoke() }
 $shown = WaitFor { ($null -ne (Dash).FindFirst($S::Descendants, (PC $A::AutomationIdProperty "cloud-storage-heading"))) -and ((PageNames) -like "*No storage accounts yet*") } 10
 $names = PageNames
 Check "cloud storage: heading, empty state and Add account shown, no error" ($shown -and ($null -ne (Named "Add account" $ButtonType)) -and ($null -eq (Named "Hide dashboard" $ButtonType)) -and ($names -notlike "*Could not*") -and ($names -notlike "*could not be opened*")) $names
-Check "cloud storage: account database created in the app data folder" (Test-Path $CloudDb) $CloudDb
+Check "cloud storage: account database created in the test profile" (Test-Path $CloudDb) $CloudDb
 $overview = Named "Overview" $HyperlinkType
 if ($overview) { $overview.GetCurrentPattern($Invoke).Invoke() }
 Check "cloud storage: Overview link brings back the Hide button and the features" ((WaitFor { ($null -ne (Named "Hide dashboard" $ButtonType)) -and ($null -ne (FeatureView)) } 10)) (PageNames)
@@ -427,6 +465,7 @@ $n = TrayIconCount; Check "quit: tray icon removed (overflow flyout open and ins
 
 # --- relaunch after quit -------------------------------------------------------------
 $fresh = Start-Process $Exe -PassThru
+Verified $fresh "relaunch"
 Check "relaunch: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch: fresh process is the running primary" (-not $fresh.HasExited -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $fresh.Id)
 Check "relaunch: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
@@ -441,6 +480,7 @@ Check "relaunch: no sotyware process left" ((Procs).Count -eq 0)
 
 # --- second relaunch: the enabled choice was saved too ---------------------------------
 $again = Start-Process $Exe -PassThru
+Verified $again "relaunch 2"
 Check "relaunch 2: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch 2: a new process is the running primary" (-not $again.HasExited -and $again.Id -ne $fresh.Id -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $again.Id)
 Check "relaunch 2: example feature Running, checkbox checked (persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
@@ -454,14 +494,17 @@ $left = Procs
 Check "cleanup: no sotyware process left" ($left.Count -eq 0) "pids=$($left.Id -join ',')"
 $left | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
 
-# Put the user's own preferences back (or remove the run's, if there were none).
+# Only this run's profile is removed; the user's own folders and credentials
+# must be exactly as before.
 $null = WaitFor { (Procs).Count -eq 0 } 5
-foreach ($f in @($PrefsDb, "$PrefsDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
-foreach ($f in @($PrefsBackup, "$PrefsBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($PrefsBackup), $PrefsDb) } }
-if (Test-Path $PrefsDb) { "preferences: your database was put back" }
-foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
-foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
-if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
+Remove-TestProfile $Prof
+Check "cleanup: this run's test profile removed" (-not (Test-Path -LiteralPath $Prof.Root))
+Check "the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|"))
+Check "the user's own sotyware credentials are unchanged" (((Get-NormalCredentialLines) -join "|") -eq ($NormalCredBefore -join "|"))
+if ($null -ne $RealBefore) {
+  $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
+  Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
+}
 
 ""
 "summary: $script:pass passed, $script:fail failed"

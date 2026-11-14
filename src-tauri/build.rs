@@ -1,5 +1,6 @@
 fn main() {
     request_recorder_guard();
+    test_profile_guard();
     // Declaring the app's commands makes each one need a permission
     // (`allow-<command>`) in a capability, instead of being open to every window.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
@@ -64,6 +65,28 @@ fn request_recorder_guard() {
         eprintln!(
             "error: the request-recorder feature needs its own target directory: \
              build with --target-dir target/recorder (ADR-024)"
+        );
+        std::process::exit(1);
+    }
+}
+
+/// A test-profile build (ADR-027) must not replace `target/release/sotyware`
+/// either: its own target directory, named `test-profile` (or `recorder`,
+/// which implies the feature).
+fn test_profile_guard() {
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_TEST_PROFILE");
+    if std::env::var_os("CARGO_FEATURE_TEST_PROFILE").is_none() {
+        return;
+    }
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default());
+    let separate = out.ancestors().any(|p| {
+        p.file_name()
+            .is_some_and(|n| n == "test-profile" || n == "recorder")
+    });
+    if !separate {
+        eprintln!(
+            "error: the test-profile feature needs its own target directory: \
+             build with --target-dir target/test-profile (ADR-027)"
         );
         std::process::exit(1);
     }

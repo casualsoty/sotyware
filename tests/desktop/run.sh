@@ -1,7 +1,7 @@
 #!/bin/bash
 # Simulated-desktop test of single-instance and window lifecycle behaviour (Linux/X11).
 #
-# usage: tests/desktop/run.sh [binary]     (default: src-tauri/target/release/sotyware)
+# usage: tests/desktop/run.sh [binary]     (default: src-tauri/target/test-profile/release/sotyware)
 #
 # Needs: an X11 display ($DISPLAY, e.g. WSLg or Xvfb + a window manager), python3,
 # python3-dbus, python3-gi with the AT-SPI typelib (gir1.2-atspi-2.0), at-spi2-core,
@@ -14,8 +14,8 @@
 # or leaves it out to test dashboard-only mode.
 set -euo pipefail
 H=$(dirname "$(readlink -f "$0")")
-BIN=$(readlink -f "${1:-$H/../../src-tauri/target/release/sotyware}")
-[ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run tauri build)" >&2; exit 2; }
+BIN=$(readlink -f "${1:-$H/../../src-tauri/target/test-profile/release/sotyware}")
+[ -x "$BIN" ] || { echo "binary not found: $BIN (run: npm run build:test-profile)" >&2; exit 2; }
 
 if [ -z "${SOTYWARE_TEST_WORK:-}" ]; then
   WORK=$(mktemp -d)

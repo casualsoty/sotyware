@@ -52,12 +52,16 @@ impl Bucket {
 #[derive(Default)]
 pub struct State {
     pub buckets: HashMap<String, Bucket>,
+    /// Every version removed by a `DeleteObject` with a version id, in
+    /// order: (bucket, key, version id, whether it was a delete marker).
+    /// Lets a test prove no real version was ever deleted for good.
+    pub removed_versions: Vec<(String, String, String, bool)>,
     next: u64,
     clock: u64,
 }
 
 impl State {
-    fn stamp(&mut self) -> (String, u64) {
+    pub fn stamp(&mut self) -> (String, u64) {
         self.next += 1;
         self.clock += 1;
         (format!("v{:06}", self.next), self.clock)
@@ -394,6 +398,7 @@ impl s3s::S3 for Versioned {
     {
         let mut st = self.lock();
         let (id, modified) = st.stamp();
+        let mut removed = None;
         let r = (|| {
             let b = st
                 .buckets
@@ -406,6 +411,14 @@ impl s3s::S3 for Versioned {
                     };
                     let was_marker = list.iter().find(|v| &v.id == vid).map(|v| v.marker);
                     list.retain(|v| &v.id != vid);
+                    if let Some(m) = was_marker {
+                        removed = Some((
+                            req.input.bucket.clone(),
+                            req.input.key.clone(),
+                            vid.clone(),
+                            m,
+                        ));
+                    }
                     if list.is_empty() {
                         b.keys.remove(&req.input.key);
                     }
@@ -440,6 +453,9 @@ impl s3s::S3 for Versioned {
                 }
             }
         })();
+        if let Some(entry) = removed {
+            st.removed_versions.push(entry);
+        }
         done(r)
     }
 
@@ -467,6 +483,8 @@ impl s3s::S3 for Versioned {
             for o in out.contents.iter_mut().flatten() {
                 if let Some(v) = o.key.as_ref().and_then(|k| current.get(k)) {
                     o.e_tag = Some(ETag::Strong(v.etag.clone()));
+                    // Each object's own date (the listing backend has one for all).
+                    o.last_modified = Some(timestamp(v.modified));
                 }
             }
             out

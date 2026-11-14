@@ -63,6 +63,55 @@ desktop (openbox, not GNOME/KDE, not Wayland), and the user (X11 client messages
 D-Bus calls and AT-SPI actions instead of clicks).
 
 
+## Test profiles (ADR-027)
+
+Every desktop test runs a **test-profile build**, never a normal one, and
+never against the user's own data
+([ADR-027](../architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)):
+
+```bash
+npm run build:test-profile   # = tauri build --no-bundle --features test-profile -- --target-dir target/test-profile
+```
+
+The binary is `src-tauri/target/test-profile/release/sotyware(.exe)`; a
+recorder build (`--features request-recorder --target-dir target/recorder`)
+is a test-profile build too. Neither can be packaged
+(`scripts/check-release-binary.mjs`).
+
+- The app starts only with `SOTYWARE_TEST_PROFILE` naming a directory that
+  holds `sotyware-test-profile.json` (format 1, purpose
+  `sotyware-desktop-test-profile`, run id, 32-digit hex nonce); otherwise it
+  prints `sotyware: test profile refused: …` and exits 3 before any window.
+  It refuses a profile inside (or around) its own folders, runs under the
+  identifier `com.sotyware.desktop.test`, keeps `preferences.sqlite3`,
+  `cloud-accounts.sqlite3` and `cloud-places.sqlite3` in `<profile>/data`,
+  the webview data in `<profile>/webview`, credentials under service
+  `com.sotyware.desktop.test` with user names `<nonce>/cloud-account/<id>`
+  (Windows target `com.sotyware.desktop.test/<nonce>/cloud-account/<id>`),
+  and writes `sotyware-test-profile-ack.json` once its stores are open.
+- The drivers use the helpers `tests/desktop/test_profile.py` (Linux) and
+  `tests/desktop/TestProfile.psm1` (Windows): a fresh profile per run (under
+  the run's work folder on Linux, `src-tauri\target\desktop-test-profiles\`
+  on Windows), the acknowledgement checked after each launch that becomes
+  the primary instance (run, nonce, pid, identifier, every path inside the
+  profile), launches without a profile and with an invalid one that must
+  exit 3, fingerprints of the user's own folders (and, on Windows, of the
+  user's `com.sotyware.desktop/` Credential Manager lines) before and after,
+  and cleanup of the run's own profile and credentials only. Any mismatch
+  stops the run before the window is touched.
+- Checks without a desktop: `npm run test:profile-helpers` (Python helper,
+  10 tests), `tests/desktop/test-profile-selftest.ps1` (PowerShell helper,
+  20 checks, Windows), `npm run check:desktop-isolation` (static check of
+  every driver, part of `test:headless`) and its self-test
+  `npm run test:desktop-isolation-guard`, and the Rust unit tests of
+  `test_profile.rs` and `CredentialNamespace` (also with
+  `--features test-profile --target-dir target/test-profile`).
+- **On Windows from a coding agent:** the agent's processes may run inside
+  an MSIX package (the Claude desktop app) whose `%LOCALAPPDATA%` is
+  virtualized; a listing of `%LOCALAPPDATA%` from such a process shows the
+  virtual view, not the user's real folder. Use a process started through
+  WMI (`Invoke-CimMethod Win32_Process Create`) to look at the real one.
+
 ## Headless tests
 
 ```bash
@@ -1566,9 +1615,41 @@ and pressed through AT-SPI; text is typed with XTest key events, because this
 WebKitGTK exposes no AT-SPI `EditableText`.
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run build:test-profile
 tests/desktop/cloud-ui.sh
 ```
+
+Every phase runs the app in a fresh [test profile](#test-profiles-adr-027)
+inside the throwaway `HOME`; the credentials go to the private keyring under
+service `com.sotyware.desktop.test` and the profile's nonce.
+
+The `files` phase (ADR-026) drives the file manager against the in-memory
+server of `serve_files_for_ui` (`src-tauri/src/cloud/test_server/files_ui.rs`:
+a versioned and an unversioned bucket, 127.0.0.1, made-up key): folders
+(create, open, breadcrumbs, nested, rename with the `photos/` versus
+`photos-backup/` boundary, copy through the picker, move with a conflict
+kept both, delete, empty folder), files (rename, properties, conflicts
+skipped or kept both, a move whose delete is refused and retried, a copy
+stopped by a refused request and retried, Cancel in the review, delete and
+restore from Deleted items, a partly refused folder delete and its retry),
+selection (click, Ctrl-click, Shift-click with the real pointer, Escape,
+Ctrl+A, context menu, reset on navigation), sorting and filters, search
+(folder, whole bucket with Search further, key prefix), Load more,
+previews (text, JSON, a text starting with "BM", HTML and SVG as text, a
+cut text, a PNG, an image over 10 MiB), a share link fetched without
+credentials, the GTK folder dialog of a several-item download (it must
+open; Cancel must start and write nothing; choosing a folder in it could
+not be driven through AT-SPI/XTest, so the downloads themselves are
+reported as not tested when that fails, and are covered by the Rust tests)
+and a delete on the unversioned bucket. After each step it
+reads the server's state (`dump`: every key's current object and versions)
+instead of trusting the page; the helper fails at the end if a real
+version of the versioned bucket was ever removed by id or the app sent a
+request the file manager does not use. It does not test a drag and drop
+from another program or the system clipboard (no source or clipboard
+manager on the virtual display), nor Ctrl/Shift-click with the pointer
+(XTest modifiers are not seen by WebKitGTK on Xvfb; Shift+Down and the
+checkboxes are), and says so.
 
 For `b2`, the same four variables as the integration test, entered at
 prompts (or loaded from your own 0600 file, as described there) so they
@@ -1584,15 +1665,21 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`):
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|files|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`;
+`files`: the file manager against `serve_files_for_ui`, UI Automation
+only, as the Linux `files` phase minus selection by pointer, search, the
+folder dialogs and downloads):
 UI Automation only (Invoke, Value and Toggle patterns): no mouse, no
 keystrokes, but a logged-in session (`download` shows the real save dialog
 on the desktop; it is driven through UI Automation too, not clicked).
 **Exception: `-Mode upload` moves the mouse** (one right click on the tray
 icon and one click on Quit, after opening the "Show Hidden Icons" flyout;
 it may press Esc once to close the flyout) and needs the unlocked desktop;
-do not use the mouse or keyboard while it runs (about 15 minutes). The existing `cloud-accounts.sqlite3`
-is moved aside and put back, as in `windows.ps1`. `-Mode b2` reads the key
+do not use the mouse or keyboard while it runs (about 15 minutes). The app
+runs in a fresh [test profile](#test-profiles-adr-027) of the run (a
+test-profile or recorder build is required); the user's own folders and
+`com.sotyware.desktop/` credentials are compared before and after and never
+touched. `-Mode b2` reads the key
 from `%USERPROFILE%\.sotyware-it\b2.xml` (`Get-Credential | Export-Clixml`:
 keyID as user name, applicationKey as password, DPAPI-encrypted for your
 Windows user) and the bucket from `b2-bucket.txt` next to it; it sets the
@@ -1808,7 +1895,7 @@ and the [Windows desktop test](#windows-desktop-test).
 ## Simulated desktop test
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run build:test-profile
 tests/desktop/run.sh [binary]
 ```
 
@@ -1938,7 +2025,7 @@ clicks an icon, and the window manager is whatever serves `$DISPLAY`.
 ## Virtual-display test
 
 ```bash
-npm run tauri build -- --no-bundle
+npm run build:test-profile
 npm run test:desktop:virtual              # = bash tests/desktop/virtual.sh [binary]
 ```
 
@@ -2009,14 +2096,15 @@ GPU rendering, what a person sees, or Windows.
 Run on Windows, from a Windows checkout (not a WSL path), after a release build:
 
 ```powershell
-npm run tauri build -- --no-bundle
+npm run build:test-profile
 npm run test:desktop:windows              # = powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1
 npm run test:desktop:windows -- -Exe <path>
 ```
 
-`-Exe` defaults to `src-tauri\target\release\sotyware.exe`. To test an installed
-copy, pass its path, e.g. `-Exe $env:LOCALAPPDATA\sotyware\sotyware.exe` for the
-NSIS per-user install.
+`-Exe` defaults to `src-tauri\target\test-profile\release\sotyware.exe`; it
+must be a test-profile build ([ADR-027](#test-profiles-adr-027)): the
+script refuses any other binary, so an installed copy (a normal build) can no
+longer be tested with it.
 
 It needs only Windows PowerShell 5.1 (UI Automation and `user32` via `Add-Type`), no
 extra modules. **It runs on your real desktop:** it moves the mouse and clicks the
@@ -2047,21 +2135,18 @@ What it does, and how:
   `InvokePattern`) and checks the section's heading (`cloud-storage-heading`),
   the empty state ("No storage accounts yet"), an "Add account" button, no
   "Hide dashboard" button and no error text; that
-  `cloud-accounts.sqlite3` was created; then follows "Overview" back to the
-  Hide button and the features. It adds no account, so it never writes to
-  the Credential Manager. An existing `cloud-accounts.sqlite3` is moved aside
-  and put back like the preferences database.
+  `cloud-accounts.sqlite3` was created in the test profile; then follows
+  "Overview" back to the Hide button and the features. It adds no account,
+  so it never writes to the Credential Manager.
 - Checks that the choice survives real restarts: before Quit it disables the
   example again; the relaunch (a new process) must show it Disabled and
   unchecked, with `preferences.sqlite3` present; it enables it, quits (exit 0,
   no process left), and a second relaunch (another new process) must show it
-  Running and checked. Windows does not let a test redirect `%LOCALAPPDATA%`,
-  so an existing `%LOCALAPPDATA%\com.sotyware.desktop\preferences.sqlite3`
-  (and its journal) is moved to `preferences.sqlite3.windows-test-backup` before
-  sotyware starts, so the run begins with the defaults, and put back at the end
-  (the run's own database is deleted). The script prints both steps. If a
-  backup from an interrupted run is still there, it aborts with exit 2 instead
-  of overwriting it; put it back by hand.
+  Running and checked, all in the run's test profile, which starts empty
+  (before 2026-11-14 the script moved the user's
+  `%LOCALAPPDATA%\com.sotyware.desktop\preferences.sqlite3` aside and deleted
+  "its" copy at the end, which is unsafe:
+  [ADR-027](../architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
 - Finds the sotyware icon in the notification area by its UI Automation name
   (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
   so the test opens it first. It treats the flyout as open only while it is the
@@ -2114,7 +2199,7 @@ not switch any feature, so it changes no stored choice.
 ## Windows isolated-desktop test
 
 ```powershell
-npm run tauri build -- --no-bundle
+npm run build:test-profile
 npm run test:desktop:windows:isolated              # = powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-isolated.ps1
 npm run test:desktop:windows:isolated -- -Exe <path>
 ```
@@ -2168,10 +2253,11 @@ launcher therefore prints `elevated: True|False` and, when elevated, prints
 from a non-elevated PowerShell. GitHub-hosted runners run jobs as administrator
 ([CI](#manual-desktop-workflows)).
 
-It does not move databases aside: sotyware creates `preferences.sqlite3` and
-`cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop\` if they are
-missing (both left empty, since the test switches nothing and adds no
-account). Remove them afterwards if you had none before.
+The launcher creates the run's [test profile](#test-profiles-adr-027) and
+removes it at the end; the copy on the private desktop checks the app's
+acknowledgement before it touches the window. Until 2026-11-14 this test
+left an empty `cloud-accounts.sqlite3` in `%LOCALAPPDATA%\com.sotyware.desktop\`;
+it no longer touches that folder.
 
 ## Headless Windows desktop testing
 
@@ -2222,8 +2308,8 @@ runner other than standard `ubuntu-latest` and `windows-latest`.
 | --- | --- | --- | --- | --- |
 | `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, `npm run test:headless` | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands, native Windows (MSVC Rust, no WSL); does not start sotyware | A. headless |
-| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run tauri build -- --no-bundle`, `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
-| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run tauri build -- --no-bundle`, `npm run test:desktop:windows:isolated` | B″. private desktop |
+| `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
+| `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the

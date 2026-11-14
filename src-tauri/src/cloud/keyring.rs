@@ -8,6 +8,8 @@
 //! - service [`SERVICE`] (`com.sotyware.desktop`, the bundle identifier),
 //! - user `cloud-account/<account id>`,
 //! - Windows target name `com.sotyware.desktop/cloud-account/<account id>`,
+//!   (a test-profile build, ADR-027, uses [`TEST_SERVICE`] and a per-profile
+//!   prefix instead: [`CredentialNamespace`]),
 //!   a generic credential persisted for the local machine (it does not roam),
 //! - Secret Service attributes `service` and `username` as above, label
 //!   `sotyware cloud account <account id>`, in the default collection.
@@ -30,14 +32,65 @@ use super::credentials::{CredentialError, CredentialStore, Credentials};
 /// The service name of every sotyware credential (the bundle identifier).
 pub const SERVICE: &str = "com.sotyware.desktop";
 
-/// The user name of the entry for `account_id`.
-pub fn entry_user(account_id: &str) -> String {
-    format!("cloud-account/{account_id}")
+/// The service name of credentials written by a test-profile build (ADR-027).
+/// It differs from [`SERVICE`] before the first `/`, so no test target name
+/// can equal or start with a normal one.
+pub const TEST_SERVICE: &str = "com.sotyware.desktop.test";
+
+/// Where in the OS credential store sotyware keeps its entries: a service
+/// name and a prefix for the user name. The app's own namespace exists only
+/// in builds without the `test-profile` feature, so a test-profile build
+/// cannot even name it (ADR-027).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialNamespace {
+    service: &'static str,
+    user_prefix: String,
 }
 
-/// The Windows target name of the entry for `account_id`.
-pub fn windows_target(account_id: &str) -> String {
-    format!("{SERVICE}/{}", entry_user(account_id))
+impl CredentialNamespace {
+    /// The app's own credentials. Not compiled into a test-profile build.
+    #[cfg(not(feature = "test-profile"))]
+    pub fn normal() -> Self {
+        Self {
+            service: SERVICE,
+            user_prefix: String::new(),
+        }
+    }
+
+    /// The credentials of one test profile: service [`TEST_SERVICE`], user
+    /// names prefixed with the profile's nonce. `None` unless `nonce` is 32
+    /// lowercase hex digits, so a prefix can never contain `/` or `..`.
+    #[cfg(any(test, feature = "test-profile"))]
+    pub fn isolated(nonce: &str) -> Option<Self> {
+        let valid = nonce.len() == 32
+            && nonce
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        valid.then(|| Self {
+            service: TEST_SERVICE,
+            user_prefix: format!("{nonce}/"),
+        })
+    }
+
+    /// The service name of every entry in this namespace.
+    pub fn service(&self) -> &'static str {
+        self.service
+    }
+
+    /// The user name of the entry for `account_id`.
+    pub fn entry_user(&self, account_id: &str) -> String {
+        format!("{}cloud-account/{account_id}", self.user_prefix)
+    }
+
+    /// The Windows target name of the entry for `account_id`.
+    pub fn windows_target(&self, account_id: &str) -> String {
+        format!("{}/{}", self.service, self.entry_user(account_id))
+    }
+
+    /// The start every Windows target name in this namespace has.
+    pub fn windows_target_prefix(&self) -> String {
+        format!("{}/{}", self.service, self.user_prefix)
+    }
 }
 
 /// The Secret Service label of the entry for `account_id`, shown in Seahorse
@@ -59,22 +112,24 @@ pub const BACKEND: &str = "the OS credential store";
 /// Service) each call tries again and fails with `Unavailable`, so a keyring
 /// that starts later is picked up without a restart.
 pub struct OsCredentialStore {
+    namespace: CredentialNamespace,
     /// Serialises every call: `keyring-core` documents that the platform
     /// stores may not handle one credential from several threads reliably.
     platform: Mutex<Option<Arc<KeyringStore>>>,
 }
 
-impl Default for OsCredentialStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl OsCredentialStore {
-    pub fn new() -> Self {
+    /// A store for the entries of `namespace` only.
+    pub fn new(namespace: CredentialNamespace) -> Self {
         Self {
+            namespace,
             platform: Mutex::new(None),
         }
+    }
+
+    /// The namespace every entry of this store is in.
+    pub fn namespace(&self) -> &CredentialNamespace {
+        &self.namespace
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Arc<KeyringStore>>> {
@@ -102,7 +157,8 @@ impl OsCredentialStore {
                 store
             }
         };
-        let entry = build_entry(&store, account_id).map_err(|e| classify(e, account_id))?;
+        let entry = build_entry(&store, &self.namespace, account_id)
+            .map_err(|e| classify(e, account_id))?;
         op(&entry).map_err(|e| classify(e, account_id))
     }
 }
@@ -155,27 +211,39 @@ fn open_platform_store() -> Result<Arc<KeyringStore>, KeyringError> {
 }
 
 #[cfg(windows)]
-fn build_entry(store: &Arc<KeyringStore>, account_id: &str) -> Result<Entry, KeyringError> {
-    let target = windows_target(account_id);
+fn build_entry(
+    store: &Arc<KeyringStore>,
+    ns: &CredentialNamespace,
+    account_id: &str,
+) -> Result<Entry, KeyringError> {
+    let target = ns.windows_target(account_id);
     // `Local` = CRED_PERSIST_LOCAL_MACHINE: survives logoff and reboot, stays
     // on this machine. The crate's default, `Enterprise`, roams with a domain
     // roaming profile.
     let modifiers = HashMap::from([("target", target.as_str()), ("persistence", "Local")]);
-    store.build(SERVICE, &entry_user(account_id), Some(&modifiers))
+    store.build(ns.service(), &ns.entry_user(account_id), Some(&modifiers))
 }
 
 #[cfg(target_os = "linux")]
-fn build_entry(store: &Arc<KeyringStore>, account_id: &str) -> Result<Entry, KeyringError> {
+fn build_entry(
+    store: &Arc<KeyringStore>,
+    ns: &CredentialNamespace,
+    account_id: &str,
+) -> Result<Entry, KeyringError> {
     let label = secret_service_label(account_id);
     let modifiers = HashMap::from([("label", label.as_str())]);
-    store.build(SERVICE, &entry_user(account_id), Some(&modifiers))
+    store.build(ns.service(), &ns.entry_user(account_id), Some(&modifiers))
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn build_entry(store: &Arc<KeyringStore>, account_id: &str) -> Result<Entry, KeyringError> {
+fn build_entry(
+    store: &Arc<KeyringStore>,
+    ns: &CredentialNamespace,
+    account_id: &str,
+) -> Result<Entry, KeyringError> {
     store.build(
-        SERVICE,
-        &entry_user(account_id),
+        ns.service(),
+        &ns.entry_user(account_id),
         None::<&HashMap<&str, &str>>,
     )
 }
@@ -341,19 +409,28 @@ mod tests {
         Box::new(e)
     }
 
+    /// A test namespace for the tests below that never reach a backend.
+    fn test_ns() -> CredentialNamespace {
+        CredentialNamespace::isolated("0123456789abcdef0123456789abcdef").unwrap()
+    }
+
+    #[cfg(not(feature = "test-profile"))]
     #[test]
     fn names_come_from_the_account_id_only() {
-        assert_eq!(entry_user("b2-photos"), "cloud-account/b2-photos");
+        let ns = CredentialNamespace::normal();
+        assert_eq!(ns.service(), SERVICE);
+        assert_eq!(ns.entry_user("b2-photos"), "cloud-account/b2-photos");
         assert_eq!(
-            windows_target("b2-photos"),
+            ns.windows_target("b2-photos"),
             "com.sotyware.desktop/cloud-account/b2-photos"
         );
+        assert_eq!(ns.windows_target_prefix(), "com.sotyware.desktop/");
         assert_eq!(
             secret_service_label("b2-work"),
             "sotyware cloud account b2-work"
         );
         // Two accounts at the same provider get two different entries.
-        assert_ne!(windows_target("b2-photos"), windows_target("b2-work"));
+        assert_ne!(ns.windows_target("b2-photos"), ns.windows_target("b2-work"));
         let conf = format!("{}/tauri.conf.json", env!("CARGO_MANIFEST_DIR"));
         let conf: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(conf).unwrap()).unwrap();
@@ -363,9 +440,50 @@ mod tests {
         );
     }
 
+    /// ADR-027: an entry of a test profile can never be an entry of the app
+    /// itself (same service and user name, or a Windows target with the
+    /// app's prefix), whatever the account id.
+    #[test]
+    fn a_test_namespace_never_names_a_normal_entry() {
+        let ns = test_ns();
+        assert_eq!(ns.service(), TEST_SERVICE);
+        assert_ne!(ns.service(), SERVICE);
+        assert_eq!(
+            ns.windows_target("b2-photos"),
+            "com.sotyware.desktop.test/0123456789abcdef0123456789abcdef/cloud-account/b2-photos"
+        );
+        let normal_prefix = format!("{SERVICE}/");
+        for id in ["b2-photos", "a", "sotyware-it", "cloud-account"] {
+            let target = ns.windows_target(id);
+            assert!(!target.starts_with(&normal_prefix), "{target}");
+            assert!(target.starts_with(&ns.windows_target_prefix()));
+            assert_ne!(ns.entry_user(id), format!("cloud-account/{id}"));
+        }
+        // Two profiles do not share entries either.
+        let other = CredentialNamespace::isolated("ffffffffffffffffffffffffffffffff").unwrap();
+        assert_ne!(other.windows_target("a"), ns.windows_target("a"));
+        let store = OsCredentialStore::new(ns.clone());
+        assert_eq!(store.namespace(), &ns);
+    }
+
+    #[test]
+    fn a_test_namespace_needs_a_32_digit_lowercase_hex_nonce() {
+        for bad in [
+            "",
+            "0123",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "0123456789abcdef0123456789abcde/",
+            "../456789abcdef0123456789abcdef0",
+            "0123456789abcdef0123456789abcdef0",
+            "0123456789abcdeg0123456789abcdef",
+        ] {
+            assert!(CredentialNamespace::isolated(bad).is_none(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn an_invalid_account_id_is_refused_before_the_backend_is_touched() {
-        let store = OsCredentialStore::new();
+        let store = OsCredentialStore::new(test_ns());
         for id in ["", "B2", "a/b", "../x", "x y"] {
             assert!(
                 matches!(store.load(id), Err(CredentialError::Invalid { .. })),
@@ -377,7 +495,7 @@ mod tests {
 
     #[test]
     fn credentials_that_cannot_be_stored_never_reach_the_backend() {
-        let store = OsCredentialStore::new();
+        let store = OsCredentialStore::new(test_ns());
         let bad = Credentials {
             access_key_id: "key".into(),
             secret_access_key: Secret::new("has a space"),
@@ -490,8 +608,8 @@ mod tests {
 /// SOTYWARE_IT_KEYRING_EXPECT=unavailable cargo test cloud::keyring::os_backend -- --ignored --nocapture
 /// ```
 ///
-/// Uses dedicated account ids `it-keyring-<run>-a`/`-b` (never a real
-/// account), checks that they start empty, and deletes them at the end, also
+/// Uses dedicated account ids `it-keyring-<run>-a`/`-b` in a test namespace
+/// of the run (never the app's own namespace, ADR-027), checks that they start empty, and deletes them at the end, also
 /// when an assertion fails.
 #[cfg(test)]
 mod os_backend {
@@ -511,8 +629,8 @@ mod os_backend {
     /// credential listed under exactly this target name? (Linux: checked with
     /// `dbus-send` from outside, see docs/development/testing.md.)
     #[cfg(windows)]
-    fn listed_by_cmdkey(account_id: &str) -> bool {
-        let target = windows_target(account_id);
+    fn listed_by_cmdkey(store: &OsCredentialStore, account_id: &str) -> bool {
+        let target = store.namespace().windows_target(account_id);
         let out = std::process::Command::new("cmdkey")
             .arg(format!("/list:{target}"))
             .output()
@@ -525,7 +643,7 @@ mod os_backend {
     }
 
     #[cfg(not(windows))]
-    fn listed_by_cmdkey(_account_id: &str) -> bool {
+    fn listed_by_cmdkey(_store: &OsCredentialStore, _account_id: &str) -> bool {
         true
     }
 
@@ -552,8 +670,13 @@ mod os_backend {
             .unwrap()
             .as_nanos();
         let (a, b) = (format!("it-keyring-{run}-a"), format!("it-keyring-{run}-b"));
-        let store = OsCredentialStore::new();
-        println!("backend: {BACKEND}; accounts {a}, {b}");
+        // Never the app's own namespace (ADR-027): a namespace of this run.
+        let ns = CredentialNamespace::isolated(&format!("{:032x}", run)).unwrap();
+        let store = OsCredentialStore::new(ns.clone());
+        println!(
+            "backend: {BACKEND}; accounts {a}, {b} under {}",
+            ns.windows_target_prefix()
+        );
 
         if expect == "unavailable" {
             for result in [
@@ -583,12 +706,12 @@ mod os_backend {
         }
 
         #[cfg(windows)]
-        assert!(!listed_by_cmdkey(&a));
+        assert!(!listed_by_cmdkey(&store, &a));
         store.store(&a, &creds("key-a", "secret-a-1")).unwrap();
         assert!(
-            listed_by_cmdkey(&a),
+            listed_by_cmdkey(&store, &a),
             "cmdkey must list {}",
-            windows_target(&a)
+            ns.windows_target(&a)
         );
         assert_eq!(store.load(&a).unwrap(), creds("key-a", "secret-a-1"));
         assert!(store.exists(&a).unwrap());
@@ -616,14 +739,14 @@ mod os_backend {
         store.delete(&b).unwrap();
         #[cfg(windows)]
         for id in [&a, &b] {
-            assert!(!listed_by_cmdkey(id), "cmdkey still lists {id}");
-            println!("cmdkey: {} not listed", windows_target(id));
+            assert!(!listed_by_cmdkey(&store, id), "cmdkey still lists {id}");
+            println!("cmdkey: {} not listed", ns.windows_target(id));
         }
         for id in [&a, &b] {
             assert!(!store.exists(id).unwrap(), "{id} must be gone");
         }
         // A fresh store (a later process) sees nothing either.
-        let fresh = OsCredentialStore::new();
+        let fresh = OsCredentialStore::new(ns);
         assert!(!fresh.exists(&a).unwrap() && !fresh.exists(&b).unwrap());
         println!("round trip passed; both entries deleted");
     }

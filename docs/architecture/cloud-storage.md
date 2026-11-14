@@ -944,8 +944,8 @@ and s3s-fs only; **never against a real provider**.
 | New folder | `ListObjectsV2` (1 key) under `prefix/name/`, then `PutObject` of the zero-byte marker | refused if anything is already at or under that prefix; a folder exists only through its objects, the marker makes an empty one visible |
 | Copy | per object: `HeadObject` (destination must not exist), `CopyObject` (`MetadataDirective: COPY`, `x-amz-copy-source-if-match` = planned ETag), `HeadObject` (verify) | content type, `Cache-Control`, `Content-Encoding`, `Content-Disposition` and user metadata (including `sotyware-sha256`) are copied; the copy gets a new date, a new version id and may get another storage class; above 5 GiB refused |
 | Move, rename | copy as above for every object of the item, then per object `HeadObject` (source ETag unchanged) and `DeleteObject` | originals deleted only after every copy is verified; on a versioned bucket they stay restorable |
-| Delete | per object `HeadObject` (ETag unchanged) and `DeleteObject` without version id | versioned bucket: delete marker, restorable; otherwise gone; the answer (`x-amz-delete-marker`) is reported per object |
-| Restore | planning: `ListObjectVersions` of the key; then `DeleteObject` with each newer delete marker's version id, `HeadObject` | the newest kept version becomes current; nothing else changes |
+| Delete | per object `HeadObject` (ETag unchanged) and `DeleteObject` without version id | versioned bucket: delete marker, restorable; otherwise gone; the answer (`x-amz-delete-marker`) is reported per object, except that a marker with version id `null` over a version whose id is `null` (versioning suspended) counts as gone for good, not restorable (`restorable_after_delete`, since the 2026-11-14 audit) |
+| Restore | planning: `ListObjectVersions` of the key; then `DeleteObject` with each newer delete marker's version id (one already gone, 404, is skipped: a retry after a lost answer), `HeadObject` | the newest kept version becomes current; nothing else changes; only ids the listing reported as delete markers are ever deleted |
 | Deleted items | `ListObjectVersions` under the folder (≤ 5,000 entries) | keys whose latest entry is a delete marker; restorable if an older version exists |
 | Search | `ListObjectsV2` without delimiter, ≤ 10 pages per call | `name`: file and folder names containing the text, case-insensitive, matched in Rust; `prefix`: keys starting with folder + text, filtered by the provider; never file contents |
 | Properties | `HeadObject` | size, date, content type, ETag, version id, storage class, headers, user metadata, stored SHA-256 |
@@ -964,10 +964,16 @@ bytes) leave an item out; the review shows why.
 
 Item states: `pending`, `running`, `completed`, `skipped`, `failed`,
 `partial` (with a note: `copied-original-kept`,
-`original-kept-copy-incomplete`, `incomplete`), `cancelled`. Operation
-states: `completed`, `partial`, `cancelled`, `failed` (stopped by an error
-that would fail every further request: credentials, access, connection,
-timeouts, provider 5xx/429). Errors carry an `ErrorKind`, including the
+`original-kept-copy-incomplete`, `incomplete`, `source-not-empty`),
+`cancelled`. A folder that was moved, renamed or deleted completely is
+checked once more (one `ListObjectsV2` of one key under its prefix): if
+objects were added after the review, the item is `partial` with
+`source-not-empty` (they stay where they are; a new review includes them),
+never `completed`. Operation states: `completed`, `partial`, `cancelled`
+(only if an item was left undone: a cancel after the last request does not
+turn a finished operation into a cancelled one), `failed` (stopped by an
+error that would fail every further request: credentials, access,
+connection, timeouts, provider 5xx/429). Errors carry an `ErrorKind`, including the
 new `remote-changed` (an object changed or appeared after the review),
 `too-large` and `outdated-plan`.
 
@@ -989,7 +995,10 @@ verified, under its own name or `name (n)`. Key segments become local names
 with `< > : " / \ | ? *` and control characters replaced by `_`, trailing
 dots and spaces removed, reserved device names (`CON`, `NUL`, `COM1`, …)
 prefixed with `_`, `.`, `..` and empty names as `_`; clashes (also by case)
-are numbered. Events carry names below the chosen folder, never its path.
+are numbered, and so is a file whose local path is also a folder's (the
+keys `a/b` and `a/b/c`: `a/b (1)` and `a/b/c`). Events carry names below the
+chosen folder, never its path. A batch is `cancelled` only if an item was
+left undone.
 
 ### Folder uploads and drag and drop
 
@@ -1053,6 +1062,15 @@ provider so far.
   invalid, or the file cannot be created: no recorder (one `sotyware:` line
   on stderr); the app runs unchanged. No file, thread or interceptor exists
   then.
+- **Operations recorded by name** (ADR-024, extended by the 2026-11-14
+  audit): `HeadBucket`, `ListBuckets`, `ListObjectsV2`, `HeadObject`,
+  `GetObject`, `PutObject`, the multipart requests, `DeleteObject` (whether
+  with a version id, never the id), `CopyObject` (destination and source
+  keys as run-scoped hashes or `outside-scope`, source bucket
+  `configured`/`other`, whether a version and an ETag condition were sent,
+  whether metadata is copied), `ListObjectVersions` (prefix, whether key and
+  version markers were sent) and `GetBucketVersioning`; anything else is
+  `unknown` with no field.
 - **Integration point:** one read-only SDK interceptor per `S3Store`,
   added in `S3Store::new` (`Intercept` hooks `read_before_execution`,
   `read_before_transmit`, `read_after_attempt`, `read_after_execution`).

@@ -57,7 +57,15 @@ aws-smithy-types = { version = "1", optional = true }
 # unless the target directory is named `recorder`
 # (`--target-dir target/recorder`), and scripts/check-release-binary.mjs
 # refuses to package a binary that contains it.
-request-recorder = ["dep:serde_json", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
+# A recorder build is always a test-profile build too (ADR-027).
+request-recorder = ["test-profile", "dep:serde_json", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
+# Off by default and never in a shipped build: the app refuses to start
+# unless SOTYWARE_TEST_PROFILE names a test profile, and then keeps every
+# database, its webview data and its credentials inside that profile, under
+# its own identifier (ADR-027). For desktop tests only. build.rs refuses it
+# unless the target directory is named `test-profile` or `recorder`;
+# scripts/check-release-binary.mjs refuses to package such a binary.
+test-profile = ["dep:serde_json"]
 
 [profile.release]
 codegen-units = 1

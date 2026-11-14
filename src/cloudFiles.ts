@@ -207,6 +207,7 @@ export const ITEM_NOTES = [
   "original-kept-copy-incomplete",
   "copied-original-kept",
   "incomplete",
+  "source-not-empty",
 ] as const;
 export type ItemNote = (typeof ITEM_NOTES)[number];
 

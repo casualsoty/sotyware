@@ -594,10 +594,15 @@ server only; no real provider was asked.
   `x-amz-copy-source-if-match`, returns `x-amz-delete-marker`, lets a
   restricted key call `GetBucketVersioning` or `ListObjectVersions`, and
   how Hetzner behaves, is unverified.
-- **Not on a desktop yet.** No desktop driver run on this tree; the native
-  folder dialogs (downloads into a folder, folder uploads) and drag and drop
-  from a real file manager have not been exercised; neither Windows nor
-  Linux.
+- **Desktop coverage is partial** (2026-11-14, local servers only,
+  [status](status.md#file-management-desktop-tests-and-audit-2026-11-14)):
+  the Linux virtual display (`cloud-ui.sh files`, GTK dialogs, not a real
+  desktop) and the native Windows 11 driver (`windows-cloud-ui.ps1 -Mode
+  files`, without the folder dialogs). Not driven on any desktop: drag and
+  drop from another program, the system clipboard, choosing a folder in the
+  GTK or Windows folder dialog (so several-item downloads and folder
+  uploads through them; the Rust tests cover both behind the dialog), and
+  Ctrl/Shift-click with the pointer on Linux (keyboard and Vitest only).
 - **One request of race.** Between the `HeadObject` that checks a source or
   destination and the `CopyObject` or `DeleteObject` that follows, another
   client can change the object (S3 offers no conditional delete at
@@ -611,7 +616,18 @@ server only; no real provider was asked.
   on a versioned bucket hidden versions stay billed until a lifecycle rule
   or the provider's console removes them. On a bucket without versions a
   delete is final. Whether versions are kept is shown as "unknown" when the
-  key may not ask.
+  key may not ask. **On a bucket whose versioning is suspended** the
+  provider's delete marker (version id `null`) replaces an object written
+  while versioning was off or suspended: that object is gone for good and
+  is counted so (`restorable_after_delete`); the review says only "may be
+  gone for good", since which objects have a `null` version is known only
+  per object, at delete time. Not tested against a suspended bucket (the
+  test backend has no suspended state; the rule is unit-tested).
+- **Objects added to a folder after its review** are not part of the
+  operation; a folder move, rename or delete that finds them afterwards is
+  reported `partial` ("source-not-empty"), not done (since the 2026-11-14
+  audit). An object added under the destination meanwhile is a conflict
+  per object (skipped, never overwritten).
 - **Deleted items read at most 5,000 versions** per folder view; deeper
   folders must be opened. A file deleted in an unversioned bucket never
   appears there.
@@ -624,8 +640,10 @@ server only; no real provider was asked.
   without hard links, a file appearing under the same name in the last
   instant could be replaced by the final rename (as for single downloads).
   No ZIP option. A key that is also a folder prefix (`a/b` next to
-  `a/b/c`) cannot be both a file and a folder on disk: that item fails
-  ("a folder could not be created") and nothing of it is kept.
+  `a/b/c`): the file is saved as `a/b (1)` (since the 2026-11-14 audit;
+  before, that item failed). A folder that appears at the chosen name in
+  the instant between the existence check and the rename could, on Linux,
+  be replaced if it is empty (rename semantics).
 - **Folder uploads and drops**: at most 1,000 files; empty folders are not
   created; symbolic links are skipped; a drop is kept 2 minutes.
 - **Share links** contain the access key id and cannot be withdrawn before
@@ -639,9 +657,18 @@ server only; no real provider was asked.
 - **Test-server limitation:** s3s cannot copy keys containing `?` (it
   splits the copy source after decoding); the tests avoid `?` in copied
   keys.
-- **The Windows Cloud Storage UI driver** must never run with a non-empty
-  account list; it now stops if one is visible (2026-11-14 incident,
-  [status.md](status.md#ui-test-acted-on-a-real-account-2026-11-14)).
+- **The clipboard of "Cut"** is emptied when the move's review opens, also
+  if the review is then cancelled (cut again to retry).
+- **Desktop tests run a test-profile build** (ADR-027): its identifier,
+  data and webview folders and credential namespace differ from a shipped
+  build's; a packaged build's exact paths are not exercised by any driver.
+  The drivers prove isolation through the app's acknowledgement and
+  fingerprints of the user's folders; a component that ignores the folders
+  it is given (WebView2, WebKitGTK) could still write elsewhere (not seen).
+  On Windows from a coding agent, `%LOCALAPPDATA%` may be MSIX-virtualized
+  (2026-11-14 incident,
+  [status.md](status.md#test-isolation-incident-root-cause-and-fix-2026-11-14));
+  the fingerprint then covers the virtual view.
 
 ## General
 

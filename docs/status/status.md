@@ -164,6 +164,203 @@ ADR-026, uncommitted on `ae11691` (nothing staged or committed, as asked).
   from a real file manager; any real provider (Backblaze, Hetzner). The
   local servers model S3's documented semantics, not a provider's.
 
+### File management: desktop tests and audit (2026-11-14)
+
+On `0e85fe6` (uncommitted, as asked: nothing staged or committed). **Local
+servers only; no real provider was contacted** (no Backblaze, no Hetzner).
+
+- **Audit of ADR-026** (all code read, not only the report). Defects found
+  and fixed, each with a regression test that fails without the fix:
+  1. A delete on a bucket whose versioning is **suspended** was counted as
+     restorable although the provider's `null` delete marker replaces a
+     `null` version for good (`restorable_after_delete`).
+  2. A folder moved, renamed or deleted while objects were **added under
+     it after the review** was reported `completed`; it is now `partial`
+     ("source-not-empty") after one more listing of its prefix.
+  3. A **cancel after the last request** turned a finished operation (and
+     a several-item download) into `cancelled`; the state now comes from the
+     items (`operation_state`).
+  4. A **restore retried** after a lost answer stopped at a delete marker
+     already removed (404); it now goes on with the next one and checks the
+     object.
+  5. A text starting with "BM" ("BMW …") was **previewed as a BMP image**
+     (two-byte signature); the BMP check now needs the reserved bytes and a
+     known header size.
+  6. A failed **"Search further"** lost its cursor in Rust, so trying again
+     said "search again"; the cursor is kept until a continuation succeeds.
+  7. A deleted **folder marker** was listed in Deleted items with an empty
+     name; it is shown as `name/`.
+  8. Several-item downloads **counted a folder's files once per listing
+     page again**, so folders of more than about 4,000 files were refused
+     as "more than 10,000".
+  9. Several-item downloads **failed a folder** holding both `a/b` and
+     `a/b/c`; the file is now saved as `a/b (1)`.
+  10. In **Deleted items**, keyboard shortcuts (Delete, F2, Ctrl+A,
+      Ctrl+X) acted on the folder's selection, which is not shown there;
+      the selection is cleared and the shortcuts are off in that view.
+  11. The **context menu closed at once on WebKitGTK**: the engine also
+      sends a window `click` for the right button that opened it (found by
+      the Linux desktop driver: right-click with the real pointer opened no
+      menu before the fix, opens it after).
+  12. The request recorder recorded `CopyObject`, `ListObjectVersions`
+      and `GetBucketVersioning` as `unknown`; they are now recorded by name
+      with redacted fields (copy source as a run-scoped hash).
+  Reviewed and found correct: only planned keys are touched (`in_folder`:
+  `photos/` never matches `photos-backup/`); no recursive delete; the only
+  version ids deleted are delete markers the listing reported; a move
+  deletes a source only after every copy of its item is verified and the
+  source's ETag is unchanged; copies are conditional on the planned ETag;
+  conflicts never overwrite; retries skip changed objects, integrity
+  failures and half-reviewable moves; every command checks that the
+  account's configured bucket is still the one asked for; 38 `allow-`
+  permissions, window `main` only, no wildcard, no `dialog:`/`fs:`;
+  previews never render markup (text in `<pre>`, images only from five
+  raster signatures as `data:` URLs; CSP adds `img-src data:` only); no
+  local path or credential in any event (tests). Not changed (documented):
+  one request of race between a `HeadObject` and the `CopyObject` or
+  `DeleteObject` after it; on Linux a folder rename into place could
+  replace an empty folder created in that instant; "Cut" is emptied when
+  the move's review opens. Test-only fixes: the in-memory server now gives
+  each object its own date in listings and records every version removed
+  by id.
+- **Desktop tests of the file manager** (new; local servers; a test-profile
+  build, ADR-027):
+  - Linux virtual display (Xvfb + openbox, WSL2; **not a real desktop**):
+    `tests/desktop/cloud-ui.sh files` against `serve_files_for_ui` —
+    **64 passed, 0
+    failed** (final run; 13 iterations before it fixed the driver and found
+    defect 11): folders (create, open, breadcrumbs, nested, rename
+    `photos/` → `pictures/` with `photos-backup/` and `photosx` untouched,
+    copy through the picker, move with "Keep both" into `pictures (1)/`,
+    delete, empty folder), files (rename, properties with the stored
+    SHA-256, conflict skipped then kept both, a move whose delete is refused
+    and retried, a copy stopped by a refused request and retried without
+    copying twice, Cancel in the review, delete and restore from Deleted
+    items, a partly refused folder delete and its retry), selection (click
+    with the real pointer, Shift+Down, Escape, Ctrl+A, right-click menu, the
+    row's menu button, reset on navigation), sorting by name, size, date
+    and type, a filter, search (folder, whole bucket with "Search further",
+    key prefix), Load more over 10,051 objects, previews (text, JSON, "BM"
+    text, HTML and SVG as text with nothing executed, a cut text, PNG, an
+    image over 10 MiB), a share link fetched without credentials, the GTK
+    folder dialog's Cancel, and a delete on the unversioned bucket. **Not
+    tested there** (said so by the driver): Ctrl/Shift-click with the
+    pointer (XTest modifiers are not seen by WebKitGTK on Xvfb; plain clicks
+    are), choosing a folder in the GTK folder dialog (it opens, but could
+    not be driven through AT-SPI/XTest), so several-item downloads through
+    it; the clipboard; a drag and drop from another program.
+  - Native Windows 11 25H2 (build 26200, real desktop, UI Automation, no
+    mouse): `windows-cloud-ui.ps1 -Mode files` — **46 passed, 0
+    failed**, twice (5 iterations before; one false failure was a variable
+    of the new block that shadowed the credential baseline, found and
+    renamed — the user's Credential Manager had no `sotyware` entry before
+    or after): folders (create, nested, rename with the boundary, copy
+    through the picker, move with "Keep both", delete), conflicts skipped
+    and kept both, a move whose delete is refused and retried, Cancel in the
+    review, delete and restore, previews of text, "BM" text, HTML and SVG
+    as text with the window title unchanged, a PNG as an image, a delete on
+    the unversioned bucket, and the account flow (add, check, rename, key,
+    remove). Not driven on Windows: several-item downloads and folder
+    uploads through the Windows folder dialog, drag and drop from Explorer,
+    the clipboard.
+  - Both helpers fail the run if a real version of the versioned bucket was
+    ever removed by id or the app sent a request the file manager does not
+    use; both passed that check in every run.
+- **Regression runs**: 
+  - WSL2 (Ubuntu 24.04, Rust 1.99.1, Node 24.22.0): `cargo fmt --check`;
+    clippy `-D warnings` for the default, `test-profile` and
+    `request-recorder` builds; `cargo test --lib` **411 passed, 27
+    ignored** (default), **410** (test-profile), **439** (recorder); Vitest
+    **175**; `npm run check` 0/0; `npm run build`; guards: release binary
+    19/19, desktop isolation 4/4 (and the check itself on the drivers),
+    Python profile helpers 10/10, rfd guard. Virtual display
+    (`virtual.sh`, test-profile build) **138/0/0**; `cloud-ui.sh` local 16,
+    hang 8, browse 17, download 22, upload 51, files 64, all 0 failed.
+  - Native Windows 11 25H2 build 26200.9711 (copy `C:\dev\sotyware-iso`,
+    test-profile binary SHA-256 `189ab369…3468c8`): `npm run check`,
+    `npm run build`, fmt, clippy (default and test-profile),
+    `test:headless` (Vitest **175**, Rust **398 passed, 27 ignored**),
+    guard self-tests, `test-profile-selftest.ps1` 20/20, the guard refuses
+    the test-profile binary. Desktop: `windows-isolated.ps1` **57/0** plus
+    the launcher's profile and user-data checks; `windows.ps1` (real desktop,
+    moves the mouse) **113/0** (the first run 112/1: the tray flyout was
+    not open when inspected after Quit); `windows-cloud-ui.ps1` local
+    **24/0**, browse **34/0**, download **41/0** (the two runs before failed
+    1 and 3 save-dialog steps, one of them while Rust builds loaded the
+    machine: the known intermittent save-dialog flake), upload **80/0**,
+    files **46/0**. Every Windows run also compared the user's real
+    `%LOCALAPPDATA%\com.sotyware.desktop` read from outside the agent's
+    process tree (via WMI) before and after: unchanged.
+  - Not run: CI on GitHub (nothing pushed); Windows 10; a real Linux
+    desktop; any real provider.
+
+### Test-isolation incident: root cause and fix (2026-11-14)
+
+Follow-up of [the UI test that acted on a real account](#ui-test-acted-on-a-real-account-2026-11-14),
+investigated without touching the user's data or credentials (read-only
+listings; one empty folder the new self-test created in the agent's view of
+the app folder was removed again, see below).
+
+- **Root cause (established):** every process the coding agent starts on
+  this Windows machine (WSL interop → `powershell.exe` → the driver →
+  `sotyware.exe`) runs inside the Claude desktop app's **MSIX package**,
+  where `%LOCALAPPDATA%` is **virtualized**: the agent sees
+  `…\AppData\Local\Packages\Claude_…\LocalCache\Local\com.sotyware.desktop\`
+  merged over the real folder. A recursive search found the account
+  database at both paths (identical, one file seen twice through the merged
+  view); a PowerShell started through WMI (outside the package) sees the
+  **real** folder: no `cloud-accounts.sqlite3` at all, a different
+  `preferences.sqlite3` (2026-11-13 06:31) and an `EBWebView` folder last
+  written at 04:51:30, the second rehearsal's start. So:
+  - The file at the driver's path was an empty database left in the
+    virtual folder by a 2026-11-11 test. Run 1 moved it aside; the app
+    started but showed no window within 20 s; the driver's `finally`
+    killed it, failed to delete "its" database (still held) and moved the
+    virtual copy back (no error: the virtual layer had no file at that
+    name).
+  - Run 2 moved the virtual copy aside again. With the virtual file gone,
+    the merged view fell through to the **user's real database**, which
+    the app opened: hence the real account on the page. The driver pressed
+    the first matching buttons (the real account's), and its `finally`
+    deleted "the test's" database, which was the **real file**, then put
+    the empty virtual copy back on top. That is why the "database in place"
+    looked untouched (2026-11-11 timestamps, no accounts) and no backup
+    remained.
+  - Credential Manager is not virtualized: the test's entries and the
+    user's shared one prefix (`com.sotyware.desktop/`), and the app removed
+    the real entry when the driver pressed Remove on the real account.
+- **Contributing defects:** the drivers computed the app's paths
+  themselves and moved and deleted databases there (`windows-cloud-ui.ps1`,
+  and `windows.ps1`, which also deleted `preferences.sqlite3` and
+  `cloud-accounts.sqlite3` at its end); nothing proved which database the
+  app opened; test credentials used the app's own namespace; the driver
+  identified accounts by the first matching button; the guard added after
+  the incident (stop unless the page starts empty) cannot tell an empty
+  real profile from a test profile.
+- **Fix: test isolation by construction**
+  ([ADR-027](../architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)):
+  a `test-profile` build that refuses to start without a profile the driver
+  created (exit 3), keeps databases, webview data and credentials (own
+  service `com.sotyware.desktop.test` and a per-profile nonce) inside it,
+  runs under its own identifier, and acknowledges pid, paths and namespace;
+  every driver checks that acknowledgement after each launch before
+  touching the window, fingerprints the user's folders and credentials
+  before and after, and removes only its own profile and credentials.
+  `scripts/check-desktop-isolation.mjs` (in `test:headless`) refuses a
+  driver that names the user's folders, moves or deletes a database,
+  deletes a credential directly or launches without the checks (18
+  findings in the drivers as they were at `0e85fe6`).
+- **Self-test slip during the fix:** the first run of the new
+  `test-profile-selftest.ps1` created an empty folder `x` inside the
+  agent's (virtual) view of `%LOCALAPPDATA%\com.sotyware.desktop` before
+  the overlap check refused it (the bug the check was written to catch:
+  `New-TestProfile` created the parent before checking it). The folder was
+  removed (checked empty and created minutes before) and `New-TestProfile`
+  now checks before creating anything.
+- **Not done (by instruction):** the user's Backblaze account and
+  Credential Manager entry were not restored; no Backblaze request was
+  made.
+
 ### UI test acted on a real account (2026-11-14)
 
 The ADR-024 recorder smoke test at Backblaze (authorised: one small object,
@@ -189,7 +386,9 @@ with a provider helper (`smoke.rs`) in a separate copy
   Afterwards: no sotyware process, the 2026-11-11 account database file in
   place (no accounts), no backup file left; the test's own leftover
   Credential Manager entry was deleted with `cmdkey`. Why the moved
-  database was still in use is not established.
+  database was still in use was not established at the time (it was
+  later the same day: see
+  [the root cause](#test-isolation-incident-root-cause-and-fix-2026-11-14)).
 - Since then `windows-cloud-ui.ps1` stops when the window does not appear
   or the Cloud Storage page is not empty at startup
   ([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test)).

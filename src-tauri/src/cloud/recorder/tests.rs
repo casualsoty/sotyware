@@ -1328,3 +1328,129 @@ fn health_reasons_cover_every_kind_of_loss() {
     h.written = 2;
     assert_eq!(h.reasons(), ["unwritten-events"]);
 }
+
+// ------------------------------------------ file management (ADR-026)
+
+/// The file-management requests (copy, delete with and without a version,
+/// version listing, versioning state, folder marker) are recorded by name
+/// with redacted fields like the transfer requests: keys and the copy
+/// source as run-scoped hashes, never the bucket, keys, key id, secret or
+/// a version id; and the recording agrees with the server's log.
+#[tokio::test(flavor = "multi_thread")]
+async fn file_management_requests_are_recorded_by_name_and_redacted() {
+    let (server, data) = TestServer::start_versioned(KEY_ID, SECRET, &[(BUCKET, true)]).await;
+    let sink = MemSink::default();
+    let rec = mem_recorder(sink.clone(), QUEUE_CAPACITY);
+    let s = store(&server, &rec, options());
+    let src = format!("{SCOPE}photos/a b+c.txt");
+    let dest = format!("{SCOPE}copied/a b+c.txt");
+    data.seed(BUCKET, &src, b"BODY-SENTINEL-Q7Z- copy me");
+    let props = s.object_properties(BUCKET, &src).await.unwrap().unwrap();
+    s.copy_object(BUCKET, &src, None, props.e_tag.as_deref(), &dest)
+        .await
+        .unwrap();
+    let deleted = s.delete_reporting(BUCKET, &src, None).await.unwrap();
+    assert!(deleted.marker_created);
+    let page = s
+        .list_versions_page(BUCKET, &format!("{SCOPE}photos/"), None, 1000)
+        .await
+        .unwrap();
+    let marker = page
+        .entries
+        .iter()
+        .find(|e| e.delete_marker)
+        .unwrap()
+        .version_id
+        .clone();
+    s.delete_reporting(BUCKET, &src, Some(&marker))
+        .await
+        .unwrap();
+    assert!(matches!(
+        s.bucket_versioning(BUCKET).await,
+        Ok(super::super::s3::Versioning::Enabled)
+    ));
+    s.put_folder_marker(BUCKET, &format!("{SCOPE}new/"))
+        .await
+        .unwrap();
+    // Outside the run's scope: recorded as such, not hashed.
+    s.copy_object(BUCKET, &dest, None, None, "elsewhere/x.txt")
+        .await
+        .unwrap();
+    settle().await;
+    let (health, r) = finish(&rec, &sink);
+    assert!(health.complete(), "{health:?}");
+    for name in [
+        "CopyObject",
+        "DeleteObject",
+        "ListObjectVersions",
+        "GetBucketVersioning",
+        "PutObject",
+    ] {
+        assert!(!r.ops_named(name).is_empty(), "{name} recorded");
+    }
+    assert!(
+        r.ops_named("unknown").is_empty(),
+        "no request recorded as unknown"
+    );
+    let start = |name: &str, n: usize| -> Value {
+        r.op(r.ops_named(name)[n])
+            .into_iter()
+            .find(|e| e["kind"] == "op-start")
+            .unwrap()
+            .clone()
+    };
+    let copy = start("CopyObject", 0);
+    assert_eq!(copy["bucket"], "configured");
+    assert_eq!(copy["source_bucket"], "configured");
+    assert!(copy["key"].as_str().unwrap().starts_with("scope:"));
+    assert!(copy["source_key"].as_str().unwrap().starts_with("scope:"));
+    assert_ne!(copy["key"], copy["source_key"]);
+    assert_eq!(copy["if_match"], true);
+    assert_eq!(copy["source_version"], false);
+    assert_eq!(copy["metadata_copied"], true);
+    let outside = start("CopyObject", 1);
+    assert_eq!(outside["key"], "outside-scope");
+    assert_eq!(outside["if_match"], false);
+    // The source of the first copy was deleted (marker), then the marker
+    // removed by its version id: the second delete says so, without the id.
+    assert_eq!(start("DeleteObject", 0)["version"], false);
+    assert_eq!(start("DeleteObject", 1)["version"], true);
+    let versions = start("ListObjectVersions", 0);
+    assert!(versions["prefix"].as_str().unwrap().starts_with("scope:"));
+    assert_eq!(versions["key_marker"], false);
+    assert_eq!(start("GetBucketVersioning", 0)["bucket"], "configured");
+    let text = sink.text();
+    for secret in [
+        KEY_ID,
+        SECRET,
+        BUCKET,
+        "photos",
+        "a b+c",
+        "BODY-SENTINEL",
+        marker.as_str(),
+    ] {
+        assert!(!text.contains(secret), "{secret} must not be recorded");
+    }
+    compare(&server.ops(), &r);
+}
+
+#[test]
+fn copy_sources_are_parsed_only_to_be_hashed() {
+    assert_eq!(
+        parse_copy_source(Some("b/a/b%20c%2B.txt")),
+        (Some("b".into()), Some("a/b c+.txt".into()), false)
+    );
+    assert_eq!(
+        parse_copy_source(Some("/b/k?versionId=v%201")),
+        (Some("b".into()), Some("k".into()), true)
+    );
+    assert_eq!(
+        parse_copy_source(Some("b")),
+        (Some("b".into()), None, false)
+    );
+    assert_eq!(
+        parse_copy_source(Some("b/%zz")),
+        (Some("b".into()), None, false)
+    );
+    assert_eq!(parse_copy_source(None), (None, None, false));
+}

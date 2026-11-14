@@ -109,13 +109,37 @@ fn local_segments(rel: &str) -> Vec<String> {
 }
 
 /// Numbers the later of two local paths that clash (also when they differ
-/// only in case, for Windows and macOS file systems).
-fn dedupe(paths: &mut [Vec<String>]) {
+/// only in case, for Windows and macOS file systems). A file whose path is
+/// also a folder's (the keys `a/b` and `a/b/c` can both exist) is numbered
+/// too, so the folder can be created. `dirs[i]` says whether `paths[i]` is
+/// a folder (a marker).
+fn dedupe(paths: &mut [Vec<String>], dirs: &[bool]) {
+    let lower = |p: &[String]| p.join("/").to_lowercase();
+    // Every folder some path needs: its parents, and markers themselves.
+    let mut folders: HashSet<String> = HashSet::new();
+    for (p, &dir) in paths.iter().zip(dirs) {
+        let end = if dir {
+            p.len()
+        } else {
+            p.len().saturating_sub(1)
+        };
+        for n in 1..=end {
+            folders.insert(lower(&p[..n]));
+        }
+    }
     let mut taken: HashSet<String> = HashSet::new();
-    for p in paths.iter_mut() {
+    for (p, &dir) in paths.iter_mut().zip(dirs) {
+        if dir {
+            // Folders merge; nothing to number.
+            continue;
+        }
         let mut candidate = p.clone();
         let mut n = 1;
-        while !taken.insert(candidate.join("/").to_lowercase()) {
+        loop {
+            let key = lower(&candidate);
+            if !folders.contains(&key) && taken.insert(key) {
+                break;
+            }
             if let Some(last) = candidate.last_mut() {
                 *last = super::operations::numbered_name(p.last().map_or("_", String::as_str), n);
             }
@@ -386,6 +410,7 @@ async fn plan_items(
                         .list_recursive_page(bucket, prefix, token.as_deref(), 1000)
                         .await
                         .map_err(|e| operation_error(&e))?;
+                    let before = files.len();
                     for o in page
                         .objects
                         .into_iter()
@@ -405,7 +430,8 @@ async fn plan_items(
                             marker,
                         });
                     }
-                    total += files.len();
+                    // This page's files only: the earlier pages are counted.
+                    total += files.len() - before;
                     if total > MAX_FILES {
                         return Err(invalid(
                             "more than 10,000 files are selected; download fewer at a time",
@@ -417,7 +443,8 @@ async fn plan_items(
                     }
                 }
                 let mut paths: Vec<Vec<String>> = files.iter().map(|f| f.local.clone()).collect();
-                dedupe(&mut paths);
+                let dirs: Vec<bool> = files.iter().map(|f| f.marker).collect();
+                dedupe(&mut paths, &dirs);
                 for (f, p) in files.iter_mut().zip(paths) {
                     f.local = p;
                 }
@@ -944,7 +971,8 @@ impl BulkDownloads {
                 batch: id.clone(),
                 state: if stop.is_some() {
                     BatchState::Failed
-                } else if cancelled.load(Ordering::SeqCst) {
+                } else if cancelled.load(Ordering::SeqCst) && cancelled_items + failed > 0 {
+                    // A cancel after the last item undid nothing.
                     BatchState::Cancelled
                 } else if failed > 0 {
                     BatchState::Partial

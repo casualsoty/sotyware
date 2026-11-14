@@ -50,8 +50,10 @@ Where things are. Generated and ignored paths are listed in
 ├── scripts/
 │   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
 │   ├── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri
-│   ├── check-release-binary.mjs  Guard against shipping the request recorder (ADR-024): --manifest (npm run check:release-binary), a binary scan, and Tauri's beforeBundleCommand (--before-bundle)
-│   └── check-release-binary.test.mjs  Its tests (node --test, npm run test:release-binary-guard)
+│   ├── check-release-binary.mjs  Guard against shipping a test build, the request recorder (ADR-024) or a test profile (ADR-027): --manifest (npm run check:release-binary), a binary scan, and Tauri's beforeBundleCommand (--before-bundle)
+│   ├── check-release-binary.test.mjs  Its tests (node --test, npm run test:release-binary-guard)
+│   ├── check-desktop-isolation.mjs  Static check of tests/desktop (npm run check:desktop-isolation, in test:headless): no driver names the user's app folder or credential namespace, moves or deletes a database, deletes a credential directly, or launches without the test-profile checks (ADR-027)
+│   └── check-desktop-isolation.test.mjs  Its tests (node --test, npm run test:desktop-isolation-guard)
 ├── package-lock.json         Pinned JS dependency tree
 ├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)
@@ -70,7 +72,8 @@ Where things are. Generated and ignored paths are listed in
 │   │   └── rfd/              rfd 0.17.2 as published, `com.rs` changed: Windows dialog paths as `OsString` + tests
 │   └── src/
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
-│       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests
+│       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
+│       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
 │       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS + tests (incl. restarts with the built-in features)
 │       ├── cloud/            Cloud storage: backend, the dashboard's account commands, the bucket browser, downloads, upload batches and file management (ADR-026)
@@ -97,7 +100,8 @@ Where things are. Generated and ignored paths are listed in
 │       │   ├── places.rs     CloudPlaces: favorites and recent items per account (cloud-places.sqlite3) and their four commands + tests
 │       │   ├── drop.rs       CloudDrops: dropped paths kept in Rust, watch/unwatch/upload_cloud_drop + tests
 │       │   ├── tests.rs      Storage operations against the in-process S3 server
-│       │   ├── test_server/versioned.rs  In-memory S3 backend with versions and delete markers (HeadObject, ranged GetObject, PutObject, CopyObject, DeleteObject, ListObjectsV2, ListObjectVersions, GetBucketVersioning), tests only
+│       │   ├── test_server/versioned.rs  In-memory S3 backend with versions and delete markers (HeadObject, ranged GetObject, PutObject, CopyObject, DeleteObject, ListObjectsV2, ListObjectVersions, GetBucketVersioning); records every version removed by id, tests only
+│       │   ├── test_server/files_ui.rs  serve_files_for_ui: the local server of the file-management desktop test (a versioned and an unversioned bucket, seeded; dump, fail, add commands; fails if a real version was removed by id), tests only
 │       │   ├── test_server.rs  In-process S3 server (s3s + s3s-fs, or an in-memory listing backend with exact keys and continuation tokens; can refuse chosen operations, records them with part numbers, injects faults per operation and part: 500, 403, no answer, a callback), a throttled or stalling TCP relay (ThrottledLink), an object backend with exact keys and slow/stalled/cut bodies, temp-file helpers, the UI tests' listing, object and upload servers (serve_listing_for_ui, serve_objects_for_ui, serve_uploads_for_ui; the last one optionally seeded with one given file; a second key for the helper's own requests; check_recordings compares request recordings with the app's requests), tests only
 │       │   ├── integration.rs  Opt-in (#[ignore]) tests against real Backblaze B2 / Hetzner accounts (round trip, B2 connection check and B2 folder listing with recorded requests, B2 bucket fingerprint) + the same check and listing cases against the test server
 │       │   └── integration/
@@ -112,18 +116,23 @@ Where things are. Generated and ignored paths are listed in
 │           ├── registry.rs   FeatureRegistry: registration, lifecycle table, per-feature locking, start_all/stop_all + tests
 │           └── example.rs    The example feature + tests
 └── tests/
-    └── desktop/              Desktop tests of the release binary
+    └── desktop/              Desktop tests of the release binary, always a test-profile build (ADR-027)
         ├── check-ps-variables.ps1  Static check of the Windows test scripts (parses only, runs nothing): fails if one scope spells a variable two ways ($out/$Out are one variable in PowerShell)
-        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test: Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), download (local object server, GTK save dialog), upload (local s3s-fs server, GTK multi-file dialog, stub tray watcher), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
+        ├── cloud-ui.sh       Opt-in Linux Cloud Storage end-to-end test (test-profile build): Xvfb + openbox, private D-Bus session, real GNOME Keyring; phases local, hang, browse (local listing server), download (local object server, GTK save dialog), upload (local s3s-fs server, GTK multi-file dialog, stub tray watcher), files (file management against serve_files_for_ui), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key)
         ├── cloud_ui.py       Its driver: add, check, open bucket, browse, download through the save dialog, rename, replace key, remove through AT-SPI + XTest; keyring and database checked from outside
         ├── cloud_ui_upload.py  Its upload phase (run by cloud_ui.py): batches through the GTK multi-file dialog, server state checked after each, exact-key cleanup
+        ├── cloud_ui_files.py  Its files phase (ADR-026, run by cloud_ui.py): folders, files, conflicts, partial failures and retries, delete and restore, selection with the real pointer, sorting, filters, search, previews, share link, several-item downloads through the GTK folder dialog, unversioned delete; server state checked after each step
+        ├── test_profile.py   Test-profile helper of the Linux drivers (ADR-027): create a profile, check the app's acknowledgement, remove only this run's profile, fingerprint the user's folders
+        ├── test_profile_test.py  Its unit tests (npm run test:profile-helpers)
+        ├── TestProfile.psm1  Test-profile helper of the Windows drivers (ADR-027): the same, plus this profile's and the user's Credential Manager lines and deleting only this profile's entries
+        ├── test-profile-selftest.ps1  Its self-test (no app, no desktop)
         ├── fake_secret_service.py  A Secret Service that never answers (cloud-ui.sh hang phase)
-        ├── run.sh            Linux/X11 simulated test: private D-Bus session, runtime dir and data dir (XDG_DATA_HOME)
+        ├── run.sh            Linux/X11 simulated test (test-profile build): private D-Bus session, runtime dir and data dir (XDG_DATA_HOME)
         ├── sni_watcher.py    Stub tray host (org.kde.StatusNotifierWatcher); --reject, --no-host
         ├── single_instance.py  Linux test driver: windows, tray menu, launches, tray failure, dashboard-only mode, feature preferences across restarts, Cloud Storage navigation and empty state, page via AT-SPI
         ├── virtual.sh        Linux: run.sh on a private Xvfb display with openbox
         ├── windows.ps1       Windows test on the real desktop: hide button, tray, close, launches, feature preferences across restarts, Cloud Storage navigation and empty state
-        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation, real Credential Manager; -Mode local, browse (local listing server), download (local object server, Windows save dialog), upload (local s3s-fs server, Windows multi-file dialog; moves the mouse once for tray Quit), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key), b2-download (one temporary file downloaded from Backblaze through the dashboard and the save dialog), b2-upload (one batch uploaded to Backblaze through the dashboard and the multi-file dialog with a third key, refused without -ConfirmB2Upload; -Rehearse: the same against the local s3s-fs server) or b2-lifecycle -Scenario multipart|cancel|retry|leave|quit (one upload lifecycle behaviour at Backblaze with the release settings, refused without -ConfirmB2Lifecycle; -Rehearse: the same against the local s3s-fs server; quit moves the mouse once)
+        ├── windows-cloud-ui.ps1  Opt-in Windows Cloud Storage end-to-end test through UI Automation (test-profile build, credentials in the profile's namespace); -Mode files (file manager against serve_files_for_ui), local, browse (local listing server), download (local object server, Windows save dialog), upload (local s3s-fs server, Windows multi-file dialog; moves the mouse once for tray Quit), b2 (real Backblaze), b2-browse (temporary dataset at Backblaze, read-only key), b2-download (one temporary file downloaded from Backblaze through the dashboard and the save dialog), b2-upload (one batch uploaded to Backblaze through the dashboard and the multi-file dialog with a third key, refused without -ConfirmB2Upload; -Rehearse: the same against the local s3s-fs server) or b2-lifecycle -Scenario multipart|cancel|retry|leave|quit (one upload lifecycle behaviour at Backblaze with the release settings, refused without -ConfirmB2Lifecycle; -Rehearse: the same against the local s3s-fs server; quit moves the mouse once)
         └── windows-isolated.ps1  Unattended Windows test on a private desktop: window, hide button, close, launches (no tray)
 ```
 

@@ -32,7 +32,7 @@ env:
   # Number of checks the test runs today. A run with fewer is a failure: a check
   # must never disappear silently. Update it in the same commit that adds or
   # removes a check in tests/desktop/windows-isolated.ps1.
-  EXPECTED_CHECKS: 56
+  EXPECTED_CHECKS: 57
 
 jobs:
   isolated-desktop:
@@ -58,11 +58,16 @@ jobs:
       # The release binary must contain the patched rfd (ADR-023).
       - name: check the rfd patch is applied
         run: npm run check:rfd-patch
-      - name: Build the release binary (no installers)
-        run: npm run tauri build -- --no-bundle
-      # The tested binary is never a request-recorder build (ADR-024).
-      - name: check the binary has no request recorder
-        run: node scripts/check-release-binary.mjs src-tauri/target/release/sotyware.exe
+      # Desktop tests run a test-profile build only (ADR-027): it cannot reach
+      # the user's data, and the packaging guard refuses it.
+      - name: Build the test-profile binary (no installers)
+        run: npm run build:test-profile
+      - name: check the guard refuses the test-profile binary (never packaged)
+        shell: bash
+        run: |
+          if node scripts/check-release-binary.mjs src-tauri/target/test-profile/release/sotyware.exe; then
+            echo "::error::the packaging guard accepted a test-profile binary"; exit 1
+          fi
 
       # Exit codes of the test: 0 all passed, 1 a check failed, 2 binary missing or
       # already running, 3 the private desktop could not be created or used, 4 the

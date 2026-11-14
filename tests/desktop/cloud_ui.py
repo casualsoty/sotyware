@@ -34,6 +34,9 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_profile as tp  # noqa: E402
 import time
 
 import dbus
@@ -219,6 +222,13 @@ elif PHASE == "upload":
     CONTROL = os.environ["SOTYWARE_UI_CONTROL"]
     with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
         SEED = {o["key"]: o for o in json.load(mf)}
+elif PHASE == "files":
+    # The made-up key of serve_files_for_ui (src-tauri/src/cloud/test_server/files_ui.rs).
+    KEY1, SECRET1 = "e2eFilesKey00000000001", "e2e-Files-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "files-versioned", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
+    CONTROL = os.environ["SOTYWARE_UI_CONTROL"]
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -382,7 +392,10 @@ def keyring_items(account_id):
     """(unlocked items, locked items, stored values); the values are only
     compared, never printed."""
     svc = secret_service()
-    unlocked, locked = svc.SearchItems({"service": "com.sotyware.desktop", "username": f"cloud-account/{account_id}"})
+    # Only this run's namespace (ADR-027): service com.sotyware.desktop.test,
+    # user names prefixed with the profile's nonce.
+    unlocked, locked = svc.SearchItems({"service": tp.CREDENTIAL_SERVICE,
+                                        "username": PROFILE.credential_user(account_id)})
     values = []
     if unlocked:
         _, session = svc.OpenSession("plain", dbus.String("", variant_level=1))
@@ -429,16 +442,30 @@ def declining_prompts(pred):
     return wrapped
 
 
-# ---- the app, with its own data folder and none of the test variables ----
+# ---- the app, in this run's test profile and with none of the test variables ----
+# ADR-027: a test-profile build that refuses to start without the profile,
+# keeps its databases and credentials in it, and acknowledges it; nothing is
+# clicked before that acknowledgement matches this launch. XDG_DATA_HOME
+# points into the throwaway HOME as a second layer.
+tp.require_test_profile_build(BIN)
 data = tempfile.mkdtemp(prefix=f"data-{PHASE}-", dir=os.environ["HOME"])
-DB = os.path.join(data, "com.sotyware.desktop", "cloud-accounts.sqlite3")
+PROFILE = tp.create(os.environ["HOME"], f"profile-{PHASE}-{os.getpid()}")
+DB = PROFILE.db("cloud-accounts.sqlite3")
 log = os.path.join(os.environ["HOME"], f"sotyware-{PHASE}.log")
 env = {k: v for k, v in os.environ.items() if not k.startswith(("SOTYWARE_IT_", "SOTYWARE_CLOUD_IT_"))}
 env["XDG_DATA_HOME"] = data
+env[tp.ENV] = PROFILE.root
 with open(log, "wb") as f:
     p = subprocess.Popen([BIN], env=env, stdout=f, stderr=subprocess.STDOUT)
 pid = p.pid
-
+try:
+    ACK = tp.verify_ack(PROFILE, pid, timeout=30, alive=lambda: p.poll() is None)
+except tp.IsolationError as e:
+    p.kill()
+    print(f"FAIL  the app runs in this run's test profile: {e}", flush=True)
+    print(f"ABORT {PHASE}: the app is not provably isolated; nothing was clicked", flush=True)
+    sys.exit(1)
+print(f"PASS  the app runs in this run's test profile (pid {pid}, {PROFILE.root})", flush=True)
 
 def rows():
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as db:
@@ -1018,6 +1045,17 @@ try:
         ok2, _, removed = remove(label)
         check("remove the account: gone from page, database and keyring",
               bool(ok) and removed and rows() == [], str(rows()))
+
+    elif PHASE == "files":
+        # A phase that stops early is a failure, never a pass with fewer checks.
+        try:
+            exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_ui_files.py"),
+                      encoding="utf-8").read())
+            check("the files phase ran to its end", True)
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            check("the files phase ran to its end", False, f"{type(e).__name__}: {e}")
+            traceback.print_exc()
 
     elif PHASE == "upload":
         try:

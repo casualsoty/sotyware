@@ -25,7 +25,7 @@ env:
   # Number of checks the driver runs today. A run with fewer is a failure: a check
   # must never disappear silently. Update it in the same commit that adds or
   # removes a check in tests/desktop/single_instance.py.
-  EXPECTED_CHECKS: 119
+  EXPECTED_CHECKS: 138
 
 jobs:
   virtual-display:
@@ -60,11 +60,16 @@ jobs:
       # The release binary must contain the patched rfd (ADR-023).
       - name: check the rfd patch is applied
         run: npm run check:rfd-patch
-      - name: Build the release binary (no installers)
-        run: npm run tauri build -- --no-bundle
-      # The tested binary is never a request-recorder build (ADR-024).
-      - name: check the binary has no request recorder
-        run: node scripts/check-release-binary.mjs src-tauri/target/release/sotyware
+      # Desktop tests run a test-profile build only (ADR-027): it cannot reach
+      # the user's data, and the packaging guard refuses it.
+      - name: Build the test-profile binary (no installers)
+        run: npm run build:test-profile
+      - name: check the guard refuses the test-profile binary (never packaged)
+        shell: bash
+        run: |
+          if node scripts/check-release-binary.mjs src-tauri/target/test-profile/release/sotyware; then
+            echo "::error::the packaging guard accepted a test-profile binary"; exit 1
+          fi
 
       # virtual.sh already fails on any FAIL or SKIP and on a missing dependency
       # (exit 2) or display (exit 3). This step additionally requires the full

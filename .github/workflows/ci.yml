@@ -109,6 +109,19 @@ jobs:
         run: npm run check:release-binary
       - name: test the release binary guard
         run: npm run test:release-binary-guard
+      # Desktop tests run in test profiles only (ADR-027): the static check
+      # of the drivers is part of test:headless; these are the guards' and
+      # helpers' own tests.
+      - name: test the desktop isolation guard
+        run: npm run test:desktop-isolation-guard
+      - name: test the test-profile helpers (Python on Linux, PowerShell on Windows)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/test-profile-selftest.ps1
+          else
+            npm run test:profile-helpers
+          fi
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --check

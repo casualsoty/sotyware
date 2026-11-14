@@ -145,17 +145,28 @@
 #   server (seeded with the anchor under the same kind of key) and checks
 #   the app's requests there by operation.
 #
-# The account database (%LOCALAPPDATA%\com.sotyware.desktop\cloud-accounts.sqlite3)
-# is moved aside first and put back at the end, as in windows.ps1; secret values
-# are only compared, never shown. Needs a logged-in session (the WebView2 window
+# The app runs in a test profile of this run (ADR-027, TestProfile.psm1): a
+# test-profile build (or a request-recorder build, which is one too) that
+# refuses to start without the profile, keeps its databases, webview data and
+# Credential Manager entries (com.sotyware.desktop.test/<nonce>/...) inside it
+# and acknowledges it. Every launch that becomes the primary instance is
+# checked against that acknowledgement before the window is touched; the run
+# stops otherwise. The user's own %LOCALAPPDATA%\com.sotyware.desktop and
+# com.sotyware.desktop/ credentials are never touched and are compared before
+# and after. (Until 2026-11-14 this script moved the user's account database
+# aside and deleted "its" copy at the end; inside an MSIX-virtualized
+# process that acted on the user's real account and deleted the real
+# database: docs/status/status.md.) Secret values are only compared, never
+# shown. Needs a logged-in session (the WebView2 window
 # must be created); it does not move the mouse (except -Mode upload and
 # -Mode b2-lifecycle -Scenario quit, above).
 # Exit code: 0 all passed, 1 a check failed, 2 binary missing, already running,
 # or b2 credentials missing, 3 (upload, b2-lifecycle quit) no interactive
 # desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle")][string]$Mode = "local",
-  [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle", "files")][string]$Mode = "local",
+  [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\test-profile\release\sotyware.exe"),
+  [string]$ProfileParent = (Join-Path $PSScriptRoot "..\..\src-tauri\target\desktop-test-profiles"),
   [string]$Region = "eu-central-003",
   # b2-upload, b2-lifecycle: the in-process server instead of Backblaze.
   [switch]$Rehearse,
@@ -170,8 +181,10 @@ param(
   # The app records its own S3 requests (a request-recorder build only).
   [switch]$RecordRequests
 )
-if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build -- --no-bundle)"; exit 2 }
+if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run build:test-profile)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
+Import-Module (Join-Path $PSScriptRoot "TestProfile.psm1") -Force
+if (-not (Test-TestProfileBuild $Exe)) { "ABORT: $Exe is not a test-profile build (ADR-027); run: npm run build:test-profile"; exit 2 }
 if ($ExpectSha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $Exe).Hash.ToLowerInvariant() -ne $ExpectSha256.ToLowerInvariant()) { "ABORT: $Exe is not the expected binary (SHA-256 differs from $ExpectSha256)"; exit 2 }
 # b2-lifecycle shares b2-upload's keys, rehearsal server and cleanup rules.
 $IsLc = $Mode -eq "b2-lifecycle"
@@ -402,9 +415,11 @@ function RunCheck([double]$timeout = 60) {
   } $timeout | Out-Null
   $script:status
 }
-function Target($id) { "com.sotyware.desktop/cloud-account/$id" }
+# This run's namespace only (ADR-027); never a com.sotyware.desktop/ target.
+function Target($id) { Get-TestCredentialTarget $Prof $id }
 function Stored($key, $secret) { "sotyware-s3-credentials-v1`n$key`n$secret" }
-function CmdkeyLines { @(cmdkey /list | Select-String -SimpleMatch "com.sotyware.desktop" | ForEach-Object { $_.Line.Trim() }) }
+# The user's own sotyware entries, compared before and after the run.
+function CmdkeyLines { Get-NormalCredentialLines }
 # Entries cmdkey lists for exactly this target. Only its "Target:" lines count:
 # the header "Currently stored credentials for target: <target>" names the
 # target even when nothing is stored.
@@ -517,10 +532,13 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # Replacing the key only stores it (no request); made-up values.
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files") {
   # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
-  # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs).
-  if ($Mode -eq "browse") {
+  # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs) and
+  # serve_files_for_ui (test_server/files_ui.rs).
+  if ($Mode -eq "files") {
+    $Key1 = "e2eFilesKey00000000001"; $Secret1 = "e2e-Files-Secret-0123456789"; $Bucket = "files-versioned"; $Helper = "files_ui::serve_files_for_ui"
+  } elseif ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
   } elseif ($Mode -eq "upload" -or $IsB2Up) {
     $Key1 = "e2eUploadKey0000000001"; $Secret1 = "e2e-Upload-Secret-0123456789"; $Bucket = "upload-bucket"; $Helper = "serve_uploads_for_ui"
@@ -551,6 +569,10 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Endpoint = (Get-Content $SrvFile -Raw).Trim()
   "test server: $Endpoint"
   if ($Mode -eq "upload" -or $IsB2Up) { @(Get-Content $SrvOut -Encoding UTF8 | Where-Object { $_ -match '^serving' }) | ForEach-Object { "  $_" } }
+  if ($Mode -eq "files") {
+    $Out = Join-Path $env:TEMP "sotyware-files-downloads-$run"
+    New-Item -ItemType Directory $Out | Out-Null
+  }
   if ($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
     # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
@@ -703,13 +725,42 @@ function LcOpenUploads {
   "$($m.Groups[1].Value):$($m.Groups[2].Value -replace '"', '')"
 }
 
-$CloudDb = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "com.sotyware.desktop\cloud-accounts.sqlite3"
-$CloudBackup = "$CloudDb.cloud-ui-test-backup"
-if (Test-Path $CloudBackup) { "ABORT: $CloudBackup exists (left by an interrupted run?); restore or remove it first"; exit 2 }
-foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudDb), $CloudBackup) } }
-if (Test-Path $CloudBackup) { "cloud accounts: existing database moved to $CloudBackup for this run" }
-$before = CmdkeyLines
-"credential manager: $($before.Count) com.sotyware.desktop line(s) before the run"
+# ---- test profile (ADR-027) ----
+$NormalBefore = Get-NormalProfileFingerprint
+$Prof = New-TestProfile $ProfileParent "cloud-$Mode-$run"
+# The user's real folder, seen from outside this (possibly MSIX-virtualized) process tree.
+$RealBefore = Get-RealNormalProfileFingerprint $Prof.Parent
+"user's real app folder (outside this process tree): $(if ($null -eq $RealBefore) { 'could not be read' } else { "$(@($RealBefore).Count) line(s)" })"
+$env:SOTYWARE_TEST_PROFILE = $Prof.Root
+"test profile: $($Prof.Root) (credentials under $($Prof.TargetPrefix))"
+$CloudDb = Join-Path $Prof.DataDir "cloud-accounts.sqlite3"
+# Stops the run unless $proc acknowledges this run's profile; nothing is
+# clicked in a window whose data and credentials are not provably this run's.
+function Verified($proc, [string]$label) {
+  try { $null = Wait-TestProfileAck $Prof $proc.Id 30 $proc; Check "${label}: the app runs in this run's test profile (acknowledged)" $true }
+  catch {
+    Check "${label}: the app runs in this run's test profile (acknowledged)" $false "$_"
+    Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
+    throw "ABORT: the app is not provably isolated; nothing else is run"
+  }
+}
+# Removes this run's profile and credentials; called on every way out.
+function ProfileCleanup {
+  $null = WaitFor { (Procs).Count -eq 0 } 10
+  Remove-TestCredentials $Prof
+  Check "cleanup: no Credential Manager entry of this run's profile left" ((Get-TestCredentialLines $Prof).Count -eq 0)
+  if (Test-Path -LiteralPath $Prof.Root) { Remove-TestProfile $Prof }
+  Check "cleanup: this run's test profile removed" (-not (Test-Path -LiteralPath $Prof.Root))
+  Check "the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|"))
+  if ($null -ne $RealBefore) {
+    $realAfter = Get-RealNormalProfileFingerprint $Prof.Parent
+    Check "the user's real app folder, read from outside this process tree, is unchanged" ($null -ne $realAfter -and (@($realAfter) -join "|") -eq (@($RealBefore) -join "|"))
+  }
+}
+# Unique names: a step that reused $before once made this check compare the
+# wrong thing (2026-11-14, files mode).
+$UserCredBefore = CmdkeyLines
+"credential manager: $($UserCredBefore.Count) com.sotyware.desktop line(s) before the run"
 
 if ($Mode -eq "b2" -or $Mode -eq "b2-browse") {
   $fpBefore = Fingerprint
@@ -745,7 +796,7 @@ if ($Mode -eq "b2-download") {
     # Nothing is downloaded; only a version the upload reported is deleted.
     DownloadCleanup
     Remove-Item -Recurse -Force $SrcDir, $Out -EA SilentlyContinue
-    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    ProfileCleanup
     "summary: $script:pass passed, $script:fail failed"; exit 1
   }
 }
@@ -763,7 +814,7 @@ if ($Mode -eq "b2-upload" -and -not $Rehearse) {
     # Nothing goes through the app; only what this run's keys hold is removed.
     UploadUiFinish
     [System.IO.Directory]::Delete($UpSrc, $true)
-    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    ProfileCleanup
     "summary: $script:pass passed, $script:fail failed"; exit 1
   }
 }
@@ -780,7 +831,7 @@ if ($IsLc -and -not $Rehearse) {
   if (-not (($prepExit -eq 0) -and $script:seedVersion)) {
     LifecycleFinish
     [System.IO.Directory]::Delete($UpSrc, $true)
-    foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
+    ProfileCleanup
     "summary: $script:pass passed, $script:fail failed"; exit 1
   }
 }
@@ -961,6 +1012,132 @@ function StoredOk($o, [string]$path) {
 # Upload requests the server saw so far (PutObject, multipart).
 function UploadOps($st) { @($st.Ops | Where-Object { $_ -match '^(PutObject|CreateMultipartUpload|UploadPart|CompleteMultipartUpload)' }).Count }
 
+
+# ---- files mode (ADR-026): the file manager against serve_files_for_ui ----
+# The server's state (`dump`): per bucket, key -> { current, versions }.
+function FState([string]$bucket = "files-versioned") {
+  $f = "$SrvFile.state.json"
+  if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f }
+  if (-not (Ctl @("dump")) -or -not (WaitFor { Test-Path -LiteralPath $f } 10)) { throw "the files server did not answer dump" }
+  $j = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+  Remove-Item -LiteralPath $f
+  $keys = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+  foreach ($p in $j.buckets.$bucket.keys.PSObject.Properties) { $keys[$p.Name] = $p.Value }
+  $keys
+}
+function FCurrent($keys, [string]$prefix = "") { @($keys.Keys | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) -and $null -ne $keys[$_].current } | Sort-Object) -join "|" }
+function FText($keys, [string]$k) { if ($keys.ContainsKey($k) -and $keys[$k].current) { [string]$keys[$k].current.text } else { $null } }
+function FVersions($keys, [string]$k) { if ($keys.ContainsKey($k)) { @($keys[$k].versions) } else { @() } }
+# The checkbox "Select <name>", toggled through the Toggle pattern.
+function Sel([string]$name) {
+  $script:box = $null
+  WaitFor { $script:box = Named "Select $name" $CT::CheckBox; $null -ne $script:box } 10 | Out-Null
+  if (-not $script:box) { Write-Host "  no checkbox 'Select $name'"; return $false }
+  try { $script:box.GetCurrentPattern($Toggle).Toggle(); $true } catch { $false }
+}
+function SelectedCount { $m = [regex]::Match((PageText), '(\d+) selected'); if ($m.Success) { [int]$m.Groups[1].Value } else { 0 } }
+# The open modal whose title satisfies $pred (the element, not its heading).
+function ModalWhere([scriptblock]$pred) {
+  $d = Dash; if (-not $d) { return $null }
+  foreach ($e in @($d.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition))) {
+    $n = $e.Current.Name
+    if ($n -and $e.Current.ControlType -ne $CT::Text -and $e.Current.ControlType -ne $CT::Button -and (& $pred $n)) {
+      if ($e.FindFirst($S::Descendants, (PCT $CT::Button))) { return $e }
+    }
+  }
+  $null
+}
+# A button in $el by its name without surrounding spaces or the folder icon
+# (UI Automation includes the aria-hidden icon in the name).
+function PressFolderIn($el, [string]$name) {
+  if (-not $el) { return $false }
+  $icon = [string][char]::ConvertFromUtf32(0x1F4C1)
+  $b = @($el.FindAll($S::Descendants, (PCT $CT::Button)) | Where-Object { $_.Current.Name.Replace($icon, "").Trim() -eq $name })[0]
+  if (-not $b) { return $false }
+  try { $b.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false }
+}
+# Removes the account card labelled $label (its Remove, then the confirmation).
+function RemoveCard([string]$label) {
+  $d = Dash; if (-not $d) { return $false }
+  $item = @($d.FindAll($S::Descendants, (PCT $CT::ListItem)) | Where-Object { $_.Current.Name.StartsWith($label) -and $null -ne (InEl $_ "Remove" $CT::Button) })[0]
+  if (-not $item) { Write-Host "  no account card '$label'"; return $false }
+  if (-not (PressIn $item "Remove")) { return $false }
+  $script:conf = $null
+  WaitFor { $script:conf = @((Dash).FindAll($S::Descendants, (PCN "Confirm removal of $label")))[0]; $null -ne $script:conf } 10 | Out-Null
+  (PressIn $script:conf "Remove account") -and (Says @("Removed $label") 30)
+}
+function InEl($el, [string]$name, $type) { if (-not $el) { return $null }; $el.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $type), (PCN $name))) }
+function PressIn($el, [string]$name) { $b = InEl $el $name $CT::Button; if (-not $b -or -not $b.Current.IsEnabled) { return $false }; try { $b.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false } }
+function OpRegion { $d = Dash; if (-not $d) { return $null }; @($d.FindAll($S::Descendants, (PCN "File operation")) | Where-Object { $_.Current.ControlType -ne $CT::Text })[0] }
+function OpText { $r = OpRegion; if ($r) { AllNames $r } else { "" } }
+function OpFinished { $r = OpRegion; ($null -ne $r) -and ($null -ne (InEl $r "Dismiss" $CT::Button)) }
+# Waits for the review ("<Verb> ...?"), runs $before on it, presses $verb in
+# it and waits for the operation's final state. Returns review + panel text.
+function Reviewed([string]$verb, [scriptblock]$before = $null, [double]$timeout = 60) {
+  $script:rv = $null
+  WaitFor { $script:rv = ModalWhere { param($n) $n.StartsWith($verb) -and $n.TrimEnd().EndsWith("?") }; $null -ne $script:rv } 30 | Out-Null
+  if (-not $script:rv) { Write-Host "  no review for ${verb}: $((OpText).Substring(0, [Math]::Min(200, (OpText).Length)))"; return $null }
+  $review = AllNames $script:rv
+  if ($before) { & $before $script:rv }
+  if (-not (PressIn $script:rv $verb)) { Write-Host "  $verb could not be pressed"; return $null }
+  if (-not (WaitFor { (OpFinished) -and $null -eq (ModalWhere { param($n) $n.StartsWith($verb) -and $n.TrimEnd().EndsWith("?") }) } $timeout)) { Write-Host "  $verb did not finish: $(OpText)"; return $null }
+  "$review || $(OpText)"
+}
+function RetryOp { $before = OpText; if (-not (PressIn (OpRegion) "Try again")) { return $null }; WaitFor { (OpText) -ne $before -or -not (OpFinished) } 10 | Out-Null; if (WaitFor { OpFinished } 60) { OpText } else { $null } }
+function DismissOp { $r = OpRegion; if ($r) { $null = PressIn $r "Dismiss"; WaitFor { $null -eq (OpRegion) } 5 | Out-Null } }
+function AnyModal { ModalWhere { param($n) $true } }
+# Closes what a failed step left open, so the next step starts clean.
+function Recover { for ($i = 0; $i -lt 3; $i++) { $m = ModalWhere { param($n) $n.StartsWith("Rename") -or $n.StartsWith("Copy") -or $n.StartsWith("Move") -or $n.StartsWith("Delete") -or $n.StartsWith("Restore") -or $n.StartsWith("Properties") -or $n.StartsWith("New folder") }; if (-not $m) { break }; if (-not ((PressIn $m "Cancel") -or (PressIn $m "Close"))) { break }; Start-Sleep -Milliseconds 400 }; DismissOp }
+function FRoot { if (-not ((PageText) -like "*Root of the bucket*")) { $null = PressFolder $Bucket }; WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and -not $t.Contains("Loading") } 20 }
+function FGo([string]$folder) {
+  if (-not (FRoot)) { return $false }
+  $path = ""
+  foreach ($seg in $folder.Trim("/").Split("/")) { $path += "$seg/"; $p = $path; if (-not ((PressFolder $seg) -and (WaitFor { $t = PageText; $t.Contains($p) -and -not $t.Contains("Loading") } 20))) { return $false } }
+  $true
+}
+# In the destination picker: from its root, open each folder of $folder, then press $confirm.
+function Pick2([string]$folder, [string]$confirm) {
+  $script:pk = $null
+  WaitFor { $script:pk = ModalWhere { param($n) $n -match ' to\u2026$' -or $n -match ' to\.\.\.$' }; $null -ne $script:pk } 10 | Out-Null
+  if (-not $script:pk) { Write-Host "  no destination picker"; return $false }
+  $null = PressIn $script:pk $Bucket; Start-Sleep -Milliseconds 600
+  $last = ""
+  if ($folder) {
+    foreach ($seg in $folder.Trim("/").Split("/")) {
+      $s2 = $seg
+      if (-not (WaitFor { PressFolderIn $script:pk $s2 } 10)) { Write-Host "  picker: no folder '$seg'"; return $false }
+      $last = $seg; Start-Sleep -Milliseconds 800
+    }
+  }
+  # The confirm button names the folder shown: "Move to <quote>made<quote>".
+  $want = if ($last) { "$confirm $([char]0x201C)$last$([char]0x201D)" } else { $confirm }
+  $script:cb = $null
+  WaitFor { $script:cb = @($script:pk.FindAll($S::Descendants, (PCT $CT::Button)) | Where-Object { $_.Current.Name.StartsWith($want) -and $_.Current.IsEnabled })[0]; $null -ne $script:cb } 10 | Out-Null
+  if (-not $script:cb) { Write-Host "  picker: no button '$want'"; return $false }
+  try { $script:cb.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false }
+}
+# A button with aria-pressed: Invoke if offered, else the Toggle pattern.
+function PressToggle([string]$name) {
+  $script:tb = $null; WaitFor { $script:tb = Named $name $CT::Button; $null -ne $script:tb } 10 | Out-Null
+  if (-not $script:tb) { return $false }
+  try { $script:tb.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
+  try { $script:tb.GetCurrentPattern($Toggle).Toggle(); $true } catch { $false }
+}
+# Runs the steps in order; on the first that fails says which.
+function Chain([string]$label, [scriptblock[]]$steps) {
+  $i = 0
+  foreach ($st in $steps) { $i++; if (-not (& $st)) { Write-Host "  ${label}: step $i of $($steps.Count) failed"; return $false } }
+  $true
+}
+function KeepBoth($dlg) { $r = @($dlg.FindAll($S::Descendants, (PCT $CT::RadioButton)) | Where-Object { $_.Current.Name.StartsWith("Keep both") })[0]; if ($r) { try { $r.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { } }; Start-Sleep -Milliseconds 300 }
+function FFill([string]$label, [string]$value) {
+  $d = Dash; if (-not $d) { return $false }
+  $e = @($d.FindAll($S::Descendants, (PCT $CT::Edit)) | Where-Object { $n = $_.Current.Name; $n -eq $label -or $n.StartsWith("$label ") })[0]
+  if (-not $e) { Write-Host "  no field '$label'"; return $false }
+  try { $e.GetCurrentPattern($ValuePattern).SetValue($value) } catch { return $false }
+  WaitFor { $e.GetCurrentPattern($ValuePattern).Current.Value -eq $value } 5
+}
+
 # The panel (CloudUpload.svelte, a region named "Upload") and its file rows.
 function AllNames($el) { @($el.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join " | " }
 # Searching WebView2's whole tree takes long (a 40 MiB PUT at 6 MiB/s ended
@@ -1086,8 +1263,9 @@ $root = $A::RootElement
 $OverflowClass = "TopLevelWindowForOverflowXamlIsland"
 function OverflowShown { $o = $root.FindFirst($S::Children, [System.Windows.Automation.PropertyCondition]::new($A::ClassNameProperty, $OverflowClass)); ($null -ne $o) -and -not $o.Current.BoundingRectangle.IsEmpty }
 function OverflowOpen { (OverflowShown) -and [CloudUiW]::ClassOf([CloudUiW]::GetForegroundWindow()) -eq $OverflowClass }
+# The test-profile build's tooltip, never an installed sotyware's ("sotyware").
 function TrayIcons {
-  @($root.FindAll($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCA "NotifyItemIcon"), (PCN "sotyware"))) |
+  @($root.FindAll($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCA "NotifyItemIcon"), (PCN "sotyware test profile"))) |
     Where-Object { $r = $_.Current.BoundingRectangle; -not $r.IsEmpty -and -not [double]::IsNaN($r.X) })
 }
 function OpenOverflow {
@@ -1123,6 +1301,7 @@ function LaunchToBucket {
   $script:app = $null
   if ((Procs).Count -gt 0) { Write-Host "  sotyware still runs; not started again"; return $false }
   $script:app = Start-Process $Exe -PassThru; $null = $script:app.Handle
+  Verified $script:app "launch" | Out-Host
   (WaitFor { $null -ne (Dash) } 20) -and (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { Btn "Open bucket" } 15) -and
     (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("inbox") } 30)
 }
@@ -1144,6 +1323,7 @@ function UpCleanup {
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
   $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
+  Verified $p "startup" | Out-Host
   $up = WaitFor { $null -ne (Dash) } 20
   Check "startup: dashboard window" $up
   # Every later step presses the first matching button on the page; without
@@ -1225,6 +1405,131 @@ try {
     $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
     $ok = $ok -and (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Root of the bucket*") -and ($t -notlike "*Loading*") } 60)
     Check "Back to accounts, then Open bucket again starts at the bucket's root" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+  } elseif ($Mode -eq "files") {
+   try {
+    $ok = $ok -and (WaitFor { (PageText) -like "*photos-backup*" } 30)
+    Check "files: Open bucket lists the root" $ok
+    $seeded = FCurrent (FState)
+    # Folders: create, open, nested, rename with the prefix boundary.
+    $ok = (Press "New folder$([char]0x2026)") -and (FFill "Name" "made") -and (Press "Create folder") -and (Says @("Folder", "made", "created") 20)
+    $k = FState
+    Check "folders: New folder creates the marker made/ (and nothing else)" ($ok -and (FCurrent $k) -eq ((@($seeded.Split("|")) + "made/" | Sort-Object) -join "|"))
+    $ok = (PressFolder "made") -and (WaitFor { (PageText) -like "*This folder is empty.*" } 20)
+    $ok = $ok -and (Press "New folder$([char]0x2026)") -and (FFill "Name" "inner") -and (Press "Create folder") -and (Says @("inner", "created") 20)
+    Check "folders: open the new folder, create a nested one in it" ($ok -and (FState).ContainsKey("made/inner/"))
+    Recover
+    $ok = (FRoot) -and (Sel "photos") -and (Press "Rename") -and (FFill "New name" "pictures") -and (Press "Rename")
+    $rv = if ($ok) { Reviewed "Rename" } else { $null }
+    $k = FState
+    Check "folders: Rename photos/ to pictures/ moves exactly its 3 objects, content kept" ($rv -and (FCurrent $k "pictures/") -eq "pictures/a.txt|pictures/b.txt|pictures/sub/c.txt" -and (FText $k "pictures/sub/c.txt") -eq "content of photos/sub/c.txt`n") "$rv"
+    Check "folders: prefix boundary: photos-backup/ and photosx untouched; originals behind delete markers" ((FCurrent $k "photos-backup") -eq "photos-backup/|photos-backup/keep.txt" -and $null -ne $k["photosx"].current -and (FCurrent $k "photos/") -eq "" -and @(FVersions $k "photos/a.txt").Count -eq 2)
+    Recover
+    $ok = (FRoot) -and (Sel "pictures") -and (Press "Copy to$([char]0x2026)") -and (Pick2 "made" "Copy to")
+    $rv = if ($ok) { Reviewed "Copy" } else { $null }
+    $k = FState
+    Check "folders: Copy pictures/ into made/ through the picker; originals kept" ($rv -and (FCurrent $k "made/pictures/") -eq "made/pictures/a.txt|made/pictures/b.txt|made/pictures/sub/c.txt" -and (FCurrent $k "pictures/").Split("|").Count -eq 3) "$rv"
+    Recover
+    $ok = (FGo "made/") -and (Sel "pictures") -and (Press "Move to$([char]0x2026)") -and (Pick2 "" "Move to")
+    $rv = if ($ok) { Reviewed "Move" { param($d) KeepBoth $d } } else { $null }
+    $k = FState
+    Check "folders: Move where the name exists shows the conflict and keeps both as pictures (1)" ($rv -and $rv.Contains("already exist") -and (FCurrent $k "pictures (1)/") -eq "pictures (1)/a.txt|pictures (1)/b.txt|pictures (1)/sub/c.txt" -and (FCurrent $k "made/pictures/") -eq "") "$rv"
+    Recover
+    $ok = (FRoot) -and (Sel "pictures") -and (Press "Delete")
+    $rv = if ($ok) { Reviewed "Delete" } else { $null }
+    $k = FState
+    Check "folders: Delete pictures/ (bucket keeps versions) hides exactly its objects" ($rv -and $rv.Contains("keeps versions") -and (FCurrent $k "pictures/") -eq "" -and (FCurrent $k "pictures (1)/").Split("|").Count -eq 3 -and (FCurrent $k "photos-backup").Split("|").Count -eq 2) "$rv"
+    Recover
+    # Files: conflict skipped then kept both; refused delete of a move and retry.
+    $ok = (FGo "conflict/src/") -and (Sel "x.txt") -and (Press "Copy to$([char]0x2026)") -and (Pick2 "conflict/dest" "Copy to")
+    $script:rv = $null
+    $ok = $ok -and (WaitFor { $script:rv = ModalWhere { param($n) $n.StartsWith("Copy") -and $n.TrimEnd().EndsWith("?") }; $null -ne $script:rv } 30)
+    $rvText = if ($script:rv) { AllNames $script:rv } else { "" }
+    $startBtn = InEl $script:rv "Copy" $CT::Button
+    $disabled = $null -ne $startBtn -and -not $startBtn.Current.IsEnabled
+    $cancelled = $ok -and (PressIn $script:rv "Cancel")
+    Start-Sleep 1
+    $k = FState
+    Check "files: an existing destination is shown; with Skip (the default) nothing can start; Cancel; nothing replaced" ($ok -and $rvText.Contains("already exist") -and $disabled -and $cancelled -and (FText $k "conflict/dest/x.txt") -eq "already there`n" -and -not $k.ContainsKey("conflict/dest/x (1).txt")) "$rvText"
+    Recover
+    $ok = (FGo "conflict/src/") -and (Sel "x.txt") -and (Press "Copy to$([char]0x2026)") -and (Pick2 "conflict/dest" "Copy to")
+    $rv = if ($ok) { Reviewed "Copy" { param($d) KeepBoth $d } } else { $null }
+    $k = FState
+    Check "files: Keep both copies to x (1).txt; the existing file unchanged" ($rv -and (FText $k "conflict/dest/x (1).txt") -eq "content of conflict/src/x.txt`n" -and (FText $k "conflict/dest/x.txt") -eq "already there`n") "$rv"
+    Recover
+    $ok = (FGo "files/") -and (Sel "two.txt") -and (Press "Move to$([char]0x2026)") -and (Pick2 "made" "Move to") -and (Ctl @("fail DeleteObject 1"))
+    $rv = if ($ok) { Reviewed "Move" } else { $null }
+    $k = FState
+    Check "files: a move whose delete is refused: copied and verified, original kept; both exist" ($rv -and $rv.Contains("original could not be deleted") -and $null -ne (FText $k "made/two.txt") -and $null -ne (FText $k "files/two.txt")) "$rv"
+    $r2 = RetryOp
+    $k = FState
+    Check "files: Try again deletes only the original left" ($r2 -and $null -eq (FText $k "files/two.txt") -and $null -ne (FText $k "made/two.txt")) "$r2"
+    Recover
+    # Cancel in the review changes nothing; delete and restore.
+    $fBefore = (FCurrent (FState))
+    $ok = (FGo "files/") -and (Sel "one.txt") -and (Press "Delete") -and (WaitFor { $null -ne (ModalWhere { param($n) $n.StartsWith("Delete") -and $n.TrimEnd().EndsWith("?") }) } 20)
+    $ok = $ok -and (PressIn (ModalWhere { param($n) $n.StartsWith("Delete") -and $n.TrimEnd().EndsWith("?") }) "Cancel")
+    Start-Sleep 1
+    Check "delete: Cancel in the review changes nothing" ($ok -and (FCurrent (FState)) -eq $fBefore)
+    $null = Sel "one.txt"
+    $ok = (Sel "one.txt") -and (Press "Delete")
+    $rv = if ($ok) { Reviewed "Delete" } else { $null }
+    $k = FState
+    Check "delete: deleting one.txt adds a delete marker and keeps the version" ($rv -and $null -eq $k["files/one.txt"].current -and @(FVersions $k "files/one.txt").Count -eq 2)
+    $ok = (PressToggle "Deleted items") -and (WaitFor { $null -ne (Named "Restore one.txt" $CT::Button) } 20) -and (Press "Restore one.txt")
+    if (-not $ok) { Write-Host "  restore: no Restore one.txt: $((PageText).Substring([Math]::Max(0, (PageText).Length - 400)))" }
+    $rv = if ($ok) { Reviewed "Restore" } else { $null }
+    $k = FState
+    Check "delete: Restore from Deleted items removes exactly the delete marker; one.txt is back" ($rv -and (FText $k "files/one.txt") -eq "content of files/one.txt`n" -and @(FVersions $k "files/one.txt").Count -eq 1) "$rv"
+    $null = Press "$([char]0x2190) Back to the folder"
+    Recover
+    # Previews: text, HTML and SVG as text (never rendered), PNG as an image.
+    foreach ($pv in @(@("docs/", "readme.txt", "Hello from the readme."), @("docs/", "cars.txt", "BMW, Audi"), @("docs/", "page.html", "<script>"), @("docs/", "logo.svg", "<svg"))) {
+      $ok = (FGo $pv[0]) -and (Sel $pv[1]) -and (Press "Properties")
+      $want = $pv[2]
+      $got = $ok -and (WaitFor { (PageText).Contains($want) } 20)
+      $pt = PageText; $at = $pt.IndexOf("Preview |")
+      # The file's own text may say PWNED; executed, it would set the title.
+      Check "preview: $($pv[1]) is shown as text, nothing in it ran (window title unchanged)" ($got -and (Dash).Current.Name -eq "sotyware" -and $null -eq (Named "Preview of $($pv[1])" $CT::Image)) "$(if ($at -ge 0) { $pt.Substring($at, [Math]::Min(300, $pt.Length - $at)) })"
+      $null = Press "Close"; Start-Sleep -Milliseconds 400
+    }
+    $ok = (FGo "media/") -and (Sel "pixel.png") -and (Press "Properties")
+    Check "preview: a PNG is shown as an image" ($ok -and (WaitFor { $null -ne (Named "Preview of pixel.png" $CT::Image) } 20))
+    $null = Press "Close"
+    Recover
+    # The unversioned bucket: a delete warns that it is final.
+    $ok = Chain "plain account" @(
+      { Press "$([char]0x2190) Back to accounts" },
+      { WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 20 },
+      { Press "Add account" },
+      { WaitFor { (Fields) -contains "Secret access key" } 10 },
+      { Fill "Name" "Plain" }, { Fill "Bucket" "files-plain" }, { Fill "Region" $Region },
+      { Fill "Custom endpoint (optional)" $Endpoint }, { Fill "Access key ID" $Key1 },
+      { (Fill "Secret access key" $Secret1) -or ((Start-Sleep -Milliseconds 500) -or (Fill "Secret access key" $Secret1)) -or ((Write-Host "  fields: $((Fields) -join ', ')") -and $false) },
+      { Press "Add account" },
+      { Says @("Added Plain") 30 },
+      { $script:opens = @((Dash).FindAll($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $CT::Button), (PCN "Open bucket")))); $script:opens.Count -eq 2 }
+    )
+    # The cards are in account-id order: "plain" before "sotyware-e2e-...".
+    if ($ok) { $script:opens[0].GetCurrentPattern($Invoke).Invoke(); $ok = WaitFor { (PageText).Contains("Root of the bucket") -and (PageText).Contains("files-plain") } 30 }
+    if (-not $ok) { Write-Host "  plain: the second account did not open" }
+    $ok = $ok -and (PressFolder "files") -and (WaitFor { (PageText) -like "*one.txt*" } 20) -and (Sel "one.txt") -and (Press "Delete")
+    $rv = if ($ok) { Reviewed "Delete" } else { $null }
+    $kp = FState "files-plain"
+    Check "plain: a delete on a bucket without versions warns it is final; the object is gone" ($rv -and $rv.Contains("gone for good") -and -not $kp.ContainsKey("files/one.txt")) "$rv"
+    Recover
+    $null = Press "$([char]0x2190) Back to accounts"
+    # Remove the second account again (its entry is in this profile's
+    # namespace), so the common steps below see only the first one.
+    $null = WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 20
+    Check "plain: the second account is removed again" (RemoveCard "Plain")
+    # The common steps below start inside the first account's bucket.
+    $null = (Press "Open bucket") -and (WaitFor { (PageText).Contains("Root of the bucket") } 30)
+    "  NOT TESTED  several-item downloads and folder uploads through the native Windows folder dialog (not driven by this mode yet; covered on Linux by cloud-ui.sh files and by the Rust tests)"
+    "  NOT TESTED  drag and drop from Explorer; the system clipboard"
+   } catch {
+    Check "files steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+    Recover
+   }
   } elseif ($Mode -eq "download") {
    try {
     $ok = $ok -and (WaitFor { (PageText) -like "*readme.txt*" } 30)
@@ -1763,6 +2068,7 @@ try {
         Check "before it ended, the panel never claimed the upload finished or the file uploaded" ($claimed.Count -eq 0) (Redact ($claimed -join " || "))
         # Relaunch, so the account can be removed through the page again.
         $p = Start-Process $Exe -PassThru; $null = $p.Handle
+        Verified $p "relaunch" | Out-Host
         $ok = (WaitFor { $null -ne (Dash) } 20) -and (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { Btn "Open bucket" } 15) -and
           (Press "Open bucket") -and (WaitFor { $t = PageText; $t.Contains("Root of the bucket") -and $t.Contains("sotyware-it") } 60)
         Check "relaunch: the account is still listed and its bucket opens; no upload panel" ($ok -and (UpPanel) -eq "") (PageText)
@@ -1910,9 +2216,7 @@ try {
 } finally {
   Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
   $null = WaitFor { (Procs).Count -eq 0 } 5
-  foreach ($f in @($CloudDb, "$CloudDb-journal")) { if (Test-Path $f) { Remove-Item $f } }
-  foreach ($f in @($CloudBackup, "$CloudBackup-journal")) { if (Test-Path $f) { Move-Item $f ($f -replace [regex]::Escape($CloudBackup), $CloudDb) } }
-  if (Test-Path $CloudDb) { "cloud accounts: your database was put back" }
+  ProfileCleanup
   if ($Mode -eq "b2-upload" -and -not $Rehearse) {
     UploadUiFinish
     "test program after the verification: $(TestExe)"
@@ -1952,13 +2256,13 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files") {
     # Removing the endpoint file stops the helper (and with it its temporary bucket).
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
   }
   # .NET, not Remove-Item: download mode saves a name with an unpaired surrogate.
-  if (($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) -and $Out -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
+  if (($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files") -and $Out -and (Test-Path $Out)) { [System.IO.Directory]::Delete($Out, $true) }
   if ($Mode -eq "b2-upload" -and (Test-Path -LiteralPath $UpSrc)) {
     [System.IO.Directory]::Delete($UpSrc, $true)
     Check "b2-upload: local test files removed ($UpSrc)" (-not (Test-Path -LiteralPath $UpSrc))
@@ -1979,7 +2283,7 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse)) {
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files") {
   $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
   if ($Mode -eq "b2-upload") {
@@ -2021,7 +2325,7 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB
     Check "rehearsal: the app sent $want" $okOps $ops
   }
   if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
-  $what = if ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
+  $what = if ($Mode -eq "files") { "only file-manager requests, and no real version was deleted for good" } elseif ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
@@ -2069,8 +2373,8 @@ if ($RecordRequests) {
   }
   "  recordings kept in $RecDir"
 }
-$after = CmdkeyLines
-Check "Credential Manager: same com.sotyware.desktop lines as before the run" (($after -join "|") -eq ($before -join "|")) "before=$($before.Count) after=$($after.Count)"
+$UserCredAfter = CmdkeyLines
+Check "Credential Manager: the user's own sotyware entries are as before the run" (($UserCredAfter -join "|") -eq ($UserCredBefore -join "|")) "before=$($UserCredBefore.Count) after=$($UserCredAfter.Count)"
 if ($Mode -eq "b2" -or $Mode -eq "b2-browse") {
   $fpAfter = Fingerprint
   if ($fpAfter) { "  after:  $($fpAfter -replace '^sotyware-it fingerprint ', '')" }

@@ -1,28 +1,31 @@
 #!/usr/bin/env node
-// Guard against shipping the request recorder (ADR-024).
+// Guard against shipping a test build: the request recorder (ADR-024) or
+// a test profile (ADR-027).
 //
 // The Cargo feature `request-recorder` compiles an opt-in recorder of the
-// app's S3 requests into the binary. It is for controlled integration runs
-// only and must never be packaged. build.rs already refuses the feature
-// unless the target directory is named `recorder`; this script adds three
-// checks:
+// app's S3 requests into the binary; `test-profile` makes the app run only
+// inside a test profile (and `request-recorder` turns it on as well). Both
+// are for desktop and integration test runs only and must never be
+// packaged. build.rs already refuses them unless the target directory is
+// named `recorder` (or `test-profile`); this script adds three checks:
 //
-//   --manifest            the feature exists and no default (and no other
-//                         feature) turns it on. In test:headless and CI.
+//   --manifest            both features exist and no default (and no other
+//                         feature except these two) turns one on. In
+//                         test:headless and CI.
 //   <binary>...           none of these binaries contains the recorder's
-//                         marker. CI runs it on the release binary the
-//                         desktop workflows test.
+//                         or the test profile's marker.
 //   --before-bundle       Tauri's beforeBundleCommand (tauri.conf.json):
 //                         refuses to package when the `tauri build` command
 //                         line (found among this process's ancestors) asks
 //                         for the feature or for all features, or when the
-//                         binary about to be bundled contains the marker.
+//                         binary about to be bundled contains a marker.
 //                         If the command line cannot be read, every
 //                         candidate binary under the target directory that
 //                         is at least as new as the normal one is checked
 //                         (conservative: it may refuse a normal build next
-//                         to a newer recorder build; remove
-//                         src-tauri/target/recorder then).
+//                         to a newer test build; remove
+//                         src-tauri/target/recorder or target/test-profile
+//                         then).
 //
 // A recorder binary that a bundler patched anyway refuses to record at
 // runtime (src-tauri/src/cloud/recorder.rs, `bundle_type()`).
@@ -36,9 +39,18 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PREFIX = "check-release-binary: ";
-const FEATURE = "request-recorder";
-/** The recorder's interceptor name (`MARKER` in recorder.rs). */
-export const MARKER = "sotyware-request-recorder";
+/** The test-only features, each with the string its binaries contain. */
+export const GUARDED = {
+  /** The recorder's interceptor name (`MARKER` in recorder.rs), ADR-024. */
+  "request-recorder": "sotyware-request-recorder",
+  /** `BUILD_MARKER` in test_profile.rs, ADR-027. */
+  "test-profile": "sotyware-test-profile-build",
+};
+const FEATURES = Object.keys(GUARDED);
+/** Kept for the tests and older callers: the recorder's marker. */
+export const MARKER = GUARDED["request-recorder"];
+/** Where each feature's builds go (build.rs). */
+const TEST_TARGETS = ["recorder", "test-profile"];
 const here = dirname(fileURLToPath(import.meta.url));
 const srcTauri = resolve(here, "..", "src-tauri");
 const exe = process.platform === "win32" ? "sotyware.exe" : "sotyware";
@@ -48,9 +60,21 @@ function fail(msg) {
   process.exit(1);
 }
 
+/**
+ * @param {string} path
+ * @returns {string | null} the guarded feature whose marker the file holds
+ */
+export function markerIn(path) {
+  const data = readFileSync(path);
+  for (const [feature, marker] of Object.entries(GUARDED)) {
+    if (data.includes(Buffer.from(marker, "latin1"))) return feature;
+  }
+  return null;
+}
+
 /** @param {string} path @returns {boolean} */
 export function containsMarker(path) {
-  return readFileSync(path).includes(Buffer.from(MARKER, "latin1"));
+  return markerIn(path) !== null;
 }
 
 /** @param {string} manifest */
@@ -64,13 +88,19 @@ function checkManifest(manifest) {
   const pkg = JSON.parse(r.stdout).packages.find((p) => p.name === "sotyware");
   if (!pkg) fail("package sotyware not found");
   const features = pkg.features ?? {};
-  if (!(FEATURE in features)) fail(`the feature ${FEATURE} is missing from ${manifest}`);
+  for (const feature of FEATURES) {
+    if (!(feature in features)) fail(`the feature ${feature} is missing from ${manifest}`);
+  }
   for (const [name, enables] of Object.entries(features)) {
-    if (name !== FEATURE && enables.some((e) => e === FEATURE || e.endsWith(`/${FEATURE}`))) {
-      fail(`feature "${name}" turns on ${FEATURE}; it must stay off by default (ADR-024)`);
+    // One test feature may turn on the other; nothing else may.
+    if (FEATURES.includes(name)) continue;
+    for (const feature of FEATURES) {
+      if (enables.some((e) => e === feature || e.endsWith(`/${feature}`))) {
+        fail(`feature "${name}" turns on ${feature}; it must stay off by default (ADR-024, ADR-027)`);
+      }
     }
   }
-  console.log(`${PREFIX}ok: ${FEATURE} exists and is off by default`);
+  console.log(`${PREFIX}ok: ${FEATURES.join(" and ")} exist and are off by default`);
 }
 
 /** Programs whose command line can carry the build's features. */
@@ -144,30 +174,38 @@ function beforeBundle() {
   if (process.env.CARGO_TARGET_DIR) targets.add(resolve(srcTauri, process.env.CARGO_TARGET_DIR));
   if (lines) {
     for (const line of lines) {
-      if (line.includes(FEATURE) || /--all-features/.test(line)) {
-        fail(`the build command asks for the ${FEATURE} feature; recorder builds are never packaged (ADR-024): ${line}`);
+      for (const feature of FEATURES) {
+        if (line.includes(feature)) {
+          fail(`the build command asks for the ${feature} feature; test builds are never packaged (ADR-024, ADR-027): ${line}`);
+        }
+      }
+      if (/--all-features/.test(line)) {
+        fail(`the build command asks for all features; test builds are never packaged (ADR-024, ADR-027): ${line}`);
       }
       const t = targetDirOf(line);
       if (t) targets.add(resolve(srcTauri, t));
     }
   } else {
-    // Unknown command line: also check recorder builds at least as new as
-    // the normal binary.
+    // Unknown command line: also check test builds at least as new as the
+    // normal binary.
     const normal = binariesIn(defaultTarget, profile)[0];
     const since = normal ? statSync(normal).mtimeMs : 0;
-    for (const b of binariesIn(join(defaultTarget, "recorder"), profile)) {
-      if (statSync(b).mtimeMs >= since) targets.add(join(defaultTarget, "recorder"));
+    for (const dir of TEST_TARGETS) {
+      for (const b of binariesIn(join(defaultTarget, dir), profile)) {
+        if (statSync(b).mtimeMs >= since) targets.add(join(defaultTarget, dir));
+      }
     }
   }
   const checked = [];
   for (const t of targets) {
     for (const b of binariesIn(t, profile)) {
-      if (containsMarker(b)) fail(`${b} is a request-recorder build and must not be packaged (ADR-024)`);
+      const found = markerIn(b);
+      if (found) fail(`${b} is a ${found} build and must not be packaged (ADR-024, ADR-027)`);
       checked.push(b);
     }
   }
   if (checked.length === 0) fail(`no ${profile} binary found to check`);
-  console.log(`${PREFIX}ok: no recorder in ${checked.join(", ")}`);
+  console.log(`${PREFIX}ok: no test build in ${checked.join(", ")}`);
 }
 
 function main(argv) {
@@ -178,9 +216,10 @@ function main(argv) {
   } else if (argv.length > 0 && !argv[0].startsWith("--")) {
     for (const b of argv) {
       if (!existsSync(b)) fail(`${b} does not exist`);
-      if (containsMarker(b)) fail(`${b} is a request-recorder build (ADR-024)`);
+      const found = markerIn(b);
+      if (found) fail(`${b} is a ${found} build (ADR-024, ADR-027)`);
     }
-    console.log(`${PREFIX}ok: no recorder in ${argv.join(", ")}`);
+    console.log(`${PREFIX}ok: no test build in ${argv.join(", ")}`);
   } else {
     console.error(
       "usage: check-release-binary.mjs --manifest [Cargo.toml] | --before-bundle | <binary>...",

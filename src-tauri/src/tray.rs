@@ -9,6 +9,12 @@ use tauri::{
 use crate::AppControl;
 
 const TRAY_ID: &str = "sotyware-tray";
+/// The icon's tooltip. A test-profile build (ADR-027) says so, so a driver
+/// can tell its icon from an installed sotyware's.
+#[cfg(not(feature = "test-profile"))]
+const TOOLTIP: &str = "sotyware";
+#[cfg(feature = "test-profile")]
+const TOOLTIP: &str = "sotyware test profile";
 const MENU_OPEN: &str = "open-dashboard";
 const MENU_QUIT: &str = "quit";
 
@@ -58,7 +64,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &refs)?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("sotyware")
+        .tooltip(TOOLTIP)
         .menu(&menu)
         // Left click opens the dashboard; the menu is on right click.
         // (Linux ignores this: the tray host decides. The ksni backend marks the

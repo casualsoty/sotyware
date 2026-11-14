@@ -3,7 +3,15 @@
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-isolated.ps1 [-Exe <path>]
-#   (default: src-tauri\target\release\sotyware.exe)
+#   (default: src-tauri\target\test-profile\release\sotyware.exe, a test-profile
+#   build: npm run build:test-profile)
+#
+# The app runs in a test profile of this run (ADR-027, TestProfile.psm1),
+# created by the launcher under src-tauri\target\desktop-test-profiles\ and
+# removed at the end; the copy on the private desktop checks the app's
+# acknowledgement before it touches the window. The user's own
+# %LOCALAPPDATA%\com.sotyware.desktop is never read or written (before
+# 2026-11-14 this test left an empty account database there).
 #
 # The script creates a new desktop (CreateDesktop) in the current window station,
 # runs itself on it with -OnDesktop, and prints what that copy reported. sotyware
@@ -33,13 +41,16 @@
 # desktop could not be created or the copy did not run on it, 4 not run: elevated
 # session, 124 timeout.
 param(
-  [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\release\sotyware.exe"),
+  [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\test-profile\release\sotyware.exe"),
+  [string]$ProfileParent = (Join-Path $PSScriptRoot "..\..\src-tauri\target\desktop-test-profiles"),
   [string]$OnDesktop = "",
   [string]$Log = "",
   [int]$Timeout = 180
 )
-if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run tauri build)"; exit 2 }
+if (-not (Test-Path $Exe)) { "binary not found: $Exe (run: npm run build:test-profile)"; exit 2 }
 $Exe = (Resolve-Path $Exe).Path
+Import-Module (Join-Path $PSScriptRoot "TestProfile.psm1") -Force
+if (-not (Test-TestProfileBuild $Exe)) { "ABORT: $Exe is not a test-profile build (ADR-027); run: npm run build:test-profile"; exit 2 }
 $ErrorActionPreference = "Stop"
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;
@@ -111,6 +122,12 @@ if ($OnDesktop -eq "") {
     "NOT RUN: this session is elevated. WebView2 then starts its browser process de-elevated on the Default desktop, which cannot attach to a window on the private desktop, so no check could tell anything about sotyware. Run the test from a non-elevated PowerShell."
     exit 4
   }
+  $NormalBefore = Get-NormalProfileFingerprint
+  $NormalCredBefore = Get-NormalCredentialLines
+  $Prof = New-TestProfile $ProfileParent ("isolated-" + (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmssfff"))
+  "test profile: $($Prof.Root)"
+  # Inherited by the copy on the private desktop and by every app it starts.
+  $env:SOTYWARE_TEST_PROFILE = $Prof.Root
   $name = "sotyware-test-$PID"
   $desk = [I]::CreateDesktop($name, [IntPtr]::Zero, [IntPtr]::Zero, 0, 0x10000000, [IntPtr]::Zero)
   if ($desk -eq [IntPtr]::Zero) { "ABORT: CreateDesktop failed (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))"; exit 3 }
@@ -130,6 +147,13 @@ if ($OnDesktop -eq "") {
   }
   else { "ABORT: the test on desktop $name wrote no output"; if ($code -ne 124) { $code = 3 } }
   [I]::CloseDesktop($desk) | Out-Null
+  for ($i = 0; $i -lt 50 -and (Procs).Count -gt 0; $i++) { Start-Sleep -Milliseconds 100 }
+  try { Remove-TestProfile $Prof; "PASS  cleanup: this run's test profile removed" }
+  catch { "FAIL  cleanup: this run's test profile removed  $_"; $code = 1 }
+  if (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|")) { "PASS  the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" }
+  else { "FAIL  the user's own sotyware folders are unchanged"; $code = 1 }
+  if (((Get-NormalCredentialLines) -join "|") -eq ($NormalCredBefore -join "|")) { "PASS  the user's own sotyware credentials are unchanged" }
+  else { "FAIL  the user's own sotyware credentials are unchanged"; $code = 1 }
   exit $code
 }
 
@@ -176,7 +200,15 @@ Info "desktop" "running on '$own' (input desktop: '$(if ($inputDesk) { $inputDes
 Info "taskbar on this desktop" ([I]::FindWindow("Shell_TrayWnd", $null) -ne [IntPtr]::Zero)
 
 $stderr = Join-Path ([IO.Path]::GetTempPath()) "$OnDesktop.stderr"
+$Prof = Open-TestProfile $env:SOTYWARE_TEST_PROFILE
 $primary = Start-Process $Exe -PassThru -RedirectStandardError $stderr
+# Nothing is touched in a window whose data is not provably this run's (ADR-027).
+try { $null = Wait-TestProfileAck $Prof $primary.Id 30 $primary; Check "startup: runs in this run's test profile (acknowledged)" $true }
+catch {
+  Check "startup: runs in this run's test profile (acknowledged)" $false "$_"
+  Procs | ForEach-Object { Stop-Process -Id $_.Id -Force -EA SilentlyContinue }
+  Say "ABORT: the app is not provably isolated; nothing else is run"; exit 1
+}
 
 # --- startup ----------------------------------------------------------------------
 Check "startup: dashboard window visible" (WaitFor { Visible } 15)

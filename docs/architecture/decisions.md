@@ -1533,3 +1533,93 @@ code: `src-tauri/src/cloud/operations.rs` (+ `operations/names.rs`),
   tests use an in-memory versioned S3 backend (`test_server::Versioned`)
   and s3s-fs, which model S3's documented behaviour, not Backblaze's or
   Hetzner's. 22 more commands (38 in all), each with its own permission.
+
+## ADR-027: Desktop tests run a test-profile build that cannot reach the user's data
+
+Status: Accepted (2026-11-14). Replaces the "move the user's database aside
+and put it back" setup of the desktop drivers; code:
+`src-tauri/src/test_profile.rs`, `run()` in `src-tauri/src/lib.rs`,
+`CredentialNamespace` in `src-tauri/src/cloud/keyring.rs`, the `TOOLTIP` in
+`tray.rs`, `test_profile_guard` in `src-tauri/build.rs`,
+`scripts/check-release-binary.mjs`, `scripts/check-desktop-isolation.mjs`,
+`tests/desktop/TestProfile.psm1`, `tests/desktop/test_profile.py`.
+
+- **Context:** on 2026-11-14 a local rehearsal of `windows-cloud-ui.ps1`
+  acted on the user's real Backblaze account and its cleanup deleted the
+  user's real account database
+  ([status](../status/status.md#test-isolation-incident-root-cause-and-fix-2026-11-14)).
+  The drivers computed the app's data folder themselves
+  (`%LOCALAPPDATA%\com.sotyware.desktop`, or `$XDG_DATA_HOME` on Linux),
+  moved its databases aside, and deleted "the test's" copy at the end. The
+  agent's processes ran inside the Claude desktop app's MSIX package, where
+  `%LOCALAPPDATA%` is virtualized: the driver moved its virtual copy, the
+  app opened the user's real file through the merged view, and the driver
+  then deleted that file. Credential Manager is shared by every process, so
+  test credentials and the user's lived side by side under one prefix. The
+  driver also pressed the first matching button on the page. Any scheme
+  where the driver guesses the app's paths, or the app silently uses its
+  normal profile, can fail this way again.
+- **Decision:**
+  - A Cargo feature **`test-profile`**, off by default and never packaged
+    (build.rs requires `--target-dir target/test-profile`, or `recorder`;
+    `request-recorder` turns it on as well; `check-release-binary.mjs`
+    refuses its marker `sotyware-test-profile-build`, its feature on a
+    `tauri build` command line, and any default that enables it).
+  - Such a build **refuses to start** (exit 3, before any plugin, window,
+    store or credential exists) unless `SOTYWARE_TEST_PROFILE` names an
+    absolute, existing directory holding `sotyware-test-profile.json`
+    written by the driver (format 1, purpose, run id, 32-digit hex nonce).
+    There is no fallback to the normal profile; the variable means nothing
+    to a normal build (the code is not compiled in).
+  - After `build()` it **refuses a profile** that is, contains or lies
+    inside the app's own folders (data, local data, config and cache
+    folders of the real identifier, resolved through symbolic links and
+    `..`, case-insensitive on Windows).
+  - It runs under **its own identifier** `com.sotyware.desktop.test` (own
+    single-instance lock, own default folders, never a hand-over to an
+    installed sotyware), keeps its **three databases in `<profile>/data`**
+    and its **webview data in `<profile>/webview`** (the dashboard is
+    created in `setup` with that folder), and its tray icon's tooltip is
+    "sotyware test profile".
+  - Credentials live in a **separate namespace**: service
+    `com.sotyware.desktop.test`, user names prefixed with the profile's
+    nonce (Windows target `com.sotyware.desktop.test/<nonce>/cloud-account/<id>`).
+    `CredentialNamespace::normal()` is not compiled into a test-profile
+    build, so no code path of such a build can name the user's entries.
+  - Once its stores are open it writes **`sotyware-test-profile-ack.json`**
+    (atomically): pid, run, nonce, identifier, the profile, data and webview
+    folders, the three database files, the credential service and prefix.
+    Without it the app exits 3.
+  - Every driver **creates a fresh profile** per run (never reused), sets
+    the variable, and after each launch that becomes the primary instance
+    **waits for the acknowledgement and compares it** with what it set up
+    and launched (same run, nonce and pid, the test identifier, every path
+    inside the profile, none in the app's own folders). Anything else stops
+    the run before a window is touched. Drivers check the binary is a
+    test-profile build first, launch it once without a profile and once
+    with an invalid one (both must exit 3 with no window), fingerprint the
+    user's own folders (names, sizes, times, SHA-256) and, on Windows, the
+    user's `com.sotyware.desktop/` Credential Manager lines before and
+    after, and remove only their own profile (refused unless it is directly
+    under the parent it was created in and its marker has the run's nonce)
+    and only credentials under the profile's prefix.
+  - **`scripts/check-desktop-isolation.mjs`** (in `test:headless`) fails
+    if a driver names `%LOCALAPPDATA%`, a `com.sotyware.desktop/` path or
+    target, moves, copies or deletes a `.sqlite3` file, calls
+    `cmdkey /delete`, or launches the app without the profile checks.
+- **Rejected:** moving or copying the user's databases (exactly what
+  failed); an environment variable that redirects a normal build's data
+  folder (one forgotten variable would put the user's data back in reach,
+  and production would carry a test switch); checking that the page "looks
+  empty" (an empty normal profile passes, and the user's data can still be
+  touched by a later step); identifying the app by its window title or a
+  first-match button.
+- **Consequences:** every desktop test needs a separate build
+  (`npm run build:test-profile`, about the time of a release build; the
+  recorder build is one too). Packaged builds are unchanged. The tests no
+  longer exercise the exact identifier and folders of a shipped build;
+  `windows.ps1` and the Linux drivers still test single instance, tray,
+  close and persistence, under the test identifier. Webview2 or WebKitGTK
+  may still write outside the profile where they ignore the data folder
+  they are given (not seen: the fingerprints of the user's folders were
+  unchanged in every run so far).

@@ -29,6 +29,9 @@ import gi
 gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_profile as tp  # noqa: E402
+
 BIN, REG = os.path.abspath(sys.argv[1]), sys.argv[2]
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOGS = tempfile.mkdtemp(prefix="sotyware-driver-")
@@ -229,14 +232,20 @@ assert RUN_DISPLAY and RUN_BUS, "run through run.sh: needs DISPLAY and a private
 # Directories only this run uses; launches that strip the bus address (scenario 16)
 # point XDG_RUNTIME_DIR into one of them.
 RUN_DIRS = (LOGS, os.path.dirname(os.path.abspath(REG)))
-# The feature preferences database (src-tauri/src/storage.rs) lives in Tauri's
-# app_local_data_dir, $XDG_DATA_HOME/<identifier> on Linux. run.sh points
-# XDG_DATA_HOME into its work directory; refuse to run against anyone's real data.
+# Every launch runs in this run's test profile (ADR-027): a test-profile build
+# that refuses to start without one, keeps its databases in it and says so in
+# an acknowledgement, checked after each launch that becomes the primary
+# instance. XDG_DATA_HOME (private to this run, set by run.sh) is a second
+# layer: even a forgotten path stays out of the user's data.
 DATA_HOME = os.path.realpath(os.environ.get("XDG_DATA_HOME", "/nonexistent"))
 assert DATA_HOME.startswith(os.path.realpath(RUN_DIRS[1]) + os.sep), \
     f"run through run.sh: XDG_DATA_HOME must be private to this run, not {DATA_HOME}"
-PREFS_DB = os.path.join(DATA_HOME, "com.sotyware.desktop", "preferences.sqlite3")
-
+tp.require_test_profile_build(BIN)
+PROFILE = tp.create(RUN_DIRS[1], f"si-{os.getpid()}")
+os.environ[tp.ENV] = PROFILE.root
+PREFS_DB = PROFILE.db("preferences.sqlite3")
+NORMAL_DIRS = tp.normal_profile_dirs(os.path.expanduser("~"))
+NORMAL_BEFORE = tp.fingerprint(NORMAL_DIRS)
 
 def _environ(pid):
     with open(f"/proc/{pid}/environ", "rb") as f:
@@ -448,6 +457,22 @@ def launch(label, env=None):
     return p, log
 
 
+def verified(p, label):
+    """Stops the whole run unless `p` acknowledges this run's test profile
+    (ADR-027): nothing is clicked in a window whose data is not provably
+    this run's."""
+    try:
+        tp.verify_ack(PROFILE, p.pid, timeout=30, alive=lambda: p.poll() is None)
+    except tp.IsolationError as e:
+        check(f"{label}: runs in this run's test profile (acknowledged)", False, str(e))
+        for pid in sotyware_pids():
+            os.kill(pid, 9)
+        print("ABORT: the app is not provably isolated; nothing else is run")
+        sys.exit(1)
+    check(f"{label}: runs in this run's test profile (acknowledged)", True)
+    return p
+
+
 def read_log(log):
     with open(log, errors="replace") as f:
         return f.read()
@@ -520,8 +545,36 @@ assert not sotyware_pids(), f"sotyware already running from {BIN}: {sotyware_pid
 # in dashboard-only mode and every tray check would fail for the wrong reason.
 start_watcher()
 
+# 0. Fail closed (ADR-027): without a profile, or with an invalid one, the
+# test-profile build exits 3 before any window or tray item exists; it never
+# falls back to the normal profile.
+def refused(label, env):
+    before = set(all_dashboards())
+    p = subprocess.Popen([BIN], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        out, _ = p.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, _ = p.communicate()
+    text = out.decode(errors="replace")
+    check(f"0 {label}: exits 3 at once, no window, no tray item",
+          p.returncode == tp.EXIT_REFUSED and set(all_dashboards()) == before and not tray_registrations()
+          and "test profile refused" in text, f"exit={p.returncode} output={text.strip()!r}")
+
+
+open(REG, "w").close()
+refused("no SOTYWARE_TEST_PROFILE", {k: v for k, v in os.environ.items() if k != tp.ENV})
+bad_profile = os.path.join(RUN_DIRS[1], "bad-profile")
+os.mkdir(bad_profile)
+with open(os.path.join(bad_profile, tp.MARKER_FILE), "w") as f:
+    f.write('{"format":1,"purpose":"%s","run":"bad","nonce":"not-hex"}' % tp.PURPOSE)
+refused("a profile with an invalid marker", {**os.environ, tp.ENV: bad_profile})
+check("0 refused launches created nothing in either profile",
+      sorted(os.listdir(bad_profile)) == [tp.MARKER_FILE] and sorted(os.listdir(PROFILE.root)) == [tp.MARKER_FILE])
+
 # 1. First launch.
 proc = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+verified(proc, "1 first launch")
 alive = lambda: proc.poll() is None
 ok = wait_for(lambda: len(dashboards(proc.pid)) == 1 and viewable(dashboards(proc.pid)[0]), 20)
 check("1 first launch: process running and dashboard visible", ok and alive())
@@ -631,7 +684,7 @@ check("9 tray Quit: no sotyware process left", wait_for(lambda: not sotyware_pid
       f"pids={sotyware_pids()}")
 
 open(REG, "w").close()
-again = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+again = verified(subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "9 relaunch")
 ok = wait_for(lambda: len(dashboards(again.pid)) == 1 and viewable(dashboards(again.pid)[0]), 20)
 check("relaunch after Quit: starts as a new primary instance", ok and again.poll() is None)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
@@ -659,6 +712,7 @@ open(REG, "w").close()
 stop_watcher()
 start_watcher("--reject")
 bad, bad_log = launch("10 tray failure")
+verified(bad, "10 tray failure")
 code = wait_exit(bad, 30)
 bad_out = read_log(bad_log)
 check("10 tray failure: process exits with code 1", code == 1, f"exit code={code}")
@@ -679,8 +733,8 @@ open(REG, "w").close()
 read_only_parent = os.path.join(os.path.dirname(os.path.abspath(REG)), "read-only")
 os.mkdir(read_only_parent, 0o500)
 missing_dir = os.path.join(read_only_parent, "runtime")
-odd = subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+odd = verified(subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "11 unusable XDG_RUNTIME_DIR")
 ok = wait_for(lambda: len(dashboards(odd.pid)) == 1 and viewable(dashboards(odd.pid)[0]), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("11 unusable XDG_RUNTIME_DIR: starts with one tray item", ok and registered and odd.poll() is None,
@@ -701,6 +755,7 @@ if not (ok and registered and code == 0):
 # control for scenario 13: it proves that AT-SPI reaches the page and its button.
 open(REG, "w").close()
 tm, tm_log = launch("12 tray mode")
+verified(tm, "12 tray mode")
 ok = wait_for(lambda: len(dashboards(tm.pid)) == 1 and viewable(dashboards(tm.pid)[0]), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("12 tray mode: starts with dashboard and one tray item", ok and registered and tm.poll() is None,
@@ -736,7 +791,7 @@ check("12 tray mode: checking it again starts it", on,
       f"text={example_feature(tm.pid)[1] if page else ''!r}")
 # The Cloud Storage section through the real webview and capability: the link
 # switches sections, list_cloud_providers and list_cloud_accounts are allowed,
-# and with no accounts (fresh XDG_DATA_HOME) the empty state and the Add
+# and with no accounts (fresh test profile) the empty state and the Add
 # account action are shown. Listing never touches the credential store, so no
 # Secret Service is needed. Then back to the overview, whose buttons are
 # unchanged.
@@ -755,8 +810,8 @@ back = to_cloud and click_link(tm.pid, "Overview") and wait_for(
     lambda: [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"], 10)
 check("12 tray mode: Overview link returns to the Hide button and features", back and example_feature(tm.pid)[0] is not None,
       f"buttons={[n for n, _ in page_buttons(tm.pid)] if page else None}")
-cloud_db = os.path.join(DATA_HOME, "com.sotyware.desktop", "cloud-accounts.sqlite3")
-check("12 tray mode: the account database is created in the app data folder, with no accounts",
+cloud_db = PROFILE.db("cloud-accounts.sqlite3")
+check("12 tray mode: the account database is created in the test profile, with no accounts",
       os.path.exists(cloud_db) and sqlite3.connect(f"file:{cloud_db}?mode=ro", uri=True)
       .execute("SELECT count(*) FROM storage_accounts").fetchone() == (0,),
       cloud_db)
@@ -782,6 +837,7 @@ if not (ok and registered and hidden and code == 0):
 stop_watcher()
 open(REG, "w").close()
 do, do_log = launch("13 dashboard-only")
+verified(do, "13 dashboard-only")
 ok = wait_for(lambda: len(dashboards(do.pid)) == 1 and viewable(dashboards(do.pid)[0]), 20)
 check("13 dashboard-only: process running and dashboard visible", ok and do.poll() is None)
 do_win = dashboards(do.pid)[0] if ok else None
@@ -846,6 +902,7 @@ if code != 0:
 # 14. With the watcher back, the next launch is normal tray mode again.
 open(REG, "w").close()
 back, back_log = launch("14 relaunch with watcher")
+verified(back, "14 relaunch with watcher")
 ok = wait_for(lambda: len(dashboards(back.pid)) == 1 and viewable(dashboards(back.pid)[0]), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("14 relaunch with watcher: tray mode with one tray item", ok and registered and back.poll() is None
@@ -870,6 +927,7 @@ stop_watcher()
 start_watcher("--no-host")
 open(REG, "w").close()
 nh, nh_log = launch("15 no host")
+verified(nh, "15 no host")
 ok = wait_for(lambda: len(dashboards(nh.pid)) == 1 and viewable(dashboards(nh.pid)[0]), 20)
 nh_out = log_after_mode(nh_log)
 check("15 no host: dashboard-only mode, dashboard visible",
@@ -912,6 +970,7 @@ def start_tray_instance(label, env=None):
     """Launches in tray mode and waits for the page; returns (process, log, page ready)."""
     open(REG, "w").close()
     p, log = launch(label, env)
+    verified(p, label)
     up = wait_for(lambda: len(dashboards(p.pid)) == 1 and viewable(dashboards(p.pid)[0]), 20)
     registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
     page = up and registered and wait_for(lambda: page_ready(p.pid), 20) and wait_for(
@@ -1018,6 +1077,7 @@ nobus_runtime = os.path.join(LOGS, "runtime-without-bus")
 os.mkdir(nobus_runtime, 0o700)
 nobus_env["XDG_RUNTIME_DIR"] = nobus_runtime
 nb, nb_log = launch("16 no session bus", env=nobus_env)
+verified(nb, "16 no session bus")
 ok = wait_for(lambda: len(dashboards(nb.pid)) == 1 and viewable(dashboards(nb.pid)[0]), 20)
 nb_out = log_after_mode(nb_log)
 check("16 no session bus: dashboard-only mode, dashboard visible",
@@ -1035,6 +1095,11 @@ if not (ok and code == 0):
 out = proc.stdout.read().decode(errors="replace").strip()
 if out:
     print("--- primary instance output ---\n" + out)
+
+check("the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)",
+      tp.fingerprint(NORMAL_DIRS) == NORMAL_BEFORE, ", ".join(NORMAL_DIRS))
+check("nothing was written under the app's real identifier in the private data folder",
+      not os.path.exists(os.path.join(DATA_HOME, tp.NORMAL_IDENTIFIER)))
 
 counts = {s: sum(1 for _, r in results if r == s) for s in ("PASS", "FAIL", "SKIP")}
 print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped")

@@ -236,11 +236,23 @@ pub fn image_type(bytes: &[u8]) -> Option<&'static str> {
         Some("image/gif")
     } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some("image/webp")
-    } else if bytes.starts_with(b"BM") && bytes.len() > 14 {
+    } else if is_bmp(bytes) {
         Some("image/bmp")
     } else {
         None
     }
+}
+
+/// A BMP file header: "BM", four reserved zero bytes, and a DIB header of
+/// a known size. "BM" alone also starts ordinary text ("BMW", "BMI").
+fn is_bmp(bytes: &[u8]) -> bool {
+    bytes.len() >= 18
+        && bytes.starts_with(b"BM")
+        && bytes[6..10] == [0, 0, 0, 0]
+        && matches!(
+            u32::from_le_bytes([bytes[14], bytes[15], bytes[16], bytes[17]]),
+            12 | 16 | 40 | 52 | 56 | 64 | 108 | 124
+        )
 }
 
 /// `bytes` as text, if they look like UTF-8 text (no NUL, valid UTF-8
@@ -438,6 +450,15 @@ impl CloudSearches {
         id
     }
 
+    /// Puts a cursor back under its id (its continuation failed).
+    fn put_back(&self, id: &str, c: SearchCursor) {
+        self.cursors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .insert(id.to_owned(), c);
+    }
+
     fn take(&self, id: &str) -> Option<SearchCursor> {
         self.cursors
             .lock()
@@ -487,6 +508,7 @@ pub async fn search(
             "type 1 to 512 characters to search for",
         ));
     }
+    let mut taken: Option<SearchCursor> = None;
     let token = match &cursor {
         None => None,
         Some(c) => {
@@ -507,10 +529,25 @@ pub async fn search(
                     "this search can no longer be continued; search again",
                 ));
             }
-            Some(found.token)
+            let token = found.token.clone();
+            taken = Some(found);
+            Some(token)
         }
     };
-    let store = store_for(&accounts, &id, &bucket).await?;
+    // A continuation that fails (a network error, a locked keyring) can be
+    // tried again: its cursor is kept under the same id until one succeeds.
+    let restore = |taken: Option<SearchCursor>| {
+        if let (Some(c), Some(id)) = (taken, cursor.as_deref()) {
+            searches.put_back(id, c);
+        }
+    };
+    let store = match store_for(&accounts, &id, &bucket).await {
+        Ok(store) => store,
+        Err(e) => {
+            restore(taken);
+            return Err(e);
+        }
+    };
     let list_prefix = match mode {
         SearchMode::Name => prefix.clone(),
         SearchMode::Prefix => format!("{prefix}{query}"),
@@ -527,10 +564,19 @@ pub async fn search(
     let mut scanned = 0u64;
     let mut token = token;
     for _ in 0..SEARCH_PAGES {
-        let page = store
+        let page = match store
             .list_recursive_page(&bucket, &list_prefix, token.as_deref(), 1000)
             .await
-            .map_err(|e| super::browser::listing_error(&e))?;
+        {
+            Ok(page) => page,
+            // Only a failure before anything was read keeps the cursor: after
+            // that the hits so far would be lost or repeated.
+            Err(e) if scanned == 0 => {
+                restore(taken.take());
+                return Err(super::browser::listing_error(&e));
+            }
+            Err(e) => return Err(super::browser::listing_error(&e)),
+        };
         for o in &page.objects {
             scanned += 1;
             let matched = match mode {
@@ -630,7 +676,13 @@ pub fn deleted_entries(versions: Vec<super::s3::VersionInfo>) -> Vec<DeletedEntr
             }
             let newest = list.iter().find(|v| !v.delete_marker);
             Some(DeletedEntry {
-                name: file_name(&key).to_owned(),
+                // A deleted folder marker (`a/b/`) is shown by its folder's
+                // name and a slash, not as an empty name.
+                name: if key.ends_with('/') {
+                    format!("{}/", folder_name(&key))
+                } else {
+                    file_name(&key).to_owned()
+                },
                 parent: parent_of(&key).to_owned(),
                 deleted_at: latest.last_modified.clone(),
                 marker_version: latest.version_id.clone(),

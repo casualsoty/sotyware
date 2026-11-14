@@ -402,3 +402,110 @@ async fn http_get(url: &str) -> Vec<u8> {
     let i = buf.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
     buf[i + 4..].to_vec()
 }
+
+// ------------------------------------------------- audit fixes (2026-11-14)
+
+/// Text that starts with "BM" ("BMW", "BMI") is text, not a BMP image; a
+/// real BMP header is still recognised.
+#[test]
+fn text_starting_with_bm_is_not_taken_for_an_image() {
+    assert_eq!(image_type(b"BMW service report, 2024, page 1"), None);
+    assert_eq!(image_type(b"BMI table for adults (kg/m2)\n"), None);
+    let mut bmp = vec![0u8; 54];
+    bmp[..2].copy_from_slice(b"BM");
+    bmp[2..6].copy_from_slice(&54u32.to_le_bytes());
+    bmp[14..18].copy_from_slice(&40u32.to_le_bytes());
+    assert_eq!(image_type(&bmp), Some("image/bmp"));
+    // Reserved bytes that are not zero: not a BMP.
+    bmp[6] = 1;
+    assert_eq!(image_type(&bmp), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_text_file_starting_with_bm_previews_as_text() {
+    let (_s, data, accounts) = setup(false).await;
+    data.seed(
+        BUCKET,
+        "cars.txt",
+        b"BMW, Audi and others: a short list of cars",
+    );
+    let p = preview(
+        Arc::clone(&accounts),
+        "local".into(),
+        BUCKET.into(),
+        "cars.txt".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(p.kind, PreviewKind::Text);
+    assert!(p.text.unwrap().starts_with("BMW"));
+}
+
+/// "Load more" of a search that failed (a refused listing) can be tried
+/// again: the cursor is still there and continues where it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_search_continuation_keeps_its_cursor() {
+    let (server, data, accounts) = setup(false).await;
+    {
+        let mut st = data.lock();
+        for n in 0..10_050 {
+            st.put(BUCKET, &format!("s/{n:05}"), vec![1], None, HashMap::new());
+        }
+        st.put(BUCKET, "s/zz-needle", vec![1], None, HashMap::new());
+    }
+    let searches = Arc::new(CloudSearches::default());
+    let run = |cursor: Option<String>| {
+        search(
+            Arc::clone(&accounts),
+            Arc::clone(&searches),
+            "local".into(),
+            BUCKET.into(),
+            "s/".into(),
+            "needle".into(),
+            SearchMode::Name,
+            cursor,
+        )
+    };
+    let first = run(None).await.unwrap();
+    assert!(first.hits.is_empty());
+    let next = first.next.expect("more to search");
+    server.inject(
+        "ListObjectsV2",
+        None,
+        1,
+        super::super::test_server::Inject::Deny,
+    );
+    let e = run(Some(next.clone())).await.unwrap_err();
+    assert_eq!(e.kind, ErrorKind::AccessDenied);
+    let rest = run(Some(next)).await.unwrap();
+    assert_eq!(
+        rest.hits
+            .iter()
+            .map(|h| h.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["s/zz-needle"]
+    );
+}
+
+/// A deleted folder marker is listed by its folder's name, not as "".
+#[test]
+fn a_deleted_folder_marker_has_a_name() {
+    use super::super::s3::VersionInfo;
+    let v = |key: &str, id: &str, latest: bool, marker: bool, t: &str| VersionInfo {
+        key: key.into(),
+        version_id: id.into(),
+        is_latest: latest,
+        delete_marker: marker,
+        size: 0,
+        last_modified: Some(t.into()),
+    };
+    let entries = deleted_entries(vec![
+        v("a/empty/", "v1", false, false, "2025-01-01T00:00:00Z"),
+        v("a/empty/", "m1", true, true, "2025-01-02T00:00:00Z"),
+        v("a/f.txt", "v2", false, false, "2025-01-01T00:00:00Z"),
+        v("a/f.txt", "m2", true, true, "2025-01-02T00:00:00Z"),
+    ]);
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["empty/", "f.txt"]);
+    assert!(entries.iter().all(|e| e.restorable));
+}

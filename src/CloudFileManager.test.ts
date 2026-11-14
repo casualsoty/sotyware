@@ -576,6 +576,25 @@ describe("deleted items", () => {
     expect(text(dialog(root))).toContain("removes the delete markers");
   });
 
+  // Audit fix (2026-11-14): the folder's selection stayed active behind the
+  // Deleted items view, so Delete or Ctrl+A acted on entries not shown.
+  it("drops the folder's selection and ignores file shortcuts while Deleted items are shown", async () => {
+    handlers["list_cloud_deleted"] = () => ({ entries: [], truncated: false });
+    const root = await opened();
+    await clickRow(root, "b.txt");
+    expect(selectedIds(root)).toEqual(["b.txt"]);
+    await click(root, "Deleted items");
+    await key("Delete");
+    await key("F2");
+    await key("a", { ctrlKey: true });
+    await key("x", { ctrlKey: true });
+    expect(argsOf("plan_cloud_operation")).toEqual([]);
+    expect(root.querySelector('[role="dialog"]')).toBeNull();
+    expect(text(root)).not.toContain("marked to move");
+    await click(root, "Deleted items");
+    expect(selectedIds(root)).toEqual([]);
+  });
+
   it("says when versions cannot be listed with this key", async () => {
     handlers["list_cloud_deleted"] = () => Promise.reject({ kind: "access-denied", message: "the provider refused to list this folder with this key" });
     const root = await opened();
@@ -719,6 +738,20 @@ describe("context menu and favorites", () => {
     await click(menu, "Add to favorites");
     expect(argsOf("set_cloud_favorite")[0]).toEqual({ id: "photos", bucket: "soty-photos", path: "docs/", favorite: true });
     expect(text(root.querySelector(".places summary"))).toBe("Favorites (1) and recent (0)");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  // Found by the Linux desktop driver (2026-11-14): WebKitGTK also sends a
+  // "click" for the right button that opened the menu, which closed it.
+  it("stays open after the right button's click and closes on a primary click elsewhere", async () => {
+    const root = await opened();
+    row(root, "docs/").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }));
+    flushSync();
+    window.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 2 }));
+    flushSync();
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+    flushSync();
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

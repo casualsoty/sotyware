@@ -337,6 +337,10 @@ pub enum ItemNote {
     CopiedOriginalKept,
     /// Copy or delete: some objects were done, some not.
     Incomplete,
+    /// Folder move, rename or delete: every planned object was handled, but
+    /// the original folder still holds objects that were added after the
+    /// review; they were left where they are.
+    SourceNotEmpty,
 }
 
 /// One failed or skipped object of an item.
@@ -1287,7 +1291,7 @@ async fn delete_step(
             }
         }
     }
-    match store.object_properties(&bucket, &step.source).await {
+    let current_version = match store.object_properties(&bucket, &step.source).await {
         Err(e) => return fail(e),
         Ok(None) => {
             return StepResult::Done(Done::Failed(CommandError::new(
@@ -1299,14 +1303,34 @@ async fn delete_step(
             if step.e_tag.is_some() && now.e_tag != step.e_tag {
                 return StepResult::Done(Done::Skipped(changed(&step.source)));
             }
+            now.version_id
         }
-    }
+    };
     match store.delete_reporting(&bucket, &step.source, None).await {
         Ok(outcome) => StepResult::Done(Done::Finished {
-            marker: Some(outcome.marker_created),
+            marker: Some(restorable_after_delete(
+                outcome.marker_created,
+                outcome.marker_version.as_deref(),
+                current_version.as_deref(),
+            )),
         }),
         Err(e) => fail(e),
     }
+}
+
+/// Whether a `DeleteObject` without a version id left the object
+/// restorable. A delete marker alone does not say so: on a bucket whose
+/// versioning is suspended the marker gets the version id `null` and
+/// replaces (deletes for good) a current version whose id is `null` too,
+/// that is, one written while versioning was off or suspended. Only a
+/// marker next to a kept, real version id hides the object.
+pub fn restorable_after_delete(
+    marker_created: bool,
+    marker_version: Option<&str>,
+    deleted_version: Option<&str>,
+) -> bool {
+    let null = |v: Option<&str>| v.is_none_or(|v| v == "null");
+    marker_created && !(marker_version == Some("null") && null(deleted_version))
 }
 
 /// Removes a restore's delete markers, newest first, and checks the
@@ -1321,11 +1345,15 @@ async fn restore_step(store: Arc<S3Store>, bucket: String, step: Step) -> StepRe
         }
     };
     for marker in &step.markers {
-        if let Err(e) = store
+        match store
             .delete_reporting(&bucket, &step.source, Some(marker))
             .await
         {
-            return fail(e);
+            Ok(_) => {}
+            // Already removed (a retry after an answer that was lost): the
+            // next marker, then the check below, decide.
+            Err(StorageError::NotFound(_) | StorageError::Provider { status: 404, .. }) => {}
+            Err(e) => return fail(e),
         }
     }
     match store.object_properties(&bucket, &step.source).await {
@@ -1930,6 +1958,36 @@ impl CloudOperations {
                 }
             }
             conclude(&mut work, kind, control.cancelled() || stop.is_some());
+            // A folder that was moved, renamed or deleted completely, but
+            // that holds objects added after the review: it is not gone, so
+            // the item is not reported as done.
+            if work.report.folder
+                && matches!(
+                    kind,
+                    OperationKind::Move | OperationKind::Rename | OperationKind::Delete
+                )
+                && work.report.state == ItemState::Completed
+            {
+                match store
+                    .list_recursive_page(bucket, &work.report.source, None, 1)
+                    .await
+                {
+                    Ok(page)
+                        if page
+                            .objects
+                            .iter()
+                            .any(|o| in_folder(&work.report.source, &o.key)) =>
+                    {
+                        work.report.state = ItemState::Partial;
+                        work.report.note = Some(ItemNote::SourceNotEmpty);
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!(
+                        "sotyware: could not check that a folder is empty after a file operation: {}",
+                        operation_error(&e).message
+                    ),
+                }
+            }
             works[index] = work;
             emitter.item(&works[index].report);
             emitter.progress(Totals::of(&works), true);
@@ -1952,15 +2010,7 @@ impl CloudOperations {
             hidden += w.report.hidden;
             removed += w.report.removed;
         }
-        let state = if stop.is_some() {
-            OperationState::Failed
-        } else if cancelled {
-            OperationState::Cancelled
-        } else if counts.failed + counts.partial > 0 {
-            OperationState::Partial
-        } else {
-            OperationState::Completed
-        };
+        let state = operation_state(stop.is_some(), cancelled, &counts);
         let retry = retry_works(&works, kind);
         let summary = OperationSummary {
             operation: id.to_owned(),
@@ -2017,6 +2067,22 @@ impl CloudOperations {
                 .map(|(g, _)| g)
                 .unwrap_or_else(|e| e.into_inner().0);
         }
+    }
+}
+
+/// The operation's final state from its items. A cancel that came after
+/// the last request undid nothing: the operation is `cancelled` only if an
+/// item was left undone.
+fn operation_state(stopped: bool, cancelled: bool, counts: &ItemCounts) -> OperationState {
+    let undone = counts.cancelled + counts.failed + counts.partial;
+    if stopped {
+        OperationState::Failed
+    } else if cancelled && undone > 0 {
+        OperationState::Cancelled
+    } else if counts.failed + counts.partial > 0 {
+        OperationState::Partial
+    } else {
+        OperationState::Completed
     }
 }
 

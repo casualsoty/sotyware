@@ -48,14 +48,21 @@ use aws_sdk_s3::operation::abort_multipart_upload::{
 use aws_sdk_s3::operation::complete_multipart_upload::{
     CompleteMultipartUploadError, CompleteMultipartUploadInput,
 };
+use aws_sdk_s3::operation::copy_object::{CopyObjectError, CopyObjectInput};
 use aws_sdk_s3::operation::create_multipart_upload::{
     CreateMultipartUploadError, CreateMultipartUploadInput,
 };
 use aws_sdk_s3::operation::delete_object::{DeleteObjectError, DeleteObjectInput};
+use aws_sdk_s3::operation::get_bucket_versioning::{
+    GetBucketVersioningError, GetBucketVersioningInput,
+};
 use aws_sdk_s3::operation::get_object::{GetObjectError, GetObjectInput};
 use aws_sdk_s3::operation::head_bucket::{HeadBucketError, HeadBucketInput};
 use aws_sdk_s3::operation::head_object::{HeadObjectError, HeadObjectInput};
 use aws_sdk_s3::operation::list_buckets::{ListBucketsError, ListBucketsInput};
+use aws_sdk_s3::operation::list_object_versions::{
+    ListObjectVersionsError, ListObjectVersionsInput,
+};
 use aws_sdk_s3::operation::list_objects_v2::{ListObjectsV2Error, ListObjectsV2Input};
 use aws_sdk_s3::operation::put_object::{PutObjectError, PutObjectInput};
 use aws_sdk_s3::operation::upload_part::{UploadPartError, UploadPartInput};
@@ -791,9 +798,44 @@ fn error_code(e: &OpError) -> Option<String> {
         UploadPartError,
         CompleteMultipartUploadError,
         AbortMultipartUploadError,
-        DeleteObjectError
+        DeleteObjectError,
+        CopyObjectError,
+        ListObjectVersionsError,
+        GetBucketVersioningError
     );
     None
+}
+
+/// `bucket/key[?versionId=v]` of an `x-amz-copy-source` header, percent
+/// decoded (what `s3::copy_source` encodes); `None`s when it does not have
+/// that form. Only used to hash or classify, never recorded as is.
+fn parse_copy_source(source: Option<&str>) -> (Option<String>, Option<String>, bool) {
+    fn decode(s: &str) -> Option<String> {
+        let mut out = Vec::with_capacity(s.len());
+        let mut bytes = s.bytes();
+        while let Some(b) = bytes.next() {
+            if b == b'%' {
+                let hi = char::from(bytes.next()?).to_digit(16)?;
+                let lo = char::from(bytes.next()?).to_digit(16)?;
+                out.push(u8::try_from(hi * 16 + lo).ok()?);
+            } else {
+                out.push(b);
+            }
+        }
+        String::from_utf8(out).ok()
+    }
+    let Some(source) = source else {
+        return (None, None, false);
+    };
+    let source = source.strip_prefix('/').unwrap_or(source);
+    let (path, version) = match source.split_once("?versionId=") {
+        Some((p, _)) => (p, true),
+        None => (source, false),
+    };
+    match path.split_once('/') {
+        Some((bucket, key)) => (decode(bucket), decode(key), version),
+        None => (decode(path), None, version),
+    }
 }
 
 fn sanitize_code(code: &str) -> String {
@@ -888,6 +930,38 @@ impl RequestRecorder {
             put("key", rec.key(i.key()));
             put("version", Some(i.version_id().is_some().into()));
             "DeleteObject"
+        } else if let Some(i) = input.downcast_ref::<CopyObjectInput>() {
+            // ADR-026: the destination like any key; the source from the
+            // copy-source header, decoded, also hashed or "outside-scope".
+            put("bucket", self.bucket(i.bucket()));
+            put("key", rec.key(i.key()));
+            let (src_bucket, src_key, src_version) = parse_copy_source(i.copy_source());
+            put("source_bucket", self.bucket(src_bucket.as_deref()));
+            put("source_key", rec.key(src_key.as_deref()));
+            put("source_version", Some(src_version.into()));
+            put("if_match", Some(i.copy_source_if_match().is_some().into()));
+            put(
+                "metadata_copied",
+                Some(
+                    (i.metadata_directive().map(|d| d.as_str()) == Some("COPY")
+                        || i.metadata_directive().is_none())
+                    .into(),
+                ),
+            );
+            "CopyObject"
+        } else if let Some(i) = input.downcast_ref::<ListObjectVersionsInput>() {
+            put("bucket", self.bucket(i.bucket()));
+            put("prefix", Some(rec.prefix(i.prefix())));
+            put("key_marker", Some(i.key_marker().is_some().into()));
+            put(
+                "version_marker",
+                Some(i.version_id_marker().is_some().into()),
+            );
+            put("max_keys", i.max_keys().map(Value::from));
+            "ListObjectVersions"
+        } else if let Some(i) = input.downcast_ref::<GetBucketVersioningInput>() {
+            put("bucket", self.bucket(i.bucket()));
+            "GetBucketVersioning"
         } else {
             "unknown"
         }

@@ -27,7 +27,9 @@ use super::account::{AccountConfig, ResolvedAccount};
 use super::credentials::{Credentials, Secret};
 
 mod versioned;
-pub use versioned::Versioned;
+pub use versioned::{Version, Versioned};
+
+mod files_ui;
 
 /// A running test server. Stopped and its folder removed on drop.
 pub struct TestServer {

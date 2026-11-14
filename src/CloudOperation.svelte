@@ -303,6 +303,8 @@
             return "Copied and verified, but the original could not be deleted; it is still there";
           case "original-kept-copy-incomplete":
             return `Not moved: only part was copied, so nothing was deleted${counts}. Copies already made stay in the destination.`;
+          case "source-not-empty":
+            return `Every reviewed object was handled${counts}, but the original folder holds files added after the review; they were left where they are. Review again to include them.`;
           default:
             return `Only partly done${counts}`;
         }

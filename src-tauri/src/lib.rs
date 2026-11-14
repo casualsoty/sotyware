@@ -35,6 +35,8 @@
 pub mod cloud;
 mod features;
 mod storage;
+#[cfg(any(test, feature = "test-profile"))]
+mod test_profile;
 mod tray;
 
 use std::sync::Arc;
@@ -221,6 +223,41 @@ fn on_second_launch(app: &impl AppControl) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A test-profile build (ADR-027) checks its profile before anything else
+    // exists: no plugin, window, store or credential is touched when the
+    // profile is missing or invalid, and there is no fallback to the normal
+    // profile.
+    #[cfg(feature = "test-profile")]
+    let profile = match test_profile::from_env(std::env::var_os(test_profile::ENV)) {
+        Ok(profile) => {
+            eprintln!(
+                "sotyware: test profile {} at {}",
+                profile.run(),
+                profile.root().display()
+            );
+            profile
+        }
+        Err(e) => {
+            eprintln!("sotyware: test profile refused: {e}");
+            std::process::exit(test_profile::EXIT_REFUSED);
+        }
+    };
+    #[allow(unused_mut)] // only changed in a test-profile build
+    let mut context = tauri::generate_context!();
+    #[cfg(feature = "test-profile")]
+    {
+        // Its own identifier: its own single-instance lock and default
+        // folders, never the installed app's. The dashboard is created in
+        // `setup` with the profile's webview folder.
+        let config = context.config_mut();
+        config.identifier = test_profile::IDENTIFIER.to_owned();
+        for window in &mut config.app.windows {
+            window.create = false;
+        }
+    }
+    #[cfg(feature = "test-profile")]
+    let webview_dir = profile.webview_dir();
+
     #[allow(unused_mut)] // only mutated on desktop
     let mut builder = tauri::Builder::default();
 
@@ -297,7 +334,23 @@ pub fn run() {
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
-        .setup(|app| {
+        .setup(move |app| {
+            // What Tauri does for the windows of tauri.conf.json, but with
+            // the profile's webview folder (ADR-027).
+            #[cfg(feature = "test-profile")]
+            {
+                let config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|w| w.label == DASHBOARD_LABEL)
+                    .cloned()
+                    .ok_or(tauri::Error::WindowNotFound)?;
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                    .data_directory(webview_dir.clone())
+                    .build()?;
+            }
             match select_mode(tray::create(app.handle())) {
                 Ok(mode) => {
                     if frontend_may_hide(mode) {
@@ -357,8 +410,37 @@ pub fn run() {
                 CloseAction::Allow => {}
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build sotyware");
+
+    // Where the databases live, and the credential namespace. A test-profile
+    // build first refuses a profile that overlaps the app's own folders
+    // (those of the real identifier, whatever the build runs under).
+    #[cfg(feature = "test-profile")]
+    let (data_dir, namespace) = {
+        let real = cloud::keyring::SERVICE;
+        let path = app.path();
+        let normal: Vec<std::path::PathBuf> = [
+            path.local_data_dir(),
+            path.data_dir(),
+            path.config_dir(),
+            path.cache_dir(),
+        ]
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(|base| base.join(real))
+        .collect();
+        if let Err(e) = test_profile::check_separate(&profile, &normal) {
+            eprintln!("sotyware: test profile refused: {e}");
+            std::process::exit(test_profile::EXIT_REFUSED);
+        }
+        (Ok(profile.data_dir()), profile.namespace().clone())
+    };
+    #[cfg(not(feature = "test-profile"))]
+    let (data_dir, namespace) = (
+        app.path().app_local_data_dir(),
+        cloud::keyring::CredentialNamespace::normal(),
+    );
 
     // Load the feature preferences now: after `build()` (a second launch has
     // already handed over and exited inside it, so only the primary instance
@@ -371,7 +453,7 @@ pub fn run() {
         .iter()
         .map(|f| f.id)
         .collect();
-    let store = storage::open_feature_store(app.path().app_local_data_dir());
+    let store = storage::open_feature_store(clone_dir(&data_dir));
     app.manage(features::FeaturePreferences::load(store, &feature_ids));
     // The cloud storage accounts, for the same reasons at the same point. Only
     // the account database is read here; the OS credential store is first
@@ -384,15 +466,33 @@ pub fn run() {
     #[cfg(feature = "request-recorder")]
     cloud::recorder::start_from_env();
     app.manage(Arc::new(cloud::dashboard::CloudAccounts::load(
-        storage::open_account_store(app.path().app_local_data_dir()),
-        Arc::new(cloud::keyring::OsCredentialStore::new()),
+        storage::open_account_store(clone_dir(&data_dir)),
+        Arc::new(cloud::keyring::OsCredentialStore::new(namespace)),
         cloud::s3::ClientOptions::default(),
     )));
     // Favorites and recent items (ADR-026): a separate small database; an
     // unusable one only disables those lists.
     app.manage(Arc::new(cloud::places::CloudPlaces::load(
-        storage::open_places_store(app.path().app_local_data_dir()),
+        storage::open_places_store(clone_dir(&data_dir)),
     )));
+    // Tells the test driver which process, paths and credential namespace
+    // this is; it compares them with what it set up before touching the
+    // window (ADR-027). Without it the driver refuses to go on, so a failed
+    // write ends the app.
+    #[cfg(feature = "test-profile")]
+    {
+        let dir = profile.data_dir();
+        let stores = [
+            storage::FILE_NAME,
+            storage::ACCOUNTS_FILE_NAME,
+            storage::PLACES_FILE_NAME,
+        ]
+        .map(|name| dir.join(name));
+        if let Err(e) = test_profile::write_ack(&profile, &stores) {
+            eprintln!("sotyware: cannot write the test profile acknowledgement: {e}");
+            std::process::exit(test_profile::EXIT_REFUSED);
+        }
+    }
 
     app.run(|app, event| match event {
         RunEvent::ExitRequested { code, api, .. } if !exit_allowed(code) => {
@@ -435,6 +535,14 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+/// `tauri::Error` is not `Clone`; the stores each take the directory.
+fn clone_dir(dir: &tauri::Result<std::path::PathBuf>) -> tauri::Result<std::path::PathBuf> {
+    match dir {
+        Ok(dir) => Ok(dir.clone()),
+        Err(e) => Err(tauri::Error::Io(std::io::Error::other(e.to_string()))),
+    }
 }
 
 /// Test doubles shared by the unit tests of this crate.

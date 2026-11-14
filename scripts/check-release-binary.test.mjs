@@ -1,4 +1,4 @@
-// Self-test of scripts/check-release-binary.mjs (ADR-024): the manifest
+// Self-test of scripts/check-release-binary.mjs (ADR-024, ADR-027): the manifest
 // check against the real src-tauri and broken temporary copies of its
 // Cargo.toml, the binary scan against temporary files, and the
 // before-bundle check with a made-up target directory and command line.
@@ -18,6 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const guard = join(here, "check-release-binary.mjs");
 const realManifest = resolve(here, "..", "src-tauri", "Cargo.toml");
 const MARKER = "sotyware-request-recorder";
+const PROFILE_MARKER = "sotyware-test-profile-build";
 const exe = process.platform === "win32" ? "sotyware.exe" : "sotyware";
 const tmp = mkdtempSync(join(tmpdir(), "sotyware-release-guard-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -68,6 +69,28 @@ describe("--manifest", () => {
     );
     assert.equal(run(["--manifest", m]).status, 1);
   });
+  test("a default that turns the test profile on is refused", () => {
+    const m = manifestCopy("default-profile", (t) =>
+      t.replace("[features]\n", '[features]\ndefault = ["test-profile"]\n'),
+    );
+    const r = run(["--manifest", m]);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /"default" turns on test-profile/);
+  });
+  test("another feature that turns the test profile on is refused", () => {
+    const m = manifestCopy("other-profile", (t) =>
+      t.replace("[features]\n", '[features]\nextras = ["test-profile"]\n'),
+    );
+    assert.equal(run(["--manifest", m]).status, 1);
+  });
+  test("a manifest without the test-profile feature is refused", () => {
+    const m = manifestCopy("missing-profile", (t) =>
+      t.replace(/^test-profile = .*$/m, "").replace('["test-profile", ', "["),
+    );
+    const r = run(["--manifest", m]);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /test-profile is missing/);
+  });
   test("a manifest without the feature is refused", () => {
     const m = manifestCopy("missing", (t) => t.replace(/^request-recorder = .*$/m, ""));
     const r = run(["--manifest", m]);
@@ -89,6 +112,13 @@ describe("binaries", () => {
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /request-recorder build/);
   });
+  test("a test-profile binary is refused", () => {
+    const profile = join(tmp, "profile.bin");
+    writeFileSync(profile, Buffer.concat([Buffer.alloc(64, 1), Buffer.from(PROFILE_MARKER)]));
+    const r = run([clean, profile]);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /test-profile build/);
+  });
   test("a missing binary is refused", () => {
     assert.equal(run([join(tmp, "nope")]).status, 1);
   });
@@ -107,7 +137,8 @@ describe("--before-bundle", () => {
   const realDefault = join(resolve(here, "..", "src-tauri", "target", "release"), exe);
   let defaultIsRecorder = false;
   try {
-    defaultIsRecorder = readFileSync(realDefault).includes(Buffer.from(MARKER));
+    const real = readFileSync(realDefault);
+    defaultIsRecorder = real.includes(Buffer.from(MARKER)) || real.includes(Buffer.from(PROFILE_MARKER));
   } catch {
     // no normal release binary here
   }
@@ -119,6 +150,21 @@ describe("--before-bundle", () => {
     });
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /asks for the request-recorder feature/);
+  });
+  test("a command line asking for the test profile is refused", () => {
+    const t = target("t-clean-3", "normal");
+    const r = run(["--before-bundle"], {
+      CARGO_TARGET_DIR: t,
+      SOTYWARE_GUARD_EXTRA_CMDLINE: "node tauri build --features test-profile -- --target-dir target/test-profile",
+    });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /asks for the test-profile feature/);
+  });
+  test("a test-profile binary in the target directory is refused", () => {
+    const t = target("t-profile", `xx${PROFILE_MARKER}xx`);
+    const r = run(["--before-bundle"], { CARGO_TARGET_DIR: t });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /test-profile build and must not be packaged/);
   });
   test("a command line asking for all features is refused", () => {
     const t = target("t-clean-2", "normal");

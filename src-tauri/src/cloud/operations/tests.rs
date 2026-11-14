@@ -959,3 +959,201 @@ fn plans_and_events_serialize_as_the_page_expects() {
     .unwrap();
     assert!(matches!(r, OperationRequest::Restore { .. }));
 }
+
+// ------------------------------------------------- audit fixes (2026-11-14)
+
+/// A folder deleted completely, while an object was added to it after the
+/// review: the item is not reported as done, and the new object is kept.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_with_objects_added_after_review_is_not_reported_deleted() {
+    let s = setup(true).await;
+    s.seed(&["d/1", "d/2", "d-other/x"]);
+    let plan = s
+        .plan(OperationRequest::Delete {
+            items: vec![folder("d/")],
+        })
+        .await
+        .unwrap();
+    assert_eq!(plan.objects, 2);
+    s.seed(&["d/late"]);
+    let started = s.start(&plan, ConflictPolicy::Skip).await;
+    let (summary, items) = s.finished(&started.operation).await;
+    assert_eq!(items[0].state, ItemState::Partial);
+    assert_eq!(items[0].note, Some(ItemNote::SourceNotEmpty));
+    assert_eq!(items[0].hidden, 2);
+    assert_eq!(summary.state, OperationState::Partial);
+    assert!(
+        !summary.retryable,
+        "a new review is needed for the new object"
+    );
+    assert_eq!(s.current(), vec!["d-other/x", "d/late"]);
+}
+
+/// The same for a folder rename: the copies are made and the planned
+/// originals removed, but the folder is not reported as renamed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_renamed_while_an_object_was_added_is_reported_partial() {
+    let s = setup(false).await;
+    s.seed(&["photos/a", "photos/b", "photos-backup/keep"]);
+    let plan = s
+        .plan(OperationRequest::Rename {
+            item: folder("photos/"),
+            new_name: "pics".into(),
+        })
+        .await
+        .unwrap();
+    s.seed(&["photos/late"]);
+    let started = s.start(&plan, ConflictPolicy::Skip).await;
+    let (summary, items) = s.finished(&started.operation).await;
+    assert_eq!(items[0].state, ItemState::Partial);
+    assert_eq!(items[0].note, Some(ItemNote::SourceNotEmpty));
+    assert_eq!(summary.state, OperationState::Partial);
+    assert_eq!(
+        s.current(),
+        vec!["photos-backup/keep", "photos/late", "pics/a", "pics/b"]
+    );
+}
+
+/// A folder moved completely with nothing added: still `completed`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_moved_completely_is_completed() {
+    let s = setup(true).await;
+    s.seed(&["m/1", "m/sub/2", "m-x/3"]);
+    let (_, summary, items) = s
+        .run(
+            OperationRequest::Move {
+                items: vec![folder("m/")],
+                destination: "to/".into(),
+            },
+            ConflictPolicy::Skip,
+        )
+        .await;
+    assert_eq!(items[0].state, ItemState::Completed);
+    assert_eq!(items[0].note, None);
+    assert_eq!(summary.state, OperationState::Completed);
+    assert_eq!(s.current(), vec!["m-x/3", "to/m/1", "to/m/sub/2"]);
+}
+
+/// A cancel that arrives after the last request: nothing was left undone,
+/// so the operation is not reported as cancelled.
+#[test]
+fn a_late_cancel_does_not_turn_a_completed_operation_cancelled() {
+    let done = ItemCounts {
+        completed: 3,
+        skipped: 1,
+        ..ItemCounts::default()
+    };
+    assert_eq!(
+        operation_state(false, true, &done),
+        OperationState::Completed
+    );
+    let left = ItemCounts {
+        completed: 1,
+        cancelled: 2,
+        ..ItemCounts::default()
+    };
+    assert_eq!(
+        operation_state(false, true, &left),
+        OperationState::Cancelled
+    );
+    let partial = ItemCounts {
+        completed: 1,
+        partial: 1,
+        ..ItemCounts::default()
+    };
+    assert_eq!(
+        operation_state(false, true, &partial),
+        OperationState::Cancelled
+    );
+    assert_eq!(
+        operation_state(false, false, &partial),
+        OperationState::Partial
+    );
+    assert_eq!(operation_state(true, true, &done), OperationState::Failed);
+}
+
+#[test]
+fn a_delete_marker_hides_only_a_kept_real_version() {
+    // Versioned bucket: the marker has a real id, the version is kept.
+    assert!(restorable_after_delete(true, Some("v2"), Some("v1")));
+    // An object from before versioning (id "null") on an enabled bucket: the
+    // marker gets a real id and the "null" version stays.
+    assert!(restorable_after_delete(true, Some("v2"), Some("null")));
+    // Suspended: the marker is "null" and replaces a "null" version: gone.
+    assert!(!restorable_after_delete(true, Some("null"), Some("null")));
+    assert!(!restorable_after_delete(true, Some("null"), None));
+    // Suspended, but the current version has a real id (written while
+    // versioning was on): that version is kept behind the "null" marker.
+    assert!(restorable_after_delete(true, Some("null"), Some("v7")));
+    // No marker: unversioned, removed.
+    assert!(!restorable_after_delete(false, None, Some("v1")));
+}
+
+/// A restore whose first marker is already gone (an earlier attempt's
+/// answer was lost) still removes the rest and brings the file back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restore_goes_on_when_a_marker_was_already_removed() {
+    let s = setup(true).await;
+    s.seed(&["twice.txt"]);
+    let _ = s
+        .run(
+            OperationRequest::Delete {
+                items: vec![file("twice.txt")],
+            },
+            ConflictPolicy::Skip,
+        )
+        .await;
+    // Deleted a second time (by another client): two markers in a row.
+    {
+        let mut st = s.data.lock();
+        let (id, modified) = st.stamp();
+        st.buckets
+            .get_mut(BUCKET)
+            .unwrap()
+            .keys
+            .get_mut("twice.txt")
+            .unwrap()
+            .push(super::super::test_server::Version {
+                id,
+                marker: true,
+                data: Arc::new(Vec::new()),
+                content_type: None,
+                metadata: HashMap::new(),
+                etag: String::new(),
+                modified,
+            });
+    }
+    assert_eq!(s.versions_of("twice.txt").len(), 3);
+    let versions = s.versions_of("twice.txt");
+    let newest_marker = versions.last().unwrap().0.clone();
+    let plan = s
+        .plan(OperationRequest::Restore {
+            items: vec![RestoreRef {
+                key: "twice.txt".into(),
+                marker_version: newest_marker.clone(),
+            }],
+        })
+        .await
+        .unwrap();
+    assert!(plan.items[0].problem.is_none(), "{plan:?}");
+    // Remove the newest marker behind the plan's back.
+    s.data
+        .lock()
+        .buckets
+        .get_mut(BUCKET)
+        .unwrap()
+        .keys
+        .get_mut("twice.txt")
+        .unwrap()
+        .retain(|v| v.id != newest_marker);
+    let started = s.start(&plan, ConflictPolicy::Skip).await;
+    let (summary, items) = s.finished(&started.operation).await;
+    assert_eq!(items[0].state, ItemState::Completed, "{items:?}");
+    assert_eq!(summary.state, OperationState::Completed);
+    assert_eq!(s.current(), vec!["twice.txt"]);
+    assert_eq!(
+        s.versions_of("twice.txt").len(),
+        1,
+        "only markers were removed"
+    );
+}

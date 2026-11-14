@@ -184,6 +184,12 @@ Boundaries that hold today:
   them, so the page cannot open a file dialog itself.
 - Any new frontend permission must be the narrowest one that works and must be
   recorded in [decisions.md](decisions.md).
+- Test builds: a `test-profile` build (ADR-027; also every recorder build)
+  runs only inside a test profile a desktop driver created, under its own
+  identifier and credential namespace, and cannot name the app's own
+  credentials (`CredentialNamespace::normal()` is not compiled in). Normal
+  builds contain none of it; the packaging guard refuses such binaries
+  ([ADR-027](decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
 
 ## Further reading
 

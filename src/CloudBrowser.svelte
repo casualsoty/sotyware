@@ -236,6 +236,19 @@
     selection = EMPTY_SELECTION;
   }
 
+  /** Deleted items replace the folder's entries: what was selected there
+   * is no longer shown, so it is no longer selected. */
+  function toggleDeleted(): void {
+    if (view === "deleted") {
+      view = "folder";
+    } else {
+      view = "deleted";
+      selection = EMPTY_SELECTION;
+      focusId = null;
+      menu = null;
+    }
+  }
+
   function activate(e: Entry): void {
     if (e.kind === "folder") {
       if (view === "search") {
@@ -567,8 +580,10 @@
   // ------------------------------------------------------------ keyboard
 
   function onkeydown(event: KeyboardEvent): void {
-    // A dialog (rename, picker, review, properties) owns the keyboard.
-    if (dialog !== null || document.querySelector('[role="dialog"]') !== null) {
+    // A dialog (rename, picker, review, properties) owns the keyboard. In
+    // Deleted items the folder's entries are not shown, so no shortcut may
+    // act on them (Delete, F2, Ctrl+A, Ctrl+X …).
+    if (dialog !== null || document.querySelector('[role="dialog"]') !== null || view === "deleted") {
       return;
     }
     const action = shortcutOf(event);
@@ -643,8 +658,10 @@
     row?.focus();
   }
 
-  function onwindowclick(): void {
-    if (menu !== null) {
+  function onwindowclick(event: MouseEvent): void {
+    // Only a primary click elsewhere closes the menu: some engines
+    // (WebKitGTK) also send "click" for the right button that opened it.
+    if (menu !== null && event.button === 0) {
       closeMenu();
     }
   }
@@ -1020,7 +1037,7 @@
       </button>
       <button type="button" onclick={() => (clipboard = null)}>Clear clipboard</button>
     {/if}
-    <button type="button" aria-pressed={view === "deleted"} onclick={() => (view = view === "deleted" ? "folder" : "deleted")}>
+    <button type="button" aria-pressed={view === "deleted"} onclick={toggleDeleted}>
       Deleted items
     </button>
   </div>
