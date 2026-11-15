@@ -105,6 +105,10 @@ and which `release.yml` reads (`update-manifest.mjs release-repository`).
      password through the system if the app's folder is not writable).
    - Linux: the AppImage file is replaced; a deb or rpm is installed with
      `pkexec`/`sudo` (`dpkg -i`, `rpm -U`).
+   Quitting while the app is being replaced on macOS or Linux (after the
+   commit point) waits for the replacement to finish, at most 60 s
+   (`INSTALL_WAIT`), instead of ending the process in the middle; on
+   Windows the installation itself ends the process.
    On macOS and Linux the page then says **Restart required** and offers
    **Restart now** (`restart_after_update`), refused while something runs.
    It uses `AppHandle::request_restart`: the normal exit

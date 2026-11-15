@@ -492,7 +492,17 @@ struct InstallSlot {
     /// interrupt, so from then on a cancel is refused instead of reporting
     /// "nothing was installed" while the installation goes on.
     committed: bool,
+    /// Disconnected once the task has ended: its sender lives in the task
+    /// and is dropped with it. Quitting waits on it (bounded) for an
+    /// installation that has begun ([`Updates::shutdown`]).
+    ended: Option<std::sync::mpsc::Receiver<()>>,
 }
+
+/// How long quitting waits for an installation that has passed its commit
+/// point on macOS and Linux, where the plugin replaces the app in place:
+/// ending the process in the middle could leave no working app (macOS may
+/// first ask for an administrator's password).
+pub const INSTALL_WAIT: Duration = Duration::from_secs(60);
 
 /// Updates: managed state.
 pub struct Updates {
@@ -861,7 +871,10 @@ impl Updates {
         let this = Arc::clone(self);
         let token = Arc::new(());
         let own = Arc::clone(&token);
+        let (alive, ended) = std::sync::mpsc::channel::<()>();
         let task = tauri::async_runtime::spawn(async move {
+            // Dropped when the task ends, however it ends.
+            let _alive = alive;
             let mut last = std::time::Instant::now();
             let result = Self::download_verified(&app, &pubkey, &offer, !allow_loopback, |d, t| {
                 if last.elapsed() >= Duration::from_millis(250) {
@@ -921,6 +934,7 @@ impl Updates {
             sink: kept,
             token,
             committed: false,
+            ended: Some(ended),
         });
         Ok(())
     }
@@ -952,9 +966,40 @@ impl Updates {
         }
     }
 
+    /// Quitting: stops the checks and cancels a download; an installation
+    /// past its commit point is waited for, at most [`INSTALL_WAIT`].
     pub fn shutdown(&self) {
+        self.shutdown_waiting(INSTALL_WAIT);
+    }
+
+    fn shutdown_waiting(&self, wait: Duration) {
         self.stop_checks();
-        self.cancel();
+        if self.cancel() {
+            return;
+        }
+        // Not on Windows: there the plugin starts the installer and ends
+        // the process itself, calling this from inside the install task
+        // (`on_before_exit` → `release_resources`), so waiting for the task
+        // would wait for itself.
+        if cfg!(windows) {
+            return;
+        }
+        let ended = {
+            let mut slot = self.install.lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_mut() {
+                Some(s) if s.committed && !s.task.inner().is_finished() => s.ended.take(),
+                _ => None,
+            }
+        };
+        if let Some(ended) = ended {
+            eprintln!("sotyware: waiting for the update installation to finish before quitting");
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = ended.recv_timeout(wait) {
+                eprintln!(
+                    "sotyware: the update installation did not finish within {} s; quitting anyway",
+                    wait.as_secs()
+                );
+            }
+        }
     }
 }
 

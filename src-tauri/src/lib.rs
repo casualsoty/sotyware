@@ -690,6 +690,9 @@ pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(backups) = app.try_state::<Arc<backup::Backups>>() {
         backups.shutdown(backup::SHUTDOWN_WAIT);
     }
+    // A running update download is cancelled; an installation that has
+    // begun replacing the app in place (macOS, Linux) is waited for
+    // (bounded, `updates::INSTALL_WAIT`).
     if let Some(updates) = app.try_state::<Arc<updates::Updates>>() {
         updates.shutdown();
     }

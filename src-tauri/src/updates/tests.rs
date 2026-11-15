@@ -850,8 +850,12 @@ async fn a_cancel_is_refused_once_the_installation_is_committed() {
     let events = Arc::new(Mutex::new(Vec::<String>::new()));
     let slot = |token: &Arc<()>| {
         let log = Arc::clone(&events);
+        let (alive, ended) = std::sync::mpsc::channel::<()>();
         InstallSlot {
-            task: tauri::async_runtime::spawn(std::future::pending::<()>()),
+            task: tauri::async_runtime::spawn(async move {
+                let _alive = alive;
+                std::future::pending::<()>().await
+            }),
             sink: Channel::new(move |body| {
                 if let tauri::ipc::InvokeResponseBody::Json(j) = body {
                     log.lock().unwrap().push(j);
@@ -860,6 +864,7 @@ async fn a_cancel_is_refused_once_the_installation_is_committed() {
             }),
             token: Arc::clone(token),
             committed: false,
+            ended: Some(ended),
         }
     };
     // Cancelled before the commit point: the task finds no slot and stops.
@@ -877,11 +882,76 @@ async fn a_cancel_is_refused_once_the_installation_is_committed() {
     );
     assert!(u.commit_install(&second));
     assert!(!u.cancel());
-    u.shutdown();
+    // Quitting waits (here briefly) for an installation that never ends,
+    // then gives up without touching it.
+    u.shutdown_waiting(Duration::from_millis(50));
     assert_eq!(events.lock().unwrap().len(), 1, "no second cancelled event");
     let left = u.install.lock().unwrap().take().expect("the slot stays");
     assert!(left.committed && !left.task.inner().is_finished());
     left.task.abort();
+}
+
+/// Quitting while the plugin replaces the app in place (macOS, Linux)
+/// waits for it to finish instead of ending the process in the middle;
+/// on Windows the installation ends the process itself and calls the
+/// shutdown from inside the task, so nothing waits there. A download that
+/// has not reached the commit point is cancelled, not waited for.
+#[tokio::test(flavor = "multi_thread")]
+async fn quitting_waits_for_an_installation_that_has_begun() {
+    const INSTALLING: Duration = Duration::from_millis(300);
+    let u = Updates::new(None, Ok(Box::new(Memory::default())));
+    let slot = |committed: bool| {
+        let (alive, ended) = std::sync::mpsc::channel::<()>();
+        InstallSlot {
+            task: tauri::async_runtime::spawn(async move {
+                let _alive = alive;
+                tokio::time::sleep(INSTALLING).await;
+            }),
+            sink: Channel::new(|_| Ok(())),
+            token: Arc::new(()),
+            committed,
+            ended: Some(ended),
+        }
+    };
+    *u.install.lock().unwrap() = Some(slot(true));
+    let started = std::time::Instant::now();
+    // shutdown_waiting blocks: off the runtime's worker.
+    tokio::task::block_in_place(|| u.shutdown_waiting(Duration::from_secs(20)));
+    let waited = started.elapsed();
+    let finished = u
+        .install
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .task
+        .inner()
+        .is_finished();
+    if cfg!(windows) {
+        assert!(
+            waited < INSTALLING && !finished,
+            "no wait on Windows: {waited:?}"
+        );
+    } else {
+        assert!(
+            waited >= INSTALLING,
+            "returned after {waited:?}, before the installation ended"
+        );
+        assert!(waited < Duration::from_secs(10), "waited {waited:?}");
+        assert!(finished);
+    }
+    // Before the commit point: cancelled at once, never waited for.
+    *u.install.lock().unwrap() = Some(slot(false));
+    let started = std::time::Instant::now();
+    tokio::task::block_in_place(|| u.shutdown_waiting(Duration::from_secs(20)));
+    assert!(
+        started.elapsed() < INSTALLING,
+        "a download is cancelled, not awaited"
+    );
+    assert!(
+        u.install.lock().unwrap().is_none(),
+        "the cancelled slot is gone"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

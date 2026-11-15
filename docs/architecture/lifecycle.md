@@ -136,6 +136,12 @@ for a tray host: one that appears later is used on the next start.
   multipart upload whose earlier abort failed, waiting at most 35 s for all
   of it; what is not done by then is logged and may leave parts at the
   provider ([cloud-storage.md](cloud-storage.md#uploading-files)).
+  (`release_resources` in `lib.rs` also stops the other slots, each with
+  its bounded wait.) `Updates::shutdown()` cancels an update download; an
+  installation past its commit point that is replacing the app in place
+  (macOS, Linux) is waited for, at most 60 s, so quitting cannot end the
+  process halfway through the replacement. On Windows the installation
+  ends the process itself ([updates.md](updates.md#flow)).
 - **An unexpected tray failure is fatal.** `setup` exits with code 1 when
   `select_mode()` does not recognise the error as a missing tray host. (A
   watcher that accepts the item while no panel displays it is not detected; see
