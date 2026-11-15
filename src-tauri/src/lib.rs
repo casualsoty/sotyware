@@ -32,6 +32,7 @@
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
+pub(crate) mod backup;
 pub mod cloud;
 mod features;
 pub(crate) mod journal;
@@ -336,7 +337,16 @@ pub fn run() {
             cloud::recovery::inspect_cloud_recovery,
             cloud::recovery::dismiss_cloud_recovery,
             cloud::recovery::list_cloud_incomplete_uploads,
-            cloud::recovery::abort_cloud_incomplete_upload
+            cloud::recovery::abort_cloud_incomplete_upload,
+            backup::list_backups,
+            backup::save_backup_job,
+            backup::remove_backup_job,
+            backup::start_backup_task,
+            backup::cancel_backup_task,
+            backup::list_backup_snapshots,
+            backup::restore_backup,
+            backup::export_backup_manifest,
+            backup::check_backup_protection
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -502,6 +512,22 @@ pub fn run() {
         .record_in(Arc::clone(&journal));
     app.state::<Arc<cloud::operations::CloudOperations>>()
         .record_in(Arc::clone(&journal));
+    // Backup jobs and their history (ADR-031): their own database and a
+    // spool folder sotyware owns. The `backup-scheduler` feature starts the
+    // scheduler in `setup` through this link.
+    let backups = backup::Backups::load(
+        storage::open_backup_store(clone_dir(&data_dir)),
+        match &data_dir {
+            Ok(dir) => dir.join("backup-spool"),
+            Err(_) => std::env::temp_dir().join("sotyware-backup-spool"),
+        },
+    );
+    backups.record_in(Arc::clone(&journal));
+    let _ = backup::SCHEDULER_LINK.set((
+        Arc::clone(&backups),
+        Arc::clone(&app.state::<Arc<cloud::dashboard::CloudAccounts>>()),
+    ));
+    app.manage(backups);
     app.manage(journal);
     // Tells the test driver which process, paths and credential namespace
     // this is; it compares them with what it set up before touching the
@@ -515,6 +541,7 @@ pub fn run() {
             storage::ACCOUNTS_FILE_NAME,
             storage::PLACES_FILE_NAME,
             storage::JOURNAL_FILE_NAME,
+            storage::BACKUP_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -557,6 +584,11 @@ pub fn run() {
             // (bounded wait, ADR-026).
             if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
                 ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
+            }
+            // A running backup task is cancelled; the scheduler stops
+            // (bounded wait, ADR-031).
+            if let Some(backups) = app.try_state::<Arc<backup::Backups>>() {
+                backups.shutdown(backup::SHUTDOWN_WAIT);
             }
             // Last, so the aborts of a quit are recorded (bounded wait).
             #[cfg(feature = "request-recorder")]
@@ -819,7 +851,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -866,7 +898,16 @@ mod tests {
                 "allow-inspect-cloud-recovery",
                 "allow-dismiss-cloud-recovery",
                 "allow-list-cloud-incomplete-uploads",
-                "allow-abort-cloud-incomplete-upload"
+                "allow-abort-cloud-incomplete-upload",
+                "allow-list-backups",
+                "allow-save-backup-job",
+                "allow-remove-backup-job",
+                "allow-start-backup-task",
+                "allow-cancel-backup-task",
+                "allow-list-backup-snapshots",
+                "allow-restore-backup",
+                "allow-export-backup-manifest",
+                "allow-check-backup-protection"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

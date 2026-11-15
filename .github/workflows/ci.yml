@@ -157,3 +157,12 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: src-tauri
         run: cargo test --locked --features request-recorder --target-dir target/recorder
+
+      # Disaster recovery without sotyware (ADR-031): a backup made by the
+      # engine is restored by scripts/recovery/sotyware-restore.py alone
+      # (Python standard library) against the in-process S3 server, byte for
+      # byte. Ignored by default because it needs Python 3.
+      - name: standalone recovery script (Python, against the test server)
+        if: runner.os == 'Linux'
+        working-directory: src-tauri
+        run: cargo test --locked --lib backup::tests::the_standalone_recovery_script -- --ignored

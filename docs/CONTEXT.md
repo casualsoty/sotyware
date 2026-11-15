@@ -171,6 +171,18 @@ backups or other product features exist**. Desktop tests run only a
   automatically. Local test servers only.
 - **Downloads report three levels** (2026-11-15): `sha256-verified`,
   `size-only`, `transfer-only`.
+- **Backups** (2026-11-15, ADR-031, [backup.md](architecture/backup.md)):
+  jobs copying an account's bucket (or folder) into another account as
+  content-addressed blobs plus one JSON manifest per run
+  (`snapshots/<job>/…`); unchanged objects not transferred, identical
+  content stored once; quick and full verification gate health (never
+  "healthy" unverified); retention only after a verified, unsuspicious
+  snapshot (mass-change check by content); restores to a folder or bucket,
+  never overwriting, every file checked against its SHA-256; recovery file
+  export; `scripts/recovery/sotyware-restore.py` restores with Python only
+  ([user guide](user/recovery.md)); scheduler feature `backup-scheduler`;
+  Backups page. Disaster scenarios tested against two in-process servers
+  only; never at a real provider.
 
 ## Repository at a glance
 
@@ -205,8 +217,8 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
-  commands of ADR-026 and the five recovery commands of ADR-030 (43 in
-  all; listed in
+  commands of ADR-026, the five recovery commands of ADR-030 and the nine
+  backup commands of ADR-031 (52 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at

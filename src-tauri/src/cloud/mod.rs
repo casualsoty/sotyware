@@ -61,6 +61,6 @@ pub use crate::storage::{ACCOUNTS_FILE_NAME, SqliteAccountStore};
 #[cfg(test)]
 mod integration;
 #[cfg(test)]
-mod test_server;
+pub(crate) mod test_server;
 #[cfg(test)]
 mod tests;

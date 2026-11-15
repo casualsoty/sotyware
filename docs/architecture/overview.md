@@ -75,7 +75,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 43 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 52 custom commands
   and one built-in call. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -108,7 +108,12 @@ Boundaries that hold today:
   recovery commands of ADR-030: `list_cloud_recovery`,
   `inspect_cloud_recovery` (reads only), `dismiss_cloud_recovery`,
   `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload`
-  ([cloud-storage.md](cloud-storage.md#operation-journal-and-recovery)); none returns a
+  ([cloud-storage.md](cloud-storage.md#operation-journal-and-recovery)),
+  and the nine backup commands of ADR-031: `list_backups`,
+  `save_backup_job`, `remove_backup_job`, `start_backup_task`,
+  `cancel_backup_task`, `list_backup_snapshots`, `restore_backup`,
+  `export_backup_manifest`, `check_backup_protection`
+  ([backup.md](backup.md#commands-and-page)); none returns a
   stored credential or a local path (a share link carries the access key
   id, never the secret). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
   tray mode only). There is no other custom command, and there are **no custom
@@ -169,8 +174,8 @@ Boundaries that hold today:
   `allow-set-feature-enabled`, the six `allow-…-cloud-…` account permissions
   `allow-list-cloud-folder`, the three download and the three upload
   permissions, the 22 file-management permissions of ADR-026 and the five
-  recovery permissions of ADR-030 (the app's 43 commands) and nothing
-  else, not even
+  recovery permissions of ADR-030 and the nine backup permissions of
+  ADR-031 (the app's 52 commands) and nothing else, not even
   `core:default` or a `dialog:`/`fs:` permission: the save dialog for
   downloads and the file dialog for uploads are opened by Rust, and the
   page never names or receives a local path

@@ -329,7 +329,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    pub(super) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
@@ -787,9 +787,41 @@ impl CloudAccounts {
         }
     }
 
+    /// An account's provider id and endpoint (for a backup manifest).
+    /// Does not touch the credential store.
+    pub(crate) fn provider_and_endpoint(&self, id: &str) -> Result<(String, String), CommandError> {
+        let (provider, endpoint, _) = self.location_of(id)?;
+        Ok((provider, endpoint))
+    }
+
+    /// An account's provider id, endpoint and region (for a recovery
+    /// export). Does not touch the credential store.
+    pub(crate) fn location_of(&self, id: &str) -> Result<(String, String, String), CommandError> {
+        let config = self.find(id)?;
+        let resolved = config
+            .resolve()
+            .map_err(|e| CommandError::new(ErrorKind::InvalidConfiguration, e.to_string()))?;
+        Ok((config.provider, resolved.endpoint_url, config.region))
+    }
+
+    /// The store and configured bucket of an account (a restore target).
+    /// Loads the credentials; sends no request.
+    pub(crate) fn prepare_own_bucket(
+        &self,
+        id: &str,
+    ) -> Result<(Arc<super::s3::S3Store>, String), CommandError> {
+        let bucket = self.find(id)?.buckets.first().cloned().ok_or_else(|| {
+            CommandError::new(
+                ErrorKind::InvalidConfiguration,
+                "no bucket is configured for this account",
+            )
+        })?;
+        Ok((self.connect(id)?, bucket))
+    }
+
     /// The blocking half of a download: checks the bucket again and loads
     /// the credentials (OS credential store). Sends no request.
-    pub(super) fn prepare_download(
+    pub(crate) fn prepare_download(
         &self,
         id: &str,
         bucket: &str,
@@ -956,6 +988,13 @@ pub fn check_status(error: &StorageError) -> CheckStatus {
 
 /// Runs `f` on the blocking thread pool and waits for it without blocking
 /// the caller's thread: credential store and SQLite calls go through here.
+/// [`blocking`] for code outside `cloud` (backups, accounts).
+pub(crate) async fn blocking_pub<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
+) -> Result<T, CommandError> {
+    blocking(f).await
+}
+
 pub(super) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
 ) -> Result<T, CommandError> {

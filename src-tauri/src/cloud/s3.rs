@@ -54,7 +54,8 @@ mod upload;
 
 pub use manage::{
     DeleteOutcome, IncompletePage, IncompleteUpload, ListedObject, MAX_COPY_BYTES, MAX_PRESIGN,
-    ObjectHead, ObjectPage, ObjectProperties, VersionInfo, VersionPage, Versioning, copy_source,
+    ObjectHead, ObjectLock, ObjectPage, ObjectProperties, VersionInfo, VersionPage, Versioning,
+    copy_source,
 };
 
 #[cfg(test)]

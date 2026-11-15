@@ -143,6 +143,16 @@ Reliability scenarios the audit traced and their current behaviour:
   journal does not block work (it is reported), a failed write on an open
   journal stops the step. Test drivers now expect four stores.
 
+- Phase C done: backup engine (`backup/`), `backup.sqlite3`, nine
+  commands, `backup-scheduler` feature, Backups page, recovery guide
+  (`docs/user/recovery.md`), stdlib-only recovery tool
+  (`scripts/recovery/sotyware-restore.py`) tested against the in-process
+  server and added to `ci.yml` (Linux). Bugs found by the new tests and
+  fixed before commit: entries took HEAD's second-precision timestamp while
+  change detection compares listing timestamps (every object looked
+  changed); change counts and the suspicious check were computed before
+  content was known (now by SHA-256 after transfer).
+
 ## Tests run during the mission
 
 (Exact commands and counts, newest last.)
@@ -151,6 +161,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | Phase C | WSL2 | `npm run test:headless`; clippy both builds; recorder tests; `--ignored` Python recovery test; profile helpers | guards ok; Vitest 197; Rust 458 passed, 28 ignored; recorder 486 passed, 28 ignored; clippy 0/0; Python recovery test 1 passed; helpers 10 OK |
 | 2026-11-15 | A2/A6 change | WSL2 | `npm run test:headless`; clippy (default and test-profile); recorder tests; `npm run check`; `npm run test:profile-helpers` | guards ok; Vitest 187; Rust 434 passed, 27 ignored; recorder 462 passed, 27 ignored; clippy 0 / 0; check clean; Python helpers 10 OK |
 | 2026-11-15 | A4/A5 change | WSL2 | same + `cargo test --features request-recorder --target-dir target/recorder --lib` | Rust 422 passed, 27 ignored; recorder build 450 passed, 27 ignored; Vitest 180; check clean; clippy exit 0 |
 
@@ -172,7 +183,9 @@ None yet beyond the audit table.
 
 ## Next concrete task
 
-Phase C: backup engine (`src-tauri/src/backup/`): model (done in
-`backup/model.rs`, uncommitted), engine (run, verify, retention, restore),
-`backup.sqlite3` store, commands, scheduler feature, Backup page,
-disaster-recovery tests, provider-independent recovery script.
+Phase D: the account service in `server/` (axum + SQLite): registration
+with verification codes through a mailer interface (dev outbox), sign-in
+with Argon2id and rotating opaque tokens, devices, enrollment by recovery
+key or approval, encrypted vault storage with revision checks, password
+change/reset, account deletion, rate limits, audit events, online backup
+and restore, health check; integration tests over HTTP.

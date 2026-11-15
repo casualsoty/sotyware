@@ -43,11 +43,12 @@ sha2 = "0.10"
 # Cloud account credentials in the OS credential store (ADR-017): the
 # platform-independent API; one platform store crate per OS below.
 keyring-core = "1"
-# Only with the `request-recorder` feature (ADR-024), all already in the tree
-# through Tauri and aws-sdk-s3: the recorder's JSON Lines, and the SDK types
-# its interceptor reads (`Metadata`, `RequestAttempts`, `Storable`), which
-# aws-sdk-s3 does not re-export.
-serde_json = { version = "1", optional = true }
+# Already in the tree through Tauri: backup manifests and job configurations
+# (ADR-031), and the recorder's JSON Lines (ADR-024).
+serde_json = "1"
+# Only with the `request-recorder` feature (ADR-024), both already in the
+# tree through aws-sdk-s3: the SDK types its interceptor reads (`Metadata`,
+# `RequestAttempts`, `Storable`), which aws-sdk-s3 does not re-export.
 aws-smithy-runtime-api = { version = "1", optional = true }
 aws-smithy-types = { version = "1", optional = true }
 
@@ -58,14 +59,14 @@ aws-smithy-types = { version = "1", optional = true }
 # (`--target-dir target/recorder`), and scripts/check-release-binary.mjs
 # refuses to package a binary that contains it.
 # A recorder build is always a test-profile build too (ADR-027).
-request-recorder = ["test-profile", "dep:serde_json", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
+request-recorder = ["test-profile", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 # Off by default and never in a shipped build: the app refuses to start
 # unless SOTYWARE_TEST_PROFILE names a test profile, and then keeps every
 # database, its webview data and its credentials inside that profile, under
 # its own identifier (ADR-027). For desktop tests only. build.rs refuses it
 # unless the target directory is named `test-profile` or `recorder`;
 # scripts/check-release-binary.mjs refuses to package such a binary.
-test-profile = ["dep:serde_json"]
+test-profile = []
 
 [profile.release]
 codegen-units = 1

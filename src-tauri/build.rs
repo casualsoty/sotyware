@@ -48,6 +48,15 @@ fn main() {
             "dismiss_cloud_recovery",
             "list_cloud_incomplete_uploads",
             "abort_cloud_incomplete_upload",
+            "list_backups",
+            "save_backup_job",
+            "remove_backup_job",
+            "start_backup_task",
+            "cancel_backup_task",
+            "list_backup_snapshots",
+            "restore_backup",
+            "export_backup_manifest",
+            "check_backup_protection",
         ]),
     ))
     .expect("failed to run tauri-build");

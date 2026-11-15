@@ -333,10 +333,12 @@ change has no OS entry, so `connect` reports `NotFound` until its key is
 entered again (`set_credentials`). No released build ever used cloud accounts,
 so no user is affected.
 
-## Backups with restic (planned, not built)
+## Backups with restic (superseded, not built)
 
-restic is the intended backup engine; sotyware orchestrates it and has no
-backup format of its own. Findings (restic 0.19.1, docs and the experiment in
+**Superseded on 2026-11-15 by sotyware's own backup engine**
+([backup.md](backup.md), ADR-031): restic's encrypted repository format
+would make recovery depend on restic and its password. The findings below
+are kept for reference. Findings (restic 0.19.1, docs and the experiment in
 [status.md](../status/status.md#cloud-storage-proof-of-concept-2026-11-11)):
 
 - **Both providers:** through restic's S3 backend,
@@ -1218,8 +1220,8 @@ No overwriting uploads, parallel uploads, upload or download history,
 transfer queue UI, ZIP downloads, multipart copies above 5 GiB, permanent
 deletion of versions from the app, a trash of sotyware's own, merging
 folders on conflict, previews of PDF, SVG or HTML, content search, custom
-event or feature; no synchronisation, folder watching, scheduled backups,
-retention, restic integration, client-side encryption, public ACLs or
+event or feature; no synchronisation, folder watching, restic
+integration, client-side encryption of objects or backups, public ACLs or
 bucket permission changes, virtual filesystem, retrying queue, parallel
 parts within one file, resumable uploads, credential import from
 environment variables or files, automatic provider or bucket discovery,

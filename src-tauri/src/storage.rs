@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, TransactionBehavior, params};
 
+use crate::backup::{BackupStore, RunRow};
 use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
 use crate::journal::{EntryRow, JournalStore, StepRow};
@@ -444,6 +445,144 @@ pub fn open_places_store(dir: tauri::Result<PathBuf>) -> Result<SqlitePlacesStor
     fs::create_dir_all(&dir)
         .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
     SqlitePlacesStore::open(&dir.join(PLACES_FILE_NAME))
+}
+
+/// Backup jobs and their run history (ADR-031), separate from the other
+/// databases. Configurations are JSON (the job type evolves with serde
+/// defaults); no credential is ever stored here.
+pub const BACKUP_FILE_NAME: &str = "backup.sqlite3";
+
+/// Schema of [`BACKUP_FILE_NAME`]; append only.
+pub const BACKUP_MIGRATIONS: &[&str] = &[
+    // 1: jobs, and every task run against them.
+    "CREATE TABLE backup_jobs (
+        id TEXT PRIMARY KEY NOT NULL,
+        config TEXT NOT NULL,
+        created_ms INTEGER NOT NULL,
+        updated_ms INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE backup_runs (
+        id INTEGER PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_ms INTEGER NOT NULL,
+        finished_ms INTEGER,
+        snapshot TEXT,
+        suspicious INTEGER NOT NULL DEFAULT 0 CHECK (suspicious IN (0, 1)),
+        passed INTEGER CHECK (passed IN (0, 1)),
+        summary TEXT,
+        error TEXT
+    ) STRICT;
+    CREATE INDEX backup_runs_by_job ON backup_runs (job_id, started_ms);",
+];
+
+/// Backup jobs and runs in a SQLite database.
+pub struct SqliteBackupStore {
+    conn: Connection,
+}
+
+impl SqliteBackupStore {
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, BACKUP_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+/// The backup store `run()` uses: [`BACKUP_FILE_NAME`] in `dir`.
+pub fn open_backup_store(dir: tauri::Result<PathBuf>) -> Result<Box<dyn BackupStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteBackupStore::open(
+        &dir.join(BACKUP_FILE_NAME),
+    )?))
+}
+
+impl BackupStore for SqliteBackupStore {
+    fn jobs(&mut self) -> Result<Vec<(String, String)>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<(String, String)>> {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, config FROM backup_jobs ORDER BY id")?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect()
+        };
+        read().map_err(sql_error("cannot read the backup jobs"))
+    }
+
+    fn save_job(&mut self, id: &str, config: &str, now_ms: i64) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO backup_jobs (id, config, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?3)
+                 ON CONFLICT (id) DO UPDATE SET config = excluded.config, updated_ms = excluded.updated_ms",
+                params![id, config, now_ms],
+            )
+            .map(drop)
+            .map_err(sql_error("cannot save the backup job"))
+    }
+
+    fn remove_job(&mut self, id: &str) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            tx.execute("DELETE FROM backup_runs WHERE job_id = ?1", [id])?;
+            tx.execute("DELETE FROM backup_jobs WHERE id = ?1", [id])?;
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot remove the backup job"))
+    }
+
+    fn add_run(&mut self, run: &RunRow) -> Result<i64, StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO backup_runs (job_id, kind, state, started_ms, finished_ms, snapshot,
+                     suspicious, passed, summary, error)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    run.job_id,
+                    run.kind,
+                    run.state,
+                    run.started_ms,
+                    run.finished_ms,
+                    run.snapshot,
+                    run.suspicious,
+                    run.passed,
+                    run.summary,
+                    run.error
+                ],
+            )
+            .map(|_| self.conn.last_insert_rowid())
+            .map_err(sql_error("cannot record the backup run"))
+    }
+
+    fn runs(&mut self, job_id: &str, limit: usize) -> Result<Vec<RunRow>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<RunRow>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, job_id, kind, state, started_ms, finished_ms, snapshot, suspicious,
+                        passed, summary, error
+                 FROM backup_runs WHERE job_id = ?1 ORDER BY started_ms DESC, id DESC LIMIT ?2",
+            )?;
+            stmt.query_map(
+                params![job_id, i64::try_from(limit).unwrap_or(i64::MAX)],
+                |r| {
+                    Ok(RunRow {
+                        id: r.get(0)?,
+                        job_id: r.get(1)?,
+                        kind: r.get(2)?,
+                        state: r.get(3)?,
+                        started_ms: r.get(4)?,
+                        finished_ms: r.get(5)?,
+                        snapshot: r.get(6)?,
+                        suspicious: r.get(7)?,
+                        passed: r.get(8)?,
+                        summary: r.get(9)?,
+                        error: r.get(10)?,
+                    })
+                },
+            )?
+            .collect()
+        };
+        read().map_err(sql_error("cannot read the backup runs"))
+    }
 }
 
 /// The operation journal (ADR-030), separate from the other databases so

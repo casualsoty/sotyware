@@ -19,7 +19,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
 │   ├── development/          Setup, commands, testing, cross-platform rules, release builds and installer testing (release.md), application icons (icons.md)
-│   └── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
+│   ├── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
+│   └── user/                 User guides: recovering files from a backup (recovery.md)
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
 │   ├── main.ts               Mounts App into #app
@@ -36,6 +37,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── CloudRecovery.svelte  Interrupted work from the operation journal (inspect, dismiss, abort an incomplete upload) and the per-bucket list of unfinished large uploads (ADR-030)
 │   ├── CloudRecovery.test.ts Tests of the recovery view (mocked recovery commands)
 │   ├── cloudRecovery.ts      Typed wrappers for the five recovery commands (ADR-030); validates responses
+│   ├── Backup.svelte         The Backups section (ADR-031): jobs with health, form, run/verify/retention tasks with progress and Cancel, snapshots, restore, recovery file, protection
+│   ├── Backup.test.ts        Tests of the Backups section (mocked backup commands and channels)
+│   ├── backup.ts             Typed wrappers for the nine backup commands; validates responses and events
 │   ├── Modal.svelte          Modal dialog (focus kept inside, Escape closes)
 │   ├── CloudFileManager.test.ts  Tests of the file manager (mocked commands and channels)
 │   ├── CloudBrowser.test.ts  Tests of the bucket browser and its downloads, opened from the Cloud Storage section
@@ -64,7 +68,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── check-installer-icons.mjs  Reads the MSI (compound file, MSI tables), the NSIS setup program (PE resources, solid LZMA data, uninstaller icon patch) and executables, and checks their icons equal src-tauri/icons/icon.ico; run by release-build.yml (docs/development/icons.md#installer-icons)
 │   ├── check-installer-icons.test.mjs  Its tests with in-memory fixtures (node --test, npm run test:installer-icons)
 │   ├── icons.mjs         The application icons from src-tauri/icons/source (npm run icons, through tauri icon; writes icon.ico itself) and their check (npm run check:icons, in test:headless)
-│   └── icons.test.mjs    Its tests (node --test, npm run test:icons)
+│   ├── icons.test.mjs    Its tests (node --test, npm run test:icons)
+│   └── recovery/
+│       └── sotyware-restore.py  Restores a backup snapshot without sotyware (Python standard library only, SigV4); tested against the in-process server by backup::tests (ignored by default, run in ci.yml) (ADR-031)
 ├── package-lock.json         Pinned JS dependency tree
 ├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)
@@ -87,8 +93,9 @@ Where things are. Generated and ignored paths are listed in
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
 │       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030) + tests (incl. restarts with the built-in features)
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031) + tests (incl. restarts with the built-in features)
 │       ├── journal.rs        The operation journal (ADR-030): Journal, JournalLink, JournalStore trait, startup cleanup of sotyware's own recorded temporary files + tests
+│       ├── backup/           Backups (ADR-031): mod.rs (Backups service, BackupStore trait, scheduler, the nine commands), model.rs (manifest format, plan, change check, retention, health; pure), engine.rs (run, verify, prune, restore over two S3Stores), tests.rs (disaster-recovery tests against two in-process servers, incl. the Python recovery tool)
 │       ├── cloud/            Cloud storage: backend, the dashboard's account commands, the bucket browser, downloads, upload batches and file management (ADR-026)
 │       │   ├── mod.rs        Module overview, re-exports SqliteAccountStore
 │       │   ├── provider.rs   ProviderProfile data: backblaze-b2, hetzner, s3-compatible + tests
@@ -128,7 +135,8 @@ Where things are. Generated and ignored paths are listed in
 │           ├── mod.rs        Feature trait, metadata, state, builtin() list, the two feature commands (FeatureList, FeatureChange) + tests
 │           ├── preferences.rs  FeaturePreferences, PreferenceStore trait: startup choice, save after a switch, failure policy + tests
 │           ├── registry.rs   FeatureRegistry: registration, lifecycle table, per-feature locking, start_all/stop_all + tests
-│           └── example.rs    The example feature + tests
+│           ├── example.rs    The example feature + tests
+│           └── backup.rs     The backup-scheduler feature: starts and stops the backup scheduler (ADR-031)
 └── tests/
     └── desktop/              Desktop tests of the release binary, always a test-profile build (ADR-027)
         ├── check-ps-variables.ps1  Static check of the Windows test scripts (parses only, runs nothing): fails if one scope spells a variable two ways ($out/$Out are one variable in PowerShell)

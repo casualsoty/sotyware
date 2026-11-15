@@ -1777,9 +1777,10 @@ recovery commands in `cloud/recovery.rs`; page `src/CloudRecovery.svelte`.
 
 ## ADR-031: Backups are content-addressed blobs plus plain JSON snapshot manifests in an independent destination
 
-Status: Accepted (2026-11-15). Code: `src-tauri/src/backup/`; page
-`src/Backup.svelte`; design: [backup.md](backup.md); recovery without
-sotyware: docs/user/recovery.md.
+Status: Accepted (2026-11-15), implemented the same day. Code:
+`src-tauri/src/backup/`, `features/backup.rs`; page `src/Backup.svelte`;
+tool `scripts/recovery/sotyware-restore.py`; design: [backup.md](backup.md);
+recovery without sotyware: [docs/user/recovery.md](../user/recovery.md).
 
 - **Context:** provider versioning is not a backup: one account, one key,
   one provider, one lifecycle policy. The user wants to keep files only in
@@ -1803,10 +1804,16 @@ sotyware: docs/user/recovery.md.
   snapshot is verified, re-reads every manifest from the destination before
   deleting a blob, deletes only blobs no remaining manifest references, and
   is skipped when the newest snapshot is **suspicious** (its change or
-  deletion ratio exceeds the job's threshold, default 30 %). Restores go to
+  deletion ratio exceeds the job's threshold, default 30 %; counted by
+  content after the transfers). Restores go to
   a local folder or a bucket prefix, never overwrite, and verify every file
-  against the manifest's SHA-256. Schedules run from the `backup` built-in
-  feature; one backup run at a time, in its own slot; quitting cancels. The
+  against the manifest's SHA-256. Schedules run from the `backup-scheduler`
+  built-in feature; one backup task at a time, in its own slot; quitting
+  cancels. Manifests live under `snapshots/<job>/`; retention keeps
+  unreferenced blobs younger than the oldest remaining manifest minus 24 h
+  (another device may be running the same job). Nine commands (52 in all).
+  A standalone, stdlib-only Python tool restores a snapshot without
+  sotyware and is tested against the test server in CI. The
   destination's Object Lock configuration is read and shown as it is;
   "immutable" is said only for default retention in compliance mode.
 - **Rejected:** restic (an extra binary and repository format the user

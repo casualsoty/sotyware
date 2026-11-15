@@ -171,12 +171,17 @@ order:
      `ListObjectVersions` with the test keys); Hetzner later;
    - decide on multipart copy above 5 GiB and a ZIP download only if
      needed.
-9. restic orchestration (child process, `--json`, exit codes), tried first
-   against the B2 test bucket.
+9. ~~restic orchestration~~: superseded by sotyware's own backup engine
+   (ADR-031, implemented 2026-11-15 against local servers). **Next for
+   backups:** with explicit approval and isolated test buckets, one run of
+   the backup → verify → restore cycle between two real providers
+   (Backblaze B2 → Hetzner or a second B2 account), including a key without
+   delete rights at the destination and a bucket with Object Lock; desktop
+   driver steps for the Backups page; desktop notifications for failed
+   scheduled backups (would need `tauri-plugin-notification`).
 10. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
 
-Synchronisation, folder watching, scheduled backups, retention and a
-virtual filesystem stay ideas until then (temporary share links exist,
+Synchronisation, folder watching and a virtual filesystem stay ideas until then (temporary share links exist,
 ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)

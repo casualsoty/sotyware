@@ -36,13 +36,22 @@ window instead (dashboard-only mode: no hiding, closing quits).
     final);
   - preview small text files and common raster images;
   - create temporary share links (1 hour, 1 day or 7 days);
-  - favorites and recent items per account.
+  - favorites and recent items per account;
+  - after a crash, a list of interrupted work, inspected at the provider
+    before you decide what to do, and a list of unfinished large uploads.
+- **Backups**: jobs that keep an independent, verified, versioned copy of a
+  bucket (or folder) in a second account, ideally at another provider:
+  scheduled or manual runs that transfer only changes, verification, a
+  retention policy that never prunes after a suspicious mass change,
+  restores that never overwrite, a recovery file, and a restore tool that
+  needs only Python ([docs/user/recovery.md](docs/user/recovery.md)).
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger
 than 5 GiB. Providers differ (versioning, link limits, key restrictions), so
-not every action behaves the same at every provider; file management has so
-far been exercised only against local test servers, not at a real provider.
+not every action behaves the same at every provider; file management,
+recovery and backups have so far been exercised only against local test
+servers, not at a real provider.
 Details and evidence: [docs/status/status.md](docs/status/status.md) and
 [docs/status/limitations.md](docs/status/limitations.md).
 
@@ -72,5 +81,6 @@ leaves the build machine's paths in the binary and is refused when bundling;
 | [docs/CONTEXT.md](docs/CONTEXT.md) | One-page summary of the project's current state |
 | [docs/architecture/](docs/architecture/overview.md) | Architecture, [repository map](docs/architecture/repository-map.md), [lifecycle and tray](docs/architecture/lifecycle.md), [built-in features](docs/architecture/features.md), [single instance](docs/architecture/single-instance.md), [decisions](docs/architecture/decisions.md) |
 | [docs/development/](docs/development/workflow.md) | [Setup](docs/development/setup.md), [commands](docs/development/workflow.md), [testing](docs/development/testing.md), [cross-platform rules](docs/development/cross-platform.md), [release builds, signing and installer testing](docs/development/release.md), [application icons](docs/development/icons.md) |
-| [docs/status/](docs/status/status.md) | [Status and validation matrix](docs/status/status.md), [known limitations](docs/status/limitations.md), [roadmap](docs/status/roadmap.md) |
+| [docs/status/](docs/status/status.md) | [Status and validation matrix](docs/status/status.md), [known limitations](docs/status/limitations.md), [roadmap](docs/status/roadmap.md), [production-readiness journal](docs/status/journal.md) |
+| [docs/user/recovery.md](docs/user/recovery.md) | Recovering files from a backup, with or without sotyware |
 | [AGENTS.md](AGENTS.md) | Conventions and rules for contributors and coding agents |

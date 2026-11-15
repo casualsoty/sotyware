@@ -107,6 +107,18 @@ pub struct VersionPage {
     pub next: Option<(String, Option<String>)>,
 }
 
+/// A bucket's Object Lock configuration, as `GetObjectLockConfiguration`
+/// reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectLock {
+    /// Object Lock is switched on for the bucket.
+    pub enabled: bool,
+    /// The default retention for new objects: `GOVERNANCE` or `COMPLIANCE`.
+    pub default_mode: Option<String>,
+    /// The default retention period in days (years converted, 365 days).
+    pub default_days: Option<u32>,
+}
+
 /// An incomplete multipart upload, as `ListMultipartUploads` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IncompleteUpload {
@@ -434,6 +446,54 @@ impl S3Store {
             _ => None,
         };
         Ok(IncompletePage { uploads, next })
+    }
+
+    /// The bucket's Object Lock configuration (read only). A bucket without
+    /// one is reported as not enabled; a provider that does not support the
+    /// request returns its error.
+    pub async fn object_lock(&self, bucket: &str) -> Result<ObjectLock, StorageError> {
+        self.check_target(bucket, None)?;
+        match self
+            .client
+            .get_object_lock_configuration()
+            .bucket(bucket)
+            .send()
+            .await
+        {
+            Ok(out) => {
+                let config = out.object_lock_configuration();
+                let retention = config
+                    .and_then(|c| c.rule())
+                    .and_then(|r| r.default_retention());
+                Ok(ObjectLock {
+                    enabled: config
+                        .and_then(|c| c.object_lock_enabled())
+                        .is_some_and(|e| e.as_str() == "Enabled"),
+                    default_mode: retention
+                        .and_then(|r| r.mode())
+                        .map(|m| m.as_str().to_owned()),
+                    default_days: retention.and_then(|r| {
+                        r.days()
+                            .or_else(|| r.years().map(|y| y.saturating_mul(365)))
+                            .and_then(|d| u32::try_from(d).ok())
+                    }),
+                })
+            }
+            Err(e) => match classify("read object lock configuration", e) {
+                // "ObjectLockConfigurationNotFoundError" and friends: none.
+                StorageError::NotFound(_) => Ok(ObjectLock {
+                    enabled: false,
+                    default_mode: None,
+                    default_days: None,
+                }),
+                StorageError::Provider { status: 404, .. } => Ok(ObjectLock {
+                    enabled: false,
+                    default_mode: None,
+                    default_days: None,
+                }),
+                other => Err(other),
+            },
+        }
     }
 
     /// The object's properties, or `None` if it does not exist (or the

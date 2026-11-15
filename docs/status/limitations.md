@@ -748,6 +748,32 @@ server only; no real provider was asked.
   [status.md](status.md#test-isolation-incident-root-cause-and-fix-2026-11-14));
   the fingerprint then covers the virtual view.
 
+## Backups (ADR-031)
+
+- **Local test servers only.** Every backup, verification, retention and
+  restore path ran against two in-process S3 servers (s3s-fs) in the Rust
+  tests, and the page with mocked commands. No real provider, no desktop
+  driver, no native Windows run yet.
+- **Not encrypted by sotyware:** blobs and manifests are plain objects (so
+  they stay restorable with standard tools); whoever can read the backup
+  bucket can read the files.
+- **One object at a time, through a spool file** as large as the largest
+  object, in the app's local data folder; large first backups are slow.
+- **Quick verification reads metadata only** (size, `sotyware-sha256`);
+  same-size corruption at the provider is found only by "Verify content".
+- **Change detection relies on listing ETags and modification times;** a
+  provider whose listing has no ETags makes every run re-read every object
+  (deduplication still avoids re-uploading; s3s-fs is such a server).
+- **No cross-device locking:** two devices running the same job write two
+  snapshots; retention protects unreferenced blobs younger than a day.
+- **No desktop notification** when a scheduled backup fails; the Backups
+  page shows the health. Schedules run only while sotyware runs.
+- **Folder markers are not backed up** (keys ending in `/`), and empty
+  folders are not restored.
+- **Object Lock is only read and reported,** never configured; per-object
+  retention is not set on uploads.
+- **Limits:** 200,000 objects per job, 2,000 manifests per repository.
+
 ## General
 
 - **No autostart** on login.

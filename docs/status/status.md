@@ -85,6 +85,7 @@ verified byte for byte; the object was deleted again by its version id
 | File management in the bucket browser (ADR-026): new folder; rename, copy, move and delete of files and folders and restore of deleted files as reviewed plans (review with object counts, conflicts with a numbered alternative, what a delete means on this bucket; start, progress, cancel, retry of what is left; partial results named); destination picker; deleted items (delete markers); search (names in Rust, or key prefix at the provider; recursive, paginated); client-side sorting and filters; selection (click, Ctrl, Shift, checkboxes, keyboard), context menu, selection bar, internal copy/cut/paste, shortcuts; properties, size-limited previews (text as text, raster images), presigned share links; downloads of several files and folders into a picked folder (staging, never replacing); folder uploads and drag and drop through the upload batch; favorites and recent items per account (`cloud-places.sqlite3`) | `src-tauri/src/cloud/operations.rs`, `manage.rs`, `bulk_download.rs`, `places.rs`, `drop.rs`, `s3/manage.rs`, folder upload in `upload.rs`, `SqlitePlacesStore` in `storage.rs`, `run()` in `lib.rs`; `src/CloudBrowser.svelte`, `CloudOperation.svelte`, `CloudFolderPicker.svelte`, `CloudProperties.svelte`, `CloudBulkDownload.svelte`, `CloudDeleted.svelte`, `Modal.svelte`, `cloudFiles.ts`, `fileList.ts` ([cloud-storage.md](../architecture/cloud-storage.md#file-management), [ADR-026](../architecture/decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit)) |
 | Provider capability model with evidence (nine capabilities per profile, shown in the account form) and conditional writes (`If-None-Match: *` on `PutObject`/`CompleteMultipartUpload`) only where `conditional_put` is established, which no shipped profile is; downloads report `sha256-verified`, `size-only` or `transfer-only` (2026-11-15) | `cloud/provider.rs`, `cloud/s3/upload.rs`, `verification_of` in `cloud/s3.rs`, `src/CloudAccountForm.svelte` ([ADR-029](../architecture/decisions.md#adr-029-provider-behaviour-is-a-capability-model-with-evidence-levels), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | Operation journal (`operations-journal.sqlite3`: uploads with their multipart id, download temporary files, staging folders, file operations with every planned step, written before they can change anything) and the recovery view (Interrupted work in Cloud Storage: inspect at the provider, dismiss, abort an incomplete multipart upload; Unfinished large uploads per bucket); startup removes only sotyware's own recorded temporary files; the five commands `list_cloud_recovery`, `inspect_cloud_recovery`, `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload` (2026-11-15) | `src-tauri/src/journal.rs`, `SqliteJournal` in `storage.rs`, `cloud/recovery.rs`, hooks in `cloud/s3.rs`, `cloud/s3/upload.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`, `run()` in `lib.rs`; `src/CloudRecovery.svelte`, `src/cloudRecovery.ts` ([cloud-storage.md](../architecture/cloud-storage.md#operation-journal-and-recovery), [ADR-030](../architecture/decisions.md#adr-030-remote-and-local-side-effects-are-journaled-before-they-happen-and-recovery-inspects-instead-of-repeating), [validation](#storage-reliability-phase-b-2026-11-15)) |
+| Backups (ADR-031): jobs from an account's bucket (or folder) to another destination as content-addressed blobs plus one JSON manifest per run; incremental (unchanged objects not transferred, identical content stored once); quick and full verification; health never "healthy" without a passed verification; retention only after a verified, unsuspicious snapshot (mass-change check by content); restore to a folder or a bucket, never overwriting, verified by SHA-256; recovery file export; destination protection (versioning, Object Lock) read and described; the `backup-scheduler` feature; the Backups page; `scripts/recovery/sotyware-restore.py` (Python only) (2026-11-15) | `src-tauri/src/backup/`, `features/backup.rs`, `SqliteBackupStore` in `storage.rs`, `run()` in `lib.rs`; `src/Backup.svelte`, `src/backup.ts`; `scripts/recovery/` ([backup.md](../architecture/backup.md), [recovery guide](../user/recovery.md), [validation](#backups-and-disaster-recovery-2026-11-15)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -104,13 +105,14 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 
 Nothing else exists: no product features (only the example feature and
 cloud storage: accounts, browsing, transfers and the file management of
-ADR-026, and the operation journal of ADR-030), no settings, no persistence
-other than the feature choices, the cloud storage accounts and their
-favorites and recent items and the operation journal, no overwriting
+ADR-026, the operation journal of ADR-030 and the backups of ADR-031), no
+settings, no persistence other than the feature choices, the cloud storage
+accounts and their favorites and recent items, the operation journal and
+the backup jobs, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
-own, content search, transfer queue UI or download history, no backups, no
+own, content search, transfer queue UI or download history, no
 sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 43 listed in
+plugins, and no custom command other than the 52 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -3703,6 +3705,36 @@ changes.**
   latest count); the Python profile-helper tests (10) after the driver's
   expected store list gained `operations-journal.sqlite3`. The PowerShell
   profile self-test was updated the same way but not run.
+
+## Backups and disaster recovery (2026-11-15)
+
+Production-readiness work, phase C ([journal](journal.md)). **WSL2 only,
+two in-process S3 servers (s3s-fs) standing for two accounts at two
+providers; no real provider, no desktop driver, no native Windows run.**
+
+- `cargo test --lib backup`: 24 passed (model: validation, names, plan,
+  change check, manifest checks, retention, dates, health; engine: names,
+  stop rules; service against the servers: first backup and byte-identical
+  restore incl. Unicode, empty and foreign objects; incremental run
+  transferring only the change and deduplicating, old snapshot restoring a
+  deleted file; mass deletion flagged, retention refused, deleted files
+  restored into the primary bucket; retention deleting only dropped
+  snapshots and old unreferenced blobs; same-size corruption caught only by
+  full verification and a missing blob by quick verification, health never
+  healthy; an interrupted backup writing no snapshot and the next run
+  reusing its blobs; wrong key and failing destination failing without
+  writing anything; a lost local database losing no backup; restores never
+  overwriting and an interrupted restore repeatable, with a folder filter;
+  a corrupt source object never backed up silently; job inputs; protection
+  wording and reading; scheduler due times and one task at a time).
+- `the_standalone_recovery_script_restores_a_snapshot_byte_identically`
+  (ignored by default, needs Python 3; run here and in `ci.yml` on Linux):
+  a snapshot made by sotyware is listed and restored by
+  `scripts/recovery/sotyware-restore.py` alone (SigV4 against s3s),
+  byte-identical, never replacing on a second run, and a damaged blob is
+  detected and its file removed.
+- Vitest: `Backup.test.ts` (10) and the navigation test with the Backups
+  link.
 
 ## See also
 

@@ -1,10 +1,15 @@
 # Backups and disaster recovery
 
-Status: design accepted 2026-11-15
-([ADR-031](decisions.md#adr-031-backups-are-content-addressed-blobs-plus-plain-json-snapshot-manifests-in-an-independent-destination)).
-What is implemented and tested is recorded in
-[status.md](../status/status.md) and the [journal](../status/journal.md).
-Recovering without sotyware: docs/user/recovery.md (written with the backup engine).
+Status: implemented 2026-11-15
+([ADR-031](decisions.md#adr-031-backups-are-content-addressed-blobs-plus-plain-json-snapshot-manifests-in-an-independent-destination));
+tested against in-process S3 servers only (two accounts), never at a real
+provider ([status.md](../status/status.md#backups-and-disaster-recovery-2026-11-15)).
+Code: `src-tauri/src/backup/` (`model.rs` pure rules, `engine.rs` remote
+work, `mod.rs` service, commands and scheduler), `backup.sqlite3` in
+`storage.rs`, the `backup-scheduler` feature (`features/backup.rs`), the
+page `src/Backup.svelte`, the standalone tool
+`scripts/recovery/sotyware-restore.py`. Recovering without sotyware:
+[docs/user/recovery.md](../user/recovery.md).
 
 ## Why
 
@@ -25,7 +30,7 @@ the destination bucket:
 ```
 P/sotyware-backup.json                 repository descriptor (format, id, created)
 P/blobs/sha256/ab/abcdef…(64 hex)      one object per distinct content
-P/snapshots/20261115T103000Z-<id>.json one manifest per completed run
+P/snapshots/<job>/20261115T103000Z-<id>.json one manifest per completed run
 ```
 
 - **Blobs** are named by the SHA-256 of their content and carry the
@@ -68,16 +73,19 @@ a local file chosen in a save dialog.
    `ListObjectsV2` per 1,000 keys). Folder markers (keys ending in `/`) are
    skipped.
 2. **Load the previous snapshot** of this job (the newest manifest under
-   `P/snapshots/` whose job id matches, read from the destination, not a
-   local cache).
+   `P/snapshots/<job>/`, read from the destination, not a local cache).
 3. **Plan:** an entry whose key, size, ETag and modification time equal the
    previous snapshot's entry is **unchanged**: its SHA-256 and blob are
    reused without any transfer. Everything else is new or changed.
-4. **Change check:** if `(changed + deleted) / previous objects` exceeds the
-   job's suspicious threshold (default 30 %, at least 10 objects), the
-   snapshot is marked `suspicious`. The run still completes (a new snapshot
-   never removes an old one), but retention will not prune, and the health
-   says "large change detected".
+4. **Change check** (after the transfers, by content: an object counts as
+   changed only if its SHA-256 differs from the previous snapshot's, so a
+   listing without ETags does not inflate it): if `(changed + deleted) /
+   previous objects` exceeds the job's suspicious threshold (default 30 %,
+   at least 10 objects), the snapshot is marked `suspicious`. The run still
+   completes (a new snapshot never removes an old one), but retention will
+   not prune, and the health says "large change detected". An object that
+   disappears from the source during the run is not part of the snapshot
+   and counts as deleted.
 5. **Transfer** each new or changed object: `GetObject` streamed into a spool
    file in the app's local data folder (SHA-256 computed while streaming;
    verified against the source's `sotyware-sha256` if it has one), then, if
@@ -139,9 +147,9 @@ newest snapshot is verified and not suspicious:
    never one younger than the newest verified one).
 3. Delete those manifests (`DeleteObject`).
 4. Compute the blobs referenced by every **remaining** manifest; delete only
-   blobs referenced by none of them and older than the oldest remaining
-   manifest's creation time (a blob uploaded by a concurrent run is newer and
-   therefore kept).
+   blobs referenced by none of them and last modified more than 24 hours
+   before the oldest remaining manifest was created (a blob uploaded by a
+   run on another device has no manifest yet, and clocks differ).
 
 On a versioned destination a delete adds a delete marker (the data stays
 until the provider's lifecycle removes it). With Object Lock retention the
@@ -185,8 +193,43 @@ is byte-identical or reported as failed.
 
 ## Scheduling
 
-The built-in feature `backup` (Features section) runs due jobs: one timer
-task that sleeps until the next job is due (no polling), runs it, and
-computes the next due time from the job's interval (hours) and the last
-run's start. Disabled feature → no scheduled runs (manual runs still work).
-While the app is not running, nothing runs; on start, overdue jobs run once.
+The built-in feature `backup-scheduler` ("Scheduled backups" in the
+Features section, on by default) runs due jobs: one timer task that sleeps
+until the next job is due or until a job is saved or removed (no polling),
+runs it like "Back up now" (run, quick verification, retention when
+allowed), and computes the next due time from the job's interval (hours)
+and the last backup run's start. Its first look is two minutes after
+startup, so overdue jobs run once soon after sotyware starts. Switched off,
+no backup starts by itself (manual tasks still work). While the app is not
+running, nothing runs. One backup task at a time (its own slot beside
+uploads, downloads and file operations); a due job waits while another
+backup task runs.
+
+## Commands and page
+
+`list_backups`, `save_backup_job` (buckets taken from the accounts'
+configuration; an id made from the name), `remove_backup_job` (local only),
+`start_backup_task` (`backup`, `verify`, `verify-full`, `prune`; events on a
+per-task channel), `cancel_backup_task`, `list_backup_snapshots`,
+`restore_backup` (a folder chosen in a dialog Rust opens, or an account's
+bucket folder), `export_backup_manifest` (a recovery file saved through a
+dialog Rust opens: the manifest, the destination's provider, endpoint,
+region, bucket and prefix, and instructions; never a key),
+`check_backup_protection` (versioning and Object Lock read from the
+destination bucket). The Backups page (third navigation link) shows each
+job's health, last backup and verification, next run, a same-account
+warning, the running task with Cancel, the last result, snapshots with
+restore and recovery-file actions, and the protection summary.
+
+## Implementation limits
+
+- Objects are transferred one after another through a spool file in the
+  app's local data folder (`backup-spool/`, emptied at startup and after
+  each task): it needs free space for the largest object.
+- At most 200,000 objects per job and 2,000 manifests per repository
+  (retention refuses to run above that).
+- Quick verification checks size and SHA-256 metadata, not the bytes; only
+  "Verify content" reads every blob (a same-size corruption at the provider
+  is caught only then).
+- No desktop notification on failure: the health on the Backups page is the
+  signal.

@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
+  import Backup from "./Backup.svelte";
   import CloudStorage from "./CloudStorage.svelte";
   import Features from "./Features.svelte";
 
@@ -11,10 +12,11 @@
 
   // The dashboard's sections. Navigation is local state: the page is never
   // reloaded, and the Overview is what the dashboard opens with.
-  type Section = "overview" | "cloud-storage";
+  type Section = "overview" | "cloud-storage" | "backups";
   const SECTIONS: { id: Section; title: string }[] = [
     { id: "overview", title: "Overview" },
     { id: "cloud-storage", title: "Cloud Storage" },
+    { id: "backups", title: "Backups" },
   ];
 
   let section = $state<Section>("overview");
@@ -90,8 +92,10 @@
   {/if}
   {#if section === "overview"}
     <Features />
-  {:else}
+  {:else if section === "cloud-storage"}
     <CloudStorage />
+  {:else}
+    <Backup />
   {/if}
 </main>
 

@@ -10,9 +10,11 @@ The user's enable/disable choice is saved and survives restarts
 Third-party plugins, WASM and a management UI do not exist
 ([what is deferred](#deferred)).
 
-Today there is one feature, `example`, which does nothing visible. It is there
-to demonstrate the lifecycle and to give the dashboard and the desktop tests a
-feature to list and switch.
+Today there are two features: `example`, which does nothing visible (it
+demonstrates the lifecycle and gives the dashboard and the desktop tests a
+feature to list and switch), and `backup-scheduler` ("Scheduled backups",
+on by default, 2026-11-15, ADR-031), which starts and stops the backup
+scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)).
 
 ## Pieces
 
@@ -26,6 +28,7 @@ feature to list and switch.
 | `SqliteStore` | `storage.rs` | The `PreferenceStore` implementation: `preferences.sqlite3`, schema and migrations |
 | `list_features`, `set_feature_enabled` | `features/mod.rs` | The frontend's only access to features |
 | `Example` | `features/example.rs` | The example feature |
+| `BackupScheduler` | `features/backup.rs` | Starts and stops the backup scheduler through `backup::SCHEDULER_LINK`, set in `run()` before the event loop (without it, as in unit tests, start and stop do nothing) |
 | `src/features.ts`, `src/Features.svelte` | frontend | Typed command wrappers that validate responses; the minimal Features section on the dashboard |
 
 ## Registration

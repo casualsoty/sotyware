@@ -10,6 +10,7 @@
 //! sees features only through the two commands below.
 //! How to add a feature: docs/architecture/features.md.
 
+mod backup;
 mod example;
 mod preferences;
 mod registry;
@@ -27,7 +28,10 @@ pub use registry::FeatureRegistry;
 /// here; nothing else in the app has to change unless the feature needs its own
 /// command.
 pub fn builtin() -> Vec<Box<dyn Feature>> {
-    vec![Box::new(example::Example::default())]
+    vec![
+        Box::new(example::Example::default()),
+        Box::new(backup::BackupScheduler),
+    ]
 }
 
 /// What a feature is. Fixed at compile time; the registry copies it once, at
