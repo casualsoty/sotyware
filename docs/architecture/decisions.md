@@ -1748,9 +1748,10 @@ recovery commands in `cloud/recovery.rs`; page `src/CloudRecovery.svelte`.
   an upload is checked by `HeadObject` (stored with the expected SHA-256 →
   confirmed complete; absent → nothing stored; other content → needs
   attention, never deleted); an open multipart id can be aborted (that
-  exact id only); a move with copied-but-undeleted originals can be kept
-  as is or finished through a new reviewed plan; a partly applied delete is
-  reported with what was deleted (delete markers are restorable). The only
+  exact id only); a move with copied-but-undeleted originals is explained
+  with the kept originals' keys (finishing it is a normal reviewed delete in
+  the browser); a partly applied delete is reported with what was deleted
+  (delete markers are restorable). The only
   automatic cleanup is sotyware's own temporary files and staging folders
   recorded in the journal, matched by sotyware's partial-name pattern.
   Incomplete multipart uploads not in the journal (another device, an
@@ -1762,10 +1763,17 @@ recovery commands in `cloud/recovery.rs`; page `src/CloudRecovery.svelte`.
   entries after the step (a crash between the step and the write would hide
   it); keeping the journal inside an existing database (separate schemas
   evolve independently, as for accounts and places).
-- **Consequences:** one small write per step (SQLite, WAL, on the blocking
-  pool); a journal write failure stops the transfer or operation before the
-  step, because an unjournaled step could not be recovered. Recovery is
+- **Consequences:** one small write per upload, download and staging
+  folder, and per phase of each operation item (SQLite on the blocking
+  pool); a journal write failure on an open journal stops the transfer or
+  operation before the step, because an unjournaled step could not be
+  recovered. A journal that cannot be opened (damaged, newer schema) is left
+  untouched like every other database: work goes on unrecorded and the page
+  says so, so a damaged journal never blocks the user's storage. Recovery is
   evidence-based; a journal entry is a hint of what to inspect, not proof.
+  Commands: `list_cloud_recovery`, `inspect_cloud_recovery`,
+  `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`,
+  `abort_cloud_incomplete_upload` (five, 43 in all).
 
 ## ADR-031: Backups are content-addressed blobs plus plain JSON snapshot manifests in an independent destination
 

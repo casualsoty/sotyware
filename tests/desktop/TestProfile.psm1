@@ -29,6 +29,8 @@ Set-StrictMode -Version 2
 $script:Env = "SOTYWARE_TEST_PROFILE"
 $script:MarkerFile = "sotyware-test-profile.json"
 $script:AckFile = "sotyware-test-profile-ack.json"
+# The databases the app reports in its acknowledgement (storage.rs).
+$script:Stores = @("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3", "operations-journal.sqlite3")
 $script:Purpose = "sotyware-desktop-test-profile"
 $script:BuildMarker = "sotyware-test-profile-build"
 $script:Identifier = "com.sotyware.desktop.test"
@@ -38,7 +40,7 @@ $script:ExitRefused = 3
 
 function Get-TestProfileConstants {
   [pscustomobject]@{
-    Env = $script:Env; MarkerFile = $script:MarkerFile; AckFile = $script:AckFile
+    Env = $script:Env; MarkerFile = $script:MarkerFile; AckFile = $script:AckFile; Stores = $script:Stores
     Purpose = $script:Purpose; BuildMarker = $script:BuildMarker; Identifier = $script:Identifier
     NormalIdentifier = $script:NormalIdentifier; CredentialService = $script:CredentialService
     ExitRefused = $script:ExitRefused
@@ -129,7 +131,9 @@ function Assert-TestProfileAck($Profile, $Ack, [int]$ProcessId) {
   Need ($Ack.credential_target_prefix -ceq $Profile.TargetPrefix) "credential prefix '$($Ack.credential_target_prefix)'"
   Need ((ConvertTo-ComparablePath ([string]$Ack.root)) -eq (ConvertTo-ComparablePath $Profile.Root)) "root '$($Ack.root)'"
   $stores = @($Ack.stores)
-  Need ($stores.Count -eq 3) "three stores"
+  Need ($stores.Count -eq $script:Stores.Count) "$($script:Stores.Count) stores"
+  $names = @($stores | ForEach-Object { [System.IO.Path]::GetFileName([string]$_) } | Sort-Object)
+  Need (($names -join "|") -ceq ((@($script:Stores) | Sort-Object) -join "|")) "stores $($stores -join ', ')"
   foreach ($p in @($Ack.data_dir, $Ack.webview_dir) + $stores) {
     Need (($p -is [string]) -and (Test-PathWithin $p $Profile.Root)) "'$p' is outside the profile"
     foreach ($n in Get-NormalProfileDirs) { Need (-not (Test-PathWithin $p $n)) "'$p' is in the app's own folder" }

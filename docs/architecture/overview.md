@@ -75,7 +75,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 38 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 43 custom commands
   and one built-in call. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -104,7 +104,11 @@ Boundaries that hold today:
   `retry_cloud_items_download`, `list_cloud_places`, `set_cloud_favorite`,
   `record_cloud_recent`, `clear_cloud_recent`, `watch_cloud_drops`,
   `unwatch_cloud_drops`, `upload_cloud_drop`
-  ([cloud-storage.md](cloud-storage.md#file-management)); none returns a
+  ([cloud-storage.md](cloud-storage.md#file-management)), and the five
+  recovery commands of ADR-030: `list_cloud_recovery`,
+  `inspect_cloud_recovery` (reads only), `dismiss_cloud_recovery`,
+  `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload`
+  ([cloud-storage.md](cloud-storage.md#operation-journal-and-recovery)); none returns a
   stored credential or a local path (a share link carries the access key
   id, never the secret). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
   tray mode only). There is no other custom command, and there are **no custom
@@ -164,8 +168,9 @@ Boundaries that hold today:
   `allow-operating-mode`, `allow-list-features`,
   `allow-set-feature-enabled`, the six `allow-…-cloud-…` account permissions
   `allow-list-cloud-folder`, the three download and the three upload
-  permissions and the 22 file-management permissions of ADR-026 (the app's
-  38 commands) and nothing else, not even
+  permissions, the 22 file-management permissions of ADR-026 and the five
+  recovery permissions of ADR-030 (the app's 43 commands) and nothing
+  else, not even
   `core:default` or a `dialog:`/`fs:` permission: the save dialog for
   downloads and the file dialog for uploads are opened by Rust, and the
   page never names or receives a local path

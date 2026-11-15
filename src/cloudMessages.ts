@@ -75,6 +75,8 @@ const ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "remote-changed": "The object changed in the bucket since it was listed, so it was left as it is. Refresh and try again. Details:",
   "too-large": "The object is too large for this action. Details:",
   "outdated-plan": "This action was reviewed too long ago or replaced by another one. Start it again to review it. Details:",
+  journal:
+    "sotyware could not record this step in its operation journal, so it did not start it (an unrecorded step could not be recovered after a crash). Check the free space of your system drive. Details:",
   other: "Something went wrong:",
 };
 
@@ -152,6 +154,8 @@ const UPLOAD_ERROR_SUMMARIES: Record<ErrorKind, string> = {
   "remote-changed": "The object changed in the bucket meanwhile. Details:",
   "too-large": "The file is too large. Details:",
   "outdated-plan": "This action is out of date. Details:",
+  journal:
+    "sotyware could not record this upload in its operation journal, so it did not start it. Check the free space of your system drive. Details:",
   other: "Something went wrong:",
 };
 

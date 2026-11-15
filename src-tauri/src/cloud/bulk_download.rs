@@ -296,6 +296,10 @@ fn file_error(error: &StorageError) -> CommandError {
         StorageError::Io(_) => {
             CommandError::new(ErrorKind::LocalFile, "the file could not be written")
         }
+        StorageError::Journal(_) => CommandError::new(
+            ErrorKind::Journal,
+            "the download was not recorded in the operation journal, so it was not started",
+        ),
         StorageError::Integrity(_) => CommandError::new(
             ErrorKind::Integrity,
             "the downloaded data does not match the file's size or stored SHA-256 checksum",
@@ -314,7 +318,8 @@ fn stops_batch(error: &StorageError) -> bool {
         | StorageError::AccessDenied(_)
         | StorageError::Network(_)
         | StorageError::Timeout(_)
-        | StorageError::Refused(_) => true,
+        | StorageError::Refused(_)
+        | StorageError::Journal(_) => true,
         StorageError::LocalWrite { kind, .. } => matches!(
             kind,
             std::io::ErrorKind::StorageFull
@@ -493,6 +498,9 @@ struct Inner {
 pub struct BulkDownloads {
     inner: Mutex<Inner>,
     freed: Condvar,
+    /// The operation journal (ADR-030): the staging folder and each file's
+    /// temporary file are recorded while they exist. Set once in `run()`.
+    journal: std::sync::OnceLock<Arc<crate::journal::Journal>>,
 }
 
 impl Default for BulkDownloads {
@@ -564,7 +572,14 @@ impl BulkDownloads {
                 closed: false,
             }),
             freed: Condvar::new(),
+            journal: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Makes every download of several items record its staging folder and
+    /// temporary files in `journal` (ADR-030). Once.
+    pub fn record_in(&self, journal: Arc<crate::journal::Journal>) {
+        let _ = self.journal.set(journal);
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -762,6 +777,7 @@ impl BulkDownloads {
             files: files.clone(),
         };
         let this = Arc::clone(self);
+        let journal = self.journal.get().cloned();
         tauri::async_runtime::spawn(async move {
             let mut seq = 0u64;
             let mut emit = |body: BulkEventBody| {
@@ -788,6 +804,30 @@ impl BulkDownloads {
                     None
                 }
             };
+            // The staging folder goes into the journal before anything is
+            // downloaded into it, so a crash leaves an entry the next start
+            // uses to remove it (ADR-030).
+            let mut staging_link = None;
+            if let (Some(journal), Some(s)) = (&journal, &staging) {
+                match crate::journal::begin(
+                    journal,
+                    crate::journal::EntryRow {
+                        kind: crate::journal::EntryKind::Staging.as_str().into(),
+                        state: crate::journal::EntryState::Started.as_str().into(),
+                        account_id: Some(account.clone()),
+                        bucket: Some(bucket.clone()),
+                        local_path: Some(s.display().to_string()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                {
+                    Ok(link) => staging_link = link,
+                    Err(e) => {
+                        stop = Some(file_error(&StorageError::Journal(e.to_string())));
+                    }
+                }
+            }
             let mut file_base = 0usize;
             for (i, p) in planned.iter().enumerate() {
                 let range = file_base..file_base + p.files.len();
@@ -858,6 +898,9 @@ impl BulkDownloads {
                         file: files[fi].clone(),
                     });
                     let control = Arc::new(TransferControl::new());
+                    if let Some(journal) = &journal {
+                        control.record_in(Arc::clone(journal));
+                    }
                     *current.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&control));
                     if cancelled.load(Ordering::SeqCst) {
                         control.cancel();
@@ -952,7 +995,13 @@ impl BulkDownloads {
                 });
             }
             if let Some(s) = staging {
-                let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&s)).await;
+                let removed =
+                    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&s)).await;
+                if let (Some(link), Ok(Ok(()))) = (staging_link, removed)
+                    && let Err(e) = link.finish().await
+                {
+                    eprintln!("sotyware: cannot update the operation journal: {e}");
+                }
             }
             let count = |s: ItemState| items.iter().filter(|i| i.state == s).count() as u32;
             let (saved, failed, cancelled_items) = (

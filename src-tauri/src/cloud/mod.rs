@@ -29,6 +29,9 @@
 //!   (ADR-026).
 //! - [`places`]: favorites and recent items (ADR-026).
 //! - [`drop`]: files dropped on the dashboard, paths kept in Rust (ADR-026).
+//! - [`recovery`]: the recovery view over the operation journal: inspect
+//!   interrupted work, dismiss it, abort incomplete multipart uploads
+//!   (ADR-030).
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
@@ -48,6 +51,7 @@ pub mod provider;
 /// `request-recorder` feature, never in a normal build.
 #[cfg(feature = "request-recorder")]
 pub mod recorder;
+pub mod recovery;
 pub mod s3;
 pub mod upload;
 

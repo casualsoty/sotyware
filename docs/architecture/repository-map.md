@@ -33,6 +33,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── CloudProperties.svelte    Properties, size-limited preview (text as text, raster images only) and share links
 │   ├── CloudBulkDownload.svelte  Panel of a download of several files and folders
 │   ├── CloudDeleted.svelte   Deleted items of the folder (delete markers) with Restore
+│   ├── CloudRecovery.svelte  Interrupted work from the operation journal (inspect, dismiss, abort an incomplete upload) and the per-bucket list of unfinished large uploads (ADR-030)
+│   ├── CloudRecovery.test.ts Tests of the recovery view (mocked recovery commands)
+│   ├── cloudRecovery.ts      Typed wrappers for the five recovery commands (ADR-030); validates responses
 │   ├── Modal.svelte          Modal dialog (focus kept inside, Escape closes)
 │   ├── CloudFileManager.test.ts  Tests of the file manager (mocked commands and channels)
 │   ├── CloudBrowser.test.ts  Tests of the bucket browser and its downloads, opened from the Cloud Storage section
@@ -84,7 +87,8 @@ Where things are. Generated and ignored paths are listed in
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
 │       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS + tests (incl. restarts with the built-in features)
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030) + tests (incl. restarts with the built-in features)
+│       ├── journal.rs        The operation journal (ADR-030): Journal, JournalLink, JournalStore trait, startup cleanup of sotyware's own recorded temporary files + tests
 │       ├── cloud/            Cloud storage: backend, the dashboard's account commands, the bucket browser, downloads, upload batches and file management (ADR-026)
 │       │   ├── mod.rs        Module overview, re-exports SqliteAccountStore
 │       │   ├── provider.rs   ProviderProfile data: backblaze-b2, hetzner, s3-compatible + tests
@@ -107,6 +111,7 @@ Where things are. Generated and ignored paths are listed in
 │       │   ├── manage.rs     create_cloud_folder, cloud_object_properties, preview_cloud_file, search_cloud_folder (CloudSearches cursors), list_cloud_deleted, share_cloud_file (tests in manage/tests.rs)
 │       │   ├── bulk_download.rs  BulkDownloads (one slot): download_cloud_items / cancel / retry: folder dialog, enumeration, safe local names, staging folder, move into place without replacing (tests in bulk_download/tests.rs)
 │       │   ├── places.rs     CloudPlaces: favorites and recent items per account (cloud-places.sqlite3) and their four commands + tests
+│       │   ├── recovery.rs   The five recovery commands over the operation journal: list, inspect (reads only), dismiss, list and abort incomplete multipart uploads (ADR-030); recovery/tests.rs: crashes simulated against the in-process servers
 │       │   ├── drop.rs       CloudDrops: dropped paths kept in Rust, watch/unwatch/upload_cloud_drop + tests
 │       │   ├── tests.rs      Storage operations against the in-process S3 server
 │       │   ├── test_server/versioned.rs  In-memory S3 backend with versions and delete markers (HeadObject, ranged GetObject, PutObject, CopyObject, DeleteObject, ListObjectsV2, ListObjectVersions, GetBucketVersioning); records every version removed by id, tests only
@@ -152,7 +157,7 @@ Where things are. Generated and ignored paths are listed in
 | --- | --- |
 | Where does the app start? | `src-tauri/src/main.rs` → `run()` in `src-tauri/src/lib.rs` |
 | Where are Tauri plugins registered? | `run()` in `lib.rs`, on the builder; the single-instance plugin must stay first |
-| Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`; the six cloud account commands in `cloud/dashboard.rs`; `list_cloud_folder` in `cloud/browser.rs`; `download_cloud_file`, `cancel_cloud_download` and `retry_cloud_download` in `cloud/download.rs`; `upload_cloud_files`, `upload_cloud_folder`, `cancel_cloud_upload` and `retry_cloud_upload` in `cloud/upload.rs`; the file-management commands (ADR-026) in `cloud/operations.rs`, `cloud/manage.rs`, `cloud/bulk_download.rs`, `cloud/places.rs` and `cloud/drop.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-<command, with ->` in `capabilities/default.json`) |
+| Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`; the six cloud account commands in `cloud/dashboard.rs`; `list_cloud_folder` in `cloud/browser.rs`; `download_cloud_file`, `cancel_cloud_download` and `retry_cloud_download` in `cloud/download.rs`; `upload_cloud_files`, `upload_cloud_folder`, `cancel_cloud_upload` and `retry_cloud_upload` in `cloud/upload.rs`; the file-management commands (ADR-026) in `cloud/operations.rs`, `cloud/manage.rs`, `cloud/bulk_download.rs`, `cloud/places.rs` and `cloud/drop.rs`; the recovery commands (ADR-030) in `cloud/recovery.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-<command, with ->` in `capabilities/default.json`) |
 | Where are built-in features? | `src-tauri/src/features/`: listed in `builtin()` in `mod.rs`, run by `FeatureRegistry` in `registry.rs`; how to add one: [features.md](features.md#adding-a-built-in-feature) |
 | Where are feature choices stored? | Policy: `features/preferences.rs`; SQLite, schema and migrations: `storage.rs`; loaded in `run()` in `lib.rs` before the event loop; the file is `preferences.sqlite3` in the app's local data folder ([features.md](features.md#persistence)) |
 | Where is cloud storage? | `src-tauri/src/cloud/`; the dashboard's commands in `cloud/dashboard.rs`, `cloud/browser.rs` and `cloud/download.rs`, its page in `src/CloudStorage.svelte` (browser: `src/CloudBrowser.svelte`, upload panel: `src/CloudUpload.svelte`; upload commands in `cloud/upload.rs`); accounts database in `storage.rs`, loaded in `run()`; design: [cloud-storage.md](cloud-storage.md), providers: [cloud-providers.md](cloud-providers.md) |

@@ -57,7 +57,7 @@ pub const DELETED_MAX_ENTRIES: usize = 5_000;
 /// The link lifetimes the page may choose, in seconds.
 pub const LINK_LIFETIMES: [u64; 3] = [3_600, 86_400, 604_800];
 
-async fn store_for(
+pub(crate) async fn store_for(
     accounts: &Arc<CloudAccounts>,
     id: &str,
     bucket: &str,

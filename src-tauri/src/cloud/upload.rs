@@ -74,6 +74,7 @@ use super::s3::{
     AbortOutcome, ClientOptions, RemoteOutcome, S3Store, StorageError, TransferControl,
     UploadProgress, UploadStage, plan_upload,
 };
+use crate::journal::Journal;
 
 /// Most files one batch of picked files may hold.
 pub const MAX_FILES: usize = 100;
@@ -376,7 +377,8 @@ pub fn disposition(error: &StorageError) -> Disposition {
         | StorageError::NotFound(_)
         | StorageError::Network(_)
         | StorageError::Timeout(_)
-        | StorageError::Refused(_) => Disposition::StopBatch,
+        | StorageError::Refused(_)
+        | StorageError::Journal(_) => Disposition::StopBatch,
         StorageError::Provider { .. } if error.is_transient() => Disposition::StopBatch,
         StorageError::Provider { .. }
         | StorageError::Integrity(_)
@@ -430,6 +432,11 @@ pub fn upload_error(error: &StorageError) -> CommandError {
             format!("the file is larger than the provider accepts ({max} bytes)"),
         ),
         StorageError::Refused(m) => (ErrorKind::InvalidConfiguration, m.clone()),
+        StorageError::Journal(_) => (
+            ErrorKind::Journal,
+            "the upload was not recorded in the operation journal, so it was not started"
+                .to_owned(),
+        ),
         StorageError::Provider { status, code, .. } => {
             let code = if !code.is_empty()
                 && code.len() <= 64
@@ -842,6 +849,9 @@ pub struct CloudUploads {
     inner: Mutex<Inner>,
     /// Signalled whenever the slot becomes free.
     freed: Condvar,
+    /// The operation journal every upload records itself in (ADR-030),
+    /// set once in `run()`.
+    journal: std::sync::OnceLock<Arc<Journal>>,
     /// Runs before a batch takes its next file (index in the batch).
     #[cfg(test)]
     before_file: Mutex<Option<IndexHook>>,
@@ -919,10 +929,26 @@ impl CloudUploads {
                 closed: false,
             }),
             freed: Condvar::new(),
+            journal: std::sync::OnceLock::new(),
             #[cfg(test)]
             before_file: Mutex::new(None),
             #[cfg(test)]
             file_control: Mutex::new(None),
+        }
+    }
+
+    /// Makes every upload record itself in `journal` (ADR-030). Once.
+    pub fn record_in(&self, journal: Arc<Journal>) {
+        let _ = self.journal.set(journal);
+    }
+
+    /// The provider confirmed this incomplete upload is gone: its journal
+    /// entry has nothing left to inspect.
+    fn forget_in_journal(&self, upload_id: &str) {
+        if let Some(journal) = self.journal.get()
+            && let Err(e) = journal.forget_upload_id(upload_id)
+        {
+            eprintln!("sotyware: cannot update the operation journal: {e}");
         }
     }
 
@@ -1087,6 +1113,14 @@ impl CloudUploads {
                 self.lock()
                     .unresolved
                     .retain(|known| known.upload_id != u.upload_id);
+                if let Some(journal) = self.journal.get().cloned() {
+                    let id = u.upload_id.clone();
+                    let forgotten =
+                        tokio::task::spawn_blocking(move || journal.forget_upload_id(&id)).await;
+                    if let Ok(Err(e)) = forgotten {
+                        eprintln!("sotyware: cannot update the operation journal: {e}");
+                    }
+                }
             }
             emitter.emit(EventBody::Cleanup {
                 key: u.key.clone(),
@@ -1243,6 +1277,9 @@ impl CloudUploads {
             let Some(file_control) = control.begin() else {
                 return Some(Stop::Cancelled);
             };
+            if let Some(journal) = self.journal.get() {
+                file_control.record_in(Arc::clone(journal));
+            }
             #[cfg(test)]
             if let Some(hook) = &*self.file_control.lock().unwrap() {
                 hook(index, &file_control);
@@ -1479,6 +1516,7 @@ impl CloudUploads {
                     pending -= 1;
                     if removed {
                         self.lock().unresolved.retain(|u| u.upload_id != upload_id);
+                        self.forget_in_journal(&upload_id);
                     } else {
                         eprintln!(
                             "sotyware: cannot abort the incomplete upload of '{key}' while quitting; its parts may remain at the provider"

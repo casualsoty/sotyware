@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import CloudAccountForm from "./CloudAccountForm.svelte";
   import CloudBrowser from "./CloudBrowser.svelte";
+  import CloudRecovery from "./CloudRecovery.svelte";
   import {
     checkAccount,
     CloudCommandError,
@@ -152,6 +153,7 @@
       <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} />
     {/key}
   {:else if providers && accounts && !storageError}
+    <CloudRecovery {accounts} />
     {#if form?.mode === "add"}
       <CloudAccountForm
         {providers}

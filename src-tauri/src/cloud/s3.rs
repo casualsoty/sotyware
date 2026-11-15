@@ -53,8 +53,8 @@ mod manage;
 mod upload;
 
 pub use manage::{
-    DeleteOutcome, ListedObject, MAX_COPY_BYTES, MAX_PRESIGN, ObjectHead, ObjectPage,
-    ObjectProperties, VersionInfo, VersionPage, Versioning, copy_source,
+    DeleteOutcome, IncompletePage, IncompleteUpload, ListedObject, MAX_COPY_BYTES, MAX_PRESIGN,
+    ObjectHead, ObjectPage, ObjectProperties, VersionInfo, VersionPage, Versioning, copy_source,
 };
 
 #[cfg(test)]
@@ -161,6 +161,9 @@ pub enum StorageError {
     },
     /// The transfer was cancelled through its [`TransferControl`].
     Cancelled,
+    /// The operation journal could not record the next step, so it was not
+    /// taken (ADR-030). Local: the provider was not asked to change anything.
+    Journal(String),
     /// Any other error the provider returned.
     Provider {
         status: u16,
@@ -201,6 +204,7 @@ impl fmt::Display for StorageError {
             Self::Io(m) => write!(f, "local file error: {m}"),
             Self::LocalWrite { message, .. } => write!(f, "cannot write the local file: {message}"),
             Self::Cancelled => write!(f, "cancelled"),
+            Self::Journal(m) => write!(f, "operation journal: {m}"),
             Self::Provider {
                 status,
                 code,
@@ -517,6 +521,9 @@ pub struct TransferControl {
     /// is completed or aborted, so it is never lost while an abort may still
     /// be needed (ADR-021).
     multipart: Mutex<Option<String>>,
+    /// The operation journal this transfer records itself in (ADR-030);
+    /// `None` in tests that do not need one.
+    journal: Mutex<Option<std::sync::Arc<crate::journal::Journal>>>,
     #[cfg(test)]
     fail_write_after: Mutex<Option<u64>>,
     #[cfg(test)]
@@ -552,6 +559,7 @@ impl TransferControl {
             phase: watch::Sender::new(Phase::Running),
             partial: Mutex::new(None),
             multipart: Mutex::new(None),
+            journal: Mutex::new(None),
             #[cfg(test)]
             fail_write_after: Mutex::new(None),
             #[cfg(test)]
@@ -661,6 +669,20 @@ impl TransferControl {
 
     fn set_multipart(&self, upload_id: Option<String>) {
         *self.multipart.lock().unwrap_or_else(|e| e.into_inner()) = upload_id;
+    }
+
+    /// Makes the transfer record itself in `journal` (ADR-030): an upload
+    /// before it can store anything, a download while its temporary file
+    /// exists.
+    pub fn record_in(&self, journal: std::sync::Arc<crate::journal::Journal>) {
+        *self.journal.lock().unwrap_or_else(|e| e.into_inner()) = Some(journal);
+    }
+
+    pub(crate) fn journal(&self) -> Option<std::sync::Arc<crate::journal::Journal>> {
+        self.journal
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Makes the next download fail like a full disk once it has written
@@ -1210,6 +1232,16 @@ impl S3Store {
             .ok_or(StorageError::Cancelled)??;
         let (partial, file) = create_partial(dest).await?;
         *control.lock_partial() = Some(partial.clone());
+        // Recorded before any byte is written, so a crash leaves a journal
+        // entry that the next start uses to remove the file (ADR-030).
+        let link = match self.journal_download(control, bucket, key, &partial).await {
+            Ok(link) => link,
+            Err(e) => {
+                drop(file);
+                discard_partial(control, &partial).await;
+                return Err(e);
+            }
+        };
         let mut result = self
             .stream_to(bucket, key, file, &partial, control, progress)
             .await;
@@ -1233,7 +1265,43 @@ impl S3Store {
         } else {
             control.lock_partial().take();
         }
+        // The temporary file is gone (removed, or renamed to the
+        // destination): nothing left to clean up. A failure here only
+        // leaves an entry whose path no longer exists.
+        if let Some(link) = link
+            && let Err(e) = link.finish().await
+        {
+            eprintln!("sotyware: cannot update the operation journal: {e}");
+        }
         result
+    }
+
+    /// The journal entry of a download's temporary file, if the transfer
+    /// records itself.
+    async fn journal_download(
+        &self,
+        control: &TransferControl,
+        bucket: &str,
+        key: &str,
+        partial: &Path,
+    ) -> Result<Option<crate::journal::JournalLink>, StorageError> {
+        let Some(journal) = control.journal() else {
+            return Ok(None);
+        };
+        crate::journal::begin(
+            &journal,
+            crate::journal::EntryRow {
+                kind: crate::journal::EntryKind::Download.as_str().into(),
+                state: crate::journal::EntryState::Started.as_str().into(),
+                account_id: Some(self.account.id.clone()),
+                bucket: Some(bucket.to_owned()),
+                object_key: Some(key.to_owned()),
+                local_path: Some(partial.display().to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| StorageError::Journal(e.to_string()))
     }
 
     async fn stream_to(

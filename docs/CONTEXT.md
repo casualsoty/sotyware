@@ -155,6 +155,23 @@ backups or other product features exist**. Desktop tests run only a
   (≤ 1,000 files, paths kept in Rust), favorites and recent items per
   account (`cloud-places.sqlite3`).
 
+- **Provider capabilities and conditional writes** (2026-11-15, ADR-029):
+  every behaviour the storage code relies on is a capability with its
+  evidence in `cloud/provider.rs`, shown in the account form;
+  `If-None-Match: *` only where established (no shipped profile, so the
+  HEAD-then-write race stays at Backblaze and Hetzner).
+- **Operation journal and recovery view** (2026-11-15, ADR-030):
+  `operations-journal.sqlite3`; uploads (with the multipart id), download
+  temporary files, staging folders and file operations (every planned step)
+  are recorded before they can change anything; at startup only sotyware's
+  own recorded temporary files are removed; everything else appears under
+  **Interrupted work** in Cloud Storage, inspected at the provider (reads
+  only) and dismissed by the user; incomplete multipart uploads can be
+  listed per bucket and aborted one by one. Nothing is repeated
+  automatically. Local test servers only.
+- **Downloads report three levels** (2026-11-15): `sha256-verified`,
+  `size-only`, `transfer-only`.
+
 ## Repository at a glance
 
 ```
@@ -188,7 +205,8 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
-  commands of ADR-026 (38 in all; listed in
+  commands of ADR-026 and the five recovery commands of ADR-030 (43 in
+  all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at

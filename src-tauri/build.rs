@@ -43,6 +43,11 @@ fn main() {
             "watch_cloud_drops",
             "unwatch_cloud_drops",
             "upload_cloud_drop",
+            "list_cloud_recovery",
+            "inspect_cloud_recovery",
+            "dismiss_cloud_recovery",
+            "list_cloud_incomplete_uploads",
+            "abort_cloud_incomplete_upload",
         ]),
     ))
     .expect("failed to run tauri-build");

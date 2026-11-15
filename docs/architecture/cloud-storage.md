@@ -1048,6 +1048,73 @@ extensions, size and date ranges) apply to the loaded entries only.
 the deleted items. Favorites and recent items (folders opened, files
 previewed or downloaded; 30 kept) live in `cloud-places.sqlite3`.
 
+## Operation journal and recovery
+
+ADR-030 (2026-11-15). Code: `src-tauri/src/journal.rs` (`Journal`,
+`JournalLink`, `JournalStore`, startup cleanup), `storage.rs`
+(`SqliteJournal`, `operations-journal.sqlite3`, own append-only
+migrations), the hooks in `cloud/s3.rs` (download), `cloud/s3/upload.rs`,
+`cloud/bulk_download.rs` and `cloud/operations.rs`, the commands in
+`cloud/recovery.rs`, the page `src/CloudRecovery.svelte` (shown at the top
+of Cloud Storage).
+
+**What is recorded, and when.** Each slot (`CloudUploads`, `CloudDownloads`,
+`BulkDownloads`, `CloudOperations`) gets the journal once in `run()`
+(`record_in`) and hands it to each `TransferControl`:
+
+| Work | Entry written | Updated | Removed |
+| --- | --- | --- | --- |
+| Upload (`S3Store::upload`) | after the first hashing pass, before the destination check and any request that could store: account, bucket, key, local path, size, SHA-256, multipart or not | the multipart upload id right after `CreateMultipartUpload`, before any part | when the outcome is confirmed (stored and verified, or nothing stored); kept as `needs-inspection` or `incomplete-parts` otherwise, until a later abort of that id succeeds |
+| Download (`S3Store::download`) | right after the temporary file is created, before any byte | — | once the temporary file is gone (renamed into place or removed) |
+| Several-item download | the staging folder, before anything is downloaded into it; each file's temporary file as above | — | once the staging folder is removed |
+| File operation | before the first request: kind, account, bucket and every planned step (source, planned ETag, destination) | each step's result after every phase of every item (a move's deletes start only once its copies are on record) | at the end, unless some steps took effect and others did not (`partial`) |
+
+A failed write on an open journal stops the step it was meant to record
+(`StorageError::Journal`, error kind `journal`): an upload or download does
+not start, an operation changes nothing. A journal that cannot be opened is
+left untouched like every database; work then goes on unrecorded and the
+page says so.
+
+**At startup** (before the event loop), `Journal::clean_local` removes the
+temporary download files and staging folders that earlier sessions
+recorded, only when the recorded path's last component has sotyware's
+pattern (`.<name>.<pid>-<n>.sotyware-partial`, `.sotyware-download-<pid>-<n>`)
+and is a regular file or a real folder (not a link). Nothing else is
+removed and nothing is sent.
+
+**The recovery view** lists every remaining entry with what is known
+locally (`summary`), never a local path (an upload shows its file name).
+*Inspect* (`inspect_cloud_recovery`) reads only: an upload's key by
+`HeadObject` (`stored-verified` when size and SHA-256 match → nothing left to
+do; `absent`; `different` → another writer's object, left alone) and, for a
+multipart upload, `ListMultipartUploads` filtered to exactly that key (each
+marked `recorded` when the journal knows its id); an operation's steps (at
+most 500 per inspection) by `HeadObject` on source and destination, sorted
+into `moved`, `original-kept`, `not-started`, `destination-differs`,
+`missing`, `copied`/`not-copied`, `deleted`/`still-there`/`changed-since`,
+`restored`/`not-restored`, with up to 50 keys per category. The only
+changes the view can make are *Dismiss* (removes the entry, after a
+confirmation that warns when parts may remain) and *Abort…* on one
+incomplete multipart upload (after a confirmation that warns when sotyware
+did not record it: another device may still be uploading). Finishing an
+interrupted move is a normal reviewed delete of the kept originals in the
+browser.
+
+**Unfinished large uploads** (`list_cloud_incomplete_uploads`): every
+incomplete multipart upload in an account's bucket (up to 5,000), each
+abortable one by one the same way.
+
+Tested against the in-process servers (`cloud/recovery/tests.rs`): a crash
+during a multipart upload simulated by dropping the running future (entry
+`multipart-open` with the id, inspection, bucket listing, abort, entry
+resolved), uploads judged by what the provider holds, a partial move kept
+with `original-kept` and inspected without changing anything, a completed
+operation leaving nothing, a download's temporary file recorded while it
+runs and removed by the next start after a "crash", and journal write
+failures refusing uploads, downloads and operations before any request.
+The test server answers `ListMultipartUploads` from s3s-fs's files (s3s-fs
+itself answers 501). Not run at a real provider.
+
 ## Request recorder
 
 Test builds for controlled integration runs only

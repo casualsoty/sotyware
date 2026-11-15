@@ -108,7 +108,9 @@ function backend(cmd: string, payload: Record<string, unknown>): unknown {
     return override(payload);
   }
   switch (cmd) {
-    case LIST_CLOUD_PROVIDERS:
+    case "list_cloud_recovery":
+        return { unavailable: null, items: [] };
+      case LIST_CLOUD_PROVIDERS:
       return PROVIDERS;
     case LIST_CLOUD_ACCOUNTS:
       return { accounts, storageError };

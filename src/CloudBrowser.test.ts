@@ -135,6 +135,8 @@ beforeEach(() => {
   mockIPC((cmd, payload) => {
     const args = (payload ?? {}) as Record<string, unknown>;
     switch (cmd) {
+      case "list_cloud_recovery":
+        return { unavailable: null, items: [] };
       case LIST_CLOUD_PROVIDERS:
         return [];
       case "list_cloud_places":

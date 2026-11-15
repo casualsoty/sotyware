@@ -19,6 +19,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
+use crate::journal::{EntryRow, JournalStore, StepRow};
 
 /// The database file inside the app's local data directory.
 pub const FILE_NAME: &str = "preferences.sqlite3";
@@ -443,6 +444,219 @@ pub fn open_places_store(dir: tauri::Result<PathBuf>) -> Result<SqlitePlacesStor
     fs::create_dir_all(&dir)
         .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
     SqlitePlacesStore::open(&dir.join(PLACES_FILE_NAME))
+}
+
+/// The operation journal (ADR-030), separate from the other databases so
+/// its schema evolves on its own. Local paths are stored here and nowhere
+/// else; the file never leaves the device.
+pub const JOURNAL_FILE_NAME: &str = "operations-journal.sqlite3";
+
+/// Schema of [`JOURNAL_FILE_NAME`]; append only.
+pub const JOURNAL_MIGRATIONS: &[&str] = &[
+    // 1: entries, and the planned steps of file operations.
+    "CREATE TABLE entries (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('upload', 'download', 'staging', 'operation')),
+        state TEXT NOT NULL,
+        account_id TEXT,
+        bucket TEXT,
+        object_key TEXT,
+        local_path TEXT,
+        size INTEGER,
+        sha256 TEXT,
+        multipart INTEGER NOT NULL DEFAULT 0 CHECK (multipart IN (0, 1)),
+        upload_id TEXT,
+        operation TEXT,
+        started_ms INTEGER NOT NULL,
+        updated_ms INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE steps (
+        entry_id INTEGER NOT NULL REFERENCES entries (id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        source_key TEXT NOT NULL,
+        source_etag TEXT,
+        dest_key TEXT,
+        phase TEXT NOT NULL,
+        PRIMARY KEY (entry_id, seq)
+    ) STRICT;",
+];
+
+/// The operation journal in a SQLite database.
+pub struct SqliteJournal {
+    conn: Connection,
+}
+
+impl SqliteJournal {
+    /// Opens (creating it if needed) the database at `path`.
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        let conn = open_database(path, JOURNAL_MIGRATIONS)?;
+        // Steps are removed with their entry.
+        conn.pragma_update(None, "foreign_keys", true)
+            .map_err(sql_error("cannot configure"))?;
+        Ok(Self { conn })
+    }
+}
+
+/// The journal `run()` uses: [`JOURNAL_FILE_NAME`] in `dir`.
+pub fn open_journal_store(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn JournalStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteJournal::open(&dir.join(JOURNAL_FILE_NAME))?))
+}
+
+fn entry_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<EntryRow> {
+    let size: Option<i64> = r.get(7)?;
+    Ok(EntryRow {
+        id: r.get(0)?,
+        kind: r.get(1)?,
+        state: r.get(2)?,
+        account_id: r.get(3)?,
+        bucket: r.get(4)?,
+        object_key: r.get(5)?,
+        local_path: r.get(6)?,
+        size: size.and_then(|s| u64::try_from(s).ok()),
+        sha256: r.get(8)?,
+        multipart: r.get(9)?,
+        upload_id: r.get(10)?,
+        operation: r.get(11)?,
+        started_ms: r.get(12)?,
+        updated_ms: r.get(13)?,
+    })
+}
+
+impl JournalStore for SqliteJournal {
+    fn insert(&mut self, e: &EntryRow) -> Result<i64, StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO entries (kind, state, account_id, bucket, object_key, local_path,
+                     size, sha256, multipart, upload_id, operation, started_ms, updated_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    e.kind,
+                    e.state,
+                    e.account_id,
+                    e.bucket,
+                    e.object_key,
+                    e.local_path,
+                    e.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
+                    e.sha256,
+                    e.multipart,
+                    e.upload_id,
+                    e.operation,
+                    e.started_ms,
+                    e.updated_ms
+                ],
+            )
+            .map(|_| self.conn.last_insert_rowid())
+            .map_err(sql_error("cannot record in the operation journal"))
+    }
+
+    fn update(&mut self, e: &EntryRow) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "UPDATE entries SET state = ?2, account_id = ?3, bucket = ?4, object_key = ?5,
+                     local_path = ?6, size = ?7, sha256 = ?8, multipart = ?9, upload_id = ?10,
+                     operation = ?11, updated_ms = ?12
+                 WHERE id = ?1",
+                params![
+                    e.id,
+                    e.state,
+                    e.account_id,
+                    e.bucket,
+                    e.object_key,
+                    e.local_path,
+                    e.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
+                    e.sha256,
+                    e.multipart,
+                    e.upload_id,
+                    e.operation,
+                    e.updated_ms
+                ],
+            )
+            .map(drop)
+            .map_err(sql_error("cannot update the operation journal"))
+    }
+
+    fn remove(&mut self, id: i64) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM entries WHERE id = ?1", [id])
+            .map(drop)
+            .map_err(sql_error("cannot update the operation journal"))
+    }
+
+    fn entries(&mut self) -> Result<Vec<EntryRow>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<EntryRow>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, kind, state, account_id, bucket, object_key, local_path, size,
+                        sha256, multipart, upload_id, operation, started_ms, updated_ms
+                 FROM entries ORDER BY id",
+            )?;
+            stmt.query_map([], entry_from_row)?.collect()
+        };
+        read().map_err(sql_error("cannot read the operation journal"))
+    }
+
+    fn insert_steps(&mut self, id: i64, steps: &[StepRow]) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO steps (entry_id, seq, source_key, source_etag, dest_key, phase)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )?;
+                for s in steps {
+                    stmt.execute(params![
+                        id,
+                        s.seq,
+                        s.source_key,
+                        s.source_etag,
+                        s.dest_key,
+                        s.phase
+                    ])?;
+                }
+            }
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot record in the operation journal"))
+    }
+
+    fn set_phases(&mut self, id: i64, phases: &[(i64, &str)]) -> Result<(), StoreError> {
+        let mut write = || -> rusqlite::Result<()> {
+            let tx = self.conn.transaction()?;
+            {
+                let mut stmt =
+                    tx.prepare("UPDATE steps SET phase = ?3 WHERE entry_id = ?1 AND seq = ?2")?;
+                for (seq, phase) in phases {
+                    stmt.execute(params![id, seq, phase])?;
+                }
+            }
+            tx.commit()
+        };
+        write().map_err(sql_error("cannot update the operation journal"))
+    }
+
+    fn steps(&mut self, id: i64) -> Result<Vec<StepRow>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<StepRow>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT seq, source_key, source_etag, dest_key, phase FROM steps
+                 WHERE entry_id = ?1 ORDER BY seq",
+            )?;
+            stmt.query_map([id], |r| {
+                Ok(StepRow {
+                    seq: r.get(0)?,
+                    source_key: r.get(1)?,
+                    source_etag: r.get(2)?,
+                    dest_key: r.get(3)?,
+                    phase: r.get(4)?,
+                })
+            })?
+            .collect()
+        };
+        read().map_err(sql_error("cannot read the operation journal"))
+    }
 }
 
 #[cfg(test)]

@@ -322,6 +322,11 @@ pub fn download_error(error: &StorageError) -> CommandError {
             _ => (ErrorKind::LocalFile, message.clone()),
         },
         StorageError::Io(m) => (ErrorKind::LocalFile, m.clone()),
+        StorageError::Journal(_) => (
+            ErrorKind::Journal,
+            "the download was not recorded in the operation journal, so it was not started"
+                .to_owned(),
+        ),
         // Only sotyware's own checks (bucket not configured, key length).
         StorageError::Refused(m) => (ErrorKind::InvalidConfiguration, m.clone()),
         StorageError::Provider { status, code, .. } => {
@@ -386,6 +391,9 @@ pub struct CloudDownloads {
     inner: Mutex<Inner>,
     /// Signalled whenever the slot becomes free.
     freed: Condvar,
+    /// The operation journal downloads record their temporary file in
+    /// (ADR-030), set once in `run()`.
+    journal: std::sync::OnceLock<Arc<crate::journal::Journal>>,
 }
 
 impl Default for CloudDownloads {
@@ -429,7 +437,14 @@ impl CloudDownloads {
                 closed: false,
             }),
             freed: Condvar::new(),
+            journal: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Makes every download record its temporary file in `journal`
+    /// (ADR-030). Once.
+    pub fn record_in(&self, journal: Arc<crate::journal::Journal>) {
+        let _ = self.journal.set(journal);
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -475,6 +490,9 @@ impl CloudDownloads {
         sink: Arc<dyn EventSink>,
     ) -> DownloadStarted {
         let control = Arc::new(TransferControl::new());
+        if let Some(journal) = self.journal.get() {
+            control.record_in(Arc::clone(journal));
+        }
         let id = {
             let mut inner = self.lock();
             inner.next_id += 1;

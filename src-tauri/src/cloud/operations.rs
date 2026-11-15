@@ -95,6 +95,7 @@ use super::browser::validate_prefix;
 use super::dashboard::{CloudAccounts, CommandError, ErrorKind, blocking};
 use super::download::CancelOutcome;
 use super::s3::{MAX_COPY_BYTES, ObjectProperties, S3Store, StorageError, Versioning};
+use crate::journal::{EntryKind, EntryRow, EntryState, Journal, JournalLink, StepRow};
 
 /// Most objects one plan may touch.
 pub const MAX_OBJECTS: usize = 50_000;
@@ -172,6 +173,17 @@ pub enum OperationKind {
 }
 
 impl OperationKind {
+    /// The name the journal records (the serde name).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Move => "move",
+            Self::Rename => "rename",
+            Self::Delete => "delete",
+            Self::Restore => "restore",
+        }
+    }
+
     fn moves(self) -> bool {
         matches!(self, Self::Move | Self::Rename)
     }
@@ -525,6 +537,10 @@ pub fn operation_error(error: &StorageError) -> CommandError {
             (ErrorKind::Provider, message)
         }
         StorageError::Cancelled => (ErrorKind::Other, "cancelled".to_owned()),
+        StorageError::Journal(_) => (
+            ErrorKind::Journal,
+            "the step was not recorded in the operation journal, so it was not started".to_owned(),
+        ),
         StorageError::Io(_) | StorageError::LocalWrite { .. } | StorageError::FileChanged(_) => {
             (ErrorKind::Other, "the request could not be made".to_owned())
         }
@@ -539,7 +555,8 @@ fn stops_operation(error: &StorageError) -> bool {
         | StorageError::AccessDenied(_)
         | StorageError::Network(_)
         | StorageError::Timeout(_)
-        | StorageError::Refused(_) => true,
+        | StorageError::Refused(_)
+        | StorageError::Journal(_) => true,
         StorageError::Provider { status, .. } => *status >= 500 || *status == 429,
         _ => false,
     }
@@ -1486,6 +1503,102 @@ async fn run_phase(
     stop
 }
 
+/// The journal's name for a step's progress.
+fn phase_name(done: &Done) -> &'static str {
+    match done {
+        Done::No => "planned",
+        Done::Copied => "copied",
+        Done::Finished { .. } => "finished",
+        Done::Skipped(_) => "skipped",
+        Done::Failed(_) => "failed",
+        Done::OriginalKept { .. } => "original-kept",
+    }
+}
+
+/// The journal sequence number of each work's first step (steps are
+/// numbered across the whole operation).
+fn step_offsets(works: &[Work]) -> Vec<i64> {
+    let mut next = 0i64;
+    works
+        .iter()
+        .map(|w| {
+            let first = next;
+            next += i64::try_from(w.steps.len()).unwrap_or(i64::MAX);
+            first
+        })
+        .collect()
+}
+
+/// Records an operation and every planned step (ADR-030).
+async fn journal_operation(
+    journal: &Arc<Journal>,
+    store: &S3Store,
+    bucket: &str,
+    kind: OperationKind,
+    works: &[Work],
+) -> Result<Option<JournalLink>, crate::features::StoreError> {
+    let Some(link) = crate::journal::begin(
+        journal,
+        EntryRow {
+            kind: EntryKind::Operation.as_str().into(),
+            state: EntryState::Started.as_str().into(),
+            account_id: Some(store.account_id().to_owned()),
+            bucket: Some(bucket.to_owned()),
+            operation: Some(kind.as_str().into()),
+            ..EntryRow::default()
+        },
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let mut steps = Vec::new();
+    for (w, first) in works.iter().zip(step_offsets(works)) {
+        for (i, s) in w.steps.iter().enumerate() {
+            steps.push(StepRow {
+                seq: first + i64::try_from(i).unwrap_or(i64::MAX),
+                source_key: s.source.clone(),
+                source_etag: s.e_tag.clone(),
+                dest_key: s.dest.clone(),
+                phase: phase_name(&s.done).into(),
+            });
+        }
+    }
+    let (j, id) = (Arc::clone(journal), link.id);
+    let added = tokio::task::spawn_blocking(move || j.add_steps(id, &steps))
+        .await
+        .map_err(|e| crate::features::StoreError::new(format!("journal task failed: {e}")))?;
+    if let Err(e) = added {
+        // Without its steps the entry would mislead: remove it and refuse.
+        let _ = link.finish().await;
+        return Err(e);
+    }
+    Ok(Some(link))
+}
+
+/// Records the current progress of every step of `work`.
+async fn record_phases(
+    link: &JournalLink,
+    first: i64,
+    work: &Work,
+) -> Result<(), crate::features::StoreError> {
+    let phases: Vec<(i64, &'static str)> = work
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            (
+                first + i64::try_from(i).unwrap_or(i64::MAX),
+                phase_name(&s.done),
+            )
+        })
+        .collect();
+    let (j, id) = (Arc::clone(&link.journal), link.id);
+    tokio::task::spawn_blocking(move || j.set_phases(id, &phases))
+        .await
+        .map_err(|e| crate::features::StoreError::new(format!("journal task failed: {e}")))?
+}
+
 /// Sets the item's final state from its steps.
 fn conclude(work: &mut Work, kind: OperationKind, cancelled: bool) {
     let steps = &work.steps;
@@ -1570,6 +1683,9 @@ type ItemHook = Box<dyn Fn(usize) + Send + Sync>;
 pub struct CloudOperations {
     inner: Mutex<Inner>,
     freed: Condvar,
+    /// The operation journal (ADR-030): every operation's planned steps and
+    /// their progress. Set once in `run()`.
+    journal: std::sync::OnceLock<Arc<Journal>>,
     /// Runs before an item starts (index); tests cancel or change things here.
     #[cfg(test)]
     before_item: Mutex<Option<ItemHook>>,
@@ -1592,9 +1708,15 @@ impl CloudOperations {
                 closed: false,
             }),
             freed: Condvar::new(),
+            journal: std::sync::OnceLock::new(),
             #[cfg(test)]
             before_item: Mutex::new(None),
         }
+    }
+
+    /// Makes every operation record its steps in `journal` (ADR-030). Once.
+    pub fn record_in(&self, journal: Arc<Journal>) {
+        let _ = self.journal.set(journal);
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -1898,6 +2020,19 @@ impl CloudOperations {
         id: &str,
     ) -> (OperationSummary, Option<Vec<Work>>) {
         let mut stop: Option<CommandError> = None;
+        // Every planned step is recorded before the first request that
+        // changes anything (ADR-030); without that record nothing starts.
+        let link = match self.journal.get() {
+            Some(journal) => match journal_operation(journal, store, bucket, kind, &works).await {
+                Ok(link) => link,
+                Err(e) => {
+                    stop = Some(operation_error(&StorageError::Journal(e.to_string())));
+                    None
+                }
+            },
+            None => None,
+        };
+        let seq_base = step_offsets(&works);
         emitter.progress(Totals::of(&works), true);
         for w in &works {
             if w.report.state != ItemState::Pending {
@@ -1956,6 +2091,16 @@ impl CloudOperations {
                 {
                     stop = Some(e);
                 }
+                // What this phase did, before the next one starts: a move's
+                // deletes begin only once its copies are on record.
+                if let Some(link) = &link
+                    && let Err(e) = record_phases(link, seq_base[index], &work).await
+                {
+                    eprintln!("sotyware: cannot update the operation journal: {e}");
+                    if stop.is_none() {
+                        stop = Some(operation_error(&StorageError::Journal(e.to_string())));
+                    }
+                }
             }
             conclude(&mut work, kind, control.cancelled() || stop.is_some());
             // A folder that was moved, renamed or deleted completely, but
@@ -2012,6 +2157,29 @@ impl CloudOperations {
         }
         let state = operation_state(stop.is_some(), cancelled, &counts);
         let retry = retry_works(&works, kind);
+        if let Some(link) = link {
+            // Kept only when some steps took effect and others did not (a
+            // partial move or delete): the recovery view can explain it
+            // after a restart. Otherwise there is nothing left to inspect.
+            let applied_partly = works.iter().any(|w| {
+                matches!(w.report.state, ItemState::Partial | ItemState::Failed)
+                    && w.steps.iter().any(|s| {
+                        matches!(
+                            s.done,
+                            Done::Copied | Done::Finished { .. } | Done::OriginalKept { .. }
+                        )
+                    })
+            });
+            let written = if applied_partly {
+                link.change(|e| e.state = EntryState::Partial.as_str().into())
+                    .await
+            } else {
+                link.finish().await
+            };
+            if let Err(e) = written {
+                eprintln!("sotyware: cannot update the operation journal: {e}");
+            }
+        }
         let summary = OperationSummary {
             operation: id.to_owned(),
             kind,

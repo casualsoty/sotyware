@@ -295,10 +295,14 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   busy until it ends; editing or removing the account does not stop a
   running download; objects without the SHA-256 that sotyware stores at
   upload are checked only by size (the page says so).
-- **A killed process leaves its temporary download file.** Quitting cancels
-  and removes it (waiting up to 5 s), but a crash, power loss or `kill -9`
-  leaves `.<name>.<pid>-<n>.sotyware-partial` next to the destination (hidden
-  on Linux, visible on Windows); sotyware does not look for such files later.
+- **A killed process leaves its temporary download file until the next
+  start.** Quitting cancels and removes it (waiting up to 5 s); after a crash,
+  power loss or `kill -9` the hidden `.<name>.<pid>-<n>.sotyware-partial`
+  stays next to the destination until sotyware starts again and removes it
+  from the operation journal's record (ADR-030). A file whose path cannot be
+  written as UTF-8 (a non-UTF-8 destination name on Linux) is recorded with
+  a lossy path and is then not found by that cleanup. If the journal could
+  not be opened, nothing is recorded or cleaned up.
 - **Replacing a file relies on the save dialog's confirmation.** The GTK and
   Windows dialogs ask before returning an existing file, and only such a
   file is replaced. On file systems without hard links (FAT, exFAT, some
@@ -486,13 +490,15 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
 - **Incomplete multipart uploads can remain.** A failed or cancelled
   multipart upload is aborted; if the abort fails or does not answer within
   30 s, the error says that parts may remain, and they stay stored (and
-  billed) until a bucket lifecycle rule removes them. A process killed or
-  crashing during a multipart upload aborts nothing. Upload batches keep
-  the ids whose abort failed **in memory only** and abort them again on a
-  retry of that account's batch and when quitting (at most 35 s); after
-  sotyware ends, or if the provider still refuses, they are forgotten.
-  sotyware does not list old multipart uploads at the provider and does
-  not configure a lifecycle rule.
+  billed) until removed. A process killed or crashing during a multipart
+  upload aborts nothing by itself; since ADR-030 the upload id is in the
+  operation journal (written right after `CreateMultipartUpload`, before
+  any part), so the recovery view offers to abort exactly that upload after
+  the next start, and **Unfinished large uploads** lists every incomplete
+  upload of a bucket (another device's too) for one-by-one aborts. A crash
+  in the instant between `CreateMultipartUpload` and the journal write
+  leaves an id only the bucket listing shows. Nothing is aborted
+  automatically, and sotyware does not configure a lifecycle rule.
 - **The upload panel shows one batch and forgets it.** Leaving the browser
   cancels a running batch and drops its result; there is no upload history.
   Its progress bar counts finished files, not bytes. Leftover multipart
@@ -542,6 +548,26 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   errors.
 - **Dependencies:** `aws-sdk-s3` is held at 1.102.0 by `rust-version = 1.90`;
   `s3s` 0.12 needs the dev-only `digest` release-candidate pin.
+
+### Operation journal and recovery (ADR-030)
+
+- **Recovery is evidence-based, not automatic.** After a crash, interrupted
+  uploads and operations are listed and inspected at the provider; nothing
+  is retried, finished or deleted without the user. Finishing an
+  interrupted move means deleting the kept originals through a normal
+  reviewed delete in the browser.
+- **Granularity:** an operation's step results are written after each phase
+  of each item; a crash in the middle of a phase leaves those steps as
+  `planned`, and inspection resolves them from the provider's state.
+  Inspection checks at most 500 steps per click.
+- **An upload ended by a crash before its journal entry** (during the first
+  hashing pass) left nothing remote, so nothing is lost by not recording it.
+- **Only this device's journal:** another device's interrupted work is not
+  known here (its incomplete multipart uploads appear in the bucket listing,
+  marked as not recorded).
+- **Local test servers only:** the journal and recovery view ran against
+  s3s-fs and the in-memory versioned server, and through the frontend with
+  mocked commands. No desktop driver run and no real provider yet.
 
 ### A part can land after the multipart abort
 
@@ -687,7 +713,8 @@ server only; no real provider was asked.
   search reads every key (requests are billed by the provider).
 - **Several-item downloads**: at most 10,000 files; one file after
   another; a killed process leaves its hidden staging folder
-  (`.sotyware-download-<pid>-<n>`) in the chosen folder; on a file system
+  (`.sotyware-download-<pid>-<n>`) in the chosen folder until the next start
+  removes it from the journal's record (ADR-030); on a file system
   without hard links, a file appearing under the same name in the last
   instant could be replaced by the final rename (as for single downloads).
   No ZIP option. A key that is also a folder prefix (`a/b` next to

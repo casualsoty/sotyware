@@ -151,6 +151,8 @@ beforeEach(() => {
       return h(args);
     }
     switch (cmd) {
+      case "list_cloud_recovery":
+        return { unavailable: null, items: [] };
       case LIST_CLOUD_PROVIDERS:
         return [];
       case LIST_CLOUD_ACCOUNTS:

@@ -34,7 +34,7 @@ try {
     $h = [ordered]@{ format = 1; purpose = $C.Purpose; build = $C.BuildMarker; run = $p.Run; nonce = $p.Nonce; pid = $pid_
       identifier = $C.Identifier; root = $root; data_dir = "$root\data"; webview_dir = "$root\webview"
       credential_service = $C.CredentialService; credential_target_prefix = $p.TargetPrefix
-      stores = @("$root\data\preferences.sqlite3", "$root\data\cloud-accounts.sqlite3", "$root\data\cloud-places.sqlite3") }
+      stores = @($C.Stores | ForEach-Object { "$root\data\$_" }) }
     foreach ($k in $change.Keys) { $h[$k] = $change[$k] }
     ([pscustomobject]$h | ConvertTo-Json) | ConvertFrom-Json
   }

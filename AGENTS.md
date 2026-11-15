@@ -28,7 +28,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   rename, copy, move, delete and restore as reviewed plans, search,
   sorting and filters, properties, previews, share links, several-item
   downloads, folder and drag-and-drop uploads, favorites and recent items
-  (never overwriting). No other product features exist yet. Current milestone and status:
+  (never overwriting), and an operation journal with a recovery view for
+  work interrupted by a crash (ADR-030). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -51,6 +52,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | provider profile | what sotyware knows about one S3-compatible provider, as data (`ProviderProfile`); not code |
 | plan (file operation) | what a copy, move, rename, delete or restore would do, computed by Rust with reads only and shown for review before anything changes (`PlanSummary`, ADR-026) |
 | delete marker | what a delete adds on a versioned bucket instead of removing the object; the versions stay and the file can be restored |
+| operation journal | `operations-journal.sqlite3`: each upload, download temporary file, staging folder and file operation is recorded before it can change anything and removed once its outcome is confirmed; what is left after a crash is shown in the recovery view (ADR-030) |
+| provider capability | one behaviour a provider may or may not have (conditional writes, delete markers, …) with its evidence: documented, verified at the provider, assumed from Amazon S3, or unknown (ADR-029) |
 | test profile | a directory a desktop test creates for one run; a test-profile build (Cargo feature `test-profile`) refuses to start without one and keeps its databases, webview data and credentials (own namespace) inside it (ADR-027) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
@@ -96,6 +99,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
 | `secret-service` (Linux only, through the store above; also a direct dependency without features, to name its error type) | `5` | 5.1.0 |
 | `s3s` + `s3s-fs` (dev only: in-process S3 test server), `hyper-util` (dev only), `digest` (dev only, pinned `=0.11.0-rc.4` for `s3s`) | `0.12` | 0.12.0 |
+| `http` (dev only, already in the tree: the test server's `ListMultipartUploads` route) | `1` | 1.5.0 |
 | `bytes`, `futures-core` (dev only, already in the tree: the test server's slow, stalled or cut-off object bodies) | `1`, `0.3` | 1.12.1, 0.3.34 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
 | Windows webview | WebView2 | system |
@@ -195,7 +199,17 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   a picked folder via a staging folder, never replacing), the folder upload
   in `cloud/upload.rs`, `cloud/drop.rs` (`CloudDrops`: dropped paths kept in
   Rust), `cloud/places.rs` (`CloudPlaces`: favorites and recent items in
-  `cloud-places.sqlite3`) and `cloud/s3/manage.rs` (the requests)
+  `cloud-places.sqlite3`) and `cloud/s3/manage.rs` (the requests).
+  Provider behaviour is a capability model with evidence in
+  `cloud/provider.rs` (ADR-029); `If-None-Match: *` is sent only where
+  `conditional_put` is established (no shipped profile).
+  **Operation journal** (ADR-030): `src-tauri/src/journal.rs` (`Journal`,
+  `JournalStore`; SQLite `operations-journal.sqlite3` in `storage.rs`);
+  every slot records itself (`record_in`); at startup `clean_local` removes
+  only sotyware's own recorded temporary files and staging folders;
+  `cloud/recovery.rs` lists, inspects (reads only), dismisses entries and
+  lists/aborts incomplete multipart uploads one by one; page
+  `src/CloudRecovery.svelte`
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
@@ -234,7 +248,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `src/CloudUpload.svelte`, `src/CloudOperation.svelte`,
   `src/CloudFolderPicker.svelte`, `src/CloudProperties.svelte`,
   `src/CloudBulkDownload.svelte`, `src/CloudDeleted.svelte`,
-  `src/Modal.svelte`; pure list logic in `src/fileList.ts`). Its only
+  `src/CloudRecovery.svelte`, `src/Modal.svelte`; pure list logic in
+  `src/fileList.ts`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
   `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`,
@@ -250,10 +265,13 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `cancel_cloud_items_download`, `retry_cloud_items_download`,
   `list_cloud_places`, `set_cloud_favorite`, `record_cloud_recent`,
   `clear_cloud_recent`, `watch_cloud_drops`, `unwatch_cloud_drops`,
-  `upload_cloud_drop`)
+  `upload_cloud_drop`) and the five recovery commands of ADR-030
+  (`list_cloud_recovery`, `inspect_cloud_recovery`,
+  `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`,
+  `abort_cloud_incomplete_upload`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts` and `src/cloudFiles.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts` and `src/cloudRecovery.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events (download progress,
   upload, operation, several-item download and drop notices use per-call
@@ -263,15 +281,16 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, the cloud
-storage accounts and their favorites and recent items, no settings, autostart,
+storage accounts and their favorites and recent items, and the operation
+journal, no settings, autostart,
 third-party plugin system, feature-management UI, sync, backend service, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
 sotyware's own, content search, transfer queue UI or download history,
-persistent record of incomplete multipart uploads, credential
+credential
 import or any credential fallback outside the OS store, backups
 or restic integration, cost estimator, custom event, or custom command besides
-the 38 listed above. Never describe these as existing.
+the 43 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -380,7 +399,8 @@ Every coding agent must:
    `PreferenceStore`, `Accounts`/`S3Store`/`ProviderProfile`/`CredentialStore`,
    `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
-   `CloudDrops`, `test_server::Versioned`, `CredentialNamespace`, the test
+   `CloudDrops`, `Journal`/`JournalLink` (operation journal), provider
+   `Capabilities`/`Support`, `test_server::Versioned`, `CredentialNamespace`, the test
    profile helpers (`test_profile.rs`, `tests/desktop/test_profile.py`,
    `TestProfile.psm1`), the capability file) before
    introducing new ones. New built-in functionality is a feature in

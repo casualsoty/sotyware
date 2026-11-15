@@ -86,6 +86,7 @@ export const ERROR_KINDS = [
   "remote-changed",
   "too-large",
   "outdated-plan",
+  "journal",
   "other",
 ] as const;
 

@@ -179,6 +179,153 @@ impl S3Access for Access {
     }
 }
 
+/// `ListMultipartUploads` (`GET /<bucket>?uploads`), which s3s-fs does not
+/// implement (it answers 501): the open uploads are read from the files
+/// s3s-fs keeps for them (`.bucket-<b64>.object-<b64>.upload-<id>.metadata.json`),
+/// filtered by `prefix`, all in one page. Recorded in the operations like
+/// any other request.
+struct ListUploadsRoute {
+    root: PathBuf,
+    operations: Arc<Mutex<Vec<String>>>,
+    keyed: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+/// The inverse of `TestServer::metadata_path`'s encoding (URL-safe base64
+/// without padding).
+fn b64_decode(s: &str) -> Option<String> {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut bits = 0u32;
+    let mut n = 0;
+    let mut out = Vec::new();
+    for c in s.bytes() {
+        let v = A.iter().position(|&a| a == c)? as u32;
+        bits = (bits << 6) | v;
+        n += 6;
+        if n >= 8 {
+            n -= 8;
+            out.push((bits >> n) as u8);
+            bits &= (1 << n) - 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn query_param(query: Option<&str>, name: &str) -> Option<String> {
+    query?.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        (k == name).then(|| percent_decode(v))
+    })
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && let Some(v) = s
+                .get(i + 1..i + 3)
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+            continue;
+        }
+        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+impl ListUploadsRoute {
+    fn uploads(&self, bucket: &str, prefix: &str) -> Vec<(String, String, SystemTime)> {
+        let Ok(dir) = fs::read_dir(&self.root) else {
+            return Vec::new();
+        };
+        let mut found: Vec<_> = dir
+            .filter_map(|e| {
+                let e = e.ok()?;
+                let name = e.file_name().into_string().ok()?;
+                let rest = name
+                    .strip_prefix(".bucket-")?
+                    .strip_suffix(".metadata.json")?;
+                let (b, rest) = rest.split_once(".object-")?;
+                let (k, id) = rest.split_once(".upload-")?;
+                let (b, k) = (b64_decode(b)?, b64_decode(k)?);
+                let when = e.metadata().ok()?.modified().ok()?;
+                (b == bucket && k.starts_with(prefix)).then(|| (k, id.to_owned(), when))
+            })
+            .collect();
+        found.sort();
+        found
+    }
+}
+
+impl s3s::route::S3Route for ListUploadsRoute {
+    fn is_match(
+        &self,
+        method: &http::Method,
+        uri: &http::Uri,
+        _headers: &http::HeaderMap,
+        _extensions: &mut http::Extensions,
+    ) -> bool {
+        method == http::Method::GET
+            && query_param(uri.query(), "uploads").is_some()
+            && uri.path().trim_matches('/').split('/').count() == 1
+    }
+
+    fn call<'a, 'f>(
+        &'a self,
+        req: s3s::S3Request<s3s::Body>,
+    ) -> Pin<Box<dyn Future<Output = s3s::S3Result<s3s::S3Response<s3s::Body>>> + Send + 'f>>
+    where
+        'a: 'f,
+        Self: 'f,
+    {
+        let op = "ListMultipartUploads".to_owned();
+        let key = req
+            .credentials
+            .as_ref()
+            .map(|c| c.access_key.clone())
+            .unwrap_or_default();
+        self.operations.lock().unwrap().push(op.clone());
+        self.keyed.lock().unwrap().push((key, op));
+        let bucket = req.uri.path().trim_matches('/').to_owned();
+        let prefix = query_param(req.uri.query(), "prefix").unwrap_or_default();
+        let mut xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ListMultipartUploadsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{}</Bucket><KeyMarker></KeyMarker><UploadIdMarker></UploadIdMarker><Prefix>{}</Prefix><MaxUploads>1000</MaxUploads><IsTruncated>false</IsTruncated>",
+            xml_escape(&bucket),
+            xml_escape(&prefix)
+        );
+        for (k, id, when) in self.uploads(&bucket, &prefix) {
+            let initiated = aws_smithy_types::DateTime::from(when)
+                .fmt(aws_smithy_types::date_time::Format::DateTime)
+                .unwrap_or_default();
+            xml.push_str(&format!(
+                "<Upload><Key>{}</Key><UploadId>{}</UploadId><Initiated>{initiated}</Initiated><StorageClass>STANDARD</StorageClass></Upload>",
+                xml_escape(&k),
+                xml_escape(&id)
+            ));
+        }
+        xml.push_str("</ListMultipartUploadsResult>");
+        Box::pin(async move {
+            let mut resp = s3s::S3Response::new(s3s::Body::from(xml));
+            resp.headers.insert(
+                http::header::CONTENT_TYPE,
+                http::header::HeaderValue::from_static("application/xml"),
+            );
+            Ok(resp)
+        })
+    }
+}
+
 /// A fresh, empty folder for one server.
 fn fresh_root() -> PathBuf {
     static N: AtomicUsize = AtomicUsize::new(0);
@@ -654,6 +801,11 @@ impl TestServer {
         let keyed = Arc::new(Mutex::new(Vec::new()));
         let injections = Arc::new(Mutex::new(Vec::new()));
         let conditional = Arc::new(Mutex::new(Vec::new()));
+        builder.set_route(ListUploadsRoute {
+            root: root.clone(),
+            operations: Arc::clone(&operations),
+            keyed: Arc::clone(&keyed),
+        });
         builder.set_access(Access {
             denied: denied.to_vec(),
             operations: Arc::clone(&operations),

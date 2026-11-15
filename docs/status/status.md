@@ -83,6 +83,8 @@ verified byte for byte; the object was deleted again by its version id
 | Upload batches, backend and commands: `upload_cloud_files` (native multi-file dialog opened by Rust, at most 100 files, every file checked before anything is sent and skipped with a reason if unusable, destination folder fixed when the dialog opens), `cancel_cloud_upload`, `retry_cloud_upload`; one file after another, one batch at a time in its own slot (a download can run meanwhile), `HeadObject` before each file so nothing is overwritten, per-file failures continue while credential, access, configuration and connection failures stop the batch, events with `seq` on a per-batch Tauri channel and one final summary, retry of eligible files only, incomplete multipart uploads kept in memory and aborted again on retry and on quit (bounded) | `src-tauri/src/cloud/upload.rs`, `upload_limits`/`prepare_upload` in `cloud/dashboard.rs`, `open_multipart`/`abort_incomplete_upload` in `cloud/s3.rs` and `cloud/s3/upload.rs`, `run()` in `lib.rs` (managed state, shutdown), `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#uploading-files), [ADR-022](../architecture/decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)) |
 | Cloud storage backend (changes to objects other than upload batches not reachable from the app): provider profiles (Backblaze B2, Hetzner, any S3-compatible), storage accounts without secrets (validation, add/update/remove, SQLite `cloud-accounts.sqlite3`), credentials by account id in the OS credential store (Windows Credential Manager, Linux Secret Service; no fallback; environment variables only in test builds), account add/rotate/remove keeping configuration and credentials consistent, one S3 adapter on `aws-sdk-s3` (list buckets/objects, single and multipart upload, verified download, delete), end-to-end SHA-256, typed errors, a transfer queue per account; the upload lifecycle `S3Store::upload` (existing key refused, cancellable until one commit point, bytes re-hashed while sent, multipart aborted on failure, `HeadObject` verification, stall timeout instead of the read timeout, throttled progress by stage) | `src-tauri/src/cloud/`, `cloud/s3/upload.rs`, `SqliteAccountStore` in `storage.rs` ([cloud-storage.md](../architecture/cloud-storage.md), [ADR-016](../architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-017](../architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store), [ADR-021](../architecture/decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration)) |
 | File management in the bucket browser (ADR-026): new folder; rename, copy, move and delete of files and folders and restore of deleted files as reviewed plans (review with object counts, conflicts with a numbered alternative, what a delete means on this bucket; start, progress, cancel, retry of what is left; partial results named); destination picker; deleted items (delete markers); search (names in Rust, or key prefix at the provider; recursive, paginated); client-side sorting and filters; selection (click, Ctrl, Shift, checkboxes, keyboard), context menu, selection bar, internal copy/cut/paste, shortcuts; properties, size-limited previews (text as text, raster images), presigned share links; downloads of several files and folders into a picked folder (staging, never replacing); folder uploads and drag and drop through the upload batch; favorites and recent items per account (`cloud-places.sqlite3`) | `src-tauri/src/cloud/operations.rs`, `manage.rs`, `bulk_download.rs`, `places.rs`, `drop.rs`, `s3/manage.rs`, folder upload in `upload.rs`, `SqlitePlacesStore` in `storage.rs`, `run()` in `lib.rs`; `src/CloudBrowser.svelte`, `CloudOperation.svelte`, `CloudFolderPicker.svelte`, `CloudProperties.svelte`, `CloudBulkDownload.svelte`, `CloudDeleted.svelte`, `Modal.svelte`, `cloudFiles.ts`, `fileList.ts` ([cloud-storage.md](../architecture/cloud-storage.md#file-management), [ADR-026](../architecture/decisions.md#adr-026-file-management-runs-as-reviewed-plans-in-rust-with-s3-semantics-made-explicit)) |
+| Provider capability model with evidence (nine capabilities per profile, shown in the account form) and conditional writes (`If-None-Match: *` on `PutObject`/`CompleteMultipartUpload`) only where `conditional_put` is established, which no shipped profile is; downloads report `sha256-verified`, `size-only` or `transfer-only` (2026-11-15) | `cloud/provider.rs`, `cloud/s3/upload.rs`, `verification_of` in `cloud/s3.rs`, `src/CloudAccountForm.svelte` ([ADR-029](../architecture/decisions.md#adr-029-provider-behaviour-is-a-capability-model-with-evidence-levels), [validation](#storage-reliability-phase-b-2026-11-15)) |
+| Operation journal (`operations-journal.sqlite3`: uploads with their multipart id, download temporary files, staging folders, file operations with every planned step, written before they can change anything) and the recovery view (Interrupted work in Cloud Storage: inspect at the provider, dismiss, abort an incomplete multipart upload; Unfinished large uploads per bucket); startup removes only sotyware's own recorded temporary files; the five commands `list_cloud_recovery`, `inspect_cloud_recovery`, `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload` (2026-11-15) | `src-tauri/src/journal.rs`, `SqliteJournal` in `storage.rs`, `cloud/recovery.rs`, hooks in `cloud/s3.rs`, `cloud/s3/upload.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`, `run()` in `lib.rs`; `src/CloudRecovery.svelte`, `src/cloudRecovery.ts` ([cloud-storage.md](../architecture/cloud-storage.md#operation-journal-and-recovery), [ADR-030](../architecture/decisions.md#adr-030-remote-and-local-side-effects-are-journaled-before-they-happen-and-recovery-inspects-instead-of-repeating), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -102,12 +104,13 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 
 Nothing else exists: no product features (only the example feature and
 cloud storage: accounts, browsing, transfers and the file management of
-ADR-026), no settings, no persistence other than the feature choices, the
-cloud storage accounts and their favorites and recent items, no overwriting
+ADR-026, and the operation journal of ADR-030), no settings, no persistence
+other than the feature choices, the cloud storage accounts and their
+favorites and recent items and the operation journal, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
 own, content search, transfer queue UI or download history, no backups, no
 sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 38 listed in
+plugins, and no custom command other than the 43 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -3678,6 +3681,28 @@ tray icon was ever seen or clicked by a person.
 To validate an environment, follow the manual checklist in
 [testing.md](../development/testing.md#manual-check-real-desktop-linux-or-windows)
 and update this table.
+
+## Storage reliability, phase B (2026-11-15)
+
+Production-readiness work, phase B ([journal](journal.md)): A3 download
+verification levels, A4/A5 capability model and conditional writes, A2/A6
+operation journal and recovery view. **WSL2 only, local test servers only;
+no desktop driver run, no native Windows run and no real provider for these
+changes.**
+
+- `cargo test --lib`: 434 passed, 0 failed, 27 ignored (22 new: the
+  verification decision and a download without size or checksum; provider
+  capability rules; six conditional-write tests against the test server,
+  which now enforces `If-None-Match` and answers `ListMultipartUploads`;
+  five journal tests on real SQLite files; seven recovery tests with
+  crashes simulated by dropping the running future).
+- Vitest 187 passed (8 files; new: the capability list in the account form,
+  the transfer-only download text, seven recovery-view tests).
+- `npm run check`, `cargo fmt --check`, `cargo clippy --all-targets -D
+  warnings`; the request-recorder test build (see the journal for the
+  latest count); the Python profile-helper tests (10) after the driver's
+  expected store list gained `operations-journal.sqlite3`. The PowerShell
+  profile self-test was updated the same way but not run.
 
 ## See also
 

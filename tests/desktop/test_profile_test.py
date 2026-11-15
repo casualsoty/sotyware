@@ -28,8 +28,7 @@ class ProfileTest(unittest.TestCase):
             "webview_dir": os.path.join(root, "webview"),
             "credential_service": tp.CREDENTIAL_SERVICE,
             "credential_target_prefix": f"{tp.CREDENTIAL_SERVICE}/{p.nonce}/",
-            "stores": [os.path.join(root, "data", n) for n in
-                       ("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3")],
+            "stores": [os.path.join(root, "data", n) for n in tp.STORES],
         }
         ack.update(changes)
         return ack

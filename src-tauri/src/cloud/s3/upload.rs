@@ -101,6 +101,7 @@ use super::{
     MIB, S3Store, SHA256_METADATA, StorageError, TransferControl, UploadPlan, UploadReport,
     classify, hex, io_error, plan_upload,
 };
+use crate::journal::{self, EntryKind, EntryRow, EntryState, JournalLink};
 
 /// At most one progress update per this interval, except the last one of
 /// each stage.
@@ -542,6 +543,42 @@ impl Body for ProbedBody {
     }
 }
 
+/// Brings an upload's journal entry up to date with its outcome: removed
+/// when nothing is left to inspect (stored and verified, or nothing
+/// stored), kept with the state the recovery view needs otherwise. A failed
+/// write is only logged: the work is over, and the entry still says what to
+/// inspect.
+async fn journal_outcome(link: &JournalLink, result: &Result<UploadReport, UploadError>) {
+    let written = match result {
+        Ok(_)
+        | Err(UploadError {
+            remote: RemoteOutcome::NothingStored,
+            ..
+        }) => link.finish().await,
+        Err(UploadError {
+            remote: RemoteOutcome::IncompleteParts { upload_id },
+            ..
+        }) => {
+            let id = upload_id.clone();
+            link.change(move |e| {
+                e.state = EntryState::IncompleteParts.as_str().into();
+                e.upload_id = Some(id);
+            })
+            .await
+        }
+        Err(UploadError {
+            remote: RemoteOutcome::NeedsInspection,
+            ..
+        }) => {
+            link.change(|e| e.state = EntryState::NeedsInspection.as_str().into())
+                .await
+        }
+    };
+    if let Err(e) = written {
+        eprintln!("sotyware: cannot update the operation journal: {e}");
+    }
+}
+
 /// A 412 answer: the precondition of a conditional request did not hold.
 fn precondition_failed(error: &StorageError) -> bool {
     matches!(error, StorageError::Provider { status: 412, .. })
@@ -601,6 +638,42 @@ impl S3Store {
             .first_pass(path, control, &mut reporter)
             .await
             .map_err(UploadError::nothing)?;
+        // Recorded before the first request that could store anything, so
+        // a crash from here on leaves an entry to inspect (ADR-030).
+        let link = self
+            .journal_upload(control, bucket, key, path, &first)
+            .await
+            .map_err(UploadError::nothing)?;
+        let result = self
+            .store_and_verify(
+                bucket,
+                key,
+                path,
+                first,
+                link.as_ref(),
+                control,
+                &mut reporter,
+            )
+            .await;
+        if let Some(link) = link {
+            journal_outcome(&link, &result).await;
+        }
+        result
+    }
+
+    /// Everything after the first hashing pass: destination check, sending,
+    /// verification.
+    #[allow(clippy::too_many_arguments)]
+    async fn store_and_verify(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        first: FirstPass,
+        link: Option<&JournalLink>,
+        control: &Arc<TransferControl>,
+        reporter: &mut Reporter<'_>,
+    ) -> Result<UploadReport, UploadError> {
         self.check_destination(bucket, key, control)
             .await
             .map_err(UploadError::nothing)?;
@@ -608,13 +681,15 @@ impl S3Store {
         let (parts, version_id) = match first.plan {
             UploadPlan::Single => (
                 1,
-                self.put_single(bucket, key, path, &first, control, &mut reporter)
+                self.put_single(bucket, key, path, &first, control, reporter)
                     .await?,
             ),
             UploadPlan::Multipart { part_size, parts } => (
                 parts,
-                self.put_multipart(bucket, key, path, &first, part_size, control, &mut reporter)
-                    .await?,
+                self.put_multipart(
+                    bucket, key, path, &first, part_size, link, control, reporter,
+                )
+                .await?,
             ),
         };
         reporter.report(UploadStage::Sending, size, true);
@@ -631,6 +706,39 @@ impl S3Store {
             parts,
             version_id,
         })
+    }
+
+    /// The journal entry of an upload, if the transfer records itself:
+    /// account, bucket, key, local path, size, SHA-256 and whether it is a
+    /// multipart upload.
+    async fn journal_upload(
+        &self,
+        control: &TransferControl,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        first: &FirstPass,
+    ) -> Result<Option<JournalLink>, StorageError> {
+        let Some(journal) = control.journal() else {
+            return Ok(None);
+        };
+        journal::begin(
+            &journal,
+            EntryRow {
+                kind: EntryKind::Upload.as_str().into(),
+                state: EntryState::Started.as_str().into(),
+                account_id: Some(self.account.id.clone()),
+                bucket: Some(bucket.to_owned()),
+                object_key: Some(key.to_owned()),
+                local_path: Some(path.display().to_string()),
+                size: Some(first.stamp.len),
+                sha256: Some(first.sha256.clone()),
+                multipart: matches!(first.plan, UploadPlan::Multipart { .. }),
+                ..EntryRow::default()
+            },
+        )
+        .await
+        .map_err(|e| StorageError::Journal(e.to_string()))
     }
 
     /// Whether writes carry `If-None-Match: *`: only where the provider is
@@ -971,6 +1079,7 @@ impl S3Store {
         path: &Path,
         first: &FirstPass,
         part_size: u64,
+        link: Option<&JournalLink>,
         control: &Arc<TransferControl>,
         reporter: &mut Reporter<'_>,
     ) -> Result<Option<String>, UploadError> {
@@ -997,6 +1106,30 @@ impl S3Store {
             })?
             .to_owned();
         control.set_multipart(Some(upload_id.clone()));
+        // The id goes into the journal before any part is sent: after a
+        // crash the next start can offer to abort exactly this upload.
+        if let Some(link) = link {
+            let id = upload_id.clone();
+            if let Err(e) = link
+                .change(move |e| {
+                    e.state = EntryState::MultipartOpen.as_str().into();
+                    e.upload_id = Some(id);
+                })
+                .await
+            {
+                let remote = match self.abort(bucket, key, &upload_id).await {
+                    Abort::Aborted | Abort::Gone => {
+                        control.set_multipart(None);
+                        RemoteOutcome::NothingStored
+                    }
+                    Abort::Failed => RemoteOutcome::IncompleteParts { upload_id },
+                };
+                return Err(UploadError {
+                    error: StorageError::Journal(e.to_string()),
+                    remote,
+                });
+            }
+        }
         let staged = async {
             let parts = self
                 .send_parts(

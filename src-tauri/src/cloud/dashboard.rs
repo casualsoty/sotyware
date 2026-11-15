@@ -312,6 +312,9 @@ pub enum ErrorKind {
     /// A file-management plan that is no longer valid (expired, replaced or
     /// already started): review the operation again.
     OutdatedPlan,
+    /// The operation journal could not record a step, so the step was not
+    /// started (ADR-030).
+    Journal,
     /// Anything else.
     Other,
 }

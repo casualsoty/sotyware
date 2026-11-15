@@ -107,6 +107,23 @@ pub struct VersionPage {
     pub next: Option<(String, Option<String>)>,
 }
 
+/// An incomplete multipart upload, as `ListMultipartUploads` reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncompleteUpload {
+    pub key: String,
+    pub upload_id: String,
+    /// RFC 3339.
+    pub initiated: Option<String>,
+}
+
+/// One page of incomplete multipart uploads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IncompletePage {
+    pub uploads: Vec<IncompleteUpload>,
+    /// `(key marker, upload id marker)` of the next page.
+    pub next: Option<(String, Option<String>)>,
+}
+
 /// The first bytes of an object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectHead {
@@ -366,6 +383,57 @@ impl S3Store {
             _ => None,
         };
         Ok(VersionPage { entries, next })
+    }
+
+    /// One page (at most 1,000) of the multipart uploads under `prefix`
+    /// that were started and neither completed nor aborted
+    /// (`ListMultipartUploads`). Read-only. Some may belong to an upload
+    /// that is still running on another device.
+    pub async fn list_incomplete_uploads(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        after: Option<(String, Option<String>)>,
+    ) -> Result<IncompletePage, StorageError> {
+        self.check_target(bucket, None)?;
+        if prefix.len() > MAX_KEY_BYTES {
+            return Err(StorageError::Refused(format!(
+                "prefixes must be at most {MAX_KEY_BYTES} bytes"
+            )));
+        }
+        let (key_marker, upload_marker) = after.map_or((None, None), |(k, u)| (Some(k), u));
+        let out = self
+            .client
+            .list_multipart_uploads()
+            .bucket(bucket)
+            .prefix(prefix)
+            .set_key_marker(key_marker.clone())
+            .set_upload_id_marker(upload_marker.clone())
+            .send()
+            .await
+            .map_err(|e| classify("list incomplete uploads", e))?;
+        let uploads = out
+            .uploads()
+            .iter()
+            .filter_map(|u| {
+                Some(IncompleteUpload {
+                    key: u.key()?.to_owned(),
+                    upload_id: u.upload_id()?.to_owned(),
+                    initiated: rfc3339(u.initiated()),
+                })
+            })
+            .collect();
+        let next = match (out.is_truncated(), out.next_key_marker()) {
+            // A marker equal to the one sent would repeat the same page.
+            (Some(true), Some(k))
+                if (Some(k), out.next_upload_id_marker())
+                    != (key_marker.as_deref(), upload_marker.as_deref()) =>
+            {
+                Some((k.to_owned(), out.next_upload_id_marker().map(str::to_owned)))
+            }
+            _ => None,
+        };
+        Ok(IncompletePage { uploads, next })
     }
 
     /// The object's properties, or `None` if it does not exist (or the

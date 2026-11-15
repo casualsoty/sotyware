@@ -34,6 +34,7 @@
 
 pub mod cloud;
 mod features;
+pub(crate) mod journal;
 mod storage;
 #[cfg(any(test, feature = "test-profile"))]
 mod test_profile;
@@ -330,7 +331,12 @@ pub fn run() {
             cloud::places::clear_cloud_recent,
             cloud::drop::watch_cloud_drops,
             cloud::drop::unwatch_cloud_drops,
-            cloud::drop::upload_cloud_drop
+            cloud::drop::upload_cloud_drop,
+            cloud::recovery::list_cloud_recovery,
+            cloud::recovery::inspect_cloud_recovery,
+            cloud::recovery::dismiss_cloud_recovery,
+            cloud::recovery::list_cloud_incomplete_uploads,
+            cloud::recovery::abort_cloud_incomplete_upload
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -475,6 +481,28 @@ pub fn run() {
     app.manage(Arc::new(cloud::places::CloudPlaces::load(
         storage::open_places_store(clone_dir(&data_dir)),
     )));
+    // The operation journal (ADR-030), before anything can run: first the
+    // temporary files and staging folders an earlier session recorded and
+    // could not remove (only sotyware's own, by name); everything else it
+    // holds waits for the recovery view. Every transfer and operation slot
+    // records itself in it from now on. An unusable journal is reported by
+    // the page; the work then goes on unrecorded.
+    let journal = journal::Journal::load(storage::open_journal_store(clone_dir(&data_dir)));
+    let cleaned = journal.clean_local();
+    if cleaned > 0 {
+        eprintln!(
+            "sotyware: removed {cleaned} temporary download file(s) left by an earlier session"
+        );
+    }
+    app.state::<Arc<cloud::upload::CloudUploads>>()
+        .record_in(Arc::clone(&journal));
+    app.state::<Arc<cloud::download::CloudDownloads>>()
+        .record_in(Arc::clone(&journal));
+    app.state::<Arc<cloud::bulk_download::BulkDownloads>>()
+        .record_in(Arc::clone(&journal));
+    app.state::<Arc<cloud::operations::CloudOperations>>()
+        .record_in(Arc::clone(&journal));
+    app.manage(journal);
     // Tells the test driver which process, paths and credential namespace
     // this is; it compares them with what it set up before touching the
     // window (ADR-027). Without it the driver refuses to go on, so a failed
@@ -486,6 +514,7 @@ pub fn run() {
             storage::FILE_NAME,
             storage::ACCOUNTS_FILE_NAME,
             storage::PLACES_FILE_NAME,
+            storage::JOURNAL_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -790,7 +819,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -832,7 +861,12 @@ mod tests {
                 "allow-clear-cloud-recent",
                 "allow-watch-cloud-drops",
                 "allow-unwatch-cloud-drops",
-                "allow-upload-cloud-drop"
+                "allow-upload-cloud-drop",
+                "allow-list-cloud-recovery",
+                "allow-inspect-cloud-recovery",
+                "allow-dismiss-cloud-recovery",
+                "allow-list-cloud-incomplete-uploads",
+                "allow-abort-cloud-incomplete-upload"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

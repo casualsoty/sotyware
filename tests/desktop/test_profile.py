@@ -28,6 +28,9 @@ import time
 ENV = "SOTYWARE_TEST_PROFILE"
 MARKER_FILE = "sotyware-test-profile.json"
 ACK_FILE = "sotyware-test-profile-ack.json"
+# The databases the app reports in its acknowledgement (storage.rs).
+STORES = ("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3",
+          "operations-journal.sqlite3")
 PURPOSE = "sotyware-desktop-test-profile"
 BUILD_MARKER = b"sotyware-test-profile-build"
 IDENTIFIER = "com.sotyware.desktop.test"
@@ -117,8 +120,11 @@ def check_ack(profile, ack, pid):
          "credential prefix")
     root = os.path.realpath(profile.root)
     need(os.path.realpath(str(ack.get("root"))) == root, f"root {ack.get('root')!r}")
-    paths = [ack.get("data_dir"), ack.get("webview_dir")] + list(ack.get("stores") or [])
-    need(len(ack.get("stores") or []) == 3, "three stores")
+    stores = list(ack.get("stores") or [])
+    paths = [ack.get("data_dir"), ack.get("webview_dir")] + stores
+    need(len(stores) == len(STORES), f"{len(STORES)} stores")
+    need(sorted(os.path.basename(str(s)) for s in stores) == sorted(STORES),
+         f"stores {stores!r}")
     for p in paths:
         need(isinstance(p, str) and _within(p, root), f"{p!r} is outside the profile")
 

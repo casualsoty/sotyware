@@ -133,6 +133,16 @@ Reliability scenarios the audit traced and their current behaviour:
   `If-None-Match` like Amazon documents it and records which requests
   carried it.
 
+- Phase B, A2 + A6: operation journal (`journal.rs`,
+  `operations-journal.sqlite3`) recording uploads (with multipart id),
+  download temporary files, staging folders and file operations before
+  they can change anything; startup cleanup of sotyware's own recorded
+  temporary files; recovery view with inspect (reads only), dismiss and
+  abort of one incomplete multipart upload; bucket-wide listing of
+  unfinished uploads. Decision change recorded in ADR-030: an unusable
+  journal does not block work (it is reported), a failed write on an open
+  journal stops the step. Test drivers now expect four stores.
+
 ## Tests run during the mission
 
 (Exact commands and counts, newest last.)
@@ -141,6 +151,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | A2/A6 change | WSL2 | `npm run test:headless`; clippy (default and test-profile); recorder tests; `npm run check`; `npm run test:profile-helpers` | guards ok; Vitest 187; Rust 434 passed, 27 ignored; recorder 462 passed, 27 ignored; clippy 0 / 0; check clean; Python helpers 10 OK |
 | 2026-11-15 | A4/A5 change | WSL2 | same + `cargo test --features request-recorder --target-dir target/recorder --lib` | Rust 422 passed, 27 ignored; recorder build 450 passed, 27 ignored; Vitest 180; check clean; clippy exit 0 |
 
 ## Open defects and blockers
@@ -161,5 +172,7 @@ None yet beyond the audit table.
 
 ## Next concrete task
 
-Phase B: A3 (download verification levels), then A5 (capability model), then
-A2/A6 (operation journal and recovery view).
+Phase C: backup engine (`src-tauri/src/backup/`): model (done in
+`backup/model.rs`, uncommitted), engine (run, verify, retention, restore),
+`backup.sqlite3` store, commands, scheduler feature, Backup page,
+disaster-recovery tests, provider-independent recovery script.
