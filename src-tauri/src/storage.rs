@@ -927,6 +927,31 @@ impl JournalStore for SqliteJournal {
     }
 }
 
+/// Creates sotyware's data folder so that only the user can open it. On
+/// Linux (and other Unix systems) the folder gets mode `0700`, and an
+/// existing one with wider permissions is narrowed: the databases in it hold
+/// no secret, but account names, bucket names, object keys and local paths
+/// are personal. Only this folder is changed, never a parent, and a link in
+/// its place is left alone. Windows: `%LOCALAPPDATA%` is already private to
+/// the user by its ACL; the folder inherits it.
+pub fn prepare_data_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+        let meta = fs::symlink_metadata(dir)?;
+        if meta.is_dir() && meta.permissions().mode() & 0o077 != 0 {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    #[cfg(not(unix))]
+    fs::create_dir_all(dir)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1495,5 +1520,39 @@ mod tests {
         // schema stays at its version.
         assert_eq!(MIGRATIONS.len(), 1);
         assert_ne!(ACCOUNTS_FILE_NAME, FILE_NAME);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_data_folder_is_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let base = TestDir::new("private");
+        // Created private.
+        let fresh = base.0.join("com.sotyware.desktop");
+        prepare_data_dir(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        // An existing folder from an older version is narrowed; its files
+        // stay where they are.
+        let old = base.0.join("old");
+        fs::create_dir_all(&old).unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(old.join(FILE_NAME), b"x").unwrap();
+        prepare_data_dir(&old).unwrap();
+        assert_eq!(mode(&old), 0o700);
+        assert!(old.join(FILE_NAME).exists());
+        // The parent is not touched.
+        assert_eq!(mode(&base.0) & 0o700, 0o700);
+        let parent_before = mode(&base.0);
+        prepare_data_dir(&fresh).unwrap();
+        assert_eq!(mode(&base.0), parent_before);
+        // A link in its place is not followed.
+        let target = base.0.join("elsewhere");
+        fs::create_dir_all(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        let link = base.0.join("linked");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        prepare_data_dir(&link).unwrap();
+        assert_eq!(mode(&target), 0o755);
     }
 }

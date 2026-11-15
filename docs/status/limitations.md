@@ -837,8 +837,16 @@ server only; no real provider was asked.
   lost when started from a desktop launcher.
 - **`npm audit`** reports a low-severity advisory in `deepmerge`
   (GHSA-gcqx-w48m-w2h4), a build-time dependency of
-  `@sveltejs/vite-plugin-svelte`, with no fix available (re-checked 2026-11-10).
-  It is not shipped to users.
+  `@sveltejs/vite-plugin-svelte`, with no fix available (re-checked
+  2026-11-15). It is not shipped to users.
+- **`cargo audit`** (2026-11-15) reports advisories the app cannot fix
+  today: `quick-xml` in the test-only S3 server, `lru` (unsound, through
+  `aws-sdk-s3`; a fix needs a newer SDK than Rust 1.90 allows), `glib`
+  (Linux GTK 3) and five unmaintained crates; none reachable with hostile
+  input in sotyware's use
+  ([threat model](../architecture/threat-model.md#dependency-review-2026-11-15)).
+- **The databases are not encrypted at rest;** the data folder is private to
+  the user (Linux `0700`), not to the process.
 
 ## Tests
 

@@ -499,17 +499,26 @@ impl Updates {
                         r.status().as_u16()
                     )));
                 }
-                // A manifest is a few kilobytes; refuse anything absurd.
-                let b = r
-                    .bytes()
-                    .await
-                    .map_err(|e| UpdateError::Network(e.without_url().to_string()))?;
-                if b.len() > MAX_MANIFEST {
-                    return Err(UpdateError::Malformed(
-                        "the update information is too large".into(),
-                    ));
+                // A manifest is a few kilobytes: read at most MAX_MANIFEST,
+                // chunk by chunk, so a hostile server cannot fill memory.
+                let too_large =
+                    || UpdateError::Malformed("the update information is too large".into());
+                if r.content_length().is_some_and(|n| n > MAX_MANIFEST as u64) {
+                    return Err(too_large());
                 }
-                Ok(b.to_vec())
+                let mut r = r;
+                let mut body = Vec::new();
+                while let Some(chunk) = r
+                    .chunk()
+                    .await
+                    .map_err(|e| UpdateError::Network(e.without_url().to_string()))?
+                {
+                    if body.len() + chunk.len() > MAX_MANIFEST {
+                        return Err(too_large());
+                    }
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(body)
             }
         };
         let result: Result<Option<Offer>, UpdateError> = async {

@@ -141,6 +141,17 @@ and the [journal](../status/journal.md), not here.
   no named pipes beyond the single-instance plugin, which only shows the
   dashboard).
 
+### Another user on the same computer
+
+- *Controls (2026-11-15):* the data folder is private to the user: on Linux
+  `storage::prepare_data_dir` creates it with mode `0700` and narrows an
+  existing one from an older version (only that folder; a link in its place
+  is not followed); on Windows `%LOCALAPPDATA%` is per-user by its ACL.
+  Credentials are in the user's OS credential store, never in files.
+- *Residual:* an administrator or root can read everything; the databases
+  are not encrypted at rest (full-disk encryption is the user's or the
+  organisation's choice).
+
 ### Accidental user deletion
 
 - *Controls:* every delete is a reviewed plan; on versioned buckets a delete
@@ -192,12 +203,41 @@ and the [journal](../status/journal.md), not here.
 ## Privacy
 
 - No telemetry, analytics or crash reporting exists. stderr diagnostics may
-  contain object keys (file names); they are never persisted or sent by
-  sotyware.
+  contain object keys (file names) and backup job ids; they are never
+  persisted or sent by sotyware. Reviewed 2026-11-15: no log line in the
+  app or the service contains a credential, token, password, account key,
+  recovery key or update key (errors that could carry one are typed and
+  tested, e.g. `errors_never_contain_a_secret`). The service's `outbox`
+  command prints development mail, verification codes included, by design;
+  production must use a mail provider instead.
+- An update check sends a plain GET with `User-Agent: sotyware/<version>`;
+  the update server learns the IP address, the time and the version.
 - The account service learns: email, password hash, device names/platforms,
   IP addresses in its rate limiter (memory only), sync timestamps and vault
   sizes. Its audit log records event types, account and device ids and times,
   never content or secrets.
+
+## Dependency review (2026-11-15)
+
+`cargo audit` (RustSec database, 1,509 advisories) and `npm audit` on the
+lock files of this commit:
+
+- **Account service** (`server/Cargo.lock`): no advisory.
+- **Frontend runtime** (`npm audit --omit=dev`): no advisory. Dev only:
+  `deepmerge` (low, GHSA-gcqx-w48m-w2h4, build time, no fix).
+- **Desktop app** (`src-tauri/Cargo.lock`): two vulnerabilities in
+  `quick-xml` 0.37.5 (RUSTSEC-2026-0194, -0195: denial of service on
+  hostile XML), reached only through `s3s`, the in-process S3 server of the
+  tests (a dev-dependency, never in a build). Unsound: `lru` 0.12.5
+  (RUSTSEC-2026-0002, -0253) through `aws-sdk-s3`, which uses only
+  `get_or_insert_mut` in its S3 Express session cache (not the affected
+  `IterMut` or `pop`, and S3 Express is AWS-only); a fixed `lru` needs a
+  newer `aws-sdk-s3` than Rust 1.90 allows. `glib` 0.18.5
+  (RUSTSEC-2024-0429, `VariantStrIter`, Linux GTK 3 through Tauri; no GTK 3
+  release with the fix). Unmaintained: `zbus_names`, `zvariant`,
+  `zvariant_derive` (Linux D-Bus), `pin-utils`, `proc-macro-error` (build
+  time). None is reachable with attacker-controlled input in sotyware's use;
+  re-run before every release.
 
 ## Residual risks summary
 

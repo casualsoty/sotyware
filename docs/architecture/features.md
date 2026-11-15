@@ -186,7 +186,9 @@ the preferences and manages `FeaturePreferences` as Tauri state.
     `~/.local/share/com.sotyware.desktop/`.
   - Windows: `%LOCALAPPDATA%\com.sotyware.desktop\` (local, not roaming). The
     webview's own data (`EBWebView`) is in the same folder.
-  The folder is created if needed. Default rollback journal (no WAL), so the
+  The folder is created if needed, private to the user (Linux `0700`, an
+  existing wider one narrowed; Windows inherits `%LOCALAPPDATA%`'s per-user
+  ACL; `storage::prepare_data_dir`, 2026-11-15). Default rollback journal (no WAL), so the
   only other file is a short-lived `preferences.sqlite3-journal` during a write.
 - **Schema (version 1):**
 

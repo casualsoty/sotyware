@@ -266,7 +266,7 @@ impl Backups {
     /// The service of `run()`: the opened store, and a spool folder sotyware
     /// owns (emptied now: anything there is a leftover of an earlier task).
     pub fn load(store: Result<Box<dyn BackupStore>, StoreError>, spool: PathBuf) -> Arc<Self> {
-        let _ = std::fs::remove_dir_all(&spool);
+        clear_spool(&spool);
         if let Err(e) = std::fs::create_dir_all(&spool) {
             eprintln!("sotyware: cannot create the backup spool folder: {e}");
         }
@@ -774,7 +774,7 @@ impl Backups {
             }
             TaskKind::Restore => {}
         }
-        let _ = std::fs::remove_dir_all(&spool);
+        clear_task_spool(&spool);
         s
     }
 
@@ -930,7 +930,7 @@ impl Backups {
             error: s.error.as_ref().map(|e| e.message.clone()),
             ..RunRow::default()
         });
-        let _ = std::fs::remove_dir_all(&spool);
+        clear_task_spool(&spool);
         s
     }
 
@@ -1367,7 +1367,7 @@ pub async fn export_backup_manifest(
         progress: &mut nothing,
     };
     let manifest = engine::read_manifest(&ctx, &snapshot).await;
-    let _ = std::fs::remove_dir_all(&spool);
+    clear_task_spool(&spool);
     let manifest = manifest.map_err(|e| backup_error(&e))?;
     let export = RecoveryExport {
         format: "sotyware-recovery-export",
@@ -1526,6 +1526,55 @@ async fn choose_save(window: &tauri::WebviewWindow, name: String) -> Option<Path
 #[cfg(not(desktop))]
 async fn choose_save(_window: &tauri::WebviewWindow, _name: String) -> Option<PathBuf> {
     None
+}
+
+/// Whether `name` is one of the spool's own names: a task folder (a task id
+/// or `export-<id>`) or a spool file (`object-<id>`, `engine::spool_file`).
+fn spool_name(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix).is_some_and(|id| {
+        !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
+}
+
+/// Removes one task's spool folder, never recursively: only regular files
+/// named like spool files, then the folder itself if that left it empty.
+/// Anything else (a link, a file someone else put there) stays, and so
+/// does the folder.
+fn clear_task_spool(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+        if is_file && name.to_str().is_some_and(|n| spool_name(n, "object-")) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    if let Err(e) = std::fs::remove_dir(dir)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        eprintln!("sotyware: left the backup spool folder in place, it holds something else: {e}");
+    }
+}
+
+/// Empties the spool folder left by an earlier session: each task folder
+/// as [`clear_task_spool`] does. Links and unknown names are left alone.
+fn clear_spool(spool: &Path) {
+    let Ok(entries) = std::fs::read_dir(spool) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        if is_dir
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| spool_name(n, ""))
+        {
+            clear_task_spool(&entry.path());
+        }
+    }
 }
 
 #[cfg(test)]

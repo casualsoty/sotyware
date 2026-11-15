@@ -160,6 +160,17 @@ Reliability scenarios the audit traced and their current behaviour:
   rows lingered in free pages), CI job `server`, operations guide
   `docs/development/server.md`.
 
+- Phase G done: security review. `cargo audit` (app: 2 `quick-xml`
+  advisories, test-only through `s3s`; unsound `lru`/`glib` and five
+  unmaintained crates, none reachable; server: none) and `npm audit`
+  (runtime none; dev `deepmerge` low). Fixed: the backup spool's
+  recursive cleanup (an unqualified `remove_dir_all` added in phase C, now
+  only sotyware's own spool files, no recursion, links never followed);
+  the data folder is now `0700` on Linux (A9). Logs reviewed: no secret
+  (A10). Threat model gained "another user on the same computer" and the
+  dependency review. Self-review of `updates.rs` found the manifest size
+  limit applied only after reading the whole answer; now streamed.
+
 - Phase F done: updates (ADR-033): `updates.rs` (signed manifest
   verified with minisign before the plugin sees it, version floor in
   `updates.sqlite3`, platform entry, `restore_update` cross-check, SHA-256
@@ -190,6 +201,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | Phase G | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `cargo fmt --check`; `cargo audit`; `npm audit`; `cargo build --release --locked` + strings check + release-binary guard | guards ok; Vitest 213; Rust 494 passed, 28 ignored; recorder 522 passed, 28 ignored; clippy 0/0; fmt clean; audits as in the threat model; release binary without overrides, guard ok |
 | 2026-11-15 | Phase F | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `test:update-manifest`; release-binary and isolation guard self-tests; profile helpers; `npm run check` | guards ok; Vitest 213; Rust 492 passed, 28 ignored (14 update tests; 2 mutants caught); recorder 520 passed, 28 ignored; update-manifest 8/8; guards 39/39 and 9/9; helpers 10 OK; clippy 0/0; check clean |
 | 2026-11-15 | Phase E | WSL2 | `npm run test:headless`; clippy (default, test-profile, server); recorder tests; server tests; profile helpers | guards ok; Vitest 205; Rust 478 passed, 28 ignored; recorder 506 passed; server 5 + 20; clippy 0/0/0; helpers OK. Clippy found an ignored 409 in conflict resolution (fixed) |
 | 2026-11-15 | Phase D | WSL2 | `cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked` | 5 unit + 18 API tests passed; clippy 0 |

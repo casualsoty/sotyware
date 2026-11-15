@@ -3828,6 +3828,39 @@ run on native Windows; no production key or update server exists.**
   `npm run check` clean; release-binary guard 39/39, isolation guard 9/9,
   profile helpers 10/10.
 
+## Security review (2026-11-15)
+
+Production-readiness work, phase G ([journal](journal.md)); WSL2 only.
+
+- **Dependency audits:** `cargo audit` 0.23.0 and `npm audit`; results and
+  why none is reachable in sotyware's use in the
+  [threat model](../architecture/threat-model.md#dependency-review-2026-11-15).
+- **Data folder private to the user** (audit A9): Linux `0700`, an older
+  wider folder narrowed, parents and links untouched; unit test
+  `the_data_folder_is_private_to_the_user` (Linux only; Windows relies on
+  `%LOCALAPPDATA%`'s ACL, not tested here).
+- **No unqualified recursive deletion:** the backup spool was emptied with
+  `remove_dir_all` (added in phase C); it now removes only regular files
+  named like spool files and then their task folders with a non-recursive
+  `remove_dir`, never following a link (test
+  `the_spool_cleanup_removes_only_spool_files`). The other recursive
+  deletions were checked: the journal's staging cleanup (only a recorded
+  folder with sotyware's staging name, not a link) and the several-item
+  download (only folders it created in this run).
+- **Logs** reviewed for secrets (audit A10): none found
+  ([threat model](../architecture/threat-model.md#privacy)).
+- **Update manifest size:** the 256 KiB limit was checked only after the
+  whole answer was in memory; the manifest is now read chunk by chunk and
+  refused at the limit, with or without an announced length (tested).
+- **Release binary** (WSL2, `cargo build --release --locked`, Linux; not
+  `build:release`, not packaged): contains none of `SOTYWARE_UPDATE_*`,
+  `SOTYWARE_ACCOUNT_SERVER`, `SOTYWARE_TEST_PROFILE`,
+  `SOTYWARE_REQUEST_RECORD`; `check-release-binary.mjs` accepts it.
+- Totals on WSL2: `npm run test:headless` exit 0 (guards ok, Vitest 213,
+  Rust 494 passed, 28 ignored); recorder build 522 passed, 28 ignored;
+  clippy `-D warnings` clean for the default and test-profile builds;
+  `cargo fmt --check` clean.
+
 ## See also
 
 - [limitations.md](limitations.md): known limitations.

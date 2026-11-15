@@ -386,6 +386,21 @@ struct Served {
     sig: Option<String>,
     artifact: Vec<u8>,
     stall: bool,
+    /// Serve the manifest without a length, in 64 KiB chunks.
+    chunked: bool,
+}
+
+/// A body of known chunks and no announced length.
+struct Chunks(std::collections::VecDeque<axum::body::Bytes>);
+
+impl futures_core::Stream for Chunks {
+    type Item = Result<axum::body::Bytes, std::convert::Infallible>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Ready(self.0.pop_front().map(Ok))
+    }
 }
 
 #[derive(Clone)]
@@ -398,8 +413,19 @@ struct Server {
 #[derive(Clone)]
 struct Shared(Arc<Mutex<Served>>, Arc<AtomicBool>);
 
-async fn manifest_route(AxState(s): AxState<Shared>) -> impl IntoResponse {
-    s.0.lock().unwrap().manifest.clone()
+async fn manifest_route(AxState(s): AxState<Shared>) -> axum::response::Response {
+    let (chunked, manifest) = {
+        let g = s.0.lock().unwrap();
+        (g.chunked, g.manifest.clone())
+    };
+    if chunked {
+        let parts = manifest
+            .chunks(64 * 1024)
+            .map(axum::body::Bytes::copy_from_slice)
+            .collect();
+        return axum::body::Body::from_stream(Chunks(parts)).into_response();
+    }
+    manifest.into_response()
 }
 
 async fn sig_route(AxState(s): AxState<Shared>) -> axum::response::Response {
@@ -549,6 +575,23 @@ async fn unsigned_tampered_or_unreachable_updates_change_nothing() {
         g.manifest = text.replace("Fixes.", "Fixes!").into_bytes();
     }
     assert_eq!(u.check(&v("0.1.0")).await, Err(UpdateError::Signature));
+    // A manifest larger than any real one is refused, with or without an
+    // announced length, without reading it all.
+    srv.publish(&k, "0.2.0");
+    srv.served.lock().unwrap().manifest = vec![b' '; MAX_MANIFEST + 1];
+    assert!(
+        matches!(u.check(&v("0.1.0")).await, Err(UpdateError::Malformed(m)) if m.contains("too large"))
+    );
+    srv.served.lock().unwrap().chunked = true;
+    assert!(
+        matches!(u.check(&v("0.1.0")).await, Err(UpdateError::Malformed(m)) if m.contains("too large"))
+    );
+    // The same server streaming a normal manifest works.
+    srv.publish(&k, "0.2.0");
+    srv.served.lock().unwrap().chunked = true;
+    let streamed = Updates::new(Some(srv.source(&k)), Ok(Box::new(Memory::default())));
+    assert!(streamed.check(&v("0.1.0")).await.unwrap().is_some());
+    srv.served.lock().unwrap().chunked = false;
     // Nothing was stored, nothing offered.
     assert_eq!(mem.saved(), Saved::default());
     assert!(u.status(&v("0.1.0"), Vec::new()).available.is_none());

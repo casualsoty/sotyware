@@ -1012,3 +1012,39 @@ async fn the_standalone_recovery_script_restores_a_snapshot_byte_identically() {
     assert!(String::from_utf8_lossy(&bad.stderr).contains("does not match"));
     assert!(!out2.join("photos/größe +x.bin").exists());
 }
+
+/// The spool is emptied without recursive deletion: only sotyware's own
+/// spool files go, then their task folders if that emptied them. A file
+/// someone else put there, a link and what the link points to stay.
+#[test]
+fn the_spool_cleanup_removes_only_spool_files() {
+    let dir = TempDir::new("spool-cleanup");
+    let spool = dir.path("backup-spool");
+    let task = spool.join("0123abcd");
+    let busy = spool.join("export-77aa");
+    fs::create_dir_all(&task).unwrap();
+    fs::create_dir_all(&busy).unwrap();
+    fs::write(task.join("object-1a2b"), b"spooled").unwrap();
+    fs::write(busy.join("object-3c4d"), b"spooled").unwrap();
+    fs::write(busy.join("notes.txt"), b"not sotyware's").unwrap();
+    fs::write(spool.join("readme"), b"not sotyware's").unwrap();
+    let outside = dir.path("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("object-5e6f"), b"must stay").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, spool.join("linked")).unwrap();
+
+    clear_spool(&spool);
+
+    assert!(!task.exists(), "an emptied task folder is removed");
+    assert!(!busy.join("object-3c4d").exists());
+    assert!(busy.join("notes.txt").exists(), "a foreign file stays");
+    assert!(busy.exists(), "and so does its folder");
+    assert!(spool.join("readme").exists());
+    assert!(
+        outside.join("object-5e6f").exists(),
+        "a link is never followed"
+    );
+    #[cfg(unix)]
+    assert!(spool.join("linked").symlink_metadata().is_ok());
+}

@@ -488,6 +488,14 @@ pub fn run() {
         app.path().app_local_data_dir(),
         cloud::keyring::CredentialNamespace::normal(),
     );
+    // Private to the user before any database is created in it (Linux
+    // 0700; Windows inherits %LOCALAPPDATA%'s per-user ACL). A failure is
+    // logged; each store then reports its own error if it cannot open.
+    if let Ok(dir) = &data_dir
+        && let Err(e) = storage::prepare_data_dir(dir)
+    {
+        eprintln!("sotyware: cannot make the data folder private: {e}");
+    }
 
     // Load the feature preferences now: after `build()` (a second launch has
     // already handed over and exited inside it, so only the primary instance

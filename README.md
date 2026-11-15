@@ -18,8 +18,9 @@ window instead (dashboard-only mode: no hiding, closing quits).
 - The desktop runtime: one dashboard window, a tray icon with "Open Dashboard"
   and "Quit", hide-on-close, single-instance handling.
 - Built-in features: native Rust modules that can be enabled and disabled from
-  the dashboard (one example feature); each choice is saved locally (SQLite,
-  in the app's data folder).
+  the dashboard (an example, scheduled backups, automatic update checks); each
+  choice is saved locally (SQLite, in the app's data folder, private to the
+  user).
 - **Cloud Storage** for S3-compatible buckets (Backblaze B2, Hetzner or any
   S3-compatible service; one bucket per account, keys only in the OS
   credential store):
@@ -45,13 +46,22 @@ window instead (dashboard-only mode: no hiding, closing quits).
   retention policy that never prunes after a suspicious mass change,
   restores that never overwrite, a recovery file, and a restore tool that
   needs only Python ([docs/user/recovery.md](docs/user/recovery.md)).
+- **Optional sotyware account** with end-to-end encrypted sync of storage
+  accounts (keys included) and backup jobs between computers: the service
+  only ever stores ciphertext; a recovery key shown once, device approval,
+  revocation and key rotation. **Not available to users yet:** the service
+  (`server/`) is not deployed and release builds have none configured.
+- **Signed updates**, installed only when you click "Update now" and never
+  during a transfer or backup. **Switched off in release builds:** no
+  release signing key or update server exists yet.
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger
 than 5 GiB. Providers differ (versioning, link limits, key restrictions), so
 not every action behaves the same at every provider; file management,
 recovery and backups have so far been exercised only against local test
-servers, not at a real provider.
+servers, not at a real provider, and accounts and updates only in tests
+with an in-process service and local update server.
 Details and evidence: [docs/status/status.md](docs/status/status.md) and
 [docs/status/limitations.md](docs/status/limitations.md).
 
