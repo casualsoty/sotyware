@@ -250,10 +250,21 @@ pub fn verify_signature(data: &[u8], signature: &str, pubkey: &str) -> Result<()
         .map_err(|_| UpdateError::Signature)
 }
 
+/// Plain HTTP to this machine only: `localhost`, `127.0.0.0/8` or `[::1]`,
+/// by the parsed host (a textual prefix check would also let any other
+/// IPv6 literal through).
 fn is_loopback_http(url: &str) -> bool {
-    url.strip_prefix("http://")
-        .and_then(|r| r.split(['/', ':']).next())
-        .is_some_and(|h| h == "127.0.0.1" || h == "localhost" || h == "[")
+    let Ok(u) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    u.scheme() == "http"
+        && u.host_str().is_some_and(|h| {
+            h.eq_ignore_ascii_case("localhost")
+                || h.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
 }
 
 /// Whether an artifact or manifest URL is acceptable: HTTPS, or loopback
@@ -455,6 +466,19 @@ pub enum InstallEvent {
     Cancelled,
 }
 
+/// The running download-and-install task.
+struct InstallSlot {
+    task: tauri::async_runtime::JoinHandle<()>,
+    sink: Channel<InstallEvent>,
+    /// Which start this slot belongs to: a task only commits its own.
+    token: Arc<()>,
+    /// Set under the slot's lock just before the plugin installs. The
+    /// installation is one blocking call that aborting the task cannot
+    /// interrupt, so from then on a cancel is refused instead of reporting
+    /// "nothing was installed" while the installation goes on.
+    committed: bool,
+}
+
 /// Updates: managed state.
 pub struct Updates {
     source: Option<Source>,
@@ -462,8 +486,7 @@ pub struct Updates {
     last: Mutex<(Option<Offer>, Option<UpdateError>)>,
     /// The version installed by this process, awaiting a restart.
     installed: Mutex<Option<String>>,
-    /// The running download-and-install task and its channel.
-    install: Mutex<Option<(tauri::async_runtime::JoinHandle<()>, Channel<InstallEvent>)>>,
+    install: Mutex<Option<InstallSlot>>,
     timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     allow_loopback: bool,
 }
@@ -682,18 +705,31 @@ impl Updates {
         }
     }
 
-    /// Stops a download in progress; nothing was installed. Too late once
-    /// the installer has started (the process then ends).
+    /// Stops a download in progress; nothing was installed. Refused (false)
+    /// once the installation has started: it cannot be interrupted.
     pub fn cancel(&self) -> bool {
-        match self
-            .install
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            Some((h, sink)) if !h.inner().is_finished() => {
-                h.abort();
-                let _ = sink.send(InstallEvent::Cancelled);
+        let mut slot = self.install.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|s| s.committed) {
+            return false;
+        }
+        match slot.take() {
+            Some(s) if !s.task.inner().is_finished() => {
+                s.task.abort();
+                let _ = s.sink.send(InstallEvent::Cancelled);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The commit point of the task started with `token`: true (and no
+    /// cancel is accepted any more) if its slot is still there, false if
+    /// it was cancelled meanwhile.
+    fn commit_install(&self, token: &Arc<()>) -> bool {
+        let mut slot = self.install.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.as_mut() {
+            Some(s) if Arc::ptr_eq(&s.token, token) => {
+                s.committed = true;
                 true
             }
             _ => false,
@@ -789,7 +825,7 @@ impl Updates {
         let mut guard = self.install.lock().unwrap_or_else(|e| e.into_inner());
         if guard
             .as_ref()
-            .is_some_and(|(h, _)| !h.inner().is_finished())
+            .is_some_and(|s| !s.task.inner().is_finished())
         {
             return Err(CommandError::new(
                 ErrorKind::Busy,
@@ -800,6 +836,8 @@ impl Updates {
         let kept = sink.clone();
         let allow_loopback = self.allow_loopback;
         let this = Arc::clone(self);
+        let token = Arc::new(());
+        let own = Arc::clone(&token);
         let task = tauri::async_runtime::spawn(async move {
             let mut last = std::time::Instant::now();
             let result = Self::download_verified(&app, &pubkey, &offer, !allow_loopback, |d, t| {
@@ -821,6 +859,10 @@ impl Updates {
                             kind: "busy",
                             message: "a transfer, file operation or backup started; the update was not installed".into(),
                         });
+                        return;
+                    }
+                    // Cancelled since the download ended: install nothing.
+                    if !this.commit_install(&own) {
                         return;
                     }
                     let _ = sink.send(InstallEvent::Installing);
@@ -851,7 +893,12 @@ impl Updates {
                 }
             }
         });
-        *guard = Some((task, kept));
+        *guard = Some(InstallSlot {
+            task,
+            sink: kept,
+            token,
+            committed: false,
+        });
         Ok(())
     }
 

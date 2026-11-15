@@ -80,8 +80,11 @@ transport: what is installed is decided by the release key's signature.
    version), requires the plugin's view of the release (version, URL,
    signature) to equal the manifest's entry, and downloads through the
    plugin (progress at most 4 times a second; **Cancel** until the download
-   ends). The plugin verifies the package's minisign signature and signed
-   version; sotyware then checks its SHA-256 against the signed manifest.
+   ends; a cancel that arrives after the commit point, taken under the
+   install slot's lock just before the plugin installs, is refused, since
+   the installation is one blocking call that cannot be interrupted). The
+   plugin verifies the package's minisign signature and signed version;
+   sotyware then checks its SHA-256 against the signed manifest.
 6. **Install.**
    - Windows: the plugin writes the installer to a temporary file,
      sotyware releases what an ordinary quit releases (`release_resources`),

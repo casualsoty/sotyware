@@ -319,6 +319,14 @@ fn urls_hashes_and_the_plugins_view_are_compared_exactly() {
     assert!(url_ok("http://127.0.0.1:8080/x", true));
     assert!(url_ok("http://localhost/x", true));
     assert!(!url_ok("file:///C:/x.exe", true));
+    // IPv6: only the loopback address, by the parsed host.
+    assert!(url_ok("http://[::1]:8080/x", true));
+    assert!(!url_ok("http://[2001:db8::1]/x", true));
+    assert!(!url_ok("http://[::ffff:203.0.113.7]:80/x", true));
+    assert!(url_ok("http://127.0.0.2/x", true));
+    assert!(!url_ok("http://127.0.0.1@example.org/x", true));
+    assert!(!url_ok("http://localhost.example.org/x", true));
+    assert!(!url_ok("http://[::1]/x", false));
 
     assert_eq!(check_sha256(ARTIFACT, &sha(ARTIFACT)), Ok(()));
     assert_eq!(
@@ -796,6 +804,50 @@ async fn a_package_that_does_not_match_the_signed_manifest_is_never_returned() {
     assert!(matches!(r, Err(UpdateError::Integrity(_))), "{:?}", r.err());
     // The untouched offer still works.
     assert!(run(offer_with(None, None)).await.is_ok());
+}
+
+/// The installation is one blocking call that aborting the task cannot
+/// stop: a cancel that arrives before the commit point stops the task from
+/// installing; one that arrives after it is refused instead of reporting
+/// "nothing was installed".
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancel_is_refused_once_the_installation_is_committed() {
+    let u = Updates::new(None, Ok(Box::new(Memory::default())));
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let slot = |token: &Arc<()>| {
+        let log = Arc::clone(&events);
+        InstallSlot {
+            task: tauri::async_runtime::spawn(std::future::pending::<()>()),
+            sink: Channel::new(move |body| {
+                if let tauri::ipc::InvokeResponseBody::Json(j) = body {
+                    log.lock().unwrap().push(j);
+                }
+                Ok(())
+            }),
+            token: Arc::clone(token),
+            committed: false,
+        }
+    };
+    // Cancelled before the commit point: the task finds no slot and stops.
+    let first = Arc::new(());
+    *u.install.lock().unwrap() = Some(slot(&first));
+    assert!(u.cancel());
+    assert!(!u.commit_install(&first));
+    assert_eq!(*events.lock().unwrap(), [r#"{"type":"cancelled"}"#]);
+    // Committed: cancel (and so quitting) leaves the installation alone.
+    let second = Arc::new(());
+    *u.install.lock().unwrap() = Some(slot(&second));
+    assert!(
+        !u.commit_install(&first),
+        "another start's task never commits"
+    );
+    assert!(u.commit_install(&second));
+    assert!(!u.cancel());
+    u.shutdown();
+    assert_eq!(events.lock().unwrap().len(), 1, "no second cancelled event");
+    let left = u.install.lock().unwrap().take().expect("the slot stays");
+    assert!(left.committed && !left.task.inner().is_finished());
+    left.task.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

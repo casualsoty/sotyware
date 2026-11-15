@@ -408,7 +408,9 @@ fn names_with_control_characters_are_skipped() {
     }
 }
 
-#[cfg(unix)]
+// Not on macOS: APFS and HFS+ refuse a file name that is not UTF-8
+// (EILSEQ), so such a file cannot exist there to be picked.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn names_that_are_not_utf8_are_skipped() {
     use std::os::unix::ffi::OsStrExt;
@@ -1846,7 +1848,8 @@ fn a_folder_is_walked_with_relative_keys_and_without_following_links() {
     assert!(checked.iter().all(|c| c.skip.is_none()));
 }
 
-#[cfg(unix)]
+// Not on macOS: its file systems refuse names that are not UTF-8 (above).
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn a_name_that_is_not_unicode_skips_the_file_and_nothing_else() {
     use std::os::unix::ffi::OsStrExt;

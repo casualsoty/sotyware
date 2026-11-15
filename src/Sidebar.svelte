@@ -105,7 +105,13 @@
         {/each}
       </nav>
     {/if}
-    <button type="button" class="ghost add" onclick={onaddaccount}><Icon name="plus" size={14} />Add storage account</button>
+    <button
+      type="button"
+      class="ghost add"
+      onclick={() => {
+        onaddaccount();
+        onclose?.();
+      }}><Icon name="plus" size={14} />Add storage account</button>
   </div>
 
   <div class="bottom">
