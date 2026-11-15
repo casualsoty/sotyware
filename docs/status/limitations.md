@@ -484,7 +484,10 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   conditional write is sent to Backblaze, Hetzner or a generic service: none
   documents `If-None-Match`, and it was never verified at either provider.
   The mechanism exists (ADR-029) and is tested only against the local test
-  server, which enforces the header as Amazon documents it.
+  server, which enforces the header as Amazon documents it. That server
+  reads a write it refuses (412) to its end before answering; how a real
+  provider answers a refusal while the body is still being sent was never
+  tried (closing the connection under it loses the 412 on Windows).
   The checks and the verification need a key that may read objects as well
   as write them.
 - **Incomplete multipart uploads can remain.** A failed or cancelled

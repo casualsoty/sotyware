@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -138,6 +138,51 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Two flaky tests after the release key push (2026-11-15)
+
+The push of `f178d3b` (the release key) ran `ci.yml` (run 43740564787)
+and `macos.yml` (run 43740564782). Each failed one test on one platform,
+unrelated to the key; the key's own tests passed everywhere. Re-running
+only the failed jobs passed both (attempt 2: Apple Silicon 501 passed
+with the Keychain round trip, Windows 496; Vitest 241 each), so
+`f178d3b` passed on every platform (from the first attempt: Ubuntu 22.04
+511 and recorder build 539, Intel 501, account service 25). Neither test
+had failed in a recorded run before.
+
+- **`favorites_and_recent_items_are_per_account_and_survive_a_restart`**
+  (Apple Silicon: "the oldest went first"). Recent items were ordered by
+  their millisecond timestamp, then by name, so items recorded in the
+  same millisecond (the test records 40 in a loop; a fast machine fits
+  several in one) were kept by name, and the trim to 30 could drop new
+  ones and keep old ones; a clock set back did the same. Fixed in the
+  store (`storage.rs`): a place is stored as newer than every other of its
+  kind for the account (now, or one more than the newest), so the order
+  is the order of the calls. The new test
+  `recent_items_keep_their_recording_order_in_one_millisecond_and_when_the_clock_goes_back`
+  failed before the fix (it kept `f00`–`f29`) and passes. The timestamp
+  is never shown.
+- **`a_conditional_put_refused_for_another_writers_object_stores_nothing`**
+  (Windows: `os error 10053`, a connection aborted). The test server
+  refuses a conditional write from its headers (412) and closed the
+  connection with the body unread; the system resets such a connection,
+  and Windows can drop the 412 with it, so the client saw a network error
+  instead of `AlreadyExists`. The server now answers each request through
+  `test_server::answer`, which reads a request refused with 412 to its
+  end before the answer goes out (a body `s3s` dropped unread hands itself
+  back); nothing else changes. `hyper`, already in the tree, is a new
+  dev-dependency for it. The test's file grew from 10 KiB to 4 MiB, more
+  than the sockets buffer, so the refusal comes while the body is still
+  being sent: on WSL2 the test then failed 9 of 10 runs without the change
+  (`Broken pipe`, the same loss) and passed 10 of 10 with it.
+
+What ran, on WSL2 (Rust 1.99.1): the conditional tests 10 of 10 each,
+the places tests 30 of 30, every `cloud::` test twice (324), the three
+ADR-025 tests under CPU load (4 of 4 each), the full suite pinned to two
+CPUs twice (512); `cargo fmt --check`, clippy (default, test-profile,
+recorder); `npm run check`, `npm run build`, `npm run test:headless`
+(Vitest 241, Rust 512 passed, 28 ignored); the recorder build 540 passed,
+28 ignored. **Not run:** Windows, macOS, any GitHub workflow.
+
 ### Release key committed (2026-11-15)
 
 The maintainer generated the release key pair on their own machine and
@@ -175,7 +220,10 @@ What ran, on WSL2: `npm run check:update-key`; the Rust update tests
 Vitest 241, Rust 511 passed, 28 ignored); the recorder build 539 passed,
 28 ignored. **Not run:** the key-pair check (the maintainer's step),
 any desktop test with the key, any GitHub workflow (the push runs
-`ci.yml` and `macos.yml`), a release.
+`ci.yml` and `macos.yml`), a release. Pushed as `f178d3b`: the key's
+tests passed on every platform, and `ci.yml` and `macos.yml` passed once
+two unrelated flaky jobs were re-run
+([flaky tests](#two-flaky-tests-after-the-release-key-push-2026-11-15)).
 
 ### Release dry runs (2026-11-15)
 

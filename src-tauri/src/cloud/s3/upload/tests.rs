@@ -352,7 +352,11 @@ async fn a_conditional_put_refused_for_another_writers_object_stores_nothing() {
     let server = server().await;
     let s = conditional_store(&server);
     let dir = TempDir::new("up-cond-race");
-    let src = dir.file("src", 10 * 1024, 3);
+    // More than the socket buffers hold, so the refusal (from the headers)
+    // comes while the body is still being sent: the server must read it to
+    // the end before answering (`test_server::answer`), or the connection is
+    // torn down under the 412 (Linux: broken pipe; Windows: os error 10053).
+    let src = dir.file("src", 4 * MIB, 3);
     // Another client creates the key after the HEAD check, right before
     // this PUT reaches the provider.
     let theirs = server.object_path(BUCKET, "raced");

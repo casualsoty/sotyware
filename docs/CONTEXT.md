@@ -370,6 +370,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Two flaky tests after the release key push** (2026-11-15,
+  [status.md](status/status.md#two-flaky-tests-after-the-release-key-push-2026-11-15)):
+  recent items recorded in one millisecond were trimmed by name (fixed in
+  the store: each is stored as newer than every other); the test server
+  now reads a request it refuses with 412 to its end, which Windows lost
+  under the reset connection. `f178d3b` passed everywhere once re-run;
+  the fixes ran on WSL2 only.
 - **Late-part wait test on a busy runner** (2026-11-15, test code only,
   [status.md](status/status.md#the-late-part-wait-test-on-a-busy-runner-2026-11-15)):
   the first `release.yml` dry run failed only on the Intel Mac, where

@@ -123,6 +123,11 @@ s3s-fs = "0.12"
 # newer `digest` and the test build fails. Test-only.
 digest = "=0.11.0-rc.4"
 hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+# Already in the tree through hyper-util, the AWS SDK and reqwest: the test
+# server's per-request service, which reads the rest of a request it refused
+# from its headers (412) before answering, so Windows does not drop the
+# answer with a reset connection.
+hyper = "1"
 # Already in the tree through hyper and the AWS SDK: the request types of
 # the test server's ListMultipartUploads route (s3s-fs answers 501 to it).
 http = "1"

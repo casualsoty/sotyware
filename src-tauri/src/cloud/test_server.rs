@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use http_body::Body as _;
+use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as ConnBuilder;
 use s3s::access::{S3Access, S3AccessContext};
@@ -19,7 +21,7 @@ use s3s::dto::{
     GetObjectInput, GetObjectOutput, HeadBucketInput, HeadBucketOutput, ListObjectsV2Input,
     ListObjectsV2Output,
 };
-use s3s::service::S3ServiceBuilder;
+use s3s::service::{S3Service, S3ServiceBuilder};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -82,6 +84,85 @@ fn part_number(query: Option<&str>) -> Option<u32> {
         .split('&')
         .find_map(|pair| pair.strip_prefix("partNumber="))
         .and_then(|n| n.parse().ok())
+}
+
+/// A request body that hands itself back through `back` when it is dropped
+/// before its end, so [`answer`] can read the rest of a request that was
+/// refused from its headers alone.
+struct Returned {
+    inner: Option<Incoming>,
+    back: Option<tokio::sync::oneshot::Sender<Incoming>>,
+}
+
+impl http_body::Body for Returned {
+    type Data = bytes::Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        match self.inner.as_mut() {
+            Some(body) => Pin::new(body).poll_frame(cx),
+            None => std::task::Poll::Ready(None),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_none_or(http_body::Body::is_end_stream)
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.as_ref().map_or_else(
+            || http_body::SizeHint::with_exact(0),
+            http_body::Body::size_hint,
+        )
+    }
+}
+
+impl Drop for Returned {
+    fn drop(&mut self) {
+        if let (Some(body), Some(back)) = (self.inner.take(), self.back.take())
+            && !http_body::Body::is_end_stream(&body)
+        {
+            let _ = back.send(body);
+        }
+    }
+}
+
+/// Answers one request with `s3`. A conditional write refused from its
+/// headers (`412`: `Access` found the key) is read to its end before the
+/// answer goes out. Otherwise the connection closes with the body unread,
+/// the system resets it, and on Windows the reset can take the 412 with it:
+/// the client then sees `os error 10053` instead of the refusal.
+async fn answer(
+    s3: S3Service,
+    req: http::Request<Incoming>,
+) -> Result<s3s::HttpResponse, s3s::HttpError> {
+    let (parts, body) = req.into_parts();
+    let (back, returned) = tokio::sync::oneshot::channel();
+    let body = Returned {
+        inner: Some(body),
+        back: Some(back),
+    };
+    let response = s3
+        .call(http::Request::from_parts(
+            parts,
+            s3s::Body::http_body_unsync(body),
+        ))
+        .await;
+    if response
+        .as_ref()
+        .is_ok_and(|r| r.status() == http::StatusCode::PRECONDITION_FAILED)
+        && let Ok(mut rest) = returned.await
+    {
+        while let Some(Ok(_)) = std::future::poll_fn(|cx| Pin::new(&mut rest).poll_frame(cx)).await
+        {
+        }
+    }
+    response
 }
 
 /// The multipart files `s3s-fs` keeps in a server's `root`
@@ -840,7 +921,10 @@ impl TestServer {
                 let service = service.clone();
                 tokio::spawn(async move {
                     let _ = ConnBuilder::new(TokioExecutor::new())
-                        .serve_connection(TokioIo::new(socket), service)
+                        .serve_connection(
+                            TokioIo::new(socket),
+                            hyper::service::service_fn(move |req| answer(service.clone(), req)),
+                        )
                         .await;
                 });
             }

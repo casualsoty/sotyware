@@ -127,6 +127,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
 | `secret-service` (Linux only, through the store above; also a direct dependency without features, to name its error type) | `5` | 5.1.0 |
 | `s3s` + `s3s-fs` (dev only: in-process S3 test server), `hyper-util` (dev only), `digest` (dev only, pinned `=0.11.0-rc.4` for `s3s`) | `0.12` | 0.12.0 |
+| `hyper` (dev only, already in the tree: the test server's per-request service, which reads a request it refused with 412 to its end) | `1` | 1.12.0 |
 | `http` (dev only, already in the tree: the test server's `ListMultipartUploads` route) | `1` | 1.5.0 |
 | `bytes`, `futures-core` (dev only, already in the tree: the test server's slow, stalled or cut-off object bodies) | `1`, `0.3` | 1.12.1, 0.3.34 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
