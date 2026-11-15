@@ -113,3 +113,136 @@ email provider (an external gate), connected where `queue_mail` is called.
 - Off-host storage for the service's backups, and their schedule.
 - An external security review of the service and of the vault design.
 - A privacy notice (what the service stores; see the table above).
+
+## Production deployment proposal (2026-11-15)
+
+What it would take to run the service for real. **Nothing below has been
+set up**: no host, domain, certificate, email provider or backup bucket
+exists, and release builds have no service URL (`PRODUCTION_SERVER` is
+`None` in `src-tauri/src/account/mod.rs`). Prices are rough orders of
+magnitude to check when choosing; none was verified for this proposal.
+
+### Is a separate database needed?
+
+No. The service embeds SQLite (one file, WAL, `secure_delete`, online
+backups with `sotyware-server backup`). For one instance this is the
+simplest reliable choice: nothing to operate besides the file, and the
+data are small (per account: a password hash, a few devices and sessions,
+and one encrypted vault of at most 1 MiB, typically a few kB). PostgreSQL
+would only pay off for several service instances behind a load balancer
+(high availability) or above the documented limit of one connection
+(about 20 sign-ins per second). Moving to it later means porting `db.rs`
+(SQL is plain; the migrations are append-only) and the backup commands;
+the API and the clients would not change. **Recommendation: SQLite now;
+no database credentials are needed from you.**
+
+### Services
+
+| Service | Purpose | Choice to make |
+| --- | --- | --- |
+| One small Linux VM (or container host with a persistent volume) | runs `sotyware-server serve` as an unprivileged user on `127.0.0.1:8787` | provider and region (an EU region keeps the data in the EU) |
+| Reverse proxy with automatic TLS | HTTPS only, HSTS, `X-Forwarded-For` overwritten (`SOTYWARE_SERVER_TRUST_PROXY=1`) | Caddy (automatic Let's Encrypt) is the smallest setup |
+| Domain / subdomain and DNS | e.g. `accounts.<your domain>` pointing at the VM | the name; it is compiled into release builds |
+| Transactional email | verification and reset codes, notices | an SMTP relay or an email API; a sender domain with SPF, DKIM and DMARC |
+| Off-host backup storage | hourly `sotyware-server backup` copies, kept 30 days | a bucket at another provider (or another account), encrypted at rest there |
+| Uptime monitoring | `GET /healthz` | any HTTP monitor |
+
+**Code still missing before production:** sending the outbox's mails
+through the chosen provider (today `db::queue_mail` only writes the outbox
+table; `sotyware-server outbox` prints it, for development). Everything
+else in the service is implemented and tested in process.
+
+### Schema (SQLite, `server/src/db.rs`, migration 1)
+
+`accounts` (id, email, Argon2id password hash, verified, lockout counters,
+recovery wrap, key-proof hash, vault ciphertext with revision and
+updater), `codes` (hashed verification and reset codes with expiry and
+attempts), `devices` (name, platform, X25519 public key, state, sealed
+account key), `sessions` (hashed access and refresh tokens, family for
+reuse detection, expiry), `enrollments` (approval requests with the
+sealed key), `audit` (event names with account and device ids), `outbox`
+(mails to send). No column holds a provider credential, the account key
+or the recovery key in plaintext.
+
+### Endpoints (`/v1`, JSON, bearer tokens)
+
+Registration and verification (`POST /v1/accounts`,
+`/v1/accounts/verify`), sessions (`POST /v1/sessions`,
+`/v1/sessions/refresh`, `DELETE /v1/sessions/current`), the account
+(`GET`/`DELETE /v1/account`, `POST /v1/account/password`,
+`GET /v1/account/events`), password reset (`/v1/password-reset/request`,
+`/confirm`), the recovery wrap (`GET`/`PUT /v1/recovery`), the vault
+(`GET`/`PUT /v1/vault` with optimistic concurrency), key rotation
+(`POST /v1/keys/rotate`, one transaction), devices (`GET /v1/devices`,
+`DELETE /v1/devices/{id}`, wraps), enrollment by approval
+(`/v1/enrollments…`), and `GET /healthz`. Details:
+[accounts.md](../architecture/accounts.md).
+
+### Authentication and encryption
+
+Email and password, Argon2id at the service; opaque random tokens stored as
+SHA-256 (access 15 minutes, refresh 30 days, single use, reuse revokes the
+family); verification codes by email; per-IP and per-account rate limits
+with lockout. Storage credentials are synced only inside the vault, which
+each device encrypts itself (XChaCha20-Poly1305 under a random account key
+that the service never receives); the account key is wrapped by the user's
+recovery key and sealed to each enrolled device's X25519 key (ADR-032). The
+service operator, or anyone who steals the database or its backups, sees
+ciphertext only. The trade-off chosen in ADR-032: a password alone never
+unlocks the vault, so a new computer needs the recovery key or an approval
+from an enrolled computer. A password-derived key (as password managers
+do) would let the password alone unlock a new computer, at the price that
+a weak or reused password, combined with a stolen database, exposes every
+synced credential, and a password reset would lose the vault unless the
+recovery key is kept anyway. Not implemented; a decision for the
+maintainer.
+
+### Deployment steps
+
+1. Create the VM; a non-root user `sotyware`; firewall: 22 (restricted),
+   80 and 443 only.
+2. `cargo build --release --locked` in `server/` (or in CI) and install
+   `target/release/sotyware-server` as `/usr/local/bin/sotyware-server`.
+3. A systemd unit running `sotyware-server serve` with
+   `SOTYWARE_SERVER_DB=/var/lib/sotyware/server.sqlite3`,
+   `SOTYWARE_SERVER_ADDR=127.0.0.1:8787`, `SOTYWARE_SERVER_TRUST_PROXY=1`,
+   `Restart=on-failure`, `NoNewPrivileges`, `ProtectSystem=strict`,
+   `ReadWritePaths=/var/lib/sotyware`.
+4. Caddy: `accounts.<domain> { reverse_proxy 127.0.0.1:8787 }` (TLS and
+   HSTS automatic; set `header_up X-Forwarded-For {remote_host}`).
+5. A systemd timer (hourly) running `sotyware-server backup` and copying
+   the file off the host; a monthly restore test (`restore` on a scratch
+   VM).
+6. Connect mail delivery (the missing code above) and test registration
+   end to end with a real address.
+7. Set `PRODUCTION_SERVER` to `https://accounts.<domain>` in
+   `src-tauri/src/account/mod.rs`, publish a privacy notice (what is
+   stored: [Data retention](#data-retention-and-deletion)), have the
+   service and the vault design reviewed externally, then release.
+
+### Expected running costs (rough, to verify)
+
+| Item | Order of magnitude |
+| --- | --- |
+| VM (2 vCPU, 2–4 GB RAM, 40 GB disk) | €4–10 per month |
+| Domain | €10–20 per year (nothing if a subdomain of an existing one) |
+| Email | free tiers cover low volumes (codes and notices only); paid plans start around $10–15 per month |
+| Off-host backups | cents per month (30 hourly copies of a database of a few MB to a few hundred MB) |
+| TLS certificates, monitoring | free (Let's Encrypt; a free uptime monitor) |
+
+Roughly **€5–15 per month** for a small user base.
+
+### What the maintainer would provide
+
+1. A domain or subdomain and access to its DNS.
+2. A VM (or the choice of a provider, and SSH access for the deployment).
+3. An email-sending account and a verified sender domain (SPF, DKIM,
+   DMARC records), and which provider to support in the mail code.
+4. An off-host bucket and a write-only key for the backups.
+5. The decisions above: SQLite (recommended) or PostgreSQL; keep the
+   recovery-key model or add a password-derived unlock.
+6. A privacy notice and an external review before any user signs up.
+
+No secret is needed in this repository: the service has no signing or
+encryption key of its own, and the email and backup credentials belong on
+the host (environment or a root-only file), never in git.
