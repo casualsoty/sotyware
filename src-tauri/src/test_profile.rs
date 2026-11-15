@@ -203,25 +203,37 @@ pub fn from_env(value: Option<OsString>) -> Result<TestProfile, Refused> {
 
 /// `path` with every existing prefix resolved (symbolic links, `..`, case
 /// on Windows), so two spellings of one place compare equal even when the
-/// place does not exist yet.
+/// place does not exist yet. Below the deepest prefix that exists, a `..`
+/// removes the folder before it: that folder does not exist, so it is not
+/// a link whose `..` would lead elsewhere; past those folders it goes to
+/// the resolved prefix's parent.
 fn resolve(path: &Path) -> PathBuf {
-    let mut rest = Vec::new();
+    // Below that prefix, last first: a name, or `None` for a `..`.
+    let mut rest: Vec<Option<OsString>> = Vec::new();
     let mut cur = path.to_path_buf();
     loop {
         if let Ok(found) = fs::canonicalize(&cur) {
             let mut out = found;
             for part in rest.iter().rev() {
-                out.push(part);
+                match part {
+                    Some(name) => out.push(name),
+                    None => {
+                        out.pop();
+                    }
+                }
             }
             return out;
         }
-        match (cur.file_name().map(OsString::from), cur.parent()) {
-            (Some(name), Some(parent)) => {
-                rest.push(name);
-                cur = parent.to_path_buf();
-            }
+        let last = match cur.components().next_back() {
+            Some(Component::Normal(name)) => Some(name.to_os_string()),
+            Some(Component::ParentDir) => None,
             _ => return path.to_path_buf(),
-        }
+        };
+        let Some(parent) = cur.parent() else {
+            return path.to_path_buf();
+        };
+        rest.push(last);
+        cur = parent.to_path_buf();
     }
 }
 
@@ -504,6 +516,44 @@ mod tests {
         std::os::unix::fs::symlink(&normal, &link).unwrap();
         let p = from_env(env(&link)).unwrap();
         assert!(check_separate(&p, &[normal]).is_err());
+    }
+
+    /// A `..` after a folder that does not exist removes that folder, also
+    /// behind a symbolic link. macOS's temporary folder is behind one
+    /// (`/var` → `/private/var`); there the unresolved spelling shared no
+    /// prefix with the profile's resolved root and the overlap was missed.
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_folder_spelled_with_dot_dot_behind_a_link_is_resolved() {
+        let base = TempDir::new().unwrap();
+        let real = base.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = base.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let target = fs::canonicalize(&real).unwrap();
+        let spell = |parts: &[&str]| parts.iter().fold(link.clone(), |p, part| p.join(part));
+        assert_eq!(
+            resolve(&spell(&["x", "..", "not-yet"])),
+            target.join("not-yet")
+        );
+        assert_eq!(
+            resolve(&spell(&["x", "y", "..", "..", "z"])),
+            target.join("z")
+        );
+        // Past the missing folders, `..` goes to the resolved parent.
+        assert_eq!(
+            resolve(&spell(&["x", "..", "..", "w"])),
+            target.parent().unwrap().join("w")
+        );
+        // The profile around a normal directory spelled that way is refused,
+        good(&real);
+        let p = from_env(env(&link)).unwrap();
+        assert!(check_separate(&p, &[spell(&["x", "..", "not-yet"])]).is_err());
+        // a sibling of it is not.
+        fs::create_dir(real.join("profile-1")).unwrap();
+        good(&real.join("profile-1"));
+        let p = from_env(env(&link.join("profile-1"))).unwrap();
+        assert!(check_separate(&p, &[spell(&["x", "..", "normal"])]).is_ok());
     }
 
     #[test]

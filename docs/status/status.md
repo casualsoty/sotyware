@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -138,6 +138,41 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Test-profile path check behind a symbolic link (2026-11-15)
+
+The fix for the one test `macos.yml` failed at `d9cf561`
+([hosted runs](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)),
+in the commit that adds this entry; not pushed. `test_profile::resolve`
+(used by `check_separate` and for the paths in the acknowledgement) now
+goes on at a `..` below the deepest prefix that exists: after a folder
+that does not exist, a `..` removes that folder (it is not a link, so its
+`..` cannot lead elsewhere); past those folders it goes to the resolved
+prefix's parent. Before, it returned such a path unresolved, which
+matched the resolved profile root only by accident, when no symbolic
+link was on the way. Paths without such a `..`, which is every path the
+app gives it (Tauri's folders, the profile's `data` and `webview`
+folders, the databases), resolve exactly as before, so a test-profile
+build starts and acknowledges as before.
+
+New test `a_missing_folder_spelled_with_dot_dot_behind_a_link_is_resolved`
+(Unix): the macOS layout on any Unix, a base reached through a symbolic
+link. Three spellings resolve to their real place, a profile around
+`<link>/x/../not-yet` is refused and a sibling of it is accepted. **It
+fails without the fix on WSL2** (`resolve` returned
+`…/link/x/../not-yet`), as `a_profile_overlapping_a_normal_directory_is_refused`
+failed on the Macs.
+
+What ran, on WSL2 (Ubuntu 24.04, Rust 1.99.1) only: `cargo fmt --check`;
+`cargo clippy --locked --all-targets -- -D warnings` for the default and
+the test-profile build; `npm run test:headless` (Vitest 241, Rust 511
+passed, 28 ignored); the recorder build's `cargo test` (539 passed, 28
+ignored); the whole default `cargo test` again with `TMPDIR` reached
+through a symbolic link, as macOS's temporary folder is (511 passed, so
+no other test depends on that); the 12 `test_profile` tests both ways.
+Not run: macOS (the next `macos.yml` run will show it), Windows (the new
+test is Unix only, like the other link tests; Windows normalises `..`
+itself), any desktop test (the paths a launch uses are unchanged).
+
 ### Hosted runs at `d9cf561`: the redesign, macOS and release work pushed (2026-11-15)
 
 `main` was pushed as a fast-forward from `afeb894` to `d9cf561` (ten
@@ -201,7 +236,8 @@ symbolic link the test fails with the same assertion; with the normal
 and macOS never ran it before, so this is no regression of the pushed
 commits. Outside the test, `check_separate` (test-profile builds only)
 is given the app's own directories from Tauri's path resolver, which
-contain no `..`. Not fixed here ([limitations.md](limitations.md#tests)).
+contain no `..`. Not fixed in that commit; fixed after it
+([Test-profile path check behind a symbolic link](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)).
 
 Not shown by these runs: `release.yml`, `release-build.yml` and the
 desktop workflows (manual, not started), the macOS packages, signing and

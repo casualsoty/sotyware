@@ -877,8 +877,10 @@ server only; no real provider was asked.
 - **Never run on a Mac a person used.** The macOS code compiles and is
   tested only on GitHub's hosted runners: `macos.yml`, on every pull
   request to and push to `main`, first ran at `d9cf561` (2026-11-15) and
-  compiled cleanly on both architectures, with one unit test failing
-  ([Tests](#tests)); the macOS-only lines (`apple-native-keyring-store`
+  compiled cleanly on both architectures, with one unit test failing (a
+  test-profile path check, fixed since and not yet rerun there:
+  [status](status.md#test-profile-path-check-behind-a-symbolic-link-2026-11-15));
+  the macOS-only lines (`apple-native-keyring-store`
   calls, the menu bar wiring, `RunEvent::Reopen`) were never compiled on
   the development machine, which has no Mac and no cross toolchain.
 - **No signing or notarization yet:** no Developer ID certificate exists.
@@ -984,16 +986,6 @@ server only; no real provider was asked.
   test work in Session 0 (a service, a scheduled task without a logged-on user)
   is unknown
   ([testing.md](../development/testing.md#headless-windows-desktop-testing)).
-- **The test-profile path check misses one spelling when a symbolic link
-  is on the path** (found 2026-11-15 by `macos.yml`'s first run, not
-  fixed): `check_separate` compares a normal directory that does not
-  exist yet by resolving its longest existing prefix, but gives up on a
-  path ending in `..` after a missing folder (`<dir>/x/../y`) and
-  compares it unresolved, so behind a link (macOS's `/var` →
-  `/private/var`) the overlap is missed. Test-profile builds only; the
-  directories it is given come from Tauri, without `..`. Its unit test
-  fails on both Macs, so `macos.yml` fails until this is fixed
-  ([status](status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)).
 
 ## CI
 
