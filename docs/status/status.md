@@ -157,6 +157,20 @@ twice: recorder 440; unpinned 412 and 440 (27 ignored each); fmt,
 clippy (default, recorder, test-profile). Not run on Windows or GitHub
 in this change.
 
+**Review and hosted run at `25eb0f6`** (pushed with `99b8970` as a
+fast-forward from `82b17c6`): an independent review found no defect;
+WSL2 repeated: unpinned 412 and 440, pinned to one CPU twice each 412
+and 440, pinned to two CPUs default 412 and recorder 440 (27 ignored
+each), the recorder shutdown test 10/10 on one CPU; fmt and clippy
+(default, recorder, test-profile). `ci.yml` run 43657354594 (push)
+passed: Ubuntu Rust 412 + recorder build 440 (the shutdown test ok),
+Windows 399 (27 ignored each), Vitest 179 on both, rfd guard ok and
+10/10, release binary guard 39/39, icons 9/9, installer icons 28/28,
+isolation guard 9/9, test-profile helpers Python 10/10 and PowerShell
+20/20; only the Linux-only steps skipped on Windows. `isolation-guard.yml`
+and `release-build.yml` were not rerun (test code and docs only; both
+passed at `82b17c6`).
+
 ### Hosted runs at `00c7872` and the upload shutdown test race (2026-11-15)
 
 `main` was pushed as a fast-forward from `f9a0c71` to `00c7872` (with

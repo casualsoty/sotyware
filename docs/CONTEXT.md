@@ -230,6 +230,13 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Upload tests on a single CPU** (2026-11-15, `25eb0f6`,
+  [status.md](status/status.md#upload-tests-on-a-single-cpu-2026-11-15)):
+  test hooks run in `block_in_place` on a multi-thread runtime, so a
+  blocking hook no longer stalls a one-worker runtime; two test races
+  fixed without loosening assertions. WSL2 pinned to one and two CPUs
+  and unpinned: default 412, recorder 440 (27 ignored); `ci.yml` run
+  43657354594 passed (Ubuntu 412 + 440, Windows 399, Vitest 179).
 - **Hosted runs at `00c7872`** (2026-11-15,
   [status.md](status/status.md#hosted-runs-at-00c7872-and-the-upload-shutdown-test-race-2026-11-15)):
   `release-build.yml` (43649816381) passed, with the installer icon check
