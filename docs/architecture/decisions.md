@@ -1682,3 +1682,222 @@ How to build: [release.md](../development/release.md#building-a-release).
   `build:release` runs. Strings that a dependency builds from
   `env!("CARGO_MANIFEST_DIR")` would not be remapped; the check after the
   build would refuse them (none found).
+
+## ADR-029: Provider behaviour is a capability model with evidence levels
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/cloud/provider.rs`
+(`Capabilities`, `Support`, `Evidence`).
+
+- **Context:** sotyware talks to every provider through one S3 adapter
+  (ADR-016), but S3-compatible services differ in exactly the places where
+  data safety depends on them: conditional writes (`If-None-Match: *`),
+  copy preconditions (`x-amz-copy-source-if-match`), whether a delete
+  reports a delete marker, version listing, `ListMultipartUploads`, whether
+  user metadata survives a copy, presigned URLs, Object Lock. These
+  assumptions were spread over code comments and documentation, and some
+  were only ever seen against a local mock server.
+- **Decision:** `ProviderProfile::capabilities` lists each behaviour as a
+  `Support` value: `Yes(Evidence)`, `No(Evidence)` or `Unknown`, where
+  `Evidence` is `Documented` (the provider's documentation says so),
+  `VerifiedAtProvider` (an opt-in test against the real provider showed it;
+  the date and test are in status.md), or `AssumedFromS3` (Amazon's
+  documented behaviour, not checked at this provider). Code that depends on
+  a behaviour asks the capability; a safety mechanism that can misbehave on
+  an unsupported provider (sending `If-None-Match: *`) is used only on
+  `Yes(_)`. Checks that are harmless when ignored (the copy precondition,
+  verified afterwards by `HeadObject` anyway) keep being sent. A local mock
+  server never counts as evidence for a real provider. The capabilities are
+  returned by `list_cloud_providers` so the dashboard can say what a bucket
+  does and does not guarantee.
+- **Rejected:** probing providers at runtime (a failed probe write is itself
+  a write, and "accepted the header" does not prove "enforced it");
+  per-account capability overrides (users cannot know; wrong answers would
+  remove safety checks).
+- **Consequences:** behaviour differences are visible and testable in one
+  place. Backblaze B2 and Hetzner keep conditional writes off until a run
+  at the provider shows them enforced; the HEAD-then-write race stays
+  documented for them.
+
+## ADR-030: Remote and local side effects are journaled before they happen, and recovery inspects instead of repeating
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/journal.rs`,
+`storage.rs` (`JOURNAL_FILE_NAME`), hooks in `cloud/upload.rs`,
+`cloud/download.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`;
+recovery commands in `cloud/recovery.rs`; page `src/CloudRecovery.svelte`.
+
+- **Context:** uploads, downloads and file operations keep their state in
+  memory. A crash, power loss or kill leaves orphaned multipart parts
+  (billed, invisible), unexplained copy-plus-original pairs from a move,
+  partly applied deletes and hidden temporary files, and the app cannot say
+  afterwards what happened.
+- **Decision:** a separate SQLite database, `operations-journal.sqlite3`
+  (own append-only migrations, same open/refuse rules as the others), gets
+  an entry **before** each step that can create, change or remove remote
+  objects or local files: an upload's intent (account, bucket, key, size,
+  SHA-256 once hashed, local path — the database is local and never
+  synced), its multipart upload id as soon as `CreateMultipartUpload`
+  returns, its final outcome; a file operation's planned steps and each
+  step's progress (copied, verified, source deleted, delete marker added);
+  each download's temporary file and the several-item download's staging
+  folder. Entries that reach a confirmed final state are removed. At
+  startup nothing is sent: entries left over are shown in a **Recovery**
+  view, classified from the journal alone, and each is resolved by an
+  explicit, reviewed action that first **inspects** the remote state:
+  an upload is checked by `HeadObject` (stored with the expected SHA-256 →
+  confirmed complete; absent → nothing stored; other content → needs
+  attention, never deleted); an open multipart id can be aborted (that
+  exact id only); a move with copied-but-undeleted originals can be kept
+  as is or finished through a new reviewed plan; a partly applied delete is
+  reported with what was deleted (delete markers are restorable). The only
+  automatic cleanup is sotyware's own temporary files and staging folders
+  recorded in the journal, matched by sotyware's partial-name pattern.
+  Incomplete multipart uploads not in the journal (another device, an
+  earlier version) can be listed (`ListMultipartUploads`) and aborted only
+  one by one on explicit confirmation, because another device may still be
+  uploading.
+- **Rejected:** repeating interrupted operations automatically (could
+  duplicate data or overwrite something written meanwhile); writing journal
+  entries after the step (a crash between the step and the write would hide
+  it); keeping the journal inside an existing database (separate schemas
+  evolve independently, as for accounts and places).
+- **Consequences:** one small write per step (SQLite, WAL, on the blocking
+  pool); a journal write failure stops the transfer or operation before the
+  step, because an unjournaled step could not be recovered. Recovery is
+  evidence-based; a journal entry is a hint of what to inspect, not proof.
+
+## ADR-031: Backups are content-addressed blobs plus plain JSON snapshot manifests in an independent destination
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/backup/`; page
+`src/Backup.svelte`; design: [backup.md](backup.md); recovery without
+sotyware: docs/user/recovery.md.
+
+- **Context:** provider versioning is not a backup: one account, one key,
+  one provider, one lifecycle policy. The user wants to keep files only in
+  sotyware's storage and still survive deletion, corruption, credential
+  compromise, provider failure and the loss of the computer.
+- **Decision:** a backup job copies a source (account, bucket, prefix) into
+  a destination (another account, ideally another provider; bucket;
+  prefix) as **content-addressed blobs** (`blobs/sha256/<2 hex>/<sha256>`,
+  each stored once, never overwritten, carrying `sotyware-sha256`) and one
+  **snapshot manifest** per run (`snapshots/<UTC time>-<id>.json`: every
+  key with size, SHA-256, source ETag, version id, modification time and
+  content type). Unchanged objects (same size, ETag and modification time as
+  in the previous snapshot) are not transferred again; identical content is
+  stored once. Objects are streamed through a local spool file, hashed, and
+  uploaded through `S3Store::upload` (verified by `HeadObject`). The
+  manifest is the recovery manifest: plain JSON, no secrets, readable with
+  any S3 tool. **Verification** (quick: every blob of the snapshot exists
+  with its size and SHA-256 metadata; full: every blob downloaded and
+  hashed) gates health: an unverified backup is never shown as healthy.
+  **Retention** (keep last N, daily D, weekly W) runs only after the newest
+  snapshot is verified, re-reads every manifest from the destination before
+  deleting a blob, deletes only blobs no remaining manifest references, and
+  is skipped when the newest snapshot is **suspicious** (its change or
+  deletion ratio exceeds the job's threshold, default 30 %). Restores go to
+  a local folder or a bucket prefix, never overwrite, and verify every file
+  against the manifest's SHA-256. Schedules run from the `backup` built-in
+  feature; one backup run at a time, in its own slot; quitting cancels. The
+  destination's Object Lock configuration is read and shown as it is;
+  "immutable" is said only for default retention in compliance mode.
+- **Rejected:** restic (an extra binary and repository format the user
+  cannot read without it; its encryption makes recovery depend on the
+  restic password); mirroring keys one-to-one (no history, a deletion or
+  corruption propagates); provider-side replication (single provider,
+  not available across providers); encrypting blobs (recovery would depend
+  on a key; the destination's access control protects them instead, see
+  the threat model).
+- **Consequences:** history and deduplication at the cost of a spool file
+  as large as the largest object; restores need the manifest plus blobs
+  (both plain objects). A key without delete permission works for backups
+  (retention then reports what it could not prune).
+
+## ADR-032: sotyware accounts are a separate service; synced configuration is end-to-end encrypted with a recovery key and device keys
+
+Status: Accepted (2026-11-15). Code: `server/` (account service),
+`src-tauri/src/account/` (client, vault crypto, sync); page
+`src/Account.svelte`; design and threat model: [accounts.md](accounts.md),
+[threat-model.md](threat-model.md).
+
+- **Context:** the user wants to sign in on another computer and find their
+  storage accounts there, without re-entering keys, and without the service
+  being able to read those keys. No backend exists.
+- **Decision:**
+  - **Service:** a small Rust HTTP service (axum, SQLite with append-only
+    migrations, versioned API `/v1`), independent of any cloud provider
+    credential; it never has bucket access. Passwords hashed with Argon2id
+    (memory-hard parameters recorded in the code); opaque random tokens
+    (access 15 min, refresh 30 days, rotated on every use, reuse revokes the
+    whole session family), stored only as SHA-256 hashes; rate limits per IP
+    and per account with progressive lockout; responses that do not reveal
+    whether an email is registered; audit events without secrets; online
+    database backups with a tested restore. Email delivery (verification,
+    reset) goes through a mailer interface; the development mailer writes to
+    a local outbox; SMTP is an external gate.
+  - **Vault:** the client generates a random 256-bit **account key**. The
+    synced configuration (storage accounts with their credentials,
+    favorites, backup jobs, preferences, the trusted device list) is one
+    JSON document encrypted with XChaCha20-Poly1305 under it (versioned
+    envelope; AAD binds account id, key id and format version). The account
+    key is stored at the server only **wrapped**: under a key derived with
+    HKDF-SHA256 from a 256-bit **recovery key** shown once to the user and
+    verified by retyping, and as an X25519 sealed box to each enrolled
+    device's public key. Device private keys stay in the OS credential
+    store. The password never derives any vault key.
+  - **Enrollment:** a newly signed-in device has no vault access until the
+    user enters the recovery key on it or approves it from an enrolled
+    device after comparing a fingerprint of the new device's public key
+    shown on both screens. Revoking a device ends its sessions, deletes its
+    wrap and prompts key rotation (new account key, vault re-encrypted,
+    re-wrapped to the remaining trusted devices listed inside the vault and
+    to the recovery key).
+  - **Sync:** optimistic concurrency on the vault revision (`If-Match`);
+    a stale write gets 409 and the client merges three-way per record (base
+    = the last synced vault, kept locally as ciphertext); a record changed on
+    both sides keeps the remote value and stores the local one as a visible
+    conflict copy; deletions are tombstones. Devices refuse a vault older
+    than the newest revision they have seen. Local paths, temporary state,
+    SQLite internals and running operations are never synced.
+  - **Optional:** without an account nothing changes for local-only users.
+- **Rejected:** password-derived vault keys (a weak or reused password would
+  expose every credential to whoever obtains the server data); server-side
+  key escrow (a backdoor); a third-party identity provider (adds an external
+  dependency and data processor; can be added later in front of the same
+  API); JWT access tokens (opaque hashed tokens are revocable and need no
+  signing key management).
+- **Consequences:** losing the recovery key and every enrolled device makes
+  the vault unrecoverable by design; storage data is unaffected and keys can
+  be re-entered. Production use needs hosting, TLS, SMTP and server backups
+  (external gates); the service is tested locally only.
+
+## ADR-033: Updates use tauri-plugin-updater behind a separately signed manifest, installed only on the user's click
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/updates.rs`, page
+`src/Updates.svelte`, release tooling `scripts/update-manifest.mjs`; design:
+[updates.md](updates.md).
+
+- **Context:** releases should reach users without manual reinstalls, but an
+  update channel is the most powerful attack path into every installation.
+- **Decision:** use the maintained `tauri-plugin-updater` (Tauri 2), driven
+  from Rust only (no frontend `updater:` permission; the page uses
+  sotyware's own commands). Its artifacts are minisign-signed by the release
+  process; the public key is compiled in. In addition, sotyware fetches a
+  **signed manifest** (`sotyware-update.json` + `.sig`, signed with the same
+  minisign key) and checks, before involving the updater: the signature,
+  the channel, a version strictly newer than the running one and not lower
+  than the highest version this installation was ever offered (stored
+  locally), and that the updater's own view of the release (version, URL,
+  signature) equals the signed manifest. After download, the artifact's
+  SHA-256 must equal the manifest's before `install`. Windows updates use the
+  NSIS artifact for NSIS installations and the MSI for MSI installations.
+  Checks run at startup and every 24 h (one timer), and on request;
+  installing needs the user's click and is refused while a transfer, file
+  operation or backup runs. Release builds without a configured production
+  public key and endpoint report updates as not configured.
+- **Rejected:** a custom installer replacement (re-implements what Tauri
+  maintains); trusting the plugin's unsigned `latest.json` alone (a
+  tampered manifest could point a higher version number at an older signed
+  artifact); silent automatic installation (restarts during transfers).
+- **Consequences:** two signatures per release (artifact and manifest), both
+  produced and checked by `scripts/update-manifest.mjs` in the release
+  workflow. No production key exists yet: the mechanism is tested with a
+  test key generated for the tests.

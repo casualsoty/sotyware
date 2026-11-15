@@ -17,9 +17,9 @@ Where things are. Generated and ignored paths are listed in
 │       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); nothing signed or uploaded
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
-│   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions)
+│   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
 │   ├── development/          Setup, commands, testing, cross-platform rules, release builds and installer testing (release.md), application icons (icons.md)
-│   └── status/               What is implemented and validated, limitations, roadmap
+│   └── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
 │   ├── main.ts               Mounts App into #app
