@@ -523,7 +523,7 @@ impl Body for ProbedBody {
                 }
             };
             if let Some((_, f)) = hook {
-                f();
+                TransferControl::call_hook(f);
             }
         }
         Poll::Ready(Some(Ok(Frame::data(data))))

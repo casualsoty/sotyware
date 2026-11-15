@@ -127,6 +127,36 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Upload tests on a single CPU (2026-11-15)
+
+Test code only. Pinned to one CPU, `a_conflict_found_by_the_upload_itself_skips_the_file`
+and `a_download_runs_while_a_batch_is_uploading` failed every time (also
+at `00c7872`): their test hooks block (a gate, a joined thread) inside
+async code on a runtime worker, and on one CPU the runtime has one
+worker, so the download or the other client's request they waited for
+could not run until the 20–30 s timeouts. `TransferControl::call_hook`
+now runs every test hook (upload and download) in
+`tokio::task::block_in_place` on a multi-thread runtime, which hands the
+worker's other tasks to another thread; on a current-thread runtime it
+calls the hook directly. That exposed two latent races, fixed in the
+tests without loosening their assertions:
+`cancel_is_idempotent_and_only_for_its_own_batch` held only the
+connection (`during_send`), so the batch could finish between its two
+cancels; it now holds the batch's own task (`during_hashing`).
+`quitting_during_a_multipart_upload_is_recorded_with_its_abort`
+required as many recorded attempts as server requests, but the server
+counts a request only once routed, so the part dropped in flight may be
+missing there; it now requires every server request to be recorded as
+sent and allows only that dropped part to be missing; it also waits for
+the final event after `shutdown` (as `82b17c6`).
+
+WSL2 only: the two hanging tests 10/10 each on one CPU (before 0/5);
+the cancel and recorder tests 10/10 each on one CPU; full suites pinned
+to one CPU twice each: default 412, recorder 440; pinned to two CPUs
+twice: recorder 440; unpinned 412 and 440 (27 ignored each); fmt,
+clippy (default, recorder, test-profile). Not run on Windows or GitHub
+in this change.
+
 ### Hosted runs at `00c7872` and the upload shutdown test race (2026-11-15)
 
 `main` was pushed as a fast-forward from `f9a0c71` to `00c7872` (with

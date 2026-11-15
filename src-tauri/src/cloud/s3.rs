@@ -678,6 +678,24 @@ impl TransferControl {
     fn run_hook(hook: &Mutex<Option<Box<dyn FnOnce() + Send>>>) {
         let f = hook.lock().unwrap().take();
         if let Some(f) = f {
+            Self::call_hook(f);
+        }
+    }
+
+    /// Calls a test hook. Hooks run inside async code and may block (wait
+    /// for a gate, join a thread); on a multi-thread runtime worker that
+    /// would also stall every task queued behind it, and with one CPU the
+    /// runtime has one worker, so a hook waiting for another task (a
+    /// download, the test server) waited for itself. `block_in_place`
+    /// hands those tasks to another thread first. It panics on a
+    /// current-thread runtime, which never has other workers anyway.
+    #[cfg(test)]
+    fn call_hook(f: Hook) {
+        let multi_thread = tokio::runtime::Handle::try_current()
+            .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+        if multi_thread {
+            tokio::task::block_in_place(f);
+        } else {
             f();
         }
     }
@@ -1173,17 +1191,13 @@ impl S3Store {
             .await;
         if result.is_ok() {
             #[cfg(test)]
-            if let Some(f) = control.before_commit.lock().unwrap().take() {
-                f();
-            }
+            TransferControl::run_hook(&control.before_commit);
             if !control.commit() {
                 result = Err(StorageError::Cancelled);
             }
             #[cfg(test)]
-            if result.is_ok()
-                && let Some(f) = control.after_commit.lock().unwrap().take()
-            {
-                f();
+            if result.is_ok() {
+                TransferControl::run_hook(&control.after_commit);
             }
         }
         let result = match result {

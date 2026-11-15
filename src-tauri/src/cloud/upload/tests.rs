@@ -1119,7 +1119,11 @@ async fn cancel_is_idempotent_and_only_for_its_own_batch() {
         let (gate, entered) = (Arc::clone(&gate), Arc::clone(&entered));
         s.uploads.file_control(move |_, control| {
             let (gate, entered) = (Arc::clone(&gate), Arc::clone(&entered));
-            control.during_send(1, move || {
+            // Held in the hashing loop, i.e. in the batch's own task: held
+            // in the request body instead, only the connection would wait,
+            // and the batch could drop the request and finish between the
+            // two cancels below.
+            control.during_hashing(move || {
                 entered.open();
                 gate.wait(Duration::from_secs(20));
             });
@@ -1713,7 +1717,8 @@ async fn quitting_during_a_multipart_upload_is_recorded_with_its_abort() {
     let health = rec.finish(Duration::from_secs(5));
     assert!(health.complete(), "{health:?}");
     assert_eq!(s.server.open_multipart_files(), Vec::<String>::new());
-    assert_eq!(s.of_finished(&batch).unwrap().state, BatchState::Cancelled);
+    // The final event may follow the freed slot that `shutdown` waits for.
+    assert_eq!(s.finished(&batch).await.state, BatchState::Cancelled);
     let text = fs::read_to_string(settings.file(std::process::id())).unwrap();
     let lines: Vec<serde_json::Value> = text
         .lines()
@@ -1737,12 +1742,36 @@ async fn quitting_during_a_multipart_upload_is_recorded_with_its_abort() {
     let end = lines.last().unwrap();
     assert_eq!(end["kind"], "end");
     assert_eq!(end["accounting"], "complete");
-    // Every request the server saw was recorded as sent.
-    let sent = lines
+    // Every request the server saw was recorded as sent. The server counts
+    // a request once it has routed it, so the part dropped in flight may be
+    // missing there; nothing else may.
+    let part_of = |op: &serde_json::Value| {
+        lines
+            .iter()
+            .find(|e| e["kind"] == "op-start" && e["op"] == *op)
+            .and_then(|e| e["part"].as_u64())
+    };
+    let label = |e: &serde_json::Value| match part_of(&e["op"]) {
+        Some(n) => format!("{}#{n}", e["name"].as_str().unwrap()),
+        None => e["name"].as_str().unwrap().to_owned(),
+    };
+    let mut unseen: Vec<String> = lines
         .iter()
         .filter(|e| e["kind"] == "attempt-start")
-        .count();
-    assert_eq!(sent, s.server.ops().len(), "{:?}", s.server.ops());
+        .map(label)
+        .collect();
+    let server = s.server.ops();
+    for op in &server {
+        let i = unseen
+            .iter()
+            .position(|l| l == op)
+            .unwrap_or_else(|| panic!("the server saw {op}, not recorded as sent: {text}"));
+        unseen.remove(i);
+    }
+    assert!(
+        unseen.is_empty() || unseen == [label(&dropped[0])],
+        "sent but not on the server: {unseen:?}; server: {server:?}"
+    );
 }
 
 // ------------------------------------------------------------ folder uploads
