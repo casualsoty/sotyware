@@ -176,7 +176,7 @@ export interface FolderListing {
 export const TRANSFER_STATES = ["active", "completed", "cancelled", "failed"] as const;
 export type TransferState = (typeof TRANSFER_STATES)[number];
 
-export const INTEGRITY_CHECKS = ["sha256-verified", "size-only"] as const;
+export const INTEGRITY_CHECKS = ["sha256-verified", "size-only", "transfer-only"] as const;
 export type IntegrityCheck = (typeof INTEGRITY_CHECKS)[number];
 
 export const CANCEL_OUTCOMES = ["cancelling", "finishing", "not-active"] as const;

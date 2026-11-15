@@ -787,7 +787,9 @@ unreachable.
   - **Integrity is reported as what was checked:** `sha256-verified` only
     when the object carries the SHA-256 sotyware stores at upload and it
     matched; otherwise `size-only` (the size the provider announced), and the
-    page says the content could not be verified. A mismatch fails the
+    page says the content could not be verified (since 2026-11-15 a third
+    level, `transfer-only`, when the provider announced no size either:
+    nothing was compared, and the page says so). A mismatch fails the
     download and nothing is saved. Provider-side checksums (the SDK's
     response validation) are not claimed.
   - **Errors** extend `ErrorKind` with `busy`, `object-not-found`,

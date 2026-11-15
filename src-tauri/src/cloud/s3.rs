@@ -375,14 +375,19 @@ pub struct UploadReport {
     pub version_id: Option<String>,
 }
 
-/// How a download was verified.
+/// How a download was verified. Three levels, never merged: a transfer
+/// that completed is not called size-verified unless a size was compared,
+/// and not called integrity-verified unless a SHA-256 was compared.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verification {
     /// The content matches the SHA-256 stored at upload.
     Sha256Matched,
     /// The object has no stored SHA-256 (not uploaded by sotyware); only the
-    /// size was checked.
+    /// size the provider announced was compared.
     SizeOnly,
+    /// The provider announced neither a size nor a SHA-256: the transfer
+    /// completed, but nothing could be compared.
+    TransferOnly,
 }
 
 /// What a download did.
@@ -391,6 +396,25 @@ pub struct DownloadReport {
     pub size: u64,
     pub sha256: String,
     pub verification: Verification,
+}
+
+/// What a completed download can claim, from what the provider announced
+/// (the stored SHA-256 and the size; a size that differs was refused
+/// before) and the SHA-256 of the bytes received. `Err` carries the
+/// expected SHA-256 when it does not match.
+pub fn verification_of<'a>(
+    expected_sha: Option<&'a str>,
+    expected_size: Option<u64>,
+    sha256: &str,
+) -> Result<Verification, &'a str> {
+    match (expected_sha, expected_size) {
+        (Some(expected), _) if expected.eq_ignore_ascii_case(sha256) => {
+            Ok(Verification::Sha256Matched)
+        }
+        (Some(expected), _) => Err(expected),
+        (None, Some(_)) => Ok(Verification::SizeOnly),
+        (None, None) => Ok(Verification::TransferOnly),
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -1268,15 +1292,10 @@ impl S3Store {
                 "{key}: received {size} bytes, expected {expected}"
             )));
         }
-        let verification = match expected_sha {
-            Some(expected) if expected.eq_ignore_ascii_case(&sha256) => Verification::Sha256Matched,
-            Some(expected) => {
-                return Err(StorageError::Integrity(format!(
-                    "{key}: SHA-256 {sha256}, expected {expected}"
-                )));
-            }
-            None => Verification::SizeOnly,
-        };
+        let verification = verification_of(expected_sha.as_deref(), expected_size, &sha256)
+            .map_err(|expected| {
+                StorageError::Integrity(format!("{key}: SHA-256 {sha256}, expected {expected}"))
+            })?;
         Ok(DownloadReport {
             size,
             sha256,
@@ -1432,6 +1451,34 @@ mod tests {
         assert!(e.is_transient());
         assert!(!c(403, Some("AccessDenied")).is_transient());
         assert!(!c(400, Some("InvalidArgument")).is_transient());
+    }
+
+    #[test]
+    fn a_download_claims_only_what_was_compared() {
+        let sha = "ab".repeat(32);
+        assert_eq!(
+            verification_of(Some(&sha), Some(3), &sha),
+            Ok(Verification::Sha256Matched)
+        );
+        // Case does not matter for a hex digest.
+        assert_eq!(
+            verification_of(Some(&sha.to_uppercase()), None, &sha),
+            Ok(Verification::Sha256Matched)
+        );
+        let other = "cd".repeat(32);
+        assert_eq!(
+            verification_of(Some(&other), Some(3), &sha),
+            Err(other.as_str())
+        );
+        assert_eq!(
+            verification_of(None, Some(3), &sha),
+            Ok(Verification::SizeOnly)
+        );
+        // Neither a size nor a checksum announced: nothing was compared.
+        assert_eq!(
+            verification_of(None, None, &sha),
+            Ok(Verification::TransferOnly)
+        );
     }
 
     #[test]

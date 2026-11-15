@@ -116,6 +116,13 @@ Reliability scenarios the audit traced and their current behaviour:
   [accounts.md](../architecture/accounts.md) and
   [updates.md](../architecture/updates.md) committed as design (docs only).
 
+- Phase B, A3 fixed: downloads now report three levels
+  (`sha256-verified`, `size-only`, `transfer-only`); `transfer-only` when
+  the provider announced neither size nor SHA-256. Tests:
+  `s3::tests::a_download_claims_only_what_was_compared`,
+  `download::tests::without_a_size_or_a_checksum_only_the_transfer_is_claimed`,
+  the download panel test in `CloudBrowser.test.ts`.
+
 ## Tests run during the mission
 
 (Exact commands and counts, newest last.)
@@ -123,6 +130,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | Date | Commit/tree | Environment | Command | Result |
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
+| 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
 
 ## Open defects and blockers
 

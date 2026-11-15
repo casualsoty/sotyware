@@ -78,6 +78,19 @@ pub enum Integrity {
     /// The object has no SHA-256 stored by sotyware: only the size the
     /// provider announced was checked.
     SizeOnly,
+    /// The provider announced neither a size nor a SHA-256: the transfer
+    /// completed but nothing could be compared.
+    TransferOnly,
+}
+
+impl From<Verification> for Integrity {
+    fn from(v: Verification) -> Self {
+        match v {
+            Verification::Sha256Matched => Self::Sha256Verified,
+            Verification::SizeOnly => Self::SizeOnly,
+            Verification::TransferOnly => Self::TransferOnly,
+        }
+    }
 }
 
 /// One progress message. Never carries a credential or provider text.
@@ -503,10 +516,7 @@ impl CloudDownloads {
         let (bytes, total) = seen;
         let event = match &result {
             Ok(report) => DownloadEvent {
-                integrity: Some(match report.verification {
-                    Verification::Sha256Matched => Integrity::Sha256Verified,
-                    Verification::SizeOnly => Integrity::SizeOnly,
-                }),
+                integrity: Some(report.verification.into()),
                 ..DownloadEvent::new(
                     &id,
                     TransferState::Completed,

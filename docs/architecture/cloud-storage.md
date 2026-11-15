@@ -197,7 +197,11 @@ size and SHA-256; only a match is renamed to `<dest>`. A mismatch is
 `Integrity`; the partial file is removed and `<dest>` is never created. An
 existing `<dest>` is never overwritten. Objects without the metadata (not
 uploaded by sotyware) are checked by size only and reported as
-`Verification::SizeOnly`. ETags are not used: they are not an MD5 for multipart
+`Verification::SizeOnly`; if the provider announced no size either, nothing
+could be compared and the download is reported as `Verification::TransferOnly`
+(`transfer-only`, 2026-11-15): a completed transfer is never called
+size-verified or integrity-verified unless that comparison happened
+(`s3::verification_of`). ETags are not used: they are not an MD5 for multipart
 uploads and differ between providers.
 
 ## Errors

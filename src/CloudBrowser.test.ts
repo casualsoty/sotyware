@@ -750,6 +750,14 @@ describe("downloading a file", () => {
     await send(downloadCalls[1]!.channel, event("download-2", "completed", 12, 12, { integrity: "size-only" }));
     expect(text(panel(b))).toContain("no SHA-256 checksum stored by sotyware, so its content could not be verified");
     expect(text(panel(b))).not.toContain("SHA-256 checksum stored with the file matched");
+    await click(b, "Dismiss");
+
+    // Neither a size nor a checksum: the panel must not claim a size check.
+    await clickDownload(b, "readme.txt");
+    await send(downloadCalls[2]!.channel, event("download-3", "completed", 12, null, { integrity: "transfer-only" }));
+    expect(panel(b).dataset["downloadState"]).toBe("completed");
+    expect(text(panel(b))).toContain("neither a size nor a checksum, so nothing could be verified");
+    expect(text(panel(b))).not.toContain("The size matched");
   });
 
   it("cancels the running transfer by its id", async () => {

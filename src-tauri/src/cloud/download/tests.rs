@@ -616,6 +616,20 @@ async fn without_a_stored_checksum_only_the_size_is_claimed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn without_a_size_or_a_checksum_only_the_transfer_is_claimed() {
+    let data = pattern(70 * KIB, 12);
+    let mut object = TestObject::foreign("bare.bin", data.clone());
+    object.announce_length = false;
+    let server = serve(vec![object]).await;
+    let s = setup(&server);
+    let (_, done) = s.download("bare.bin", "bare.bin").await;
+    assert_eq!(done.state, TransferState::Completed, "{done:?}");
+    // Nothing to compare against: neither "size-only" nor "sha256-verified".
+    assert_eq!(done.integrity, Some(Integrity::TransferOnly));
+    assert_eq!(fs::read(s.dir.path("bare.bin")).unwrap(), data);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_broken_connection_fails_cleanly_and_can_be_retried() {
     let server = serve(vec![
         TestObject::new("cut.bin", pattern(MIB, 9)).with_fault(Fault::CutAfter(300 * KIB)),

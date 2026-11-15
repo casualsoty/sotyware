@@ -48,7 +48,7 @@ use super::download::{CancelOutcome, Integrity};
 use super::operations::{
     ItemRef, MAX_KEY_BYTES, file_name, folder_name, in_folder, operation_error,
 };
-use super::s3::{Existing, S3Store, StorageError, TransferControl, Verification};
+use super::s3::{Existing, S3Store, StorageError, TransferControl};
 
 /// Most files one batch may download.
 pub const MAX_FILES: usize = 10_000;
@@ -891,10 +891,7 @@ impl BulkDownloads {
                         Ok(report) => {
                             files[fi].state = FileState::Completed;
                             files[fi].bytes = report.size;
-                            files[fi].integrity = Some(match report.verification {
-                                Verification::Sha256Matched => Integrity::Sha256Verified,
-                                Verification::SizeOnly => Integrity::SizeOnly,
-                            });
+                            files[fi].integrity = Some(report.verification.into());
                         }
                         Err(StorageError::Cancelled) => {
                             files[fi].state = FileState::Cancelled;

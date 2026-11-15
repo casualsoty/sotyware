@@ -944,9 +944,14 @@
   }
 
   function integrityText(check: IntegrityCheck | null): string {
-    return check === "sha256-verified"
-      ? "The SHA-256 checksum stored with the file matched."
-      : "The size matched. This file has no SHA-256 checksum stored by sotyware, so its content could not be verified.";
+    switch (check) {
+      case "sha256-verified":
+        return "The SHA-256 checksum stored with the file matched.";
+      case "size-only":
+        return "The size matched. This file has no SHA-256 checksum stored by sotyware, so its content could not be verified.";
+      default:
+        return "The transfer completed, but the provider announced neither a size nor a checksum, so nothing could be verified.";
+    }
   }
 
   function formatDate(rfc3339: string | null): string {

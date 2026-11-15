@@ -91,7 +91,7 @@ backups or other product features exist**. Desktop tests run only a
   download at a time (`busy` otherwise); the body streams into a hidden
   `.<name>.<pid>-<n>.sotyware-partial` next to the destination, is synced and
   checked (size; SHA-256 if sotyware stored one at upload, else "size only"
-  is said), then hard-linked/renamed into place; progress on a per-call
+  is said; "transfer only" if no size was announced either), then hard-linked/renamed into place; progress on a per-call
   Tauri `Channel` (≤ 4/s, then one final completed/cancelled/failed); Cancel
   drops the stream and removes the temporary file, too late once the final
   move began (`finishing`); Try download again reuses the destination;

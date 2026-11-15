@@ -713,7 +713,7 @@ export interface BulkFile {
   size: number;
   state: BulkFileState;
   bytes: number;
-  integrity: "sha256-verified" | "size-only" | null;
+  integrity: "sha256-verified" | "size-only" | "transfer-only" | null;
   error: CommandErrorInfo | null;
 }
 
@@ -756,7 +756,7 @@ function parseBulkFile(value: unknown): BulkFile {
   const w = "download file";
   const v = rec(w, value);
   const integrity = v["integrity"];
-  if (!(integrity === null || integrity === "sha256-verified" || integrity === "size-only")) {
+  if (!(integrity === null || integrity === "sha256-verified" || integrity === "size-only" || integrity === "transfer-only")) {
     throw invalid(w, value);
   }
   return {
