@@ -519,17 +519,13 @@ impl Body for ProbedBody {
         });
         #[cfg(test)]
         if first {
-            let hook = {
-                let mut hook = probe.control.during_send.lock().unwrap();
-                if hook.as_ref().is_some_and(|(part, _)| *part == probe.part) {
-                    hook.take()
-                } else {
-                    None
-                }
-            };
-            if let Some((_, f)) = hook {
-                TransferControl::call_hook(f);
-            }
+            TransferControl::run_part_hook(&probe.control.during_send, probe.part);
+        }
+        // After `complete` is set: a cancel from this hook finds the part
+        // handed over completely.
+        #[cfg(test)]
+        if last {
+            TransferControl::run_part_hook(&probe.control.handed_over, probe.part);
         }
         Poll::Ready(Some(Ok(Frame::data(data))))
     }

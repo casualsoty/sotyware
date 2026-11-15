@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -137,6 +137,55 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### The late-part wait test on a busy runner (2026-11-15)
+
+Test code only; nothing the app does changed. The first `release.yml`
+dry run (run 43729127961, by hand on `main` at `ecf4339`) passed every
+job except `macOS tests (x86_64)` (`macos-15-intel`, image
+20260819.586): `a_cancelled_part_that_was_handed_over_is_answered_before_the_abort`
+(ADR-025) failed its `took >= 500 ms` check with 483.6 ms, the other 500
+tests passed (the suite took 84.8 s; 73.0 s at `ec42d41` on the same
+image, where it passed). So `rehearse` was skipped; `publish` was
+skipped as a dry run should be.
+
+**Cause, reproduced on WSL2:** the tests cancelled from the progress
+callback. Progress updates are throttled (`PROGRESS_INTERVAL`, 250 ms)
+and come late on a starved CPU, while the `Pace::Buffered` link forwards
+part 2 from its first byte, so less than the assumed 1.3 s was left to
+wait after the cancel; under more load the cancel came after part 2 was
+answered and part 3 had begun, and the scenario never happened. Pinned to
+one CPU at `nice 10` beside two busy loops, the test failed 6 of 6 runs
+(`took` 192–249 ms) and its control
+`without_the_wait_a_handed_over_part_lands_after_the_abort` 4 of 4 (no
+late part; `UploadPart#3` in 3 of them); alone, unpinned or on one CPU
+without competition, 10 of 10 passed each.
+
+**Fix:** a test hook, `TransferControl::handed_over(part, f)`
+(`#[cfg(test)]`, in `cloud/s3.rs`), runs when a part's last chunk is
+handed over, right after the part is marked complete; `during_send`
+shares its code (`run_part_hook`). The three ADR-025 tests cancel from
+it. An `Inject::Run` on `AbortMultipartUpload` lists the server's
+multipart files when the abort arrives (`test_server::multipart_files_in`;
+`s3s-fs` renames a part into place only once its whole body has
+arrived): with the wait, part 2 must be stored by then, which replaces
+the 500 ms floor (the 5 s ceiling stays); in the control it must not be.
+The control waits until the late part 2 appears, at most 30 s, instead
+of a fixed 2.4 s. `the_wait_for_a_handed_over_part_is_bounded` keeps its
+checks.
+
+What ran, on WSL2 (Rust 1.99.1, Node 24.22.0): under the same load the
+test 6/6, the control 10/10, the bounded wait 6/6; unloaded 3/3 each.
+With the wait switched off in `upload.rs` (temporarily, reverted) the
+test failed 3 of 3 runs unloaded and 3 of 3 under load, at the new check
+(part 1 but no part 2 stored when the abort arrived). The upload module
+42/42 three times and once pinned to two CPUs; the hook tests 6/6; the
+upload batch tests 41/41; the full suite pinned to two CPUs twice (511);
+`cargo fmt --check`; clippy (default, test-profile, recorder);
+`npm run check`, `npm run build`; `npm run test:headless` (Vitest 241,
+Rust 511 passed, 28 ignored); the recorder build 539 passed, 28 ignored.
+**Not run:** macOS, Windows, any GitHub workflow; the dry run still has
+to be repeated.
 
 ### Release rehearsal readiness (2026-11-15)
 

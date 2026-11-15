@@ -535,6 +535,8 @@ pub struct TransferControl {
     during_hashing: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     during_send: Mutex<Option<(u32, Hook)>>,
+    #[cfg(test)]
+    handed_over: Mutex<Option<(u32, Hook)>>,
 }
 
 #[cfg(test)]
@@ -571,6 +573,8 @@ impl TransferControl {
             during_hashing: Mutex::new(None),
             #[cfg(test)]
             during_send: Mutex::new(None),
+            #[cfg(test)]
+            handed_over: Mutex::new(None),
         }
     }
 
@@ -721,10 +725,37 @@ impl TransferControl {
         *self.during_send.lock().unwrap() = Some((part, Box::new(f)));
     }
 
+    /// Runs `f` once part `part` of an upload (1 for a single PUT) has
+    /// handed its last chunk to the connection, so the part counts as
+    /// handed over completely (ADR-025), before its answer can come. A
+    /// test cancelling here does it at that exact moment, which a progress
+    /// update, throttled and late on a busy machine, cannot.
+    #[cfg(test)]
+    pub(crate) fn handed_over(&self, part: u32, f: impl FnOnce() + Send + 'static) {
+        *self.handed_over.lock().unwrap() = Some((part, Box::new(f)));
+    }
+
     #[cfg(test)]
     fn run_hook(hook: &Mutex<Option<Box<dyn FnOnce() + Send>>>) {
         let f = hook.lock().unwrap().take();
         if let Some(f) = f {
+            Self::call_hook(f);
+        }
+    }
+
+    /// Runs a hook set for one part ([`Self::during_send`],
+    /// [`Self::handed_over`]) if `part` is that part.
+    #[cfg(test)]
+    fn run_part_hook(hook: &Mutex<Option<(u32, Hook)>>, part: u32) {
+        let f = {
+            let mut hook = hook.lock().unwrap();
+            if hook.as_ref().is_some_and(|(p, _)| *p == part) {
+                hook.take()
+            } else {
+                None
+            }
+        };
+        if let Some((_, f)) = f {
             Self::call_hook(f);
         }
     }

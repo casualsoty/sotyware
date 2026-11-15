@@ -1523,7 +1523,14 @@ cd .. && npm run check:release-binary && npm run test:release-binary-guard
   (`Pace::Buffered` in `test_server.rs`), a cancel after part 2 was handed
   over completely waits for its answer and the abort leaves no part; with
   `part_settle_timeout` zero (the control) the late part remains; the
-  wait ends at its bound. After its client went away, the `Buffered` link
+  wait ends at its bound. The cancel comes from the test hook
+  `TransferControl::handed_over`, the moment part 2's last chunk is
+  handed over (a progress update is throttled and, on a busy machine, can
+  come after part 2 was answered), and the server's multipart files are
+  listed when the abort arrives: part 2 is stored by then with the wait,
+  not without it, so neither test depends on the machine's speed
+  ([status](../status/status.md#the-late-part-wait-test-on-a-busy-runner-2026-11-15)).
+  After its client went away, the `Buffered` link
   does not half-close towards the server (it waits up to a minute for the
   answer, then closes): hyper's server takes that EOF as a closed
   connection and drops a handler still storing the part, which on a

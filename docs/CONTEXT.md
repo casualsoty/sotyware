@@ -362,6 +362,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Late-part wait test on a busy runner** (2026-11-15, test code only,
+  [status.md](status/status.md#the-late-part-wait-test-on-a-busy-runner-2026-11-15)):
+  the first `release.yml` dry run failed only on the Intel Mac, where
+  the ADR-025 test missed its 500 ms floor (483.6 ms); its cancel came
+  from throttled progress updates. It now cancels from the test hook
+  `TransferControl::handed_over` and checks at the abort's arrival that
+  part 2 was stored; reproduced and fixed under CPU load on WSL2 (the old
+  test 0/6 there, the new 6/6, its control 10/10; both fail with the
+  wait switched off). Not yet run on GitHub.
 - **Upload tests on a single CPU** (2026-11-15, `25eb0f6`,
   [status.md](status/status.md#upload-tests-on-a-single-cpu-2026-11-15)):
   test hooks run in `block_in_place` on a multi-thread runtime, so a

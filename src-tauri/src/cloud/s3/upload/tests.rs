@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use super::super::super::test_server::{
-    CONDITIONAL_PROFILE, Inject, Pace, TempDir, TestServer, ThrottledLink, sha256_hex,
+    CONDITIONAL_PROFILE, Inject, Pace, TempDir, TestServer, ThrottledLink, multipart_files_in,
+    sha256_hex,
 };
 use super::super::{ClientOptions, Verification};
 use super::*;
@@ -1262,16 +1263,32 @@ async fn probe_a_part_landing_after_the_abort() {
     println!("a part of an aborted upload remained in {left} of {trials} trials");
 }
 
-/// Cancels a 3-part upload right after part 2 was handed over completely
-/// behind a link that buffers it and forwards 4 MiB/s (part 2 needs about
-/// 1.3 s to arrive). Returns the outcome, the time from the cancel to the
-/// upload's return, the operations and the multipart files left once the
-/// link has delivered everything.
+/// What [`cancel_after_part_2_was_handed_over`] waits for after the upload
+/// returned, before it lists the multipart files left.
+#[derive(Clone, Copy)]
+enum Drain {
+    No,
+    /// As long as the link needs for a whole part at its rate, plus 1 s.
+    Rate,
+    /// Until a stored part 2 appears, at most 30 s: the part the race
+    /// leaves behind lands later on a busy machine than at the link's rate.
+    UntilPart2,
+}
+
+/// Cancels a 3-part upload the moment part 2 has been handed over
+/// completely ([`TransferControl::handed_over`]), behind a link that
+/// buffers it and forwards it at `rate` (at 4 MiB/s part 2 needs about
+/// 1.3 s to arrive). Not from a progress update: those are throttled, and
+/// on a busy machine one can come after part 2 was answered and part 3
+/// began. Returns the outcome, the time from the cancel to the upload's
+/// return, the operations, the multipart files the server held when
+/// `AbortMultipartUpload` arrived (part 2 among them only if it was stored
+/// before the abort) and the ones left after `drain`.
 async fn cancel_after_part_2_was_handed_over(
     settle: Duration,
     rate: u64,
-    drain: bool,
-) -> (UploadError, Duration, Vec<String>, Vec<String>) {
+    drain: Drain,
+) -> (UploadError, Duration, Vec<String>, Vec<String>, Vec<String>) {
     let server = server().await;
     let link = ThrottledLink::start(&server.endpoint, Pace::Buffered(rate)).await;
     let s = store_with(
@@ -1282,49 +1299,89 @@ async fn cancel_after_part_2_was_handed_over(
             ..options()
         },
     );
+    let at_abort = Arc::new(Mutex::new(None::<Vec<String>>));
+    let seen = Arc::clone(&at_abort);
+    let root = server.root().to_path_buf();
+    server.inject(
+        "AbortMultipartUpload",
+        None,
+        1,
+        Inject::Run(Arc::new(move || {
+            *seen.lock().unwrap() = Some(multipart_files_in(&root));
+        })),
+    );
     let dir = TempDir::new("up-settle");
     let src = dir.file("src", 12 * MIB, 61);
     let control = Arc::new(TransferControl::new());
     let weak = Arc::downgrade(&control);
     let cancelled_at = Arc::new(Mutex::new(None::<Instant>));
     let at = Arc::clone(&cancelled_at);
+    control.handed_over(2, move || {
+        if let Some(c) = weak.upgrade()
+            && c.cancel()
+        {
+            *at.lock().unwrap() = Some(Instant::now());
+        }
+    });
     let result = s
-        .upload(BUCKET, "settle.bin", &src, &control, &mut |p| {
-            if p.stage == UploadStage::Sending
-                && p.bytes >= 10 * MIB as u64
-                && let Some(c) = weak.upgrade()
-                && c.cancel()
-            {
-                *at.lock().unwrap() = Some(Instant::now());
-            }
-        })
+        .upload(BUCKET, "settle.bin", &src, &control, &mut |_| {})
         .await;
     let took = cancelled_at.lock().unwrap().expect("cancelled").elapsed();
     let e = expect_err(result);
+    let at_abort = at_abort
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the abort reached the server");
     // Let the link deliver whatever is still buffered (5 MiB at `rate`).
-    if drain {
-        tokio::time::sleep(
-            Duration::from_secs_f64(5.5 * MIB as f64 / rate as f64) + Duration::from_secs(1),
-        )
-        .await;
+    match drain {
+        Drain::No => {}
+        Drain::Rate => {
+            tokio::time::sleep(
+                Duration::from_secs_f64(5.5 * MIB as f64 / rate as f64) + Duration::from_secs(1),
+            )
+            .await;
+        }
+        Drain::UntilPart2 => {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !server
+                .open_multipart_files()
+                .iter()
+                .any(|f| f.ends_with(".part-2"))
+                && Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
     }
-    (e, took, server.ops(), server.open_multipart_files())
+    (
+        e,
+        took,
+        server.ops(),
+        at_abort,
+        server.open_multipart_files(),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_part_that_was_handed_over_is_answered_before_the_abort() {
-    let (e, took, ops, left) =
-        cancel_after_part_2_was_handed_over(Duration::from_secs(5), 4 * MIB as u64, true).await;
+    let (e, took, ops, at_abort, left) =
+        cancel_after_part_2_was_handed_over(Duration::from_secs(5), 4 * MIB as u64, Drain::Rate)
+            .await;
     assert_eq!(
         (e.error, e.remote),
         (StorageError::Cancelled, RemoteOutcome::NothingStored)
     );
-    // It waited for part 2's answer (about 1.3 s through the link), not
-    // for the whole bound.
+    // It waited for part 2's answer: the part was stored before the abort
+    // arrived, however much of it the link had forwarded before the
+    // cancel (a busy machine hands it over slowly, so less is left to
+    // wait for). And it returned once part 2 was answered, not at the end
+    // of the bound.
     assert!(
-        took >= Duration::from_millis(500) && took < Duration::from_secs(5),
-        "{took:?}"
+        at_abort.iter().any(|f| f.ends_with(".part-2")),
+        "part 2 was not stored when the abort arrived: {at_abort:?} {ops:?}"
     );
+    assert!(took < Duration::from_secs(5), "{took:?}");
     assert_eq!(left, Vec::<String>::new(), "{ops:?}");
     assert_eq!(
         ops,
@@ -1342,10 +1399,15 @@ async fn a_cancelled_part_that_was_handed_over_is_answered_before_the_abort() {
 /// which the server then still stores (the race this fixes).
 #[tokio::test(flavor = "multi_thread")]
 async fn without_the_wait_a_handed_over_part_lands_after_the_abort() {
-    let (e, took, ops, left) =
-        cancel_after_part_2_was_handed_over(Duration::ZERO, 4 * MIB as u64, true).await;
+    let (e, took, ops, at_abort, left) =
+        cancel_after_part_2_was_handed_over(Duration::ZERO, 4 * MIB as u64, Drain::UntilPart2)
+            .await;
     assert_eq!(e.error, StorageError::Cancelled);
     assert!(took < Duration::from_millis(500), "{took:?}");
+    assert!(
+        !at_abort.iter().any(|f| f.ends_with(".part-2")),
+        "part 2 was already stored when the abort arrived: {at_abort:?} {ops:?}"
+    );
     assert!(
         left.iter().any(|f| f.ends_with(".part-2")),
         "expected the late part 2 to remain: {left:?} {ops:?}"
@@ -1358,8 +1420,8 @@ async fn without_the_wait_a_handed_over_part_lands_after_the_abort() {
 /// documented.)
 #[tokio::test(flavor = "multi_thread")]
 async fn the_wait_for_a_handed_over_part_is_bounded() {
-    let (e, took, _, _) =
-        cancel_after_part_2_was_handed_over(Duration::from_secs(1), MIB as u64, false).await;
+    let (e, took, _, _, _) =
+        cancel_after_part_2_was_handed_over(Duration::from_secs(1), MIB as u64, Drain::No).await;
     assert_eq!(e.error, StorageError::Cancelled);
     assert!(
         took >= Duration::from_millis(900) && took < Duration::from_secs(4),

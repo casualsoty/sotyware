@@ -84,6 +84,20 @@ fn part_number(query: Option<&str>) -> Option<u32> {
         .and_then(|n| n.parse().ok())
 }
 
+/// The multipart files `s3s-fs` keeps in a server's `root`
+/// ([`TestServer::root`]): each upload id and each stored part
+/// (`….part-<n>`). A part appears only once its whole body has arrived
+/// (`s3s-fs` writes it to a temporary file and renames it), before the
+/// server answers it, so a test that lists them while a request arrives
+/// (an [`Inject::Run`]) sees which parts were stored before it.
+pub fn multipart_files_in(root: &Path) -> Vec<String> {
+    fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| name.contains(".upload"))
+        .collect()
+}
+
 /// Records every authenticated operation (`UploadPart` with its part
 /// number, as `UploadPart#2`), refuses the `denied` ones with
 /// `AccessDenied`, as a provider does for a key without that permission (a
@@ -889,11 +903,7 @@ impl TestServer {
     /// Files `s3s-fs` keeps for multipart uploads that were neither
     /// completed nor aborted (upload ids, parts, their metadata).
     pub fn open_multipart_files(&self) -> Vec<String> {
-        fs::read_dir(&self.root)
-            .unwrap()
-            .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter(|name| name.contains(".upload"))
-            .collect()
+        multipart_files_in(&self.root)
     }
 
     /// The file `s3s-fs` keeps an object's metadata in.
