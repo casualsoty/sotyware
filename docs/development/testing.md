@@ -1611,7 +1611,7 @@ Not covered by any test: installing an update on any platform, the Windows
 installer or `request_restart` starting the new version, data surviving an
 update (needs two signed releases;
 [release.md](release.md#testing-updates-locally)), `release.yml` itself
-(never run on GitHub: not pushed yet, no key, no environment).
+(never run on GitHub: no key, no environment).
 
 ## Cloud Storage UI end-to-end test
 
@@ -2417,8 +2417,7 @@ own `GITHUB_TOKEN` (ADR-039); a dry run signs with a throwaway key.
 `macos-signing` environment when they exist; no pull request job sees a
 secret. Nothing runs on a schedule. A workflow can be started by hand only
 once its file is on the default branch (`macos.yml` and `release.yml` are
-not on `main` yet: opening a pull request to `main` runs `ci.yml` and
-`macos.yml`).
+on `main` since `d9cf561`, 2026-11-15).
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
@@ -2429,7 +2428,7 @@ not on `main` yet: opening a pull request to `main` runs `ci.yml` and
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Signs nothing; called by `release.yml` with `upload: true` it uploads the two checked installers as the `windows-installers` artifact, which `release.yml`'s publish job signs (ADR-036). Nothing published | release artifacts (no install) |
-| `macos.yml` | **automatic**: pull request to `main`, push to `main` (same skipped paths as `ci.yml`); **manual**; or called by `release.yml` with `package: true` (ADR-037, ADR-039; never run yet) | `macos-15` (Apple Silicon, M1) + `macos-15-intel` (Intel) | job `macOS tests` per architecture: native machine and rustc host checked (no Rosetta), `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; no secret. Job `macOS package` (only with `package`, environment `macos-signing`): `npm run build:release` without caches, binary architecture and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
+| `macos.yml` | **automatic**: pull request to `main`, push to `main` (same skipped paths as `ci.yml`); **manual**; or called by `release.yml` with `package: true` (ADR-037, ADR-039; its first run, at `d9cf561`, failed one test on both architectures: [status](../status/status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)) | `macos-15` (Apple Silicon, M1) + `macos-15-intel` (Intel) | job `macOS tests` per architecture: native machine and rustc host checked (no Rosetta), `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; no secret. Job `macOS package` (only with `package`, environment `macos-signing`): `npm run build:release` without caches, binary architecture and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
 | `release.yml` | **tag `vX.Y.Z`**; or manual, a **dry run** by default, on any branch (ADR-036, ADR-039; never run yet) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | prepare: versions (and tag), `updates.rs` names this repository; for a real release also the commit on `main`, no existing release, `update-key.pub` a real key, the `release` environment tag-only, no signing secret at repository level, unsigned Windows installers allowed (warnings in a dry run); `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then **rehearse** (dry run: throwaway key, `scripts/release-assemble.sh`, artifact `release-dry-run`) or **publish** (environment `release`: tag re-checked, key probe, `release-assemble.sh`, draft with `--verify-tag`, files compared and downloaded back, pre-release, anonymous download verified, latest, endpoint checked; [release.md](release.md#publishing-a-release)) | release |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
@@ -2603,7 +2602,13 @@ line of each job, while the repository was private;
 23 s on Windows** (Windows Rust tests alone 97 s). A manual virtual-display
 run took **9 min 7 s** (release build 7 min 49 s); a manual isolated-desktop
 run **11 min 10 s** (release build 9 min 20 s), although it always ends NOT
-RUN on hosted runners. No macOS job has run yet.
+RUN on hosted runners. At `d9cf561` (2026-11-15, a push;
+[status](../status/status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)):
+`headless (ubuntu-22.04)` took **9 min 46 s** with no Cargo cache,
+`headless (windows-latest)` **7 min 2 s** with a partly restored one,
+`account service` 43 s, and the first `macOS tests` **9 min 43 s on Apple
+Silicon and 15 min 26 s on Intel**, both without a cache and both stopped
+at a failing test before the Keychain round trip.
 
 Per run: open the run in the **Actions** tab; the summary shows each job's
 duration (see

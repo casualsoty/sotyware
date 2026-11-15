@@ -22,8 +22,8 @@ built with `npm run build:release`, which keeps the build machine's paths out
 ## What works today
 
 **Redesign, macOS, GitHub Releases updates** (2026-11-15, committed as
-`2e3972e` on branch `feat/desktop-redesign-macos-github-updates`, not
-pushed; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
+`2e3972e` on branch `feat/desktop-redesign-macos-github-updates`, pushed
+to `main` with `d9cf561`; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
 the dashboard is a desktop shell (sidebar with sections and storage
 accounts, Overview with summaries, Settings with Appearance/Features/About
 & updates, one update notification) on one token-based design system with
@@ -38,7 +38,8 @@ installs, and `release.yml` publishing draft → pre-release → verified →
 latest (ADR-036). **Releases are published in this repository**,
 `casualsoty/sotyware`, which the maintainer made public on 2026-11-15
 (ADR-039, superseding ADR-038's separate release repository; committed on
-branch `feat/releases-in-public-repository` after `77b1923`, not pushed;
+branch `feat/releases-in-public-repository` after `77b1923`, pushed with
+`d9cf561`;
 [status](status/status.md#releases-in-the-public-source-repository-2026-11-15)):
 the app fetches
 `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
@@ -50,7 +51,7 @@ live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
 file can never hold a fixture's or a private key. **Not usable yet:** no
 release key in `src-tauri/update-key.pub`, no environment or ruleset
-configured, no workflow run on GitHub since. On this tree, WSL2 only:
+configured, `release.yml` never run. On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the
 Linux Cloud Storage phases (local 16, hang 8, browse 17, download 22,
@@ -58,10 +59,11 @@ upload 51, files 99, no failure). Tested earlier (2e3972e): Vitest 240,
 Rust 507 (recorder build 535), the virtual display 139/0/0 and every Linux
 Cloud Storage driver phase (files 99/99) against the real binary, after an
 AT-SPI audit that found and fixed text WebKitGTK hid from screen readers; the release commands rehearsed with the real
-Tauri CLI and a throwaway key. Not run: `macos.yml`, `release.yml`, any
-Mac, the Windows drivers after the redesign. A **pre-push audit of the
-release workflow** (2026-11-15, branch `fix/release-workflow-audit`, not
-pushed; [status](status/status.md#release-workflow-audit-before-the-first-push-2026-11-15))
+Tauri CLI and a throwaway key. Not run then: `macos.yml` (first run at
+`d9cf561`, below), `release.yml`, a Mac a person used, the Windows
+drivers after the redesign. A **pre-push audit of the
+release workflow** (2026-11-15, branch `fix/release-workflow-audit`,
+pushed with `d9cf561`; [status](status/status.md#release-workflow-audit-before-the-first-push-2026-11-15))
 made the promotion explicit and read back (pre-release with
 `make_latest=false`, then `prerelease=false` and `make_latest=true`),
 deletes a cancelled run's draft too, tightened the environment checks,
@@ -70,8 +72,16 @@ push to `main` cancelled each other) and `update-manifest.mjs` exiting 0
 unchecked when started through a symlink; the publish steps ran only
 against a local stand-in for GitHub. The automatic Linux CI jobs then
 moved from `ubuntu-latest` (becoming Ubuntu 26.04) to `ubuntu-22.04`,
-where the Linux packages are built (glibc 2.35); nothing has run there yet
+where the Linux packages are built (glibc 2.35)
 ([status](status/status.md#linux-ci-jobs-on-ubuntu-2204-2026-11-15)).
+**Pushed to `main` as `d9cf561`** (2026-11-15,
+[hosted runs](status/status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)):
+`ci.yml` passed, with the first build on Ubuntu 22.04 (Rust 510, recorder
+build 538; Windows 496; Vitest 241 on each), and so did
+`isolation-guard.yml`; `macos.yml`'s first run compiled cleanly on Apple
+Silicon and Intel but failed one test on both: `test_profile`'s path
+check misses a `..` spelling behind macOS's `/var` symbolic link (not
+fixed).
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
@@ -887,7 +897,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   $12 of compute a month): `ci.yml` runs automatically on pull requests to and
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
   `test:headless`; docs-only changes skipped), and so does `macos.yml`
-  (Apple Silicon + Intel, never run yet). Its two automatic runs so far
+  (Apple Silicon + Intel; its first run, at `d9cf561`, failed one test on
+  both: [status](status/status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)).
+  Its two automatic runs so far
   passed: both the Ubuntu and the Windows headless job (run ids, commits and
   durations not recorded); a third, run 43360177079 at `f19dd8b`
   (2026-11-13, with the rfd guard), passed both jobs (7 min 37 s Linux,

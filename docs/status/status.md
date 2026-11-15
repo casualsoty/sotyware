@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -138,6 +138,75 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `d9cf561`: the redesign, macOS and release work pushed (2026-11-15)
+
+`main` was pushed as a fast-forward from `afeb894` to `d9cf561` (ten
+commits, `2e3972e` to `d9cf561`; no tag, no release). The push started
+three workflows, and every job checked out `d9cf561`. Read back
+afterwards: still no environment (the skipped macOS package job created
+none), ruleset, secret, variable or release.
+
+- **`ci.yml`** run 43720222274 (push): **passed**.
+  - `headless (ubuntu-22.04)`, 9 min 46 s: image ubuntu-22.04
+    20261111.360.2, the first build of sotyware on Ubuntu 22.04
+    (`libwebkit2gtk-4.1-dev` 2.50.4, `libgtk-3-dev` 3.24.33), rustc
+    1.100.0, no Cargo cache under the new key. Guard self-tests rfd
+    10/10, release binary 39/39, isolation 9/9; icons 9/9, installer
+    icons 28/28, update manifest 21/21, release assembly 5/5; Python
+    test-profile helpers 10/10; Vitest 241/241; `cargo test` 510 passed,
+    28 ignored; recorder build 538 passed, 28 ignored; the standalone
+    recovery script test passed with the image's Python 3.
+  - `account service (ubuntu-22.04)`, 43 s, no cache: fmt, clippy, 25
+    tests.
+  - `headless (windows-latest)`, 7 min 2 s: image windows-2025-vs2026
+    20261103.298.1, Cargo cache restored from the previous key (partial
+    match); the same guards and tests except the Linux-only ones,
+    PowerShell helpers 20/20, Vitest 241/241, `cargo test` 496 passed,
+    28 ignored.
+- **`isolation-guard.yml`** run 43720222246 (push; the push changed
+  `tests/desktop/**` and `desktop-virtual.yml`): **passed**. `guard`
+  (ubuntu-22.04, 6 s): driver check, self-test 9/9, Python helpers
+  10/10, desktop-workflow check; `powershell-helpers` (22 s): 20/20.
+- **`macos.yml`** run 43720222325 (push), its first run: **failed on
+  both architectures, on one test**. `macOS tests (aarch64)` (image
+  macos-15-arm64 20261104.0514.1, 9 min 43 s) and `macOS tests (x86_64)`
+  (`macos-15-intel`, image 20260824.0482.1, 15 min 26 s), rustc 1.100.0,
+  no cache: the native machine checks (no Rosetta), `npm ci`,
+  `npm run check`, `npm run build`, `cargo fetch --locked`, the rfd
+  guard, `cargo fmt --check` and `cargo clippy` (default and
+  test-profile build) passed, so the macOS code compiles cleanly on
+  both; in `npm run test:headless` Vitest passed 241/241 and
+  `cargo test` **499 passed, 1 failed**, 28 ignored. The Keychain round
+  trip, the next step, did not run. `macOS package` was skipped
+  (`package` is false on a push).
+
+**The failure:** `test_profile::tests::a_profile_overlapping_a_normal_directory_is_refused`,
+`assertion failed: check_separate(&p, &[spelled]).is_err()`
+(`src-tauri/src/test_profile.rs:487`), the same on both Macs. **Cause:
+`resolve` leaves a path ending in `..` unresolved, and macOS's temporary
+folders lie behind a symbolic link.** The test spells a normal directory
+that does not exist yet as `<base>/x/../not-yet` and expects a profile
+at `<base>` to be refused. `resolve` looks for the longest prefix that
+exists; at `<base>/x/..` (there is no `x`) that fails, and
+`Path::file_name` is `None` for a path ending in `..`, so it returns the
+whole path unresolved, while the profile's root is fully resolved.
+`TempDir` on macOS is under `/var/folders/…` and `/var` links to
+`/private/var`, so the two paths share no prefix and `check_separate`
+accepts the profile. On Linux `/tmp` is no link, so the unresolved path
+still starts with the root and the test passes by accident; on Windows
+the path is normalised (`x\..` removed) before the file system is
+asked. Reproduced on WSL2 at `d9cf561`: with `TMPDIR` reached through a
+symbolic link the test fails with the same assertion; with the normal
+`TMPDIR` it passes. The test dates from `124364c` (ADR-027, 2026-11-14)
+and macOS never ran it before, so this is no regression of the pushed
+commits. Outside the test, `check_separate` (test-profile builds only)
+is given the app's own directories from Tauri's path resolver, which
+contain no `..`. Not fixed here ([limitations.md](limitations.md#tests)).
+
+Not shown by these runs: `release.yml`, `release-build.yml` and the
+desktop workflows (manual, not started), the macOS packages, signing and
+notarization, the Keychain round trip, any installation.
+
 ### Linux CI jobs on `ubuntu-22.04` (2026-11-15)
 
 On `main` after `7250db8`, in the commit that adds this entry, before the
@@ -168,7 +237,9 @@ instead of 3.12 or 3.14. Neither has run: sotyware was never built on
 Ubuntu 22.04 (the `linux` release job never ran), and the Python test
 helpers and the recovery script were checked for 3.10 only statically
 (the 3.10 grammar; no 3.11-or-later API found). The first hosted run
-will show it. GitHub removes `ubuntu-22.04` on 2027-04-17, with
+will show it; it passed
+([hosted runs at `d9cf561`](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)).
+GitHub removes `ubuntu-22.04` on 2027-04-17, with
 brownouts from 2027-03-23
 ([limitations.md](limitations.md#updates-adr-033-adr-036-adr-039)).
 
