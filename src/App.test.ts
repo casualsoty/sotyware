@@ -418,6 +418,34 @@ describe("shell navigation", () => {
     expect(localStorage.getItem("sotyware.theme.v1")).toBeNull();
   });
 
+  // Narrow windows: the sidebar is an overlay; every choice in it closes it
+  // (review of 2e3972e: "Add storage account" left it open).
+  it("closes the sidebar overlay after a link and after Add storage account", async () => {
+    const root = await render();
+    const shell = root.querySelector<HTMLElement>(".shell")!;
+    const toggle = (): HTMLButtonElement => root.querySelector<HTMLButtonElement>('button[aria-label$="navigation"]')!;
+    const open = async (): Promise<void> => {
+      toggle().click();
+      await settle();
+      expect(shell.classList.contains("sidebar-open")).toBe(true);
+      expect(toggle().getAttribute("aria-expanded")).toBe("true");
+      expect(root.querySelector(".scrim")).not.toBeNull();
+    };
+    await open();
+    [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Backups")!.click();
+    await settle();
+    expect(shell.classList.contains("sidebar-open")).toBe(false);
+    expect(root.querySelector("main h1")?.textContent).toBe("Backups");
+    await open();
+    [...root.querySelectorAll<HTMLButtonElement>("aside button")].find((b) => b.textContent?.trim() === "Add storage account")!.click();
+    await settle();
+    await settle();
+    expect(shell.classList.contains("sidebar-open")).toBe(false);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector(".scrim")).toBeNull();
+    expect(root.querySelector("main h1")?.textContent).toBe("Cloud Storage");
+  });
+
   it("walks the Settings tabs with the arrow keys", async () => {
     const root = await render();
     [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Settings")!.click();
