@@ -3893,6 +3893,31 @@ provider contacted.
   again after the last build; free space afterwards 15.9 GB (16.2 GB
   before the run).
 
+## Hosted CI at `0d3c77f` failed in the rfd guard's self-test (2026-11-15)
+
+The maintainer pushed `main` at `0d3c77f`. `isolation-guard.yml` (run
+43697759759) passed; `ci.yml` (run 43697759743) failed on Ubuntu and
+Windows at "test the rfd patch guard" (4 of 10 failed, every later step
+skipped); the account service job passed. Cause: the self-test copies
+`src-tauri` alone into a temporary folder, where the path dev-dependency
+`sotyware-server = { path = "../server" }` (added in `33263d4`) cannot
+resolve (`no matching package named sotyware-server`). The mission never
+ran `npm run test:rfd-patch-guard` after adding it. Fix: the copy keeps the
+repository's layout and includes each `../<dir>` path dependency's manifest
+and sources.
+
+Verified on WSL2, every step of `ci.yml`'s Linux job in order: rfd guard
+and its self-test **10/10**, release-binary guard and self-test, icon and
+installer-icon tests, update manifest tool, isolation guard self-test,
+profile helpers, `cargo fmt --check`, clippy (default and test-profile),
+`npm run test:headless` (Vitest 213, Rust 494 passed, 28 ignored), the
+recorder build `cargo test` (522 passed, 28 ignored), the standalone
+recovery script, and the service job (fmt, clippy, 5 + 20 tests). Native
+Windows 11: the PowerShell test-profile self-test passed 19 of 20; the
+failing check fingerprints the user's real app folder twice and a
+sotyware process was running on that machine (on a runner the folder is
+absent). Hosted CI not yet rerun.
+
 ## See also
 
 - [limitations.md](limitations.md): known limitations.

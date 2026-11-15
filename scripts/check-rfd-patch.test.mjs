@@ -7,7 +7,7 @@
 // rfd crates must be cached or reachable (no other network access).
 
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -47,14 +47,25 @@ describe("check-rfd-patch", () => {
   let root;
   let n = 0;
 
-  /** A fresh copy of what cargo metadata needs from src-tauri (no target/, no gen/). */
+  /** A fresh copy of what cargo metadata needs from src-tauri (no target/, no gen/),
+   * in the repository's layout: `<case>/src-tauri`, beside a copy of each
+   * `../<dir>` path dependency (its manifest and sources, e.g. the account
+   * service `server/`, a dev-dependency), so those still resolve. */
   function copy() {
-    const dir = join(root, `case-${++n}`);
+    const caseDir = join(root, `case-${++n}`);
+    const dir = join(caseDir, "src-tauri");
     for (const p of ["Cargo.toml", "Cargo.lock", "build.rs", "src", "patches"]) {
       cpSync(join(srcTauri, p), join(dir, p), {
         recursive: true,
         filter: (src) => !/[\\/]patches[\\/]rfd[\\/]target([\\/]|$)/.test(src),
       });
+    }
+    const manifest = readFileSync(join(srcTauri, "Cargo.toml"), "utf8");
+    for (const [, sibling] of manifest.matchAll(/path\s*=\s*"\.\.\/([^"/]+)"/g)) {
+      for (const p of ["Cargo.toml", "src", "build.rs"]) {
+        const from = join(srcTauri, "..", sibling, p);
+        if (existsSync(from)) cpSync(from, join(caseDir, sibling, p), { recursive: true });
+      }
     }
     return dir;
   }
