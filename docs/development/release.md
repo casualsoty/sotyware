@@ -10,7 +10,7 @@ it with a date.
 
 | Platform | Code and builds | Release support |
 | --- | --- | --- |
-| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**, once the installers have passed the [installation test](#installation-test-plan-disposable-windows-11) |
+| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**; `v0.1.0` (2026-11-15) was published before its installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do |
 | Windows 10 | the same binary; never run | **not validated, not claimed.** Do not list it as supported |
 | Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop.** Releases carry the AppImage, deb and rpm for testing, labelled as such in the release notes |
 | macOS (Apple Silicon, Intel) | builds and tests only on GitHub's hosted macOS runners ([macos.md](macos.md)); never run on a Mac a person used | **not validated.** Releases carry Mac packages only when they are signed and notarized; none can be until a Developer ID certificate exists |
@@ -159,9 +159,10 @@ in the `release_repository!` macro in `src-tauri/src/updates.rs`, compiled
 into every build; `release.yml` refuses to publish anywhere else.
 Publishing needs no token besides the workflow's own `GITHUB_TOKEN`.
 
-Before the first release, all of the following must be true; **all five
-are** (read back 2026-11-15, after the final dry run at `f846bdd`; the
-installation test below is still to do):
+Before the first release, all of the following had to be true, and all
+five were; **`v0.1.0` was published on 2026-11-15** (run 43749158657,
+[status](../status/status.md#first-release-v010-2026-11-15)), without the
+installation test below, which is still to do:
 
 1. **The repository settings are made** ([below](#repository-settings)).
 2. **The `release` environment exists**, admits only `v*` tags and holds
@@ -225,8 +226,8 @@ day ([status](../status/status.md#release-settings-complete-and-the-final-dry-ru
 - **General → Releases → Enable release immutability** (recommended): a
   published release's files and tag can no longer change. `release.yml`
   uploads every file while the release is a draft and afterwards changes
-  only its pre-release and latest flags, which GitHub documents as still
-  editable on an immutable release (not yet tried here). The cost: a
+  only its pre-release and latest flags, which stay editable on an
+  immutable release (as `v0.1.0` showed on 2026-11-15). The cost: a
   release that fails after it became a pre-release cannot be repaired, only
   deleted, and its version is used up.
 - **Environments:** `release` and `macos-signing` ([Secrets](#secrets)).

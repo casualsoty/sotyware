@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -91,7 +91,7 @@ verified byte for byte; the object was deleted again by its version id
 | Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
 | Desktop shell and design system (ADR-035): sidebar (sections, storage accounts opening their bucket, Add storage account, Account, Settings), Overview with storage/backups/version summaries, Settings (Appearance System/Light/Dark saved per device and applied to the window, Features, About & updates), one update notification, keyboard shortcuts, focus to the page title on navigation; every page and panel restyled on design tokens and a shared vocabulary, narrow-window overlay sidebar | `src/App.svelte`, `src/Sidebar.svelte`, `src/Overview.svelte`, `src/Settings.svelte`, `src/styles/`, `src/theme.ts`, `src/Icon.svelte`, `src/updatesModel.svelte.ts` ([frontend.md](../architecture/frontend.md)) |
 | macOS support (ADR-037): login keychain credentials with OSStatus classification, menu bar (Quit ⌘Q through `AppControl::quit`, Edit, Window), Dock click shows the dashboard, `bundle.macOS` (10.15, hardened runtime, .dmg), `macos.yml` (Apple Silicon and Intel runners, each checked to be native; tests, Keychain round trip in a throwaway keychain; since ADR-039 on every pull request to and push to `main`, and signing and notarization only in the `macos-signing` environment when secrets exist); **never compiled or run here, never run on GitHub** | `src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`, `lib.rs`, `tauri.conf.json`, `.github/workflows/macos.yml` ([macos.md](../development/macos.md)) |
-| Updates from GitHub Releases of this public repository, `casualsoty/sotyware` (ADR-036, ADR-039; ADR-038's separate release repository was dropped): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (dry run with a throwaway key; real release: environment `release`, `GITHUB_TOKEN`, draft → pre-release → verified → latest), `update-manifest.mjs` and `release-assemble.sh` for every platform; **never released**; the release key exists (public half in `update-key.pub`, key id `3A6E8F2D58D68E0D`; private half and password in the `release` environment; [key](#release-key-committed-2026-11-15)), `macos-signing` exists without a secret, every other release setting exists (the variable, the `v*` tag rulesets, the Actions settings, release immutability), and dry runs passed on GitHub at `8125739` (run 43735919504; [dry runs](#release-dry-runs-2026-11-15)) and, with the key and every setting, at `f846bdd` (run 43746112094, no warning; [final dry run](#release-settings-complete-and-the-final-dry-run-2026-11-15)); the publish job never ran | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `scripts/release-assemble.sh`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
+| Updates from GitHub Releases of this public repository, `casualsoty/sotyware` (ADR-036, ADR-039; ADR-038's separate release repository was dropped): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (dry run with a throwaway key; real release: environment `release`, `GITHUB_TOKEN`, draft → pre-release → verified → latest), `update-manifest.mjs` and `release-assemble.sh` for every platform; **`v0.1.0` published** (2026-11-15, run 43749158657: GitHub's latest release, immutable, verified anonymously with the release key; [first release](#first-release-v010-2026-11-15)); **no update ever installed** (no later version), and the installers were published without the installation test. The release key: public half in `update-key.pub`, key id `3A6E8F2D58D68E0D`, private half and password in the `release` environment ([key](#release-key-committed-2026-11-15)); every other release setting exists (the variable, the `v*` tag rulesets, the Actions settings, release immutability); dry runs passed at `8125739` and `f846bdd` ([final dry run](#release-settings-complete-and-the-final-dry-run-2026-11-15)) | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `scripts/release-assemble.sh`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -137,6 +137,57 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### First release: v0.1.0 (2026-11-15)
+
+**sotyware 0.1.0 is published** on GitHub Releases of this repository:
+<https://github.com/casualsoty/sotyware/releases/tag/v0.1.0>.
+
+- The annotated tag `v0.1.0` on `50f8251` (the head of `main`; its code
+  is `f846bdd`'s), its message the release notes, was pushed at 18:52
+  UTC; GitHub reported the `release tags: who` restriction on creating it
+  bypassed by the Repository admin role, as designed.
+- Run 43749158657: `prepare` passed as a real release with no
+  annotation. Builds: `ci` (Ubuntu 22.04 5 min 17 s, Windows 6 min 13 s,
+  account service 21 s), Windows installers 8 min, Linux packages 7 min
+  1 s, macOS tests 5 min 8 s (Apple Silicon) and 7 min 28 s (Intel), macOS
+  packages 8 min 44 s and 19 min 42 s, unsigned. Then `publish` waited
+  for the maintainer's approval.
+- **Attempt 1 of `publish` failed safely** (18 s) at its first use of the
+  key, the probe signature: `incorrect updater private key password:
+  Wrong password for that key`. The password secret did not open the
+  stored key. Nothing was signed or uploaded, the deletion step found no
+  draft, and no release existed. The maintainer re-set
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (19:17 UTC; the key secret
+  unchanged).
+- **Attempt 2** (only `publish`, approved again) passed every step in 28
+  s: the tag and key checks, signing with the release key and verifying,
+  the draft and its byte-for-byte check, the pre-release, the anonymous
+  downloads, the promotion with GitHub's `/releases/latest` read-back,
+  and the endpoint check. Published at 19:17:52 UTC by
+  `github-actions[bot]`, without an annotation.
+
+The release is a full release (neither draft nor pre-release), GitHub's
+latest and immutable, with 13 assets: the NSIS setup program and the MSI,
+the AppImage, deb and rpm, each with its minisign signature, and
+`latest.json`, `latest.json.sig` and `SHA256SUMS`; no macOS packages (not
+signed and notarized). Its notes are the tag's message and the
+workflow's paragraph on platforms and signatures.
+
+Checked on WSL2 without a token: `latest.json` and its `.sig` through
+`/releases/latest/download/` verify with the committed key, name exactly
+the five platforms under `…/releases/download/v0.1.0/` and equal the
+release's own assets; all 13 assets downloaded; `SHA256SUMS` matches the
+12 files; every package verified (its signature by the release key, the
+signed version 0.1.0, its SHA-256 in the manifest); the notes in
+`latest.json`, which the app shows, are the tag's message.
+
+**Not done:** the installation test of
+[release.md](../development/release.md#installation-test-plan-disposable-windows-11),
+neither before nor after publishing, although the support scope names it
+as the condition for Windows 11; installing or updating any
+installation (no later version exists); Authenticode and Apple signing;
+any platform claimed besides Windows 11.
 
 ### Release settings complete, and the final dry run (2026-11-15)
 
@@ -192,7 +243,9 @@ the installation test on a disposable Windows 11, the publish job (the
 release key's probe and signature, the draft, the pre-release, the
 anonymous downloads, the promotion and its read-backs, an immutable
 release switched from pre-release to latest), signed and notarized macOS
-builds, Authenticode signing.
+builds, Authenticode signing. The publish job then ran for the
+[first release](#first-release-v010-2026-11-15), an immutable release
+switched from pre-release to latest included.
 
 ### Two flaky tests after the release key push (2026-11-15)
 

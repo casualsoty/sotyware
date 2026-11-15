@@ -6,11 +6,12 @@ source and restart:
 [ADR-036](decisions.md#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033),
 where releases are published and who can sign:
 [ADR-039](decisions.md#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments)).
-**Not usable yet**: no release has been published. `src-tauri/update-key.pub`
-holds the release key's public half since 2026-11-15, so builds made from
-then on check GitHub's latest release and, until the first one is
-published, report that `casualsoty/sotyware` has no published release with
-update information yet (HTTP 404). What was tested, and
+**The first release, `v0.1.0`, was published on 2026-11-15**
+([status](../status/status.md#first-release-v010-2026-11-15)), signed with
+the release key whose public half `src-tauri/update-key.pub` holds since
+that day; builds made from then on check GitHub's latest release, which
+is that one. **No update was ever installed:** that needs a later
+version. What was tested, and
 where: [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15).
 How to publish: [release.md](../development/release.md#publishing-a-release).
 

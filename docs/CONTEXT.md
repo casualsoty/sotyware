@@ -9,10 +9,12 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.0, not yet released. Code and builds target
+TypeScript. Version 0.1.0, **released on 2026-11-15** as `v0.1.0`
+([status](status/status.md#first-release-v010-2026-11-15)). Code and builds target
 Windows, Linux and macOS (Apple Silicon and Intel; macOS built and tested
 only on GitHub's runners, ADR-037); the **first release targets Windows 11
-only**, subject to installer validation; Windows 10 is not validated, Linux
+only**, and its installers have not yet been through the installation
+test; Windows 10 is not validated, Linux
 has not run on a real desktop and macOS not on a Mac a person used, so none
 is claimed as supported
 ([release.md](development/release.md#support-scope)). Release binaries are
@@ -49,22 +51,25 @@ the `release` environment (tags `v*`) and reaches only the publish job's
 signing step, dry runs sign with a throwaway key, the Apple credentials
 live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
-file can never hold a fixture's or a private key. **Not usable yet:** no
-release published. Every release setting exists since 2026-11-15: the
+file can never hold a fixture's or a private key. **`v0.1.0` is
+published** (2026-11-15, run 43749158657: `publish` failed once on the
+password secret, then passed; GitHub's latest release, immutable,
+verified anonymously with the release key;
+[first release](status/status.md#first-release-v010-2026-11-15)); no
+update was ever installed. Every release setting exists since 2026-11-15: the
 release key (public half in `src-tauri/update-key.pub`, key id
 `3A6E8F2D58D68E0D`; private half and password in the `release`
 environment, created by hand that day like `macos-signing`;
 [key](status/status.md#release-key-committed-2026-11-15)), the
 `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` variable, the `v*` tag and `main`
-rulesets, the Actions settings and release immutability. `release.yml`
-ran only as a dry run: it failed at `ecf4339` on one test on the Intel
-Mac, passed at `8125739` with `rehearse`, and passed again at `f846bdd`
-with the key and every setting and no warning (run 43746112094; nothing
-published;
-[final dry run](status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15),
+rulesets, the Actions settings and release immutability. Before the
+release, `release.yml`'s dry runs failed at `ecf4339` on one test on the
+Intel Mac, passed at `8125739` with `rehearse`, and passed again at
+`f846bdd` with the key and every setting and no warning
+([final dry run](status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15),
 [readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
-Still to do: the installation test on a disposable Windows 11, then the
-`v0.1.0` tag.
+Still to do: the installation test on a disposable Windows 11, with the
+published installers.
 On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the
@@ -292,8 +297,7 @@ update server exist), all tested headless against in-process servers only.
   checks manifests in `release.yml`'s publish job, which publishes in this
   public repository (ADR-039). `src-tauri/update-key.pub` holds the
   release key's public half since 2026-11-15, so builds check GitHub's
-  latest release, which does not exist yet (HTTP 404 until the first
-  release). Tested with test keys, a local server, the
+  latest release, `v0.1.0` since that day. Tested with test keys, a local server, the
   plugin on Tauri's mock runtime and a fixture signed by the real Tauri
   CLI; **no update was ever installed**.
 

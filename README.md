@@ -59,7 +59,8 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   (`server/`) is not deployed and release builds have none configured.
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
-  backup. **Not usable yet:** no release has been published.
+  backup. The first release, `v0.1.0`, was published on 2026-11-15; no
+  update has been installed yet (that needs a later version).
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger

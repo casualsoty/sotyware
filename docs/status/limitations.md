@@ -816,12 +816,17 @@ server only; no real provider was asked.
 
 ## Updates (ADR-033, ADR-036, ADR-039)
 
-- **Not usable yet:** no release has been published. The release key
-  exists since 2026-11-15 (its public half in `src-tauri/update-key.pub`,
-  the private half and its password in the `release` environment), so
-  builds made from then on check GitHub's latest release and report that
-  none with update information exists yet (HTTP 404)
-  ([release.md](../development/release.md#github-releases)).
+- **Only one release exists:** `v0.1.0`, published on 2026-11-15 with the
+  release key (its public half in `src-tauri/update-key.pub`, the private
+  half and its password in the `release` environment). An installation
+  finds it up to date; no update was ever offered or installed
+  ([status](status.md#first-release-v010-2026-11-15)).
+- **`v0.1.0` was published before the installation test** that the
+  support scope names as the condition for Windows 11
+  ([release.md](../development/release.md#support-scope)): installing,
+  upgrading and uninstalling its installers on a real Windows 11 were never
+  tried, and as an immutable release it cannot be changed: a problem found
+  needs a new version.
 - **Development and desktop-test builds check GitHub too:** a debug or
   test-profile build without `SOTYWARE_UPDATE_ENDPOINT` and
   `SOTYWARE_UPDATE_PUBKEY` uses the compiled-in key like a release build,
@@ -867,9 +872,8 @@ server only; no real provider was asked.
   promotion** leaves that pre-release visible on the releases page (not
   offered to installations); release immutability is on (since
   2026-11-15), so it cannot be repaired, only deleted, and its version is
-  used up. GitHub documents
-  that an immutable release can still be switched between pre-release and
-  latest; not yet tried.
+  used up. An immutable pre-release can still be made the latest release
+  (`v0.1.0` was, on 2026-11-15).
 - **A failure after the promotion request** (the `/releases/latest`
   read-back or the endpoint check) leaves a full release that GitHub was
   asked to make the latest and that installations may already be
@@ -897,11 +901,9 @@ server only; no real provider was asked.
   before the promotion, and `latest.json` with its `.sig` after it.
   Addressing the release by its id from its creation on would close this
   ([status](status.md#release-rehearsal-readiness-2026-11-15)).
-- **No update was ever installed, and `release.yml` ran only as a dry
-  run** (passed at `8125739` and, with the release key and every setting,
-  at `f846bdd`, 2026-11-15; its publish job never ran, so nothing was ever
-  uploaded to, published on or read back from GitHub Releases;
-  [status](status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)): download,
+- **No update was ever installed** (`release.yml` published `v0.1.0`,
+  the only release, on 2026-11-15;
+  [status](status.md#first-release-v010-2026-11-15)): download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
   release commands were rehearsed locally with the real Tauri CLI and a

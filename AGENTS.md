@@ -17,8 +17,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   Silicon and Intel, ADR-037), and every change must keep all three working
   ([cross-platform.md](docs/development/cross-platform.md)); macOS is built
   and tested only on GitHub's hosted runners ([macos.md](docs/development/macos.md)).
-  **Release support** is narrower: the first release targets Windows 11 only,
-  subject to installer validation; Windows 10 is not validated, Linux has
+  **Release support** is narrower: the first release, `v0.1.0` (published
+  2026-11-15), targets Windows 11 only, and its installers have not yet been
+  through the installation test; Windows 10 is not validated, Linux has
   never run on a real desktop and macOS never on a Mac a person used, so
   none of them may be described as supported
   ([release.md](docs/development/release.md#support-scope)).
@@ -42,7 +43,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
   signing key only in the protected `release` environment; the release key
   exists since 2026-11-15, its public half in `src-tauri/update-key.pub`,
-  but no release has been published, so update checks find none yet), in a
+  and `v0.1.0` was published with it that day; no update was ever
+  installed), in a
   desktop shell with a sidebar, Settings and one design system (ADR-035). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
@@ -381,7 +383,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state and the update state, no settings, autostart,
-third-party plugin system, feature-management UI, a deployed account service, production email delivery, a published release, XEmbed
+third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
 sotyware's own, content search, transfer queue UI or download history,
