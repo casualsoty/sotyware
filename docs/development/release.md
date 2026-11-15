@@ -69,7 +69,10 @@ newer; GitHub deprecated that runner on 2026-09-17 and removes it on
 2027-04-17 (brownouts from 2027-03-23). Before then the Linux job must move
 to `ubuntu-24.04`, which raises the floor to glibc 2.39 (Ubuntu 24.04,
 Debian 13, Fedora 40 or newer); that changes which Linux systems a
-release can run on and is the maintainer's decision. Building the MSI makes WiX
+release can run on and is the maintainer's decision. `ci.yml`'s Linux jobs
+(and `isolation-guard.yml`) run on the same runner, so every push checks
+the code against the libraries the packages are built with; move them
+together. Building the MSI makes WiX
 validate it through Windows Installer, which writes "Windows Installer
 installed the product" events (MsiInstaller 1033/11707) to the Application
 log **without installing anything**; do not mistake those for an

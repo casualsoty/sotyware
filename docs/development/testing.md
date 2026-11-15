@@ -2404,7 +2404,12 @@ GitHub's standard hosted runners cost nothing
 ([runners and cost](#runners-and-cost)). The headless workflows (`ci.yml` on
 Linux and Windows, `macos.yml` on Apple Silicon and Intel) run on every
 pull request to `main` and every push to `main`; the desktop tests and the
-release build run only when started by hand. Only `release.yml`'s publish
+release build run only when started by hand. The automatic Linux jobs
+(`ci.yml`'s and `isolation-guard.yml`'s) run on `ubuntu-22.04`, the runner
+`release.yml` builds the Linux packages on (glibc 2.35), not on
+`ubuntu-latest`, which GitHub is moving to Ubuntu 26.04;
+`desktop-virtual.yml` and `release.yml`'s `prepare`, `rehearse` and
+`publish` jobs stay on `ubuntu-latest`. Only `release.yml`'s publish
 job (a real release, on a tag) can read the update signing key, from the
 `release` environment, and publish a release, in this repository with its
 own `GITHUB_TOKEN` (ADR-039); a dry run signs with a throwaway key.
@@ -2417,9 +2422,10 @@ not on `main` yet: opening a pull request to `main` runs `ci.yml` and
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the update manifest tool's tests (`npm run test:update-manifest`), the release assembly script's tests (`npm run test:release-assemble`, Linux only), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
+| `ci.yml`, job `headless (ubuntu-22.04)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-22.04` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the update manifest tool's tests (`npm run test:update-manifest`), the release assembly script's tests (`npm run test:release-assemble`, Linux only), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands except the recorder-build `cargo test`, native Windows (MSVC Rust, no WSL), the PowerShell test-profile helpers' self-test instead of the Python one; does not start sotyware | A. headless |
-| `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
+| `ci.yml`, job `account service (ubuntu-22.04)` | same | `ubuntu-22.04` | in `server/` (ADR-032, its own lock file): `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` | A. headless |
+| `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-22.04` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Signs nothing; called by `release.yml` with `upload: true` it uploads the two checked installers as the `windows-installers` artifact, which `release.yml`'s publish job signs (ADR-036). Nothing published | release artifacts (no install) |
@@ -2571,7 +2577,8 @@ figures change; re-check them before relying on them.
 - **Cost:** "Use of the standard GitHub-hosted runners is free and
   unlimited on public repositories." Every runner these workflows use is a
   standard one: `ubuntu-latest`, `ubuntu-22.04` (deprecated, removed
-  2027-04-17; [release.md](release.md#building-a-release)), `windows-latest`,
+  2027-04-17; the Linux packages and the automatic Linux checks run there,
+  [release.md](release.md#building-a-release)), `windows-latest`,
   `macos-15` (arm64, M1, 3 CPUs, 7 GB) and `macos-15-intel` (x64, 4 CPUs,
   14 GB). Larger runners are always billed; none is used. Until
   2026-11-15 the repository was private on GitHub Free ($12 of compute a

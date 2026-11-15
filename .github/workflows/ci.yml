@@ -57,7 +57,12 @@ jobs:
       # Windows result, or the other way round.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Linux runs on ubuntu-22.04, the runner release.yml builds the Linux
+        # packages on (glibc 2.35, docs/development/release.md#building-a-release),
+        # so these checks compile against the libraries a release links to;
+        # ubuntu-latest is moving to Ubuntu 26.04. Move both together: GitHub
+        # removes ubuntu-22.04 on 2027-04-17, with brownouts from 2027-03-23.
+        os: [ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || 30 }}
     steps:
@@ -92,6 +97,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
+          # rust-cache keys on the OS name ("Linux"), not its release: without
+          # this a Linux run could restore dependencies (build scripts, proc
+          # macros, C libraries) compiled on another Ubuntu image.
+          key: ${{ runner.os == 'Linux' && matrix.os || '' }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: npm ci
@@ -188,10 +197,11 @@ jobs:
         run: cargo test --locked --lib backup::tests::the_standalone_recovery_script -- --ignored
 
   # The account service (ADR-032): its own crate and lock file, Linux only
-  # (it is deployed on a server, not shipped with the desktop app).
+  # (it is deployed on a server, not shipped with the desktop app). On the
+  # headless job's Ubuntu, not ubuntu-latest, which is moving to 26.04.
   server:
-    name: account service (ubuntu-latest)
-    runs-on: ubuntu-latest
+    name: account service (ubuntu-22.04)
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -205,6 +215,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: server
+          # The runner image, as in the headless job's cache.
+          key: ubuntu-22.04
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - working-directory: server
         run: cargo fmt --check

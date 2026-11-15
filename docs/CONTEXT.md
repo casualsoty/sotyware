@@ -68,7 +68,10 @@ deletes a cancelled run's draft too, tightened the environment checks,
 and fixed `ci.yml`'s concurrency group (a release dry run on `main` and a
 push to `main` cancelled each other) and `update-manifest.mjs` exiting 0
 unchecked when started through a symlink; the publish steps ran only
-against a local stand-in for GitHub.
+against a local stand-in for GitHub. The automatic Linux CI jobs then
+moved from `ubuntu-latest` (becoming Ubuntu 26.04) to `ubuntu-22.04`,
+where the Linux packages are built (glibc 2.35); nothing has run there yet
+([status](status/status.md#linux-ci-jobs-on-ubuntu-2204-2026-11-15)).
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches

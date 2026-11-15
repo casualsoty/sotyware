@@ -138,6 +138,52 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Linux CI jobs on `ubuntu-22.04` (2026-11-15)
+
+On `main` after `7250db8`, in the commit that adds this entry, before the
+first push of this work. The [audit](#release-workflow-audit-before-the-first-push-2026-11-15)
+found `ubuntu-latest` moving from Ubuntu 24.04 to 26.04. The automatic
+Linux jobs now run on `ubuntu-22.04`, the runner `release.yml` builds the
+Linux packages on (glibc 2.35), so every push compiles against the
+libraries a release links to:
+
+- `ci.yml`: the Linux entry of `headless` (now `headless (ubuntu-22.04)`)
+  and `server` (now `account service (ubuntu-22.04)`). Their Cargo caches
+  are keyed by the image: rust-cache keys on the OS name ("Linux") only,
+  so a run could otherwise restore dependencies compiled on another
+  Ubuntu. The Windows cache key is unchanged.
+- `isolation-guard.yml`: `guard`, which runs the same Python helpers'
+  tests as `ci.yml`'s Linux job.
+
+Not changed: `desktop-virtual.yml` (manual; its drivers last passed on
+GitHub on the Ubuntu 26.04 image and never ran on 22.04), `release.yml`'s
+`prepare`, `rehearse` and `publish` (they build and test nothing; their
+`gh`, `jq` and Tauri CLI steps were rehearsed locally with newer tools
+than Ubuntu 22.04 has; `linux` was already on `ubuntu-22.04`), and the
+Windows and macOS jobs.
+
+What this changes, and what is not known yet: these jobs now build
+against Ubuntu 22.04's WebKitGTK, GTK and GLib and run Python 3.10
+instead of 3.12 or 3.14. Neither has run: sotyware was never built on
+Ubuntu 22.04 (the `linux` release job never ran), and the Python test
+helpers and the recovery script were checked for 3.10 only statically
+(the 3.10 grammar; no 3.11-or-later API found). The first hosted run
+will show it. GitHub removes `ubuntu-22.04` on 2027-04-17, with
+brownouts from 2027-03-23
+([limitations.md](limitations.md#updates-adr-033-adr-036-adr-039)).
+
+What ran, on WSL2 (Ubuntu 24.04, Node 24.22.0, Rust 1.99.1, Python
+3.12.3), on this tree: actionlint 1.7.12 with shellcheck 0.11.0 over
+every workflow (0 findings); `npm run check`, `npm run build`,
+`cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`;
+`npm run test:headless` (Vitest 241, Rust 510 passed, 28 ignored);
+`test:update-manifest` 21, `test:release-assemble` 5,
+`test:profile-helpers` 10, the desktop isolation guard and its tests (9),
+the rfd (10), release-binary (39), icon (9) and installer icon (28)
+guards' tests, the standalone recovery script test, and
+`isolation-guard.yml`'s workflow check. Not run: any GitHub workflow,
+anything on Ubuntu 22.04 or with Python 3.10.
+
 ### Release workflow audit before the first push (2026-11-15)
 
 On branch `fix/release-workflow-audit`, started from `29ec56a` (where

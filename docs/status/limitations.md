@@ -831,6 +831,9 @@ server only; no real provider was asked.
   on 2027-04-17 (brownouts from 2027-03-23); from then on releases fail
   until `release.yml` moves to `ubuntu-24.04`, which needs glibc 2.39
   instead of 2.35 ([release.md](../development/release.md#building-a-release)).
+  `ci.yml`'s Linux jobs and `isolation-guard.yml` run there too (since
+  2026-11-15), so they fail in the brownouts as well until they move with
+  it.
 - **A dry run cannot check the release key:** it signs with a throwaway
   key; only a real release's publish job (or the local check in
   [release.md](../development/release.md#update-signing-key)) proves that
