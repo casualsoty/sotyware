@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -138,6 +138,45 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `ec42d41`: macOS passes (2026-11-15)
+
+`main` was pushed as a fast-forward from `d9cf561` to `ec42d41`
+(`e97c0c7`, which records the runs at `d9cf561`, and the
+[path check fix](#test-profile-path-check-behind-a-symbolic-link-2026-11-15);
+no tag, no release). The push started `ci.yml` and `macos.yml` (it
+changed no `isolation-guard.yml` path), both for `ec42d41`, and **both
+passed**. Read back afterwards: still no environment.
+
+- **`ci.yml`** run 43722852374: `headless (ubuntu-22.04)` (image
+  20261111.360.2), 4 min 56 s with the Cargo cache saved at `d9cf561`
+  (full match): guard self-tests rfd 10/10, release binary 39/39,
+  isolation 9/9; icons 9/9, installer icons 28/28, update manifest
+  21/21, release assembly 5/5; Python helpers 10/10; Vitest 241/241;
+  `cargo test` 511 passed, 28 ignored; recorder build 539 passed, 28
+  ignored; the recovery script test. `headless (windows-latest)`
+  (windows-2025-vs2026 20261103.298.1), 6 min 30 s (cache full match):
+  the same guards except the Linux-only one, PowerShell helpers 20/20,
+  Vitest 241/241, `cargo test` 496 passed, 28 ignored (the new test is
+  Unix only). `account service (ubuntu-22.04)`, 25 s: 25 tests.
+- **`macos.yml`** run 43722852362: **passed on both architectures.**
+  `macOS tests (aarch64)` (macos-15-arm64 20261104.0514.1), 10 min 52 s,
+  and `macOS tests (x86_64)` (`macos-15-intel`, image 20260824.0482.1),
+  19 min 19 s, both without a cache (the failed jobs at `d9cf561` saved
+  none): the native machine checks, `npm ci`, check, build,
+  `cargo fetch --locked`, the rfd guard, fmt and clippy (default and
+  test-profile build); Vitest 241/241; `cargo test` **501 passed, 0
+  failed**, 28 ignored, with `a_profile_overlapping_a_normal_directory_is_refused`
+  and the new `a_missing_folder_spelled_with_dot_dot_behind_a_link_is_resolved`
+  ok; then the **Keychain round trip**
+  (`cloud::keyring::os_backend::round_trip`, `--ignored`, in a keychain
+  made for the run and set as the default) passed: the first run of
+  sotyware's code against a real macOS keychain. `macOS package` was
+  skipped (`package` is false on a push).
+
+Not shown: the macOS packages, signing and notarization (no Developer ID
+certificate), `release.yml`, `release-build.yml`, the desktop workflows,
+any Mac a person used.
+
 ### Test-profile path check behind a symbolic link (2026-11-15)
 
 The fix for the one test `macos.yml` failed at `d9cf561`
@@ -172,6 +211,8 @@ no other test depends on that); the 12 `test_profile` tests both ways.
 Not run: macOS (the next `macos.yml` run will show it), Windows (the new
 test is Unix only, like the other link tests; Windows normalises `..`
 itself), any desktop test (the paths a launch uses are unchanged).
+Pushed with `e97c0c7` (`d9cf561..ec42d41`); `macos.yml` then passed on
+both Macs ([hosted runs at `ec42d41`](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)).
 
 ### Hosted runs at `d9cf561`: the redesign, macOS and release work pushed (2026-11-15)
 

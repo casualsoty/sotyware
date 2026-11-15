@@ -878,8 +878,9 @@ server only; no real provider was asked.
   tested only on GitHub's hosted runners: `macos.yml`, on every pull
   request to and push to `main`, first ran at `d9cf561` (2026-11-15) and
   compiled cleanly on both architectures, with one unit test failing (a
-  test-profile path check, fixed since and not yet rerun there:
-  [status](status.md#test-profile-path-check-behind-a-symbolic-link-2026-11-15));
+  test-profile path check); at `ec42d41` everything passed there, the
+  Keychain round trip included
+  ([status](status.md#hosted-runs-at-ec42d41-macos-passes-2026-11-15));
   the macOS-only lines (`apple-native-keyring-store`
   calls, the menu bar wiring, `RunEvent::Reopen`) were never compiled on
   the development machine, which has no Mac and no cross toolchain.

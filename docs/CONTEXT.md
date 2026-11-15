@@ -80,9 +80,10 @@ where the Linux packages are built (glibc 2.35)
 build 538; Windows 496; Vitest 241 on each), and so did
 `isolation-guard.yml`; `macos.yml`'s first run compiled cleanly on Apple
 Silicon and Intel but failed one test on both: `test_profile`'s path
-check missed a `..` spelling behind macOS's `/var` symbolic link (fixed
-since, not yet rerun on GitHub:
-[status](status/status.md#test-profile-path-check-behind-a-symbolic-link-2026-11-15)).
+check missed a `..` spelling behind macOS's `/var` symbolic link. Fixed
+in `ec42d41`, where `ci.yml` (Ubuntu 22.04, Windows) and `macos.yml`
+(Apple Silicon, Intel: Rust 501 and the Keychain round trip) passed
+([status](status/status.md#hosted-runs-at-ec42d41-macos-passes-2026-11-15)).
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
@@ -899,7 +900,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
   `test:headless`; docs-only changes skipped), and so does `macos.yml`
   (Apple Silicon + Intel; its first run, at `d9cf561`, failed one test on
-  both, fixed since: [status](status/status.md#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)).
+  both; at `ec42d41` it passed:
+  [status](status/status.md#hosted-runs-at-ec42d41-macos-passes-2026-11-15)).
   Its two automatic runs so far
   passed: both the Ubuntu and the Windows headless job (run ids, commits and
   durations not recorded); a third, run 43360177079 at `f19dd8b`
