@@ -12,8 +12,8 @@ Where things are. Generated and ignored paths are listed in
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, guard self-tests, fmt, clippy (default and test-profile build), test:headless; also called by release.yml
-│       ├── macos.yml         Manual or called by release.yml: macOS Apple Silicon and Intel, each on its own runner: headless checks and tests, Keychain round trip in a throwaway keychain; with package: true the .app/.dmg, signing and notarization when the Apple secrets exist (ADR-037)
-│       ├── release.yml       Tag vX.Y.Z (or manual dry run): version and key checks, ci.yml, Windows/Linux/macOS builds, then the one job with the update key signs, writes latest.json, publishes draft → pre-release → verified → latest (ADR-036)
+│       ├── macos.yml         Automatic (pull request to / push to main), manual or called by release.yml: macOS Apple Silicon and Intel, each natively on its own runner: job "macOS tests" (headless checks and tests, Keychain round trip in a throwaway keychain; no secret); with package: true job "macOS package" in the macos-signing environment (.app/.dmg, signing and notarization when the Apple secrets exist) (ADR-037, ADR-039)
+│       ├── release.yml       Tag vX.Y.Z, or manual (a dry run by default, any branch): version, repository and key checks, ci.yml, Windows/Linux/macOS builds, then rehearse (dry run: throwaway key) or publish (environment release, the only job with the update key: signs, writes latest.json, publishes this repository's draft → pre-release → verified → latest with GITHUB_TOKEN) (ADR-036, ADR-039)
 │       ├── isolation-guard.yml  Automatic for changes to tests/desktop/** or the guard (which ci.yml skips): desktop isolation guard, its self-test, the Python profile helpers' tests
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
 │       ├── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
@@ -96,6 +96,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── icons.test.mjs    Its tests (node --test, npm run test:icons)
 │   ├── update-manifest.mjs  Creates latest.json from signed updater packages of every platform, verifies a signed manifest, its platforms, URLs and packages, checks one signed file (ADR-033, ADR-036; signing itself is tauri signer sign --app-version)
 │   ├── update-manifest.test.mjs  Its tests (node --test, npm run test:update-manifest)
+│   ├── release-assemble.sh  release.yml's signing and checking step (publish and rehearse jobs): picks the built files (macOS only when both builds are signed and notarized), signs them and latest.json with tauri signer sign, verifies with the public key alone, writes SHA256SUMS (ADR-039)
+│   ├── release-assemble.test.mjs  Its tests: bash, the real Tauri CLI, throwaway keys (node --test, npm run test:release-assemble)
 │   ├── fixtures/update/  A manifest and two stand-in installers signed once by the real Tauri CLI with a throwaway key (public key only; private key deleted); verified by the script's tests and src-tauri/src/updates/tests.rs
 │   ├── fixtures/update-github/  A GitHub release's latest.json for all seven platforms and stand-in packages, made once with release.yml's own commands, the real Tauri CLI and a throwaway key (public key only); verified by the script's tests and src-tauri/src/updates/tests.rs
 │   └── recovery/

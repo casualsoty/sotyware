@@ -1,51 +1,58 @@
 # macOS (ADR-037): builds and tests sotyware on Apple Silicon (aarch64) and
-# Intel (x86_64), each natively on its own hosted runner, and optionally
-# packages the .app and .dmg.
+# Intel (x86_64), each natively on its own GitHub-hosted runner, and
+# optionally packages the .app and .dmg.
 #
-# Not on every push: the repository is private on GitHub Free, where macOS
-# runner minutes are billed at about ten times the Linux rate
-# (docs/development/testing.md#ci). It runs
-# - on a pull request to main that carries the label `macos` (added, or a
-#   new commit pushed while it is there): the way to validate a branch
-#   before this file is on main, since GitHub starts a workflow by hand
-#   only once it exists on the default branch;
+# The repository is public, so GitHub's standard hosted runners, the macOS
+# ones included, cost nothing (docs/development/testing.md#runners-and-cost).
+# It therefore runs like ci.yml:
+# - on every pull request to main and every push to main (documentation-only
+#   changes skipped);
 # - when started by hand (Actions tab, or `gh workflow run macos.yml --ref
-#   <branch>`), once this file is on main;
+#   <branch>`; add `-f package=true` for the .app and .dmg);
 # - from release.yml, which calls it with `package: true`.
-# A pull request run never packages or signs.
 #
-# What it runs: the same headless checks as ci.yml (svelte-check, Vite
-# build, the rfd and release-binary guards, Vitest, cargo fmt/clippy and
-# `cargo test` including the in-process S3 integration tests), plus the
-# Keychain round trip against a throwaway keychain made for the run (never
-# the runner user's login keychain).
-#
-# Packaging (`package: true`): `npm run build:release` makes sotyware.app
-# and the .dmg. Signing and notarization happen only when the Apple secrets
-# exist (docs/development/macos.md#signing-and-notarization); each secret is
-# handed only to the step that needs it:
+# Two jobs per architecture:
+#   test     the same headless checks as ci.yml (svelte-check, Vite build,
+#            the rfd guard, Vitest, cargo fmt/clippy and `cargo test`
+#            including the in-process S3, updater and account-service tests),
+#            plus the Keychain round trip against a throwaway keychain made
+#            for the run (never the runner user's login keychain). It never
+#            sees a secret.
+#   package  only with `package: true`: `npm run build:release` makes
+#            sotyware.app and the .dmg, checked, and uploaded with a
+#            status.txt. It runs in the `macos-signing` environment, the only
+#            place the Apple credentials live; with them it signs (Developer
+#            ID, hardened runtime) and notarizes, without them it is an
+#            unsigned development build, and release.yml then leaves macOS
+#            out of the release and of latest.json. The environment should
+#            admit only main and v* tags (docs/development/release.md#secrets);
+#            GitHub creates it, unprotected and empty, the first time this
+#            job runs if it does not exist yet.
+# Every secret is handed only to the step that needs it:
 #   APPLE_CERTIFICATE (base64 .p12 of a "Developer ID Application"
 #   certificate), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
 #   APPLE_API_ISSUER, APPLE_API_KEY_ID, APPLE_API_KEY (the .p8 contents).
-# They are repository secrets: started by hand this workflow reads them by
-# name; release.yml passes exactly these six (declared below), never the
-# update signing key or the release token. Without them the build is an
-# unsigned development build and says so in the uploaded
-# `macos-<arch>/status.txt`; release.yml then leaves macOS out of the
-# release and of latest.json, so an unsigned Mac build is never published.
-#
-# No secret is needed for the tests: `gh workflow run macos.yml --ref
-# <branch>` validates both architectures without any Apple account.
 name: macos
 
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "tests/desktop/**"
+      - ".github/workflows/desktop-*.yml"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "tests/desktop/**"
+      - ".github/workflows/desktop-*.yml"
   workflow_dispatch:
     inputs:
       package:
-        description: "Also build sotyware.app and the .dmg (signed and notarized when the Apple secrets exist)"
+        description: "Also build sotyware.app and the .dmg (signed and notarized when the macos-signing environment holds the Apple credentials)"
         type: boolean
         default: false
   workflow_call:
@@ -53,57 +60,53 @@ on:
       package:
         type: boolean
         default: false
-    secrets:
-      APPLE_CERTIFICATE:
-        required: false
-      APPLE_CERTIFICATE_PASSWORD:
-        required: false
-      APPLE_SIGNING_IDENTITY:
-        required: false
-      APPLE_API_ISSUER:
-        required: false
-      APPLE_API_KEY_ID:
-        required: false
-      APPLE_API_KEY:
-        required: false
 
 permissions:
   contents: read
 
-# A newer commit or label on the same pull request replaces the older run;
-# a release's call is never cancelled by anything else.
+# A newer commit on the same pull request or on main replaces the older run;
+# a manual run or a release's call is never cancelled by anything else (the
+# event name keeps their groups apart).
 concurrency:
-  group: macos-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: macos-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  macos:
-    name: macOS (${{ matrix.arch }})
-    # Pull requests only with the `macos` label (and only when that label
-    # is what was added, or the code changed).
-    if: >-
-      github.event_name != 'pull_request' ||
-      (contains(github.event.pull_request.labels.*.name, 'macos') &&
-       (github.event.action != 'labeled' || github.event.label.name == 'macos'))
+  test:
+    name: macOS tests (${{ matrix.arch }})
     strategy:
       # Each architecture's result on its own.
       fail-fast: false
       matrix:
         include:
           - arch: aarch64
-            # Apple Silicon.
+            # Apple Silicon (M1), standard runner.
             runner: macos-15
-            label: aarch64
+            machine: arm64
           - arch: x86_64
-            # Intel; GitHub's last Intel macOS image.
+            # Intel, standard runner; GitHub's last x86_64 macOS image,
+            # announced to be retired in 2027 (macos.md#architectures).
             runner: macos-15-intel
-            label: x64
+            machine: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
+      # Native, not Rosetta: a mislabelled runner must not pass for the
+      # other architecture.
+      - name: The runner is a native ${{ matrix.machine }} Mac
+        env:
+          WANT: ${{ matrix.machine }}
+        run: |
+          set -eu
+          got=$(uname -m)
+          translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+          sw_vers
+          echo "uname -m: $got, Rosetta translation: $translated"
+          [ "$got" = "$WANT" ] && [ "$translated" != "1" ] || { echo "::error::expected a native $WANT Mac, got $got (sysctl.proc_translated=$translated)"; exit 1; }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -114,10 +117,15 @@ jobs:
           cache: npm
 
       - name: Install Rust stable with rustfmt and clippy
+        env:
+          HOST: ${{ matrix.arch }}-apple-darwin
         run: |
+          set -eu
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup default stable
-          rustc --version && cargo --version && uname -m && sw_vers
+          rustc --version && cargo --version
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          [ "$host" = "$HOST" ] || { echo "::error::rustc builds for $host, not $HOST"; exit 1; }
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -149,8 +157,9 @@ jobs:
       - run: npm run test:headless
 
       # The OS credential store for real: one entry written, read, replaced
-      # and deleted in a keychain made for this run, set as the default so
-      # the user's login keychain is never touched.
+      # and deleted in a keychain made for this run, set as the user's
+      # default keychain (the one the store opens) so the login keychain is
+      # never touched.
       - name: Keychain round trip (throwaway keychain)
         working-directory: src-tauri
         run: |
@@ -165,13 +174,71 @@ jobs:
           trap 'security default-keychain -d user -s "$old_default"; security delete-keychain "$kc"' EXIT
           cargo test --locked --lib cloud::keyring::os_backend::round_trip -- --ignored --exact
 
+  package:
+    name: macOS package (${{ matrix.arch }})
+    if: ${{ inputs.package }}
+    # The only job that can read the Apple credentials (release.md#secrets).
+    environment: macos-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-15
+            machine: arm64
+            label: aarch64
+          - arch: x86_64
+            runner: macos-15-intel
+            machine: x86_64
+            label: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: The runner is a native ${{ matrix.machine }} Mac
+        env:
+          WANT: ${{ matrix.machine }}
+        run: |
+          set -eu
+          got=$(uname -m)
+          translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+          sw_vers
+          [ "$got" = "$WANT" ] && [ "$translated" != "1" ] || { echo "::error::expected a native $WANT Mac, got $got (sysctl.proc_translated=$translated)"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No caches in a release build: it compiles from the locked sources
+      # alone.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install Rust stable
+        env:
+          HOST: ${{ matrix.arch }}-apple-darwin
+        run: |
+          set -eu
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          [ "$host" = "$HOST" ] || { echo "::error::rustc builds for $host, not $HOST"; exit 1; }
+
+      - run: npm ci
+      - name: cargo fetch --locked
+        working-directory: src-tauri
+        run: cargo fetch --locked
+      - name: check the rfd patch is applied
+        run: npm run check:rfd-patch
+      - name: check the test features are off by default
+        run: npm run check:release-binary
+
       # Signing, only with the secrets: the certificate is imported as
       # non-extractable into a keychain made for this run, before the build,
       # so Tauri signs sotyware.app (hardened runtime, timestamp) before it
       # puts it into the .dmg. The build step gets only the identity's name.
       - name: Prepare the signing keychain (Developer ID)
         id: sign
-        if: ${{ inputs.package }}
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -180,7 +247,7 @@ jobs:
           set -eu
           if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
             echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "No Apple signing secrets: this is an unsigned development build."
+            echo "No Apple signing secrets in the macos-signing environment: this is an unsigned development build."
             exit 0
           fi
           kc="$RUNNER_TEMP/sotyware-sign.keychain-db"
@@ -192,12 +259,15 @@ jobs:
           security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -x -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/cert.p12"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" > /dev/null
-          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          # Put it first in the search list, keeping the others (one quoted
+          # path per line; read without word splitting).
+          others=()
+          while IFS= read -r line; do others+=("$line"); done < <(security list-keychains -d user | sed -e 's/^ *"//' -e 's/" *$//')
+          security list-keychains -d user -s "$kc" "${others[@]}"
           security find-identity -v -p codesigning "$kc" | grep -q "$APPLE_SIGNING_IDENTITY"
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       - name: Build sotyware.app and the .dmg
-        if: ${{ inputs.package }}
         env:
           SIGNED: ${{ steps.sign.outputs.signed }}
           IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -206,18 +276,20 @@ jobs:
           if [ "$SIGNED" = "true" ]; then export APPLE_SIGNING_IDENTITY="$IDENTITY"; fi
           npm run build:release
 
-      - name: Check the packaged app (no test build, no build-machine path, signature)
-        if: ${{ inputs.package }}
+      - name: Check the packaged app (no test build, no build-machine path, architecture, signature)
         env:
           SIGNED: ${{ steps.sign.outputs.signed }}
           IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          WANT: ${{ matrix.machine }}
         run: |
           set -eu
           app=src-tauri/target/release/bundle/macos/sotyware.app
           dmg=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
           test -d "$app" && test -f "$dmg"
           node scripts/check-release-binary.mjs --local-paths "$app/Contents/MacOS/sotyware"
-          lipo -archs "$app/Contents/MacOS/sotyware"
+          archs=$(lipo -archs "$app/Contents/MacOS/sotyware")
+          echo "architectures: $archs"
+          [ "$archs" = "$WANT" ] || { echo "::error::sotyware.app holds $archs, expected only $WANT"; exit 1; }
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' -c 'Print :LSMinimumSystemVersion' -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist"
           if [ "$SIGNED" = "true" ]; then
             codesign --verify --deep --strict --verbose=2 "$app"
@@ -235,7 +307,7 @@ jobs:
 
       - name: Notarize and staple
         id: notarize
-        if: ${{ inputs.package && steps.sign.outputs.signed == 'true' }}
+        if: ${{ steps.sign.outputs.signed == 'true' }}
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -265,24 +337,27 @@ jobs:
       # component is sotyware.app (what tauri-plugin-updater unpacks), named
       # with version and architecture so the two Macs' files differ.
       - name: Collect the release files
-        if: ${{ inputs.package }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          LABEL: ${{ matrix.label }}
+          SIGNED: ${{ steps.sign.outputs.signed || 'false' }}
+          NOTARIZED: ${{ steps.notarize.outputs.notarized || 'false' }}
         run: |
           set -eu
           version=$(node -p "require('./package.json').version")
-          out="$RUNNER_TEMP/macos-${{ matrix.arch }}"
+          out="$RUNNER_TEMP/macos-$ARCH"
           mkdir -p "$out"
-          COPYFILE_DISABLE=1 tar -czf "$out/sotyware_${version}_${{ matrix.label }}.app.tar.gz" -C src-tauri/target/release/bundle/macos sotyware.app
+          COPYFILE_DISABLE=1 tar -czf "$out/sotyware_${version}_${LABEL}.app.tar.gz" -C src-tauri/target/release/bundle/macos sotyware.app
           cp src-tauri/target/release/bundle/dmg/*.dmg "$out/"
           {
-            echo "arch=${{ matrix.arch }}"
-            echo "signed=${{ steps.sign.outputs.signed || 'false' }}"
-            echo "notarized=${{ steps.notarize.outputs.notarized || 'false' }}"
+            echo "arch=$ARCH"
+            echo "signed=$SIGNED"
+            echo "notarized=$NOTARIZED"
           } > "$out/status.txt"
           ls -l "$out"; cat "$out/status.txt"
           shasum -a 256 "$out"/*
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: ${{ inputs.package }}
         with:
           name: macos-${{ matrix.arch }}
           path: ${{ runner.temp }}/macos-${{ matrix.arch }}

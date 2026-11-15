@@ -90,8 +90,8 @@ verified byte for byte; the object was deleted again by its version id
 | Updates (ADR-033): signed `sotyware-update.json` verified before `tauri-plugin-updater` gets exactly it; version floor against replays; package signature, signed version and SHA-256 checked; install only on Update now and not during transfers, file operations or backups; Overview panel; `update-check` feature; `updates.sqlite3`; `scripts/update-manifest.mjs` and gated signing steps in `release-build.yml`. Switched off in release builds: no production key or update server (2026-11-15) | `src-tauri/src/updates.rs`, `features/updates.rs`, `SqliteUpdateState` in `storage.rs`, `release_resources` in `lib.rs`; `src/Updates.svelte`, `src/updates.ts`; `scripts/update-manifest.mjs` ([updates.md](../architecture/updates.md), [validation](#updates-2026-11-15)) |
 | Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
 | Desktop shell and design system (ADR-035): sidebar (sections, storage accounts opening their bucket, Add storage account, Account, Settings), Overview with storage/backups/version summaries, Settings (Appearance System/Light/Dark saved per device and applied to the window, Features, About & updates), one update notification, keyboard shortcuts, focus to the page title on navigation; every page and panel restyled on design tokens and a shared vocabulary, narrow-window overlay sidebar | `src/App.svelte`, `src/Sidebar.svelte`, `src/Overview.svelte`, `src/Settings.svelte`, `src/styles/`, `src/theme.ts`, `src/Icon.svelte`, `src/updatesModel.svelte.ts` ([frontend.md](../architecture/frontend.md)) |
-| macOS support (ADR-037): login keychain credentials with OSStatus classification, menu bar (Quit ⌘Q through `AppControl::quit`, Edit, Window), Dock click shows the dashboard, `bundle.macOS` (10.15, hardened runtime, .dmg), `macos.yml` (Apple Silicon and Intel runners, tests, Keychain round trip in a throwaway keychain, signing and notarization when secrets exist); **never compiled or run here** | `src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`, `lib.rs`, `tauri.conf.json`, `.github/workflows/macos.yml` ([macos.md](../development/macos.md)) |
-| Updates from GitHub Releases (ADR-036; since ADR-038 of the public release repository `casualsoty/sotyware-releases`, the source repository staying private): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (draft → pre-release → verified → latest), `update-manifest.mjs` for every platform; **no key, release repository not created, never released** | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
+| macOS support (ADR-037): login keychain credentials with OSStatus classification, menu bar (Quit ⌘Q through `AppControl::quit`, Edit, Window), Dock click shows the dashboard, `bundle.macOS` (10.15, hardened runtime, .dmg), `macos.yml` (Apple Silicon and Intel runners, each checked to be native; tests, Keychain round trip in a throwaway keychain; since ADR-039 on every pull request to and push to `main`, and signing and notarization only in the `macos-signing` environment when secrets exist); **never compiled or run here, never run on GitHub** | `src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`, `lib.rs`, `tauri.conf.json`, `.github/workflows/macos.yml` ([macos.md](../development/macos.md)) |
+| Updates from GitHub Releases of this public repository, `casualsoty/sotyware` (ADR-036, ADR-039; ADR-038's separate release repository was dropped): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (dry run with a throwaway key; real release: environment `release`, `GITHUB_TOKEN`, draft → pre-release → verified → latest), `update-manifest.mjs` and `release-assemble.sh` for every platform; **no key, no environment, never released, never run on GitHub** | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `scripts/release-assemble.sh`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -138,11 +138,141 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Releases in the public source repository (2026-11-15)
+
+On branch `feat/releases-in-public-repository`, started from `77b1923`
+(where `main` and `feat/desktop-redesign-macos-github-updates` also
+point): the sidebar test is `c7bb642`, the install wait `d79a2dd`, the
+rest the commit that adds this entry; not pushed. ADR-039, superseding
+ADR-038, after the maintainer made `casualsoty/sotyware` public. What
+changed:
+
+- **Releases in this repository:** `release_repository!` names
+  `casualsoty/sotyware`, so installations fetch
+  `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`;
+  `update-manifest.mjs release-repository --expect` refuses to publish to
+  any other repository. The separate release repository, its token
+  (`SOTYWARE_RELEASES_TOKEN`) and its checks (public, no source) are gone.
+- **`release.yml`:** publishes with `GITHUB_TOKEN`, `contents: write` in the
+  publish job only and given only to the steps that call `gh`. `prepare`
+  (no environment, no dependency installed) checks the versions and the
+  compiled-in repository and, for a real release, the tag's commit on
+  `main`, no existing release, a real key in `update-key.pub`, the
+  `release` environment existing and admitting tags only (no reviewer: a
+  warning), the signing key and the Apple credentials not being repository
+  secrets, and the unsigned-Windows opt-in; a dry run only warns, and may
+  run on any branch. New job `rehearse` (dry runs): signs with a throwaway
+  key made in the run; the real key and the `release` environment are never
+  used. `publish` (real releases, environment `release`): dependencies
+  without install scripts, no cache; the tag must still name the built
+  commit; a probe checks the key against `update-key.pub`;
+  `scripts/release-assemble.sh` signs and verifies; the draft is created
+  with `--verify-tag`, its names and sizes compared and its files
+  downloaded back with the token; pre-release; anonymous downloads (now
+  retried on every error, a fresh asset can answer 404); latest; endpoint
+  check; after a failure the draft this run created (never one found
+  before) is deleted.
+- **`scripts/release-assemble.sh`** (new, with
+  `scripts/release-assemble.test.mjs`, `npm run test:release-assemble`, in
+  `ci.yml` on Linux): the signing and checking shared by `rehearse` and
+  `publish`.
+- **`macos.yml`:** runs on every pull request to and push to `main` (free
+  on a public repository), split into `macOS tests` (no secret) and
+  `macOS package` (only with `package`, environment `macos-signing`, no
+  caches); every job checks it runs natively (`uname -m`, not Rosetta,
+  rustc's host), the package's binary must hold exactly its architecture.
+- **Review of `70a9e62` and `77b1923`** (the 22 changes on `2e3972e`). Kept:
+  the install commit point, the parsed IPv6 loopback check, the fixture and
+  private key guards, the macOS-only test exclusions (the case-variant file
+  names in other tests already pass on case-insensitive NTFS; the Keychain
+  store opens the default keychain, so the round trip's throwaway default
+  keychain is enough), the sidebar fix. Found and fixed:
+  - quitting after the commit point on macOS or Linux ended the process
+    while the plugin replaced the app in place: `Updates::shutdown` now
+    waits for it, at most 60 s (`INSTALL_WAIT`); not on Windows, where the
+    installation calls the shutdown from inside its own task. New test
+    `quitting_waits_for_an_installation_that_has_begun` (fails with the
+    wait removed);
+  - the sidebar fix had no test: `App.test.ts` now checks the overlay
+    closes after a link and after **Add storage account** (fails without
+    the fix);
+  - the release key reached two jobs (`prepare`'s probe and `publish`)
+    and every dry run: now only `publish`'s signing step;
+  - ADR-038's reason for repository-level Apple secrets was wrong (a
+    called job that names an environment receives its secrets): they move
+    to `macos-signing`;
+  - `npm ci` in the key's job ran every dependency's install scripts;
+    `curl --retry` does not retry a 404; nothing noticed a tag moved
+    during the run; two shellcheck warnings (a word-split keychain list,
+    an unused loop variable).
+- **Found, not changed:** `release.yml` builds the Linux packages on
+  `ubuntu-22.04`, which GitHub deprecated on 2026-09-17 and removes on
+  2027-04-17; moving to `ubuntu-24.04` raises the glibc floor from 2.35 to
+  2.39, a decision for the maintainer (release.md, limitations.md).
+
+GitHub state read on 2026-11-15 (`gh api`, read only): the repository is
+public; no environment, ruleset, Actions secret or variable; Actions allow
+every action and do not require SHA pinning; the default `GITHUB_TOKEN` is
+read-only and cannot approve pull requests; release immutability is off;
+`casualsoty/sotyware-releases` does not exist. GitHub's documentation
+(read the same day): standard runners, `macos-15` (arm64, M1) and
+`macos-15-intel` (x64) included, are free on public repositories;
+`macos-15-intel` is the last Intel image (retirement announced for 2027);
+environments, deployment rules and required reviewers exist on GitHub Free
+for public repositories; immutable releases keep pre-release and latest
+editable. The five pinned action SHAs were checked against their tags
+through the API: all match.
+
+What ran, on WSL2 (Ubuntu 24.04, Node 24.22.0, Rust 1.99.1), on the final
+tree:
+
+- `npm run check` 0 errors 0 warnings (871 files); `npm run build`;
+  Vitest **241 passed** (1 new).
+- `cargo fmt --check`; `cargo clippy --all-targets -D warnings` for the
+  normal and the test-profile build; `npm run test:headless` passed end to
+  end (rfd, release-binary, desktop-isolation, icon and update-key guards,
+  Vitest 241, `cargo test` **510 passed, 28 ignored**: 1 new, 2 changed);
+  the request-recorder build's tests **538 passed, 28 ignored**; the
+  standalone recovery script test passed; the account service: fmt,
+  clippy, 25 tests passed.
+- Script self-tests: `test:update-manifest` **20 passed** (3 rewritten),
+  `test:release-assemble` **5 passed** (new), `test:release-binary-guard`
+  39, `test:rfd-patch-guard` 10, `test:icons` 9, `test:installer-icons` 28,
+  `test:desktop-isolation-guard` 9, `test:profile-helpers` 10.
+- `npm ci --ignore-scripts` from the lockfile in a scratch folder, then
+  `tauri signer generate`/`sign` and `check-signature`: the publish job's
+  install works without install scripts.
+- **actionlint 1.7.12** (with shellcheck 0.11.0, both official release
+  binaries, actionlint's checked against its release checksums) over all
+  seven workflows: **0 findings** after the two fixes above.
+- `release.yml`'s prepare check, extracted and run under bash: against the
+  real repository (read-only, through the anonymous fallback) a dry run
+  warned about the missing key, environment and opt-in and exited 0; a
+  real run refused with four errors (key, environment, commit not on
+  `main`, unsigned Windows) and exited 1. With stubbed API answers and jq
+  1.8.2: an environment admitting every branch, protected branches or a
+  branch rule was refused, a tag-only one accepted; the missing reviewer
+  and an open `macos-signing` were warned about.
+- Linux desktop tests (WSL2 virtual display, Xvfb + openbox, stub tray
+  host; the test-profile release binary of the final tree, AT-SPI;
+  binary SHA-256 `321b2808…6bea8bc`): `npm run test:desktop:virtual`
+  **139 passed, 0 failed, 0 skipped**; `cloud-ui.sh` (local S3 servers, a
+  real GNOME Keyring on a private D-Bus session, native GTK dialogs) local
+  **16/16**, hang **8/8**, browse **17/17** (one AT-SPI reply timeout on
+  Refresh, retried by the driver), download **22/22**, upload **51/51**,
+  files **99/99**. The same suites passed earlier the same day on a binary
+  built before the shutdown change (139/0/0; 16, 8, 17, 22, 51, 99).
+- **Not run:** any GitHub workflow (nothing pushed since these changes),
+  `release.yml` in any form, `macos.yml`, anything on macOS or Windows,
+  signing with a real key, the repository settings and environments (not
+  created).
+
 ### Public release repository, signing key guard and CI readiness (2026-11-15)
 
 On branch `feat/desktop-redesign-macos-github-updates` after `2e3972e`:
 the review fixes are `70a9e62`, the rest is the commit that adds this
-entry; not pushed. ADR-038. What changed:
+entry (`77b1923`); not pushed. ADR-038, superseded by ADR-039 the same day
+([above](#releases-in-the-public-source-repository-2026-11-15)). What changed:
 
 - **Release repository:** releases go to the public
   `casualsoty/sotyware-releases`; the source repository stays private.
@@ -3497,7 +3627,7 @@ appears in any log.
 
 Record further GitHub results here, with the real job durations when they are
 read, and replace the cost estimate in
-[testing.md](../development/testing.md#github-free-budget).
+[testing.md](../development/testing.md#runners-and-cost).
 
 ### Virtual-display test on Ubuntu 26.04 (container, 2026-11-10)
 

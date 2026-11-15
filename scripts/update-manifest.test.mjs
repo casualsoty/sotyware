@@ -295,32 +295,41 @@ describe("the GitHub release fixture (every platform, real Tauri CLI)", () => {
   });
 });
 
-describe("the public release repository (ADR-038)", () => {
-  const RELEASES = "https://github.com/casualsoty/sotyware-releases/releases/download/v1.4.0/";
+describe("the release repository: the source repository itself (ADR-039)", () => {
+  const RELEASES = "https://github.com/casualsoty/sotyware/releases/download/v1.4.0/";
 
   test("is read from src-tauri/src/updates.rs, the one place it is written", () => {
     const rust = readFileSync(join(here, "..", "src-tauri", "src", "updates.rs"), "utf8");
-    assert.equal(releaseRepository(rust), "casualsoty/sotyware-releases");
+    assert.equal(releaseRepository(rust), "casualsoty/sotyware");
     // MANIFEST_URL is built from the same literal, not written twice.
     assert.doesNotMatch(rust, /"https:\/\/github\.com\/casualsoty\//);
+    assert.doesNotMatch(rust, /sotyware-releases/);
   });
 
-  test("refuses a missing or malformed name and the source repository itself", () => {
+  test("refuses a missing or malformed name, and any repository but the expected one", () => {
     assert.throws(() => releaseRepository("pub const X: &str = \"a/b\";"), /no release_repository! macro/);
     for (const bad of ["", "casualsoty", "a/b/c", "-x/y", "x/..", "x/y z"]) {
       assert.throws(() => releaseRepository(`macro_rules! release_repository { () => { "${bad}" }; }`), /not a GitHub repository/, bad);
     }
+    const out = [];
     const log = console.log;
-    console.log = () => {};
+    console.log = (l) => out.push(l);
     try {
-      assert.equal(main(["release-repository", "--not", "casualsoty/sotyware"]), 0);
-      assert.throws(() => main(["release-repository", "--not", "CasualSoty/Sotyware-Releases"]), /is this \(private source\) repository/);
+      assert.equal(main(["release-repository"]), 0);
+      // GitHub names are case-insensitive: GITHUB_REPOSITORY may differ in case.
+      assert.equal(main(["release-repository", "--expect", "CasualSoty/Sotyware"]), 0);
+      assert.deepEqual(out, ["casualsoty/sotyware", "casualsoty/sotyware"]);
+      // A fork, or the old separate repository of ADR-038: installations
+      // would never see what it publishes.
+      for (const other of ["someone/sotyware", "casualsoty/sotyware-releases"]) {
+        assert.throws(() => main(["release-repository", "--expect", other]), /would never reach them/, other);
+      }
     } finally {
       console.log = log;
     }
   });
 
-  test("manifests point into the public repository, never the private one", () => {
+  test("manifests point into the repository's own tag folder", () => {
     const key = testKey();
     const pub = readPublicKey(key.pubkey);
     const { nsis, msi } = artifactsSignedWith(key, "1.4.0");
@@ -328,8 +337,11 @@ describe("the public release repository (ADR-038)", () => {
     assert.equal(m.platforms["windows-x86_64-nsis"].url, `${RELEASES}sotyware_1.4.0_x64-setup.exe`);
     const bytes = Buffer.from(JSON.stringify(m));
     assert.equal(verifyManifest({ bytes, signature: null, publicKey: pub, baseUrl: RELEASES, require: ["nsis", "msi"] }).version, "1.4.0");
-    const source = createManifest({ version: "1.4.0", baseUrl: "https://github.com/casualsoty/sotyware/releases/download/v1.4.0/", publicKey: pub, artifacts: { nsis } });
-    assert.throws(() => verifyManifest({ bytes: Buffer.from(JSON.stringify(source)), signature: null, publicKey: pub, baseUrl: RELEASES }), /is not under/);
+    // A manifest naming another repository's (or another tag's) files is refused.
+    for (const base of ["https://github.com/casualsoty/sotyware-releases/releases/download/v1.4.0/", "https://github.com/casualsoty/sotyware/releases/download/v1.3.0/"]) {
+      const other = createManifest({ version: "1.4.0", baseUrl: base, publicKey: pub, artifacts: { nsis } });
+      assert.throws(() => verifyManifest({ bytes: Buffer.from(JSON.stringify(other)), signature: null, publicKey: pub, baseUrl: RELEASES }), /is not under/, base);
+    }
   });
 });
 

@@ -63,7 +63,13 @@ Outputs under `src-tauri/target/release/`: on Windows `sotyware.exe`,
 `bundle/nsis/sotyware_<version>_x64-setup.exe`; on Linux `sotyware`,
 `bundle/appimage/…AppImage`, `bundle/deb/…deb`, `bundle/rpm/…rpm`; on macOS
 `bundle/macos/sotyware.app` and `bundle/dmg/sotyware_<version>_<arch>.dmg`
-([macos.md](macos.md)). `release.yml` builds each on its own runner. Building the MSI makes WiX
+([macos.md](macos.md)). `release.yml` builds each on its own runner. The
+Linux packages are built on `ubuntu-22.04` so they run with glibc 2.35 and
+newer; GitHub deprecated that runner on 2026-09-17 and removes it on
+2027-04-17 (brownouts from 2027-03-23). Before then the Linux job must move
+to `ubuntu-24.04`, which raises the floor to glibc 2.39 (Ubuntu 24.04,
+Debian 13, Fedora 40 or newer); that changes which Linux systems a
+release can run on and is the maintainer's decision. Building the MSI makes WiX
 validate it through Windows Installer, which writes "Windows Installer
 installed the product" events (MsiInstaller 1033/11707) to the Application
 log **without installing anything**; do not mistake those for an
@@ -140,123 +146,149 @@ unsigned one.
 
 ## GitHub Releases
 
-Releases are built, tested and signed in the private source repository
-`casualsoty/sotyware` and published on GitHub Releases of the **public
-release repository `casualsoty/sotyware-releases`**, which is also where
-installations look for updates
+Releases are built, tested, signed and published by `release.yml` in this
+repository, `casualsoty/sotyware`, which is public, and installations
+look for updates in its GitHub Releases
 ([ADR-036](../architecture/decisions.md#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033),
-[ADR-038](../architecture/decisions.md#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases),
-[updates.md](../architecture/updates.md)). The release repository holds
-distribution files and release metadata only; the source code is never
-pushed there. The repository name is written once, in the
-`release_repository!` macro in `src-tauri/src/updates.rs`, compiled into
-every build and read from there by `release.yml`.
+[ADR-039](../architecture/decisions.md#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments),
+[updates.md](../architecture/updates.md)). The repository is written once,
+in the `release_repository!` macro in `src-tauri/src/updates.rs`, compiled
+into every build; `release.yml` refuses to publish anywhere else.
+Publishing needs no token besides the workflow's own `GITHUB_TOKEN`.
 
 Before the first release, all of the following must be true; **none of
-them is yet**:
+them is yet** (checked 2026-11-15):
 
-1. **The release repository exists and is public**
-   ([below](#the-public-release-repository)).
-2. **A release key exists** and its public half is in
+1. **The repository settings are made** ([below](#repository-settings)).
+2. **The `release` environment exists**, admits only `v*` tags and holds
+   the signing key; `macos-signing` exists for Mac packages
+   ([Secrets](#secrets)).
+3. **A release key exists** and its public half is in
    `src-tauri/update-key.pub` ([below](#update-signing-key)).
-3. **The secrets and the variable are set** ([below](#secrets)).
 4. **Unsigned Windows installers are allowed on purpose**, as long as no
    Authenticode certificate exists ([above](#signing-not-set-up)): the
    repository variable `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` is `true`.
    Without it `release.yml` refuses to publish.
+5. **`release.yml` is on `main`**: GitHub starts a workflow by hand only
+   once its file is on the default branch (a pushed tag starts it from the
+   tagged commit's copy).
 
-### The public release repository
+### Repository settings
 
-What a release puts there, per tag: the installers and their `.sig` files,
-`latest.json`, `latest.json.sig` and `SHA256SUMS` (table below). GitHub
-also attaches "Source code (zip, tar.gz)" archives of the release
-repository's own default branch to every release, which is why that branch
-may hold only a README and similar notes: `release.yml` refuses to publish
-if it finds anything other than `README.md`, `README`, `LICENSE`,
-`LICENSE.md`, `LICENSE.txt`, `SECURITY.md`, `.gitattributes`, `.gitignore`
-or `.github`.
+Once, by hand, in **Settings** of `casualsoty/sotyware`. On 2026-11-15 the
+repository had: Actions allowing every action, SHA pinning not required,
+the default `GITHUB_TOKEN` read-only, Actions not allowed to approve pull
+requests, no environment, no ruleset, no secret or variable, release
+immutability off.
 
-Set it up once, by hand (sotyware's tools never create it):
+- **Actions → General**
+  - **Actions permissions:** *Allow casualsoty, and select non-casualsoty,
+    actions and reusable workflows* → *Allow actions created by GitHub*
+    and, under *Allow specified actions*, `Swatinem/rust-cache@*`. Tick
+    **Require actions to be pinned to a full-length commit SHA** (every
+    workflow already pins them).
+  - **Fork pull request workflows from outside collaborators:** *Require
+    approval for all external contributors*. Fork pull requests never get
+    secrets or a write token, but they run on hosted runners.
+  - **Workflow permissions:** keep *Read repository contents and packages
+    permissions* and leave *Allow GitHub Actions to create and approve pull
+    requests* off (both already so). Each workflow also declares its own
+    permissions.
+- **Rules → Rulesets → New tag ruleset**, twice, both enforcement
+  **Active** and target **Include by pattern** `v*`:
+  - `release tags: who` with **Restrict creations**, bypass list
+    **Repository admin** only: pushing a `v*` tag starts a release, so only
+    you can create one;
+  - `release tags: never move` with **Restrict updates**, **Restrict
+    deletions** and **Block force pushes**, bypass list **empty**: a
+    published tag must never move (the signed manifest names its URLs),
+    not even by you without first editing the ruleset.
+- **Rules → Rulesets → New branch ruleset** for `main` (the default
+  branch): **Restrict deletions**, **Block force pushes**; **Require a pull
+  request before merging** once anyone else has write access. Only commits
+  on `main` are released.
+- **General → Releases → Enable release immutability** (recommended): a
+  published release's files and tag can no longer change. `release.yml`
+  uploads every file while the release is a draft and afterwards changes
+  only its pre-release and latest flags, which GitHub documents as still
+  editable on an immutable release (not yet tried here). The cost: a
+  release that fails after it became a pre-release cannot be repaired, only
+  deleted, and its version is used up.
+- **Environments:** `release` and `macos-signing` ([Secrets](#secrets)).
 
-1. On GitHub: **New repository**, owner `casualsoty`, name
-   `sotyware-releases`, **Public**, tick **Add a README file** (a release
-   needs at least one commit: its tag is created on the default branch).
-   No `.gitignore` template is needed; a licence file is optional.
-2. Edit the README to say what the repository is, for example: "Installers
-   and update files of sotyware. The source code is not published here.
-   Every package and `latest.json` carry a minisign signature of
-   sotyware's release key."
-3. In the repository's **Settings**:
-   - **General → Features:** turn off Wikis, Issues, Projects and
-     Discussions unless you want them (they would be public).
-   - **Actions → General:** **Disable actions** (nothing runs there; the
-     source repository's workflow publishes from outside).
-   - **Rules → Rulesets → New tag ruleset:** target all tags (`*`),
-     enforcement **Active**, rules **Restrict deletions** and **Block force
-     pushes** (and **Restrict updates**), bypass list empty. A published
-     tag must never move: the signed manifest names its URLs. Tags are
-     still created by the release token when a draft is published.
-   - **Rules → Rulesets → New branch ruleset** for the default branch:
-     **Restrict deletions**, **Block force pushes**, **Require a pull
-     request before merging** if others ever get access.
-   - Optional: **General → Releases → Enable release immutability**, which
-     locks a published release's assets and tag. sotyware's workflow
-     uploads every file while the release is a draft, so it fits, but its
-     last step changes a published pre-release into the latest release;
-     check on the first release that GitHub allows that with immutability
-     on (not tried).
-4. Create the release token ([Secrets](#secrets)).
-5. Nothing else: no workflow, no source, no branch besides the default one.
+Read them back:
 
-Check it from a machine that is not signed in to GitHub: the repository
-page opens, and after the first release
-`https://github.com/casualsoty/sotyware-releases/releases/latest/download/latest.json`
-downloads.
+```bash
+gh api repos/casualsoty/sotyware/actions/permissions
+```
+
+```bash
+gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, protection_rules, deployment_branch_policy}'
+```
 
 ### Publishing a release
 
 1. Raise the version in `package.json`, `package-lock.json` (`npm version
    --no-git-tag-version X.Y.Z` does both), `src-tauri/Cargo.toml`,
    `src-tauri/Cargo.lock` (`cargo update -p sotyware`) and
-   `src-tauri/tauri.conf.json`; commit; let `ci.yml` pass on `main`.
-2. Optional rehearsal: `gh workflow run release.yml --ref vX.Y.Z` (on the
-   tag; `dry_run` is the default for a manual run). Everything is built,
-   signed with the real key and verified, the files are kept as the
-   `release-dry-run` artifact (7 days; treat them as release material:
-   they carry valid signatures), and no release is made. A dry run warns
-   instead of failing when the release repository is missing or wrong, so
-   the builds can be rehearsed first. GitHub starts a workflow by hand only
-   once its file is on the default branch: `release.yml` must be on `main`.
+   `src-tauri/tauri.conf.json`; commit; let `ci.yml` and `macos.yml` pass
+   on `main`.
+2. Rehearse (recommended before the first release and after workflow
+   changes): `gh workflow run release.yml --ref main` (`dry_run` is the
+   default for a manual run). Every platform is built and tested, the
+   updater packages and `latest.json` are signed with a **throwaway key**
+   made in the run and verified, and the files are kept as the
+   `release-dry-run` artifact (7 days). Nothing is published, and neither
+   the release key nor the `release` environment is used, so this works
+   before either exists. The files are not release material: nothing
+   trusts that key. The macOS package job runs in `macos-signing`, which
+   must admit `main` for this.
 3. Tag and push: `git tag -s vX.Y.Z -m "sotyware X.Y.Z" -m "<release
    notes>"`, `git push origin vX.Y.Z`. The tag's message becomes the
-   release notes, **published** in the release repository and shown in the
-   app.
-4. `release.yml` runs: prepare (tag = every version; the release
-   repository is not the source repository, is public and holds only
-   notes; the tagged commit is on `main`; the release token exists; no
-   release or tag `vX.Y.Z` exists there yet; unsigned Windows installers
-   allowed; `update-key.pub` holds a real key, not a fixture's, and the
-   signing secret matches it), `ci.yml` on the tag, the Windows installers
-   (`release-build.yml`, unpacked and checked), Linux (Ubuntu 22.04:
-   AppImage, deb, rpm), macOS (`macos.yml` on both architectures), then
-   publish: sign every updater package and `latest.json`, verify them with
-   the public key alone, upload to a **draft** in the release repository
-   (visible only to you), compare the uploaded names and sizes, publish as
-   a **pre-release**, download every file through its public URL without
-   a token and verify again (signatures, signed versions, SHA256SUMS),
-   then mark it **latest** and check that
-   `https://github.com/casualsoty/sotyware-releases/releases/latest/download/latest.json`
-   serves it. One release runs at a time.
+   published release notes and the notes the app shows.
+4. `release.yml` runs:
+   - **prepare:** every version equals `X.Y.Z`; `updates.rs` names this
+     repository; the tagged commit is on `main`; no release `vX.Y.Z`
+     exists; `update-key.pub` holds a real key (not a fixture's, not a
+     private key); the `release` environment exists and admits tags only
+     (a missing required reviewer is a warning); the signing key and the
+     Apple credentials are not repository secrets; unsigned Windows
+     installers are allowed.
+   - **ci, windows, linux, macos:** `ci.yml` on the commit; the Windows
+     installers (`release-build.yml`, unpacked and checked); Linux
+     (Ubuntu 22.04: AppImage, deb, rpm); macOS (`macos.yml`: tests on both
+     architectures, packages signed and notarized in `macos-signing` when
+     the Apple credentials are there).
+   - **publish**, in the `release` environment: if it has a reviewer, the
+     run waits for your approval on its page (**Review deployments**).
+     Then: the tag still names the built commit; no release (or draft)
+     exists; a probe signed with the secret verifies with `update-key.pub`;
+     every updater package and `latest.json` are signed and verified with
+     the public key alone (`scripts/release-assemble.sh`); a **draft** is
+     created on the tag (visible only to people with write access); its
+     names and sizes are compared and its files downloaded back with the
+     token and checked against `SHA256SUMS`; it is published as a
+     **pre-release** (public, never "latest"); every file is downloaded
+     again **anonymously** over HTTPS and verified (signatures, signed
+     versions, SHA-256); then it is marked **latest**, and
+     `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
+     must serve its manifest. One release runs at a time.
+
+   A tag that exists can also be released by hand:
+   `gh workflow run release.yml --ref vX.Y.Z -f dry_run=false`.
 5. If any step fails, the previous release stays the latest: installations
-   see nothing. A failed run can leave a draft or a pre-release in the
-   release repository: delete that release there (a tag it created can
-   stay: the version is used up either way), fix the cause and release a
-   new patch version. Never re-publish an older version or move a
-   published tag (installations refuse a lower version than they were
-   offered, and a moved tag breaks the URLs in the signed manifest).
+   see nothing. A draft the failed run created is deleted automatically
+   (a draft that existed before is left alone, and stops the run), so
+   after fixing the cause you can **Re-run failed jobs**. A failure after
+   the pre-release was published leaves that pre-release: delete it (with
+   immutability on, GitHub may keep its tag and not let the version be
+   used again) and release a new patch version. Never
+   re-publish an older version or move a published tag (installations
+   refuse a lower version than they were offered, and a moved tag breaks
+   the URLs in the signed manifest).
 
 Assets of a release (version 0.2.0 shown), all under
-`https://github.com/casualsoty/sotyware-releases/releases/download/v0.2.0/`:
+`https://github.com/casualsoty/sotyware/releases/download/v0.2.0/`:
 
 | File | Platform | In `latest.json` as |
 | --- | --- | --- |
@@ -269,6 +301,9 @@ Assets of a release (version 0.2.0 shown), all under
 | `sotyware_0.2.0_x64.dmg`, `sotyware_0.2.0_x64.app.tar.gz` (+ `.sig`) | macOS, Intel (signed and notarized only) | `darwin-x86_64-app` |
 | `latest.json`, `latest.json.sig`, `SHA256SUMS` | all | |
 
+GitHub adds "Source code (zip, tar.gz)" archives of the tagged commit to
+every release.
+
 Authenticode signing of the Windows installers ([above](#signing-not-set-up))
 is not part of the workflow yet; when it is added it must happen in the
 Windows build job, before the update signatures (signing changes the bytes),
@@ -277,70 +312,66 @@ the installers are signed.
 
 ### Secrets
 
-GitHub plans decide where secrets can live. **Environments and environment
-secrets are not available to private repositories on GitHub Free**; they
-need GitHub Pro (personal accounts), Team or Enterprise. Required
-reviewers and wait timers are not available to private repositories on
-Free, Pro or Team at all. `release.yml` names the environment `release` in
-its `prepare` and `publish` jobs, the only jobs that read the update key
-and the release token.
+The repository is public, so GitHub Free offers environments, environment
+secrets, deployment branch and tag rules and required reviewers. Secrets
+of an environment reach only a job that names it, and only once that
+environment's rules let the job start: a job on another branch or tag, or
+a pull request (from a fork none gets secrets at all), cannot read them.
+No workflow uses `pull_request_target` or `workflow_run`, which would run
+with secrets or a write token next to code from a fork.
 
 | Name | Kind and where | Used by | Required |
 | --- | --- | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | secret, environment `release` | `release.yml` prepare (probe) and publish (signing), one step each | yes |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | secret, environment `release` | the same steps | yes (the key must have a password) |
-| `SOTYWARE_RELEASES_TOKEN` | secret, environment `release` | `release.yml` prepare (does the release exist?) and the publish steps that run `gh release` | yes, outside a dry run |
-| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | secrets, **repository** | `macos.yml` signing | for Mac packages ([macos.md](macos.md#signing-and-notarization)) |
-| `APPLE_API_ISSUER`, `APPLE_API_KEY_ID`, `APPLE_API_KEY` | secrets, **repository** | `macos.yml` notarization | for Mac packages |
-| `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` | variable, repository | `release.yml` prepare | `true` while no Authenticode certificate exists |
+| `TAURI_SIGNING_PRIVATE_KEY` | secret, environment **`release`** | `release.yml` publish job, its signing step only | yes |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | secret, environment **`release`** | the same step | yes (the key must have a password) |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | secrets, environment **`macos-signing`** | `macos.yml` package job, signing steps | for Mac packages ([macos.md](macos.md#signing-and-notarization)) |
+| `APPLE_API_ISSUER`, `APPLE_API_KEY_ID`, `APPLE_API_KEY` | secrets, environment **`macos-signing`** | `macos.yml` package job, notarization step | for Mac packages |
+| `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` | variable, repository | `release.yml` prepare and publish | `true` while no Authenticode certificate exists |
+| `GITHUB_TOKEN` | automatic, per job | read-only in every job; `contents: write` only in the publish job, given to the steps that call `gh` | — |
 
-The Apple secrets must be repository secrets: `release.yml` hands them to
-the reusable `macos.yml`, and a job that calls a reusable workflow cannot
-name an environment, so environment secrets would never reach it (the Mac
-builds would silently be unsigned and left out). `release.yml` passes
-exactly those six, never `secrets: inherit`.
+No other token exists or is needed. Never store the signing key or an
+Apple credential as a **repository** secret: every workflow run of the
+repository could read it, and `release.yml` refuses to release while one
+is there (its `prepare` job, which names no environment, only checks
+whether those names are visible to it, which they are only as repository
+or organisation secrets).
 
-**Set up** (Settings of `casualsoty/sotyware`):
+**Set up**, before pushing the first release tag (a job that names an
+environment that does not exist makes GitHub create it, without any
+protection):
 
-1. With GitHub Pro (or Team): **Environments → New environment**
-   `release`. **Deployment branches and tags → Selected branches and
-   tags → Add rule**, type **Tag**, pattern `v*`; remove any branch rule.
-   Then **Environment secrets**: add `TAURI_SIGNING_PRIVATE_KEY`,
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` and `SOTYWARE_RELEASES_TOKEN`. A
-   dry run is started on the tag too, so the tag rule allows it.
-   On GitHub Free, environments are unavailable for a private repository:
-   upgrade, or store the three as **repository** secrets (every workflow
-   run of the repository could then read them; pull requests from forks
-   still get none). Whether GitHub runs a job that names an environment the
-   plan does not offer has not been tried; if `prepare` fails on it, that
-   is the reason.
-2. **Secrets and variables → Actions → Variables → New repository
-   variable** `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` = `true` (only once you
-   accept publishing unsigned Windows installers).
-3. Apple secrets, when a Developer ID certificate exists: **Secrets → New
-   repository secret** for each of the six ([macos.md](macos.md#signing-and-notarization)).
-4. **Rules → Rulesets → New tag ruleset** in the source repository for
-   `v*`: only you may create, update or delete such tags (pushing a `v*`
-   tag starts a release). Rulesets on a private repository also need
-   GitHub Pro or above; on Free, you are the only one with write access,
-   which has the same effect while that stays true.
+1. **Settings → Environments → New environment** `release`:
+   - **Required reviewers:** yourself (leave *Prevent self-review* off:
+     you are the only maintainer, and it would block your own approval).
+   - **Allow administrators to bypass configured protection rules:** off.
+   - **Deployment branches and tags → Selected branches and tags → Add
+     deployment branch or tag rule:** ref type **Tag**, pattern `v*`. No
+     branch rule.
+   - **Environment secrets:** `TAURI_SIGNING_PRIVATE_KEY` and
+     `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+     ([how](#update-signing-key)).
+2. **New environment** `macos-signing`: deployment rules **branch** `main`
+   and **tag** `v*` (dry runs from `main` package macOS too); a reviewer
+   is optional (every Mac packaging run, dry runs included, would wait for
+   it). Secrets: the six `APPLE_*` values, once a Developer ID certificate
+   exists ([macos.md](macos.md#signing-and-notarization)). If a packaging
+   run created it already, it is unprotected and empty: restrict it before
+   adding a secret.
+3. **Secrets and variables → Actions → Variables → New repository
+   variable** `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` = `true`, only once you
+   accept publishing unsigned Windows installers:
 
-**The release token** (`SOTYWARE_RELEASES_TOKEN`): GitHub → your avatar →
-**Settings → Developer settings → Personal access tokens → Fine-grained
-tokens → Generate new token**. Name `sotyware-releases publishing`,
-resource owner `casualsoty`, an expiry you will remember (renew it before
-it lapses; a release fails at its first `gh release` step otherwise),
-**Repository access → Only select repositories →
-`casualsoty/sotyware-releases`**, **Repository permissions → Contents:
-Read and write** (Metadata: Read-only is added automatically), nothing
-else. Copy it once into the secret; do not keep another copy. Revoke and
-replace it if it may have leaked: it can publish to the release
-repository, but not sign, so installations would refuse what it published
-(the release key is the authority).
+   ```bash
+   gh variable set SOTYWARE_ALLOW_UNSIGNED_WINDOWS --repo casualsoty/sotyware --body true
+   ```
 
-`GITHUB_TOKEN` only reads the source repository (`contents: read`
-everywhere, including the publish job). No secret is ever echoed; the
-Tauri CLI reads the signing key from the environment.
+4. Check the environment the way `release.yml` does:
+
+   ```bash
+   gh api repos/casualsoty/sotyware/environments/release/deployment-branch-policies --jq '.branch_policies[] | "\(.type) \(.name)"'
+   ```
+
+   It must print `tag v*` and nothing else.
 
 ### Update signing key
 
@@ -378,16 +409,24 @@ an assistant, never a throwaway key (the fixtures' keys are test-only and
    gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --env release --repo casualsoty/sotyware
    ```
 
-   (the second prompts for the value; leave out `--env release` for
-   repository secrets on GitHub Free).
-4. **Back up** the key file and the password separately and offline (for
+   (the second prompts for the value). Only the `release` environment,
+   never a repository secret ([Secrets](#secrets)).
+4. **Check the pair** on the same computer, from the repository with the
+   committed `update-key.pub` (the signer prompts for the password):
+
+   ```bash
+   echo "sotyware key check" > /tmp/sotyware-key-check.txt
+   npx @tauri-apps/cli@2.12.4 signer sign -f ~/sotyware-release-key/sotyware-update.key --app-version 0.0.0 /tmp/sotyware-key-check.txt
+   node scripts/update-manifest.mjs check-signature --pubkey src-tauri/update-key.pub --file /tmp/sotyware-key-check.txt --version 0.0.0
+   ```
+
+   A dry run of `release.yml` cannot check it (it never uses the release
+   key); a real release checks it again with a probe before signing
+   anything, and stops on a mismatch.
+5. **Back up** the key file and the password separately and offline (for
    example the password in a password manager, the key file on two
    encrypted USB drives or printed), never in the repository, a chat, an
    issue or a CI log. Then delete the working copy from the computer.
-5. **Check**: `gh workflow run release.yml --ref vX.Y.Z` with `dry_run`
-   (once `release.yml` is on `main` and a version tag exists). Its first
-   job signs a probe with the secret and verifies it with the committed key
-   before anything is built, so a mismatch stops at once.
 
 - **Rotation** (planned, e.g. a person with access leaves): installations
   trust only the key compiled into them. Release one version signed with
@@ -419,8 +458,13 @@ release. The mechanism is tested without either:
   platforms.
 - `npm run test:update-manifest`: the release tool with keys generated in
   the test and the same fixtures, the release repository read from
-  `updates.rs`, and `check-key` (fixture keys, private keys and malformed
-  key files refused).
+  `updates.rs` (and refused unless it is the repository publishing), and
+  `check-key` (fixture keys, private keys and malformed key files refused).
+- `npm run test:release-assemble`: `scripts/release-assemble.sh`, the
+  signing and checking step of `release.yml`'s publish and rehearse jobs,
+  run with the real Tauri CLI and throwaway keys made in the test (macOS
+  left out unless both builds are signed and notarized, missing packages
+  and a wrong key refused, the key never printed).
 - A debug or test-profile build against a local server: generate a
   throwaway key (`npx tauri signer generate -w /tmp/k --ci -p x`), sign two
   test packages and a manifest the way `release.yml` does, serve the folder

@@ -38,12 +38,12 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   end-to-end encrypted sync of storage accounts and backup jobs (ADR-032;
   the service exists in `server/` but is not deployed: release builds have
   no service configured), and signed application updates from GitHub
-  Releases of the separate public repository `casualsoty/sotyware-releases`
-  (ADR-033, ADR-036, ADR-038; the source repository stays private; no
-  release key exists and the release repository has not been created, so
-  release builds have updates switched off and no release has been
-  published), in a desktop shell with a sidebar, Settings and one
-  design system (ADR-035). No other product features exist yet. Current milestone and status:
+  Releases of this public repository, `casualsoty/sotyware` (ADR-033,
+  ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
+  signing key only in the protected `release` environment; no release key
+  exists and the environments have not been created, so release builds
+  have updates switched off and no release has been published), in a
+  desktop shell with a sidebar, Settings and one design system (ADR-035). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -255,12 +255,12 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   local state in `account.sqlite3`; `PRODUCTION_SERVER` is `None`;
   `SOTYWARE_ACCOUNT_SERVER` only in debug and test-profile builds; page
   `src/Account.svelte`.
-  **Updates** (ADR-033, ADR-036, ADR-038, [updates.md](docs/architecture/updates.md)):
+  **Updates** (ADR-033, ADR-036, ADR-039, [updates.md](docs/architecture/updates.md)):
   `src-tauri/src/updates.rs` (`Updates` managed state, six commands,
   `updates.sqlite3` with the version floor): `latest.json` and its
-  minisign signature from the latest release of the public release
-  repository (`release_repository!` → `RELEASE_REPOSITORY`
-  `casualsoty/sotyware-releases`, `MANIFEST_URL`, at
+  minisign signature from the latest release of this repository
+  (`release_repository!` → `RELEASE_REPOSITORY` `casualsoty/sotyware`,
+  `MANIFEST_URL`, at
   most five HTTPS redirects, one refetch on a signature mismatch) are
   verified with the key compiled in from `src-tauri/update-key.pub`
   (empty: updates off; endpoint and key from `SOTYWARE_UPDATE_*` only in
@@ -273,8 +273,11 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   platform entries for Windows (nsis, msi), macOS (aarch64, x86_64 app)
   and Linux (appimage, deb, rpm); automatic checks are the built-in
   feature `update-check`; Settings › About & updates and one notification
-  in the shell; release tool `scripts/update-manifest.mjs`; releases only
-  through `.github/workflows/release.yml`
+  in the shell; release tools `scripts/update-manifest.mjs` and
+  `scripts/release-assemble.sh`; releases only through
+  `.github/workflows/release.yml` (dry runs sign with a throwaway key;
+  only its publish job, in the `release` environment, gets the signing
+  key; Apple credentials only in `macos-signing`)
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),

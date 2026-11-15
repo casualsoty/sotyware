@@ -2032,8 +2032,10 @@ Status: Accepted (2026-11-15). Code: `src/App.svelte`, `src/Sidebar.svelte`,
 ## ADR-036: Updates come from the latest GitHub release (`latest.json`), signed and verified as in ADR-033
 
 Status: Accepted (2026-11-15). Supersedes ADR-033's update source. Where
-the releases live (a separate public repository) is superseded by
-[ADR-038](#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases). Code:
+the releases live: [ADR-038](#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases)
+moved them to a separate public repository, and
+[ADR-039](#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments)
+brought them back to this repository once it was made public. Code:
 `src-tauri/src/updates.rs`, `src-tauri/update-key.pub`,
 `scripts/update-manifest.mjs`, `.github/workflows/release.yml`; design:
 [updates.md](updates.md), procedure:
@@ -2144,12 +2146,20 @@ Status: Accepted (2026-11-15). Code: `src-tauri/Cargo.toml`
 
 ## ADR-038: Releases are published to a separate public repository (`casualsoty/sotyware-releases`)
 
-Status: Accepted (2026-11-15). Supersedes ADR-036 in one point: where the
-releases live.
-Code: `src-tauri/src/updates.rs` (`release_repository!`,
+Status: Superseded by
+[ADR-039](#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments)
+(2026-11-15): the maintainer made the source repository public, so releases are published
+there and the release repository, its token and its checks were removed.
+`check-key` and the release-key guards stay. Its statement that environment
+secrets can never reach a reusable workflow was wrong: a caller cannot pass
+them, but a called job that names an environment receives that
+environment's secrets. Was: Accepted (2026-11-15), superseding ADR-036 in
+one point: where the releases live.
+Code (then): `src-tauri/src/updates.rs` (`release_repository!`,
 `RELEASE_REPOSITORY`, `MANIFEST_URL`), `.github/workflows/release.yml`,
 `scripts/update-manifest.mjs` (`release-repository`, `check-key`);
-procedure: [release.md](../development/release.md#the-public-release-repository).
+procedure: the "public release repository" section of release.md, removed
+with ADR-039.
 
 - **Context:** ADR-036 takes updates from the latest GitHub release, which
   installations must download without signing in. The source repository
@@ -2197,3 +2207,94 @@ procedure: [release.md](../development/release.md#the-public-release-repository)
   to another repository later means a release built with the new
   `release_repository!` published at the old place first, since
   installations follow only the URL compiled into them.
+
+## ADR-039: Releases are published in the public source repository with `GITHUB_TOKEN`; signing credentials live in protected environments
+
+Status: Accepted (2026-11-15). Supersedes
+[ADR-038](#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases).
+Code: `src-tauri/src/updates.rs` (`release_repository!`,
+`RELEASE_REPOSITORY`, `MANIFEST_URL`), `.github/workflows/release.yml`,
+`.github/workflows/macos.yml`, `scripts/release-assemble.sh`,
+`scripts/update-manifest.mjs` (`release-repository --expect`,
+`check-key`); procedure:
+[release.md](../development/release.md#github-releases).
+
+- **Context:** the maintainer made `casualsoty/sotyware` public on
+  2026-11-15. That removes ADR-038's reason for a second repository: GitHub
+  serves a public repository's release assets to anyone, without signing
+  in. Being public also changes what GitHub offers the repository (standard
+  hosted runners, macOS included, cost nothing; environments with
+  deployment restrictions and required reviewers exist on GitHub Free) and
+  who can start workflows (anyone can open a pull request from a fork).
+- **Decision:**
+  - Releases are published on GitHub Releases of `casualsoty/sotyware`.
+    Installations fetch
+    `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
+    (+ `.sig`); package URLs point at the release's tag folder.
+    `release_repository!` names this repository, and `release.yml` refuses
+    to publish unless it equals `GITHUB_REPOSITORY` (a fork's or a renamed
+    repository's release would reach no installation).
+  - Publishing uses the workflow's own `GITHUB_TOKEN`: `contents: write`
+    only in the publish job, and only in the steps that call the API;
+    read-only everywhere else. No personal token or app. The draft is
+    created with `--verify-tag` on the pushed tag. Before it is published
+    the job checks that the tag still names the commit every job built,
+    compares the uploaded names and sizes and downloads the files back with
+    the token; published as a pre-release, every file is downloaded again
+    anonymously over HTTPS and verified with the committed public key; only
+    then is the release marked latest. After a failure the draft this run
+    created is deleted (never one that existed before); a published
+    pre-release is left for the maintainer.
+  - The update signing key (`TAURI_SIGNING_PRIVATE_KEY`, `…_PASSWORD`) is a
+    secret of the environment `release`, which admits only `v*` tags
+    (recommended: a required reviewer, administrators not bypassing). Only
+    the publish job names that environment and only its signing step
+    receives the key; that job installs dependencies with
+    `--ignore-scripts` and restores no cache. `prepare` refuses a real
+    release unless the environment exists and admits tags only, and while
+    the key (or an Apple credential) is a repository or organisation
+    secret, which every workflow run could read.
+  - The Apple credentials move from repository secrets to the environment
+    `macos-signing` (`main` and `v*` tags), named only by `macos.yml`'s new
+    `package` job; its `test` job never has a secret.
+  - A dry run (the default for a manual run, now allowed on any branch)
+    never touches the release key or the `release` environment: the job
+    `rehearse` signs with a throwaway key made in the run, so every
+    platform and the whole manifest chain can be rehearsed before the key,
+    the environments or a tag exist. Signing and checking are one script,
+    `scripts/release-assemble.sh`, shared by `rehearse` and `publish` and
+    tested with the real Tauri CLI.
+  - `macos.yml` runs like `ci.yml`, on every pull request to and push to
+    `main`, on both architectures natively (`macos-15`, `macos-15-intel`;
+    each job checks it is not translated by Rosetta and that rustc's host
+    is the expected one). Release builds there restore no cache.
+  - Unchanged from ADR-036 and ADR-038: signature verification and the
+    version floor, `check-key` refusing fixture and private keys,
+    draft → pre-release → latest, one release at a time, unsigned Windows
+    installers only with `SOTYWARE_ALLOW_UNSIGNED_WINDOWS=true`, macOS only
+    when both builds are signed and notarized.
+- **Rejected:** keeping the separate release repository (a second
+  repository and a long-lived token that expires and can leak, for a reason
+  that no longer exists); a personal access token or a GitHub App for
+  publishing (`GITHUB_TOKEN` can publish the repository's own releases);
+  repository secrets for the signing key (readable by every workflow run,
+  including one on any branch a collaborator pushes); the real key in dry
+  runs (more exposure, and the publish job checks the key against
+  `update-key.pub` before signing anyway); `pull_request_target` or
+  `workflow_run` triggers (they run with secrets or a write token next to
+  code from a fork); an environment chosen by an expression (whether an
+  empty name means "no environment" is not documented, and a placeholder
+  environment would be created unprotected); building the Intel Mac
+  package on Apple Silicon (its tests would not run natively).
+- **Consequences:** the source code and the release notes are public, and
+  every release also carries GitHub's "Source code" archives of the tagged
+  commit. The maintainer configures, once, the two environments, a tag
+  ruleset for `v*` and the repository's Actions settings
+  ([release.md](../development/release.md#repository-settings)); none
+  exists today. A publish job's token can publish files, but installations
+  refuse anything the release key did not sign, and the version floor
+  refuses replays. Whoever can push a `v*` tag can start a release; the tag
+  ruleset and the environment's reviewer decide whether it reaches the
+  key. macOS CI time is free but slow (two Mac jobs per pull request). Intel
+  Mac builds end when GitHub retires its last Intel image (announced for
+  2027).

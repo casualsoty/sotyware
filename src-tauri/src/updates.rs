@@ -60,19 +60,17 @@ pub struct Source {
 
 /// The one place the release repository is written; [`RELEASE_REPOSITORY`]
 /// and [`MANIFEST_URL`] are built from it, and `release.yml` reads it from
-/// here (`update-manifest.mjs release-repository`).
+/// here (`update-manifest.mjs release-repository`) to refuse publishing
+/// anywhere else.
 macro_rules! release_repository {
     () => {
-        "casualsoty/sotyware-releases"
+        "casualsoty/sotyware"
     };
 }
 
-/// The public GitHub repository whose published releases carry the
-/// installers and the manifest (ADR-036, ADR-038). It holds distribution
-/// files and release metadata only, never source code: the source
-/// repository stays private, and GitHub serves a private repository's
-/// release assets only to signed-in clients, while installations fetch
-/// anonymously.
+/// The GitHub repository whose published releases carry the installers and
+/// the manifest (ADR-036, ADR-039): the public source repository itself,
+/// whose `release.yml` publishes them. Installations fetch anonymously.
 pub const RELEASE_REPOSITORY: &str = release_repository!();
 
 /// The manifest of the release GitHub marks as latest (never a draft or a
@@ -651,7 +649,7 @@ impl Updates {
                     .map_err(|e| UpdateError::Network(e.without_url().to_string()))?;
                 if r.status() == reqwest::StatusCode::NOT_FOUND {
                     // No published release carries update information yet
-                    // (or the release repository is not public).
+                    // (or the repository is not public).
                     return Err(UpdateError::Network(not_found));
                 }
                 if !r.status().is_success() {

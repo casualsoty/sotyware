@@ -119,16 +119,23 @@ and the [journal](../status/journal.md), not here.
   signature must name the same version; checks the package's SHA-256
   against the signed manifest; HTTPS only, and at most five redirects,
   each to HTTPS (GitHub's `releases/latest/download/` redirects twice). The
-  signing key is used in one job of `release.yml` (bound to the
-  `release` environment), never in a build job whose dependencies' build
-  scripts could read it; the job checks the secret against the committed
-  public key first, and the committed key can never be a signing fixture's
-  throwaway key or a private key (`check-key`, ADR-038). Releases live in a
-  separate public repository holding only distribution files
-  (`casualsoty/sotyware-releases`, ADR-038); the token that writes there
-  (`SOTYWARE_RELEASES_TOKEN`, fine-grained, Contents on that repository
-  only) is given only to the steps that run `gh release` and cannot sign,
-  so a leaked token can publish files installations refuse, not updates.
+  signing key is a secret of the `release` environment, which admits only
+  `v*` tags (and, configured as documented, waits for a reviewer); only
+  the signing step of `release.yml`'s publish job receives it, never a
+  build job whose dependencies' build scripts could read it, a pull
+  request (fork pull requests get no secret and a read-only token) or a
+  dry run (a throwaway key). That job installs its dependencies without
+  install scripts and restores no cache, checks that the tag still names
+  the built commit and that the secret belongs to the committed public
+  key, and the committed key can never be a signing fixture's throwaway
+  key or a private key (`check-key`). `prepare` refuses a release while
+  the key or an Apple credential is a repository secret, or while the
+  `release` environment admits a branch (ADR-039). Releases are published
+  in the public source repository with the workflow's own `GITHUB_TOKEN`
+  (`contents: write` only in that job): a leaked token can publish files
+  installations refuse, not updates. The Apple credentials live in the
+  `macos-signing` environment (`main` and `v*` tags), used only by the
+  macOS package job.
   The plugin's own commands are unreachable from the page (no `updater:`
   permission). Nothing installs without the user's click, and not while a
   transfer, file operation or backup runs. Tested with test keys and a
@@ -141,13 +148,16 @@ and the [journal](../status/journal.md), not here.
   no version floor yet, so the first manifest it sees can be any validly
   signed one, newer than the installed version. A withheld update (the
   server answering an old manifest, or nothing) is not detected beyond the
-  floor: there is no expiry on manifests. Whoever controls the release
-  repository (the account, or the release token) can delete releases or
-  mark an older one latest, which installations see as "up to date" (the
-  floor refuses anything lower than what they were offered). On GitHub
-  Free a private repository has no environments, so the update key and
-  release token are repository secrets readable by any workflow run of the
-  source repository ([release.md](../development/release.md#secrets)).
+  floor: there is no expiry on manifests. Whoever controls the repository
+  (the account, or a publish job's token) can delete releases or mark an
+  older one latest, which installations see as "up to date" (the floor
+  refuses anything lower than what they were offered). Whoever can push a
+  `v*` tag can start a release: the tag ruleset and the `release`
+  environment's reviewer are the gates, and both are settings the
+  maintainer must make ([release.md](../development/release.md#repository-settings);
+  none exists yet). A dependency or action compromised upstream could act
+  inside the signing step; actions are pinned to commit SHAs and npm
+  packages to the lockfile's hashes.
 
 ### Malicious local process (same user)
 

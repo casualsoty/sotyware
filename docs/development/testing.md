@@ -129,7 +129,7 @@ builds rfd from the local patch
 `check:update-key` is one too: `src-tauri/update-key.pub` may be empty
 (updates off) but must never hold a private key, more than one key line or
 the throwaway key of a signing fixture (`scripts/fixtures/**/test-key.pub`,
-ADR-038).
+ADR-039).
 `check:release-binary` is another: it fails if a default (or any other
 feature) turns on the request recorder (ADR-024,
 [below](#request-recorder-tests)).
@@ -1053,8 +1053,9 @@ part of this test. If the run id is lost, find the run under
   `src-tauri\` after checking its SHA-256 against the one approved, with
   the same arguments. No desktop or dialog is involved.
 - **GitHub CI:** not prepared, on purpose. It would need repository secrets
-  and a manual, approval-gated workflow, and its log would be on GitHub.
-  Its cost counts against the GitHub Free budget and the B2 caps.
+  and a manual, approval-gated workflow, and its log would be public on
+  GitHub (the repository is public). It would also count against the B2
+  caps.
 
 The real file dialog and the dashboard UI are not part of this test. The
 release binary's upload workflow was validated only against the local
@@ -1567,6 +1568,7 @@ recording that is incomplete fails the run as "count unknown", never as
 ```bash
 cd src-tauri && cargo test --lib updates::
 npm run test:update-manifest
+npm run test:release-assemble
 ```
 
 `src-tauri/src/updates/tests.rs` (ADR-033) signs manifests and stand-in
@@ -1592,7 +1594,16 @@ commands; every platform's entry, signature and SHA-256 verified).
 `scripts/update-manifest.test.mjs` checks the release tool against both
 fixtures and keys made with Node's crypto: every platform kind, the GitHub
 asset-name rule, `--require` (exactly the platforms built), `--base-url`
-(URLs under the tag's folder) and `check-signature`. `src/Updates.test.ts`
+(URLs under the tag's folder), `check-signature`, `check-key` and that the
+repository in `updates.rs` is the one publishing (`release-repository
+--expect`). `scripts/release-assemble.test.mjs` runs
+`scripts/release-assemble.sh` (the signing and checking step of
+`release.yml`'s publish and rehearse jobs) under bash with the real Tauri
+CLI and throwaway keys made in the test: Windows and Linux only while the
+Mac builds are not both signed and notarized, all seven platforms when
+they are, a missing package, a wrong public key, no private key and a
+non-empty output folder refused, the key and its password never in the
+output (Linux and macOS; skipped on Windows). `src/Updates.test.ts`
 covers the panel (error kinds, restart, per-platform wording) and
 `src/App.test.ts` the notification, with mocked commands and channels.
 
@@ -1600,7 +1611,7 @@ Not covered by any test: installing an update on any platform, the Windows
 installer or `request_restart` starting the new version, data surviving an
 update (needs two signed releases;
 [release.md](release.md#testing-updates-locally)), `release.yml` itself
-(never run: no key, private repository).
+(never run on GitHub: not pushed yet, no key, no environment).
 
 ## Cloud Storage UI end-to-end test
 
@@ -2388,29 +2399,32 @@ Findings:
 
 ## CI
 
-GitHub Actions, in `.github/workflows/`. The repository is **private on GitHub
-Free**, so hosted-runner time comes out of a small monthly allowance (see
-[GitHub Free budget](#github-free-budget)). Only the headless workflow runs
-automatically; the desktop tests and the release build run only when started
-by hand, except `macos.yml`, which also runs on a pull request labelled
-`macos`. Only `release.yml` (on a tag) uses the update key and the release
-token, and publishes a release, to the public release repository
-`casualsoty/sotyware-releases` (ADR-038); `macos.yml` uses the Apple
-secrets when they exist (never on a pull request) and runs on `macos-15`
-and `macos-15-intel`. Nothing runs on a schedule. A workflow can be started
-by hand only once its file is on the default branch (`macos.yml` and
-`release.yml` are not on `main` yet).
+GitHub Actions, in `.github/workflows/`. The repository is **public**, so
+GitHub's standard hosted runners cost nothing
+([runners and cost](#runners-and-cost)). The headless workflows (`ci.yml` on
+Linux and Windows, `macos.yml` on Apple Silicon and Intel) run on every
+pull request to `main` and every push to `main`; the desktop tests and the
+release build run only when started by hand. Only `release.yml`'s publish
+job (a real release, on a tag) can read the update signing key, from the
+`release` environment, and publish a release, in this repository with its
+own `GITHUB_TOKEN` (ADR-039); a dry run signs with a throwaway key.
+`macos.yml`'s package job reads the Apple credentials from the
+`macos-signing` environment when they exist; no pull request job sees a
+secret. Nothing runs on a schedule. A workflow can be started by hand only
+once its file is on the default branch (`macos.yml` and `release.yml` are
+not on `main` yet: opening a pull request to `main` runs `ci.yml` and
+`macos.yml`).
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the update manifest tool's tests (`npm run test:update-manifest`), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the update manifest tool's tests (`npm run test:update-manifest`), the release assembly script's tests (`npm run test:release-assemble`, Linux only), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands except the recorder-build `cargo test`, native Windows (MSVC Rust, no WSL), the PowerShell test-profile helpers' self-test instead of the Python one; does not start sotyware | A. headless |
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Signs nothing; called by `release.yml` with `upload: true` it uploads the two checked installers as the `windows-installers` artifact, which `release.yml`'s publish job signs (ADR-036). Nothing published | release artifacts (no install) |
-| `macos.yml` | **pull request to `main` labelled `macos`**, **manual**, or called by `release.yml` with `package: true` (ADR-037; never run yet) | `macos-15` (Apple Silicon) + `macos-15-intel` | per architecture: `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; with `package`: `npm run build:release`, binary and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
-| `release.yml` | **tag `vX.Y.Z`**, or manual on a tag (dry run by default; ADR-036, ADR-038; never run yet: no key, no release repository) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | version/tag check; the release repository (read from `updates.rs`) separate, public and free of source; outside a dry run the commit on `main`, the release token, no existing release, unsigned Windows installers allowed; `update-key.pub` a real key (not a fixture's) matching the signing secret; `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then sign, write and verify `latest.json`, draft in `casualsoty/sotyware-releases` → pre-release → anonymous download verified → latest ([release.md](release.md#publishing-a-release)) | release |
+| `macos.yml` | **automatic**: pull request to `main`, push to `main` (same skipped paths as `ci.yml`); **manual**; or called by `release.yml` with `package: true` (ADR-037, ADR-039; never run yet) | `macos-15` (Apple Silicon, M1) + `macos-15-intel` (Intel) | job `macOS tests` per architecture: native machine and rustc host checked (no Rosetta), `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; no secret. Job `macOS package` (only with `package`, environment `macos-signing`): `npm run build:release` without caches, binary architecture and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
+| `release.yml` | **tag `vX.Y.Z`**; or manual, a **dry run** by default, on any branch (ADR-036, ADR-039; never run yet) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | prepare: versions (and tag), `updates.rs` names this repository; for a real release also the commit on `main`, no existing release, `update-key.pub` a real key, the `release` environment tag-only, no signing secret at repository level, unsigned Windows installers allowed (warnings in a dry run); `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then **rehearse** (dry run: throwaway key, `scripts/release-assemble.sh`, artifact `release-dry-run`) or **publish** (environment `release`: tag re-checked, key probe, `release-assemble.sh`, draft with `--verify-tag`, files compared and downloaded back, pre-release, anonymous download verified, latest, endpoint checked; [release.md](release.md#publishing-a-release)) | release |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2429,12 +2443,14 @@ gh workflow run release-build.yml --ref main
 ```
 
 ```bash
-gh workflow run macos.yml --ref main -f package=false
+gh workflow run macos.yml --ref main -f package=true
 ```
 
-Before `macos.yml` is on `main`, open a pull request and add the label
-`macos` to it instead (`gh pr edit <number> --add-label macos`; create the
-label once with `gh label create macos`).
+```bash
+gh workflow run release.yml --ref main
+```
+
+The last one is a release dry run ([release.md](release.md#publishing-a-release)).
 
 ### Automatic headless workflow (`ci.yml`)
 
@@ -2544,56 +2560,46 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   auto-logged-on session, which is a separate decision (security and approval)
   and is not configured.
 
-### GitHub Free budget
+### Runners and cost
 
-Checked on 2026-11-10 against GitHub's documentation
-([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
-[billing and usage](https://docs.github.com/en/actions/concepts/billing-and-usage),
-[limits](https://docs.github.com/en/actions/reference/limits),
-[dependency caching](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)).
-These figures change; re-check them before relying on them.
+Checked on 2026-11-15 against GitHub's documentation
+([GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+[Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+[limits](https://docs.github.com/en/actions/reference/limits)). These
+figures change; re-check them before relying on them.
 
-- **Included per month (GitHub Free, private repositories):** compute worth
-  **$12 USD**, expressed as money rather than minutes; **500 MB** artifact
-  storage (shared with GitHub Packages); **10 GB** cache per repository. The
-  allowance resets at the start of each billing cycle.
-- **Per-minute rates of standard runners:** Linux 2-core x64 **$0.006**,
-  Windows 2-core **$0.010** (Windows costs about 1.7 times Linux), macOS
-  $0.062 (about ten times Linux: used only by the manual `macos.yml` and by
-  `release.yml`; one run of both architectures with packaging is likely
-  $3–5 at a cold cache, an estimate, not measured). $12 is therefore about 2,000 Linux minutes, or 1,200 Windows
-  minutes, or any mix. The pages read do not state how a job's time is rounded.
-- **When the allowance is used up:** without a payment method on file, "usage is
-  blocked once you consume the included compute usage" until the next cycle.
-  With a payment method, further usage is billed, limited only by any budgets
-  you set. This project adds no payment method, budget or paid feature.
-- **Public repositories** get standard hosted runners free; this repository is
-  private, so that does not apply.
-- **Cache entries** not accessed for 7 days are removed; beyond 10 GB the least
-  recently used are evicted. Logs do not count toward artifact storage; runs,
-  logs and artifacts are kept 90 days by default.
+- **Cost:** "Use of the standard GitHub-hosted runners is free and
+  unlimited on public repositories." Every runner these workflows use is a
+  standard one: `ubuntu-latest`, `ubuntu-22.04` (deprecated, removed
+  2027-04-17; [release.md](release.md#building-a-release)), `windows-latest`,
+  `macos-15` (arm64, M1, 3 CPUs, 7 GB) and `macos-15-intel` (x64, 4 CPUs,
+  14 GB). Larger runners are always billed; none is used. Until
+  2026-11-15 the repository was private on GitHub Free ($12 of compute a
+  month), which is why the desktop workflows are manual; they could now run
+  automatically too.
+- **Limits that still apply:** concurrent jobs per account (on Free 20 in
+  all and 5 macOS jobs at a time, per GitHub's limits page; a release
+  starts two Mac test and two Mac package jobs), job and workflow time
+  limits, artifact and cache storage (10 GB of cache per repository; entries
+  not used for 7 days are removed).
+- **Intel Macs:** `macos-15-intel` is GitHub's last x86_64 macOS image,
+  announced to be retired in 2027 ([macos.md](macos.md#architectures)).
+- **Fork pull requests** run on the same free runners. The repository
+  setting *Require approval for all external contributors*
+  ([release.md](release.md#repository-settings)) keeps a stranger's pull
+  request from starting runs without a maintainer's approval.
 
-**What consumes minutes.** Only the workflows above: the two headless jobs on
-every qualifying pull request update and every push to `main`, and the two
-desktop workflows when started by hand. Local runs (`npm run test:headless`,
-`npm run test:desktop:virtual`, the Windows scripts on your own machine) cost
-nothing.
+**Measured durations** (2026-11-13, runs at `f19dd8b`, first to last log
+line of each job, while the repository was private;
+[status.md](../status/status.md#runs-at-f19dd8b-2026-11-13)): with a
+**cold** Cargo cache a headless run took **7 min 37 s on Linux and 17 min
+23 s on Windows** (Windows Rust tests alone 97 s). A manual virtual-display
+run took **9 min 7 s** (release build 7 min 49 s); a manual isolated-desktop
+run **11 min 10 s** (release build 9 min 20 s), although it always ends NOT
+RUN on hosted runners. No macOS job has run yet.
 
-**Measured cost** (2026-11-13, runs at `f19dd8b`, first to last log line of
-each job; [status.md](../status/status.md#runs-at-f19dd8b-2026-11-13)): with a
-**cold** Cargo cache a headless run took **7 min 37 s on Linux and 17 min 23 s
-on Windows** (Windows Rust tests alone 97 s), about $0.05 + $0.17 = **$0.22**,
-i.e. roughly 50 cold headless runs a month. A warm cache should be faster;
-no warm run has been timed yet. A pull request with `n` pushes costs `n` runs
-plus one on merge. A manual virtual-display run took **9 min 7 s** (release
-build 7 min 49 s; about $0.06); a manual isolated-desktop run **11 min 10 s**
-(release build 9 min 20 s; about $0.11), although it always ends NOT RUN on
-hosted runners.
-
-**Monitoring usage.** Personal account: <https://github.com/settings/billing>,
-then the **Usage** view filtered to Actions (or "Actions grouped by SKU"); GitHub
-emails at 90 % and 100 % of the included amount. Per run: open the run in the
-**Actions** tab; the summary shows each job's duration (see
+Per run: open the run in the **Actions** tab; the summary shows each job's
+duration (see
 [viewing job execution time](https://docs.github.com/en/actions/how-tos/monitor-workflows/view-job-execution-time)).
 Cache size: the repository's **Actions → Caches** page.
 
@@ -2604,7 +2610,7 @@ Cache size: the repository's **Actions → Caches** page.
   GPU rendering, screen readers. The automatic jobs never start sotyware.
 - The Windows tray, tray menu, left click and Quit (only `windows.ps1` on a real
   desktop, by hand).
-- Windows 10, macOS on a real Mac (only hosted runners, by hand), release
+- Windows 10, macOS on a real Mac (only hosted runners), release
   builds with LTO in the automatic jobs (only the manual and release
   workflows build `--release`), installing any package (`.msi`, NSIS,
   `.deb`, `.rpm`, AppImage, `.dmg`), Authenticode signing, installing an

@@ -55,18 +55,18 @@ Not started unless status.md says so. Scope and procedures:
    at `f9a0c71` ([status](status.md#hosted-runs-at-f9a0c71-icons-pushed-2026-11-14));
    Explorer, Start menu, other scalings and the installers are part of the
    installation test (3).
-6. Updates through GitHub Releases (ADR-036, ADR-038; implemented
+6. Updates through GitHub Releases (ADR-036, ADR-039; implemented
    2026-11-15 but not usable). Decided 2026-11-15: the source repository
-   stays private and releases go to the public `casualsoty/sotyware-releases`.
-   Left, each by the maintainer: create that repository
-   ([release.md](../development/release.md#the-public-release-repository));
-   decide on GitHub Pro for the `release` environment or repository secrets
-   ([secrets](../development/release.md#secrets)); create the release
-   token; generate the release key offline and commit its public half to
-   `src-tauri/update-key.pub`
-   ([update signing key](../development/release.md#update-signing-key));
-   set `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` or add Authenticode signing; merge
-   so `release.yml` is on `main`; run it as a dry run on a tag, then
+   `casualsoty/sotyware` is public and releases are published there.
+   Left, each by the maintainer: push and let `ci.yml` and `macos.yml`
+   run; make the repository settings
+   ([release.md](../development/release.md#repository-settings)); create
+   the `release` and `macos-signing` environments
+   ([secrets](../development/release.md#secrets)); run `release.yml` as a
+   dry run from `main`; generate the release key offline, commit its public
+   half to `src-tauri/update-key.pub` and store the private half in
+   `release` ([update signing key](../development/release.md#update-signing-key));
+   set `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` or add Authenticode signing; then
    publish release N; install it on a disposable machine, publish N+1 and
    update through the notification, checking the data folder and
    credentials survive.
@@ -76,11 +76,11 @@ Not started unless status.md says so. Scope and procedures:
 
 ## macOS (after ADR-037)
 
-1. Run `macos.yml` (both architectures; before it is on `main`, through a
-   pull request labelled `macos`, then by hand with `package: true`); fix
-   what the first real compile and test run finds.
+1. Run `macos.yml` (both architectures; a pull request to `main` or a push
+   to `main` starts it, then by hand with `package: true`); fix what the
+   first real compile and test run finds.
 2. Obtain an Apple Developer ID certificate and an App Store Connect API
-   key; set the secrets ([macos.md](../development/macos.md#signing-and-notarization));
+   key; set the secrets in the `macos-signing` environment ([macos.md](../development/macos.md#signing-and-notarization));
    run `macos.yml` again and check signing and notarization.
 3. On an Apple Silicon and an Intel Mac: the manual check in
    [macos.md](../development/macos.md#signing-and-notarization), then an

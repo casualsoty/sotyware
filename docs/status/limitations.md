@@ -811,25 +811,35 @@ server only; no real provider was asked.
 - **Losing the recovery key and every enrolled device** makes the vault
   unrecoverable by design; storage data is unaffected.
 
-## Updates (ADR-033, ADR-036, ADR-038)
+## Updates (ADR-033, ADR-036, ADR-039)
 
-- **Not usable yet, for two reasons:** `src-tauri/update-key.pub` holds no
-  public key (no release key exists), and **the public release repository
-  `casualsoty/sotyware-releases` does not exist yet** (the source
-  repository stays private; GitHub serves a private repository's release
-  assets only to signed-in clients). `release.yml` refuses to publish until
-  it exists, is public and holds no source code
-  ([release.md](../development/release.md#the-public-release-repository)).
-  Release builds say updates are not set up.
-- **On GitHub Free the `release` environment does not exist** for a private
-  repository: the update key and the release token would have to be
-  repository secrets, readable by every workflow run of the source
-  repository; whether a job naming an unavailable environment runs at all
-  is untested ([release.md](../development/release.md#secrets)).
+- **Not usable yet:** `src-tauri/update-key.pub` holds no public key (no
+  release key exists), the `release` environment that would hold the
+  private key does not exist, and no release has been published. Release
+  builds say updates are not set up
+  ([release.md](../development/release.md#github-releases)).
+- **The signing key's protection depends on repository settings** that do
+  not exist yet: the `release` environment's tag rule and reviewer, and a
+  tag ruleset for `v*`. `release.yml` refuses a real release while the
+  environment is missing or admits a branch, or while the key is a
+  repository secret, but it cannot stop another workflow from naming an
+  unprotected environment, and it only warns when no reviewer is set
+  ([release.md](../development/release.md#repository-settings)).
 - **The Windows installers are not Authenticode-signed**; publishing them
   needs the explicit opt-in `SOTYWARE_ALLOW_UNSIGNED_WINDOWS`.
-- **The release token expires** (fine-grained tokens do); a release fails
-  at its first `gh release` step until it is renewed.
+- **The Linux packages are built on `ubuntu-22.04`,** which GitHub removes
+  on 2027-04-17 (brownouts from 2027-03-23); from then on releases fail
+  until `release.yml` moves to `ubuntu-24.04`, which needs glibc 2.39
+  instead of 2.35 ([release.md](../development/release.md#building-a-release)).
+- **A dry run cannot check the release key:** it signs with a throwaway
+  key; only a real release's publish job (or the local check in
+  [release.md](../development/release.md#update-signing-key)) proves that
+  the secret matches `update-key.pub`.
+- **A failure after the pre-release is published** leaves that
+  pre-release visible on the releases page (not offered to installations);
+  with release immutability on it cannot be repaired, only deleted, and
+  its version is used up. Whether GitHub lets an immutable pre-release be
+  marked latest afterwards is documented but not yet tried.
 - **No update was ever installed, and `release.yml` never ran:** download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
@@ -857,7 +867,8 @@ server only; no real provider was asked.
 
 - **Never run on a Mac a person used.** The macOS code compiles and is
   tested only on GitHub's hosted runners, and `macos.yml` has not run yet
-  (it needs the maintainer to start it); the macOS-only lines (`apple-native-keyring-store`
+  (nothing has been pushed since it was written; it now runs on every pull
+  request to and push to `main`); the macOS-only lines (`apple-native-keyring-store`
   calls, the menu bar wiring, `RunEvent::Reopen`) were never compiled on
   the development machine, which has no Mac and no cross toolchain.
 - **No signing or notarization yet:** no Developer ID certificate exists.
@@ -870,7 +881,8 @@ server only; no real provider was asked.
   template image, so it does not follow the menu bar's light/dark tint.
 - **Minimum macOS 10.15 is declared, not tested;** only the runners'
   versions (macOS 15) have run anything. Intel builds depend on GitHub's
-  `macos-15-intel` image, its last Intel one.
+  `macos-15-intel` image, its last Intel one, announced to be retired in
+  2027; after that there is no hosted Intel Mac to build and test on.
 - **File names from older HFS+ volumes** may be decomposed (NFD); object
   keys keep the local name's exact bytes, so such a name and its composed
   (NFC) spelling are different keys.
@@ -972,11 +984,11 @@ server only; no real provider was asked.
   [status.md](status.md#ci-github-actions-2026-11-10)). A passing virtual-display
   run is not a real Linux desktop: GNOME, KDE and XFCE remain untested. Real
   job durations are not recorded, so the cost figures are still estimates.
-- **CI time is a limited allowance.** The repository is private on GitHub Free:
-  $12 of hosted compute a month, after which Actions is blocked until the next
-  cycle (no payment method is set up). Hence only the headless jobs run
-  automatically, and the desktop tests only by hand
-  ([budget](../development/testing.md#github-free-budget)).
+- **The desktop workflows are still manual.** They were made manual while
+  the repository was private and CI time was a $12 monthly allowance; since
+  2026-11-15 the repository is public and standard runners are free
+  ([runners and cost](../development/testing.md#runners-and-cost)), but
+  only the headless jobs (`ci.yml`, `macos.yml`) run automatically.
 - **Automatic CI never starts sotyware.** Window, tray, single-instance and close
   behaviour are covered there only by unit tests with doubles; the desktop
   workflows are manual and may lag behind `main`.

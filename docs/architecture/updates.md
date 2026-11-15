@@ -4,12 +4,11 @@ Status: implemented 2026-11-15
 ([ADR-033](decisions.md#adr-033-updates-use-tauri-plugin-updater-behind-a-separately-signed-manifest-installed-only-on-the-users-click),
 source and restart:
 [ADR-036](decisions.md#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033),
-release repository:
-[ADR-038](decisions.md#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases)).
-**Not usable yet**: `src-tauri/update-key.pub` holds no public key and the
-release repository `casualsoty/sotyware-releases` has not been created, so
-release builds say "Updates are not set up in this build" and no release
-exists. What was tested, and
+where releases are published and who can sign:
+[ADR-039](decisions.md#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments)).
+**Not usable yet**: `src-tauri/update-key.pub` holds no public key and no
+release has been published, so release builds say "Updates are not set
+up in this build". What was tested, and
 where: [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15).
 How to publish: [release.md](../development/release.md#publishing-a-release).
 
@@ -17,22 +16,21 @@ Code: `src-tauri/src/updates.rs` (+ `updates/tests.rs`), the built-in
 feature `update-check` (`src-tauri/src/features/updates.rs`), the page
 `src/Updates.svelte` in Settings › About & updates and the notification in
 `src/App.svelte`, both on one `UpdatesModel` (`src/updatesModel.svelte.ts`,
-`src/updates.ts`), the release tool `scripts/update-manifest.mjs` and the
-workflow `.github/workflows/release.yml`.
+`src/updates.ts`), the release tools `scripts/update-manifest.mjs` and
+`scripts/release-assemble.sh`, and the workflow
+`.github/workflows/release.yml`.
 
 ## Where updates come from
 
-GitHub Releases of the public release repository
-`casualsoty/sotyware-releases` (`RELEASE_REPOSITORY`, ADR-038), which holds
-distribution files and release metadata only; the source repository
-`casualsoty/sotyware` stays private, and GitHub would serve its release
-assets only to signed-in clients. Each release carries the packages, their
-`.sig` files, `latest.json`, `latest.json.sig` and `SHA256SUMS`. sotyware
-asks, without any GitHub account or token,
+GitHub Releases of the public repository `casualsoty/sotyware`
+(`RELEASE_REPOSITORY`, ADR-039), published by its own `release.yml`. Each
+release carries the packages, their `.sig` files, `latest.json`,
+`latest.json.sig` and `SHA256SUMS`. sotyware asks, without any GitHub
+account or token,
 
 ```
-https://github.com/casualsoty/sotyware-releases/releases/latest/download/latest.json
-https://github.com/casualsoty/sotyware-releases/releases/latest/download/latest.json.sig
+https://github.com/casualsoty/sotyware/releases/latest/download/latest.json
+https://github.com/casualsoty/sotyware/releases/latest/download/latest.json.sig
 ```
 
 GitHub answers with a redirect to the release it marks as latest (drafts
@@ -40,7 +38,8 @@ and pre-releases never are), then to its asset store. GitHub is only the
 transport: what is installed is decided by the release key's signature.
 The repository is written once, in the `release_repository!` macro in
 `updates.rs`, from which `RELEASE_REPOSITORY` and `MANIFEST_URL` are built
-and which `release.yml` reads (`update-manifest.mjs release-repository`).
+and which `release.yml` reads (`update-manifest.mjs release-repository
+--expect`), refusing to publish to any other repository.
 
 ## Flow
 
@@ -54,8 +53,8 @@ and which `release.yml` reads (`update-manifest.mjs release-repository`).
    256 KiB, 30 s. A signature that does not match is fetched once more,
    with the manifest, because a release published between the two requests
    pairs one release's manifest with another's signature. HTTP 404 means
-   no published release has update information (or the release repository
-   is not public).
+   no published release has update information (or the repository is not
+   public).
 3. It verifies the manifest's minisign signature with the compiled-in key
    **before reading anything in it**, then checks: `format`
    `sotyware-update`, `formatVersion` 1; `channel` equals the
@@ -135,12 +134,12 @@ reads the same JSON:
   "pub_date": "2026-12-01T12:00:00Z",
   "platforms": {
     "windows-x86_64-nsis": {
-      "url": "https://github.com/casualsoty/sotyware-releases/releases/download/v0.2.0/sotyware_0.2.0_x64-setup.exe",
+      "url": "https://github.com/casualsoty/sotyware/releases/download/v0.2.0/sotyware_0.2.0_x64-setup.exe",
       "signature": "<the package's .sig>",
       "sha256": "…"
     },
     "darwin-aarch64-app": {
-      "url": "https://github.com/casualsoty/sotyware-releases/releases/download/v0.2.0/sotyware_0.2.0_aarch64.app.tar.gz",
+      "url": "https://github.com/casualsoty/sotyware/releases/download/v0.2.0/sotyware_0.2.0_aarch64.app.tar.gz",
       "signature": "…",
       "sha256": "…"
     }
@@ -159,8 +158,10 @@ signed version; `verify` checks a signed manifest, that it names exactly
 the expected platforms (`--require`), that every URL is under the tag's
 folder (`--base-url`) and the packages it names; `check-signature` checks
 one signed file (the release job's key check); `check-key` checks
-`update-key.pub`; `release-repository` prints the release repository named
-in `updates.rs`. A fixture made by the real
+`update-key.pub`; `release-repository` prints the repository named in
+`updates.rs` (with `--expect`, fails for any other).
+`scripts/release-assemble.sh` runs `tauri signer sign` and these commands
+in the release jobs. A fixture made by the real
 Tauri CLI for all seven platforms (`scripts/fixtures/update-github/`, key
 deleted) is verified by both the script's and the Rust tests.
 
@@ -174,10 +175,11 @@ deleted) is verified by both the script's and the Rust tests.
   signing fixtures' throwaway keys (`scripts/fixtures/**/test-key.pub`,
   test-only). The private key and its password are the GitHub secrets
   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` of
-  the `release` environment, used only by `release.yml`'s prepare (key
-  check) and publish (signing) jobs, never by a build job. Publishing to
-  the release repository uses a separate fine-grained token,
-  `SOTYWARE_RELEASES_TOKEN`, that cannot sign. Generation,
+  the `release` environment, which admits only `v*` tags; only the signing
+  step of `release.yml`'s publish job receives them, never a build job, a
+  pull request or a dry run (which signs with a throwaway key made for
+  it). Publishing uses the workflow's own `GITHUB_TOKEN` (`contents:
+  write` in that job only), which cannot sign. Generation,
   storage, rotation and recovery:
   [release.md](../development/release.md#update-signing-key).
 - `tauri.conf.json` → `plugins.updater` holds only what the plugin needs to

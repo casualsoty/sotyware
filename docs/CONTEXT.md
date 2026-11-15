@@ -35,16 +35,26 @@ exist; [macos.md](development/macos.md), ADR-037); updates come from the
 latest GitHub release's signed `latest.json`, with bounded HTTPS redirects,
 platform entries for Windows, macOS and Linux, Restart now after in-place
 installs, and `release.yml` publishing draft → pre-release → verified →
-latest (ADR-036). **Releases go to the separate public repository
-`casualsoty/sotyware-releases`** (ADR-038, committed after `70a9e62`, not pushed;
-[status](status/status.md#public-release-repository-signing-key-guard-and-ci-readiness-2026-11-15)):
-the source repository stays private, the installed app fetches the
-release repository's `latest.json` anonymously, `release.yml` publishes
-there with a release-only token after checking that it is public and holds
-no source, and the release key file can never hold a fixture's or a
-private key. **Not usable yet:** no release key in
-`src-tauri/update-key.pub`, and the release repository has not been
-created. Tested: Vitest 240,
+latest (ADR-036). **Releases are published in this repository**,
+`casualsoty/sotyware`, which the maintainer made public on 2026-11-15
+(ADR-039, superseding ADR-038's separate release repository; committed on
+branch `feat/releases-in-public-repository` after `77b1923`, not pushed;
+[status](status/status.md#releases-in-the-public-source-repository-2026-11-15)):
+the app fetches
+`https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
+anonymously; `release.yml` publishes with its own `GITHUB_TOKEN`
+(`contents: write` in the publish job only), the signing key lives only in
+the `release` environment (tags `v*`) and reaches only the publish job's
+signing step, dry runs sign with a throwaway key, the Apple credentials
+live in `macos-signing`, and `macos.yml` runs natively on both Mac
+architectures on every pull request to and push to `main`. The release key
+file can never hold a fixture's or a private key. **Not usable yet:** no
+release key in `src-tauri/update-key.pub`, no environment or ruleset
+configured, no workflow run on GitHub since. On this tree, WSL2 only:
+Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
+actionlint with shellcheck clean, the virtual display 139/0/0 and the
+Linux Cloud Storage phases (local 16, hang 8, browse 17, download 22,
+upload 51, files 99, no failure). Tested earlier (2e3972e): Vitest 240,
 Rust 507 (recorder build 535), the virtual display 139/0/0 and every Linux
 Cloud Storage driver phase (files 99/99) against the real binary, after an
 AT-SPI audit that found and fixed text WebKitGTK hid from screen readers; the release commands rehearsed with the real
@@ -241,10 +251,9 @@ update server exist), all tested headless against in-process servers only.
   checked before installing, only on **Update now**, never during a
   transfer, file operation or backup; Overview panel; automatic checks are
   the `update-check` feature; `scripts/update-manifest.mjs` makes and
-  checks manifests in `release.yml`'s publish job, which publishes to the
-  public release repository (ADR-038). `src-tauri/update-key.pub` holds no
-  key and the release repository does not exist, so release builds say
-  updates are not set up. Tested with test keys, a local server, the
+  checks manifests in `release.yml`'s publish job, which publishes in this
+  public repository (ADR-039). `src-tauri/update-key.pub` holds no key, so
+  release builds say updates are not set up. Tested with test keys, a local server, the
   plugin on Tauri's mock runtime and a fixture signed by the real Tauri
   CLI; **no update was ever installed**.
 
@@ -861,10 +870,12 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   3 runs, at `468a2c3`.
 - Test categories (headless / virtual display / private desktop / real desktop):
   [testing.md](development/testing.md). No JS linter.
-- CI (GitHub Actions, private repo on GitHub Free: $12 of hosted compute a
-  month, then blocked): `ci.yml` runs automatically on pull requests to and
+- CI (GitHub Actions; the repository is public since 2026-11-15, so
+  standard runners are free; until then it was private on GitHub Free with
+  $12 of compute a month): `ci.yml` runs automatically on pull requests to and
   pushes to `main` (Linux + Windows: `npm ci`, check, build, fmt, clippy,
-  `test:headless`; docs-only changes skipped). Its two automatic runs so far
+  `test:headless`; docs-only changes skipped), and so does `macos.yml`
+  (Apple Silicon + Intel, never run yet). Its two automatic runs so far
   passed: both the Ubuntu and the Windows headless job (run ids, commits and
   durations not recorded); a third, run 43360177079 at `f19dd8b`
   (2026-11-13, with the rfd guard), passed both jobs (7 min 37 s Linux,

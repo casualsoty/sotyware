@@ -1,9 +1,13 @@
-# Headless CI: the only workflow that runs automatically.
+# Headless CI on Linux and Windows; macos.yml runs the same checks on both
+# Mac architectures on the same events (docs/development/testing.md#ci).
 #
-# The repository is private on GitHub Free, so hosted-runner time is a limited
-# monthly allowance (docs/development/testing.md#ci). This workflow therefore:
+# The repository is public, so standard hosted runners cost nothing, but runs
+# still take time and count against GitHub's concurrency limits. This
+# workflow therefore:
 # - runs on pull requests to main and pushes to main only (a push to any other
 #   branch runs nothing, so a pull request commit is never built twice);
+# - never sees a secret: pull requests from forks get a read-only token and
+#   no secrets anyway, and no step here names one;
 # - skips commits that change only documentation or the desktop test scripts,
 #   which the headless jobs do not exercise;
 # - cancels an older run of the same pull request or branch when a newer one starts;
@@ -124,6 +128,12 @@ jobs:
       # Tauri signer produced (no key needed) and keys made in the test.
       - name: test the update manifest tool
         run: npm run test:update-manifest
+      # release.yml's signing and checking script (ADR-039), run as the
+      # release jobs run it (bash, the real Tauri CLI) with throwaway keys
+      # made in the test. Ubuntu only, like the release jobs.
+      - name: test the release assembly script
+        if: runner.os == 'Linux'
+        run: npm run test:release-assemble
       # Desktop tests run in test profiles only (ADR-027): the static check
       # of the drivers is part of test:headless; these are the guards' and
       # helpers' own tests.

@@ -66,6 +66,19 @@ that warning, and any guard failure, as a failed check. How to update or
 remove the patch: [patches/README.md](../../src-tauri/patches/README.md#updating-or-removing-the-patch).
 Builds print rfd's nine upstream dead-code warnings; they are expected.
 
+A change to the release workflows or their tools (`.github/workflows/`,
+`scripts/update-manifest.mjs`, `scripts/release-assemble.sh`) also needs
+their tests and a workflow lint:
+
+```bash
+npm run test:update-manifest                # the manifest and key tool
+npm run test:release-assemble               # release.yml's signing step: bash, the real Tauri CLI, throwaway keys
+```
+
+and `actionlint` (with `shellcheck` on `PATH`, so the `run:` scripts are
+checked too) from the repository root, if installed; it is not a project
+dependency.
+
 There is no JavaScript linter or formatter (ESLint/Prettier) and no `rustfmt.toml`
 or `clippy.toml`; defaults apply. GitHub Actions runs the static checks and the
 headless tests on Linux and Windows for every pull request to `main` and push to

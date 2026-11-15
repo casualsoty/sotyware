@@ -67,31 +67,51 @@ Minimum macOS: 10.15 (`bundle.macOS.minimumSystemVersion`; Tauri 2's own
 minimum). Apple Silicon needs macOS 11 anyway. Only the runners' macOS
 versions have run anything; older versions are not tested.
 
+Both runners are GitHub's **standard** hosted runners, free on a public
+repository (checked 2026-11-15 in GitHub's runner reference: `macos-15`
+is arm64 on M1 with 3 CPUs and 7 GB; `macos-15-intel` is x64 with 4 CPUs
+and 14 GB). `macos-15-intel` is GitHub's last Intel macOS image, announced
+to be retired in 2027 (August, or "fall", depending on the announcement);
+after that no hosted runner can build or test the Intel package
+natively, and the Intel build has to be dropped or moved to a
+self-hosted Intel Mac. Cross-compiling it on Apple Silicon is not a
+substitute: its tests would not run on Intel.
+
 ## CI
 
-`.github/workflows/macos.yml` (macOS minutes are billed at about ten times
-the Linux rate on a private repository, so it does not run on every push).
-It runs:
+`.github/workflows/macos.yml`. The repository is public, so GitHub's
+standard macOS runners cost nothing, and it runs like `ci.yml`:
 
-- on a pull request to `main` labelled **`macos`** (when the label is
-  added, and again for every commit pushed while it is there). This is how
-  a branch is validated before `macos.yml` is on `main`: GitHub starts a
-  workflow by hand only once its file is on the default branch. Such a run
-  never packages or signs and gets no secret;
+- on every pull request to `main` and every push to `main` (changes to
+  documentation or the desktop test scripts only are skipped);
 - by hand, once the file is on `main`: Actions tab, or
-  `gh workflow run macos.yml --ref <branch>` (add `-f package=true` for an
-  unsigned `.app` and `.dmg` without Apple secrets);
+  `gh workflow run macos.yml --ref <branch>` (add `-f package=true` for the
+  `.app` and `.dmg`);
 - from `release.yml`, with `package: true`.
 
-No Apple account or secret is needed to validate the code. Per
-architecture: the
-headless checks of `ci.yml` (svelte-check, Vite build, the guards, Vitest,
-fmt, clippy for the normal and the test-profile build, `cargo test` with the
-in-process S3, updater and account-service tests), the OS credential store
-round trip in a keychain made for the run (never the runner user's login
-keychain), and with `package: true` the release build, its checks (no test
-build, no build-machine path, `LSMinimumSystemVersion`, the binary's
-architecture) and the release files (`.dmg`, `.app.tar.gz`, `status.txt`).
+Before `macos.yml` is on `main`, opening a pull request to `main` runs it.
+
+Two jobs per architecture, each on its own runner (table above):
+
+- **`macOS tests`** never has a secret: the headless checks of `ci.yml`
+  (svelte-check, Vite build, the guards, Vitest, fmt, clippy for the normal
+  and the test-profile build, `cargo test` with the in-process S3, updater
+  and account-service tests) and the OS credential store round trip in a
+  keychain made for the run and set as the default keychain (never the
+  runner user's login keychain). First it checks that the runner is the
+  expected native machine (`uname -m`, and `sysctl.proc_translated` not 1,
+  i.e. not Rosetta) and that rustc's host is `aarch64-apple-darwin` or
+  `x86_64-apple-darwin`, so neither architecture can pass on the other's
+  hardware.
+- **`macOS package`** only with `package: true`: the release build (no
+  cache), its checks (no test build, no build-machine path,
+  `LSMinimumSystemVersion`, exactly one architecture in the binary) and
+  the release files (`.dmg`, `.app.tar.gz`, `status.txt`). It runs in the
+  environment **`macos-signing`**, the only place the Apple credentials
+  are ([release.md](release.md#secrets)); it signs and notarizes when they
+  are there.
+
+No Apple account or secret is needed to validate the code.
 
 ## Signing and notarization
 
@@ -99,13 +119,13 @@ Signing needs an Apple Developer Program membership (paid) and a
 **Developer ID Application** certificate; notarization needs an App Store
 Connect API key with the Developer role. Neither exists yet.
 
-**Repository** secrets (Settings → Secrets and variables → Actions →
-Repository secrets; never in a file, never printed). Not environment
-secrets: `release.yml` passes these six to the reusable `macos.yml`, and a
-job that calls a reusable workflow cannot name an environment, so an
-environment secret would never reach it and every Mac build would be
-unsigned and left out of the release
-([release.md](release.md#secrets)):
+Secrets of the **`macos-signing` environment** (Settings → Environments →
+`macos-signing` → Environment secrets; never in a file, never printed,
+never as repository secrets, which `release.yml` refuses). The
+environment should admit only the branch `main` and the tags `v*`
+([release.md](release.md#secrets)); only the package job names it, and a
+job that names an environment receives its secrets also inside a reusable
+workflow called by `release.yml` (ADR-039):
 
 | Secret | What |
 | --- | --- |

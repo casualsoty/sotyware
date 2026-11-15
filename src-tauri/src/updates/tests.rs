@@ -366,15 +366,16 @@ fn a_build_without_a_release_key_has_no_update_source() {
 #[test]
 fn the_production_source_is_github_and_the_committed_key() {
     // The manifest of the release GitHub marks as latest (ADR-036), in the
-    // public release repository, never the private source one (ADR-038).
+    // public source repository, where release.yml publishes (ADR-039).
     assert_eq!(
         MANIFEST_URL,
         format!("https://github.com/{RELEASE_REPOSITORY}/releases/latest/download/latest.json")
     );
-    assert_eq!(RELEASE_REPOSITORY, "casualsoty/sotyware-releases");
-    let (owner, name) = RELEASE_REPOSITORY.split_once('/').unwrap();
-    assert!(!owner.is_empty() && !name.contains('/'));
-    assert_ne!(name, "sotyware", "the source repository is private");
+    assert_eq!(
+        MANIFEST_URL,
+        "https://github.com/casualsoty/sotyware/releases/latest/download/latest.json"
+    );
+    assert_eq!(RELEASE_REPOSITORY, "casualsoty/sotyware");
     // Either no key yet (updates off) or one that decodes as minisign.
     match production_pubkey() {
         None => assert!(production().is_none()),

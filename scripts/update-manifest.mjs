@@ -19,8 +19,10 @@
 //           minisign Ed25519 public key, not a private key pasted by
 //           mistake and not one of the test fixtures' throwaway keys
 //           (scripts/fixtures/**/test-key.pub); prints it;
-//   release-repository  prints the public release repository named in
-//           src-tauri/src/updates.rs (ADR-038), the one place it is written.
+//   release-repository  prints the repository whose releases installations
+//           read, as written once in src-tauri/src/updates.rs (ADR-039);
+//           with --expect, fails unless it is that repository (release.yml
+//           passes the repository it publishes to).
 //
 // It never reads or prints a private key. Only Node's standard library.
 //
@@ -43,7 +45,7 @@
 //     [--fixtures scripts/fixtures] [--allow-missing]
 //
 //   node scripts/update-manifest.mjs release-repository \
-//     [--source src-tauri/src/updates.rs] [--not <owner/name>]
+//     [--source src-tauri/src/updates.rs] [--expect <owner/name>]
 //
 // --pubkey takes a key file (comment lines starting with # are skipped, as
 // in src-tauri/update-key.pub) or the base64 line itself.
@@ -382,8 +384,8 @@ export function checkReleaseKey(keyFileText, fixturesDir = FIXTURES) {
   return lines[0];
 }
 
-/** The public release repository written in src-tauri/src/updates.rs
- * (the `release_repository!` macro, ADR-038). */
+/** The repository whose releases installations read, written in
+ * src-tauri/src/updates.rs (the `release_repository!` macro, ADR-039). */
 export function releaseRepository(rustSource) {
   const m = rustSource.match(/macro_rules!\s+release_repository\s*\{\s*\(\)\s*=>\s*\{\s*"([^"]*)"\s*\};?\s*\}/);
   if (!m) {
@@ -446,8 +448,9 @@ export function main(argv) {
   }
   if (command === "release-repository") {
     const repo = releaseRepository(readFileSync(o.source ?? UPDATES_RS, "utf8"));
-    if (o.not !== undefined && o.not.toLowerCase() === repo.toLowerCase()) {
-      fail(`the release repository ${repo} is this (private source) repository; releases go to a separate public repository (ADR-038)`);
+    // GitHub compares owner and repository names without regard to case.
+    if (o.expect !== undefined && o.expect.toLowerCase() !== repo.toLowerCase()) {
+      fail(`installations read the releases of ${repo} (src-tauri/src/updates.rs), not of ${o.expect}: a release published to ${o.expect} would never reach them (ADR-039)`);
     }
     console.log(repo);
     return 0;
