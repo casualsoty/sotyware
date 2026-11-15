@@ -56,6 +56,13 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Features.test.ts      Tests of the Features section and of features.ts
 │   └── features.ts           Typed wrappers for list_features / set_feature_enabled; validates responses
 ├── package.json              npm scripts and JS dependencies
+├── server/                   The account and sync service (ADR-032), its own crate and Cargo.lock; operations: docs/development/server.md
+│   ├── src/main.rs           sotyware-server: serve, backup <file>, restore <file>, outbox (development)
+│   ├── src/lib.rs            AppState, Config (token lifetimes, Argon2 cost, proxy trust)
+│   ├── src/api.rs            The /v1 HTTP API (axum): accounts, sessions, devices, enrollments, recovery wrap, vault, audit events, health
+│   ├── src/db.rs             SQLite schema (append-only MIGRATIONS), queries, online backup and checked restore
+│   ├── src/security.rs       Argon2id, random tokens/codes/ids, SHA-256 storage of secrets, constant-time comparison, rate limits, lockout
+│   └── tests/api.rs          The API over HTTP in process (fresh database, controllable clock)
 ├── scripts/
 │   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
 │   ├── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri

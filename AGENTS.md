@@ -106,6 +106,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `http` (dev only, already in the tree: the test server's `ListMultipartUploads` route) | `1` | 1.5.0 |
 | `bytes`, `futures-core` (dev only, already in the tree: the test server's slow, stalled or cut-off object bodies) | `1`, `0.3` | 1.12.1, 0.3.34 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
+| **Account service** (`server/`, own `Cargo.lock`, ADR-032): `axum` (http1, json, tokio, query), `tokio`, `serde`, `serde_json`, `rusqlite` (bundled, backup), `argon2` (Argon2id), `getrandom`, `sha2`, `subtle`, `base64`; dev: `tower`, `http-body-util` | `0.8`, `1`, `1`, `1`, `0.41`, `0.5`, `0.3`, `0.10`, `2`, `0.22`; `0.5`, `0.1` | 0.8.9, 1.54.1, 1.0.229, 1.0.154, 0.41.1, 0.5.3, 0.3.4, 0.10.9, 2.6.1, 0.22.1; 0.5.3, 0.1.5 |
 | Windows webview | WebView2 | system |
 
 Re-check this table against the lockfiles when you change dependencies.
@@ -291,12 +292,24 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   Tauri channels, not events), no `dialog:` or `fs:` permission. CSP:
   `img-src 'self' data:` added for previews (ADR-026).
 
+- **Account service (`server/`, ADR-032):** a separate Rust crate (not
+  part of the desktop build; own lock file; CI job `server`): axum + SQLite
+  (`db.rs` append-only migrations, WAL, `secure_delete`), `security.rs`
+  (Argon2id, random tokens and codes stored as SHA-256, rate limits,
+  lockout), `api.rs` (`/v1`: registration with verification codes, sign-in,
+  refresh rotation with reuse detection, sign-out, account, password change
+  and reset, deletion, recovery wrap, device wraps with a key proof, vault
+  with optimistic concurrency, devices, enrollment by approval, audit
+  events, `/healthz`), `main.rs` (`serve`, `backup`, `restore`, `outbox`).
+  Mail goes to a development outbox; production email, hosting and TLS are
+  external gates ([server.md](docs/development/server.md)).
+
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
 journal and the backup jobs, no settings, autostart,
-third-party plugin system, feature-management UI, sync, backend service, XEmbed
+third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
 sotyware's own, content search, transfer queue UI or download history,

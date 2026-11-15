@@ -2,10 +2,24 @@
 
 Status: design accepted 2026-11-15
 ([ADR-032](decisions.md#adr-032-sotyware-accounts-are-a-separate-service-synced-configuration-is-end-to-end-encrypted-with-a-recovery-key-and-device-keys)).
-What is implemented and tested is recorded in
-[status.md](../status/status.md) and the [journal](../status/journal.md).
-Threats: [threat-model.md](threat-model.md). Operating the service:
-docs/development/server.md (written with the service).
+The service (`server/`) is implemented and tested locally; what else is
+implemented is recorded in [status.md](../status/status.md) and the
+[journal](../status/journal.md). Threats: [threat-model.md](threat-model.md).
+Operating the service: [server.md](../development/server.md).
+
+**Key proof.** The service cannot check that a device holds the account
+key without learning it, so it stores the SHA-256 of a *key proof*,
+`HKDF-SHA256(AK, info = "sotyware key proof v1" ‖ account id)`, recorded
+when sync is set up (and replaced on rotation). Writing the vault, storing
+a device wrap, approving an enrollment and replacing the recovery wrap all
+require the proof: a password alone can sign in but cannot overwrite or
+re-key the vault. The proof reveals nothing about AK (one-way), and the
+service stores only its hash.
+
+**Email verification and pre-registration.** Verifying an address needs
+the code *and* the password; registering an unverified address again
+replaces its password and sends a new code, so someone who registered a
+stranger's address first cannot keep it.
 
 Accounts are **optional**. An installation without a sotyware account keeps
 working exactly as before; nothing is sent anywhere.

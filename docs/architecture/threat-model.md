@@ -175,7 +175,7 @@ and the [journal](../status/journal.md), not here.
   optional, local-only installations keep working). A backup on another
   provider keeps the data reachable during a primary-provider outage, with
   standard S3 tools if needed. The service's own database is backed up and
-  its restore is tested (docs/development/server.md, written with the service).
+  its restore is tested ([server operations](../development/server.md)).
 - *Residual:* during a service outage, new devices cannot enroll and sync
   pauses; existing devices keep their local configuration.
 

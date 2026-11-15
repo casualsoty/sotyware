@@ -166,3 +166,29 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: src-tauri
         run: cargo test --locked --lib backup::tests::the_standalone_recovery_script -- --ignored
+
+  # The account service (ADR-032): its own crate and lock file, Linux only
+  # (it is deployed on a server, not shipped with the desktop app).
+  server:
+    name: account service (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: server
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - working-directory: server
+        run: cargo fmt --check
+      - working-directory: server
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - working-directory: server
+        run: cargo test --locked

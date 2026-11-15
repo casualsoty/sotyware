@@ -153,6 +153,13 @@ Reliability scenarios the audit traced and their current behaviour:
   changed); change counts and the suspicious check were computed before
   content was known (now by SHA-256 after transfer).
 
+- Phase D done: `server/` (axum + SQLite) with the `/v1` API, Argon2id,
+  rotating tokens with reuse detection, lockout and rate limits, key proof
+  for vault writes and enrollment, pre-registration defence, audit, online
+  backup/restore, `secure_delete` (found by the plaintext test: deleted
+  rows lingered in free pages), CI job `server`, operations guide
+  `docs/development/server.md`.
+
 ## Tests run during the mission
 
 (Exact commands and counts, newest last.)
@@ -161,6 +168,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | Phase D | WSL2 | `cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked` | 5 unit + 18 API tests passed; clippy 0 |
 | 2026-11-15 | Phase C | WSL2 | `npm run test:headless`; clippy both builds; recorder tests; `--ignored` Python recovery test; profile helpers | guards ok; Vitest 197; Rust 458 passed, 28 ignored; recorder 486 passed, 28 ignored; clippy 0/0; Python recovery test 1 passed; helpers 10 OK |
 | 2026-11-15 | A2/A6 change | WSL2 | `npm run test:headless`; clippy (default and test-profile); recorder tests; `npm run check`; `npm run test:profile-helpers` | guards ok; Vitest 187; Rust 434 passed, 27 ignored; recorder 462 passed, 27 ignored; clippy 0 / 0; check clean; Python helpers 10 OK |
 | 2026-11-15 | A4/A5 change | WSL2 | same + `cargo test --features request-recorder --target-dir target/recorder --lib` | Rust 422 passed, 27 ignored; recorder build 450 passed, 27 ignored; Vitest 180; check clean; clippy exit 0 |
@@ -183,9 +191,10 @@ None yet beyond the audit table.
 
 ## Next concrete task
 
-Phase D: the account service in `server/` (axum + SQLite): registration
-with verification codes through a mailer interface (dev outbox), sign-in
-with Argon2id and rotating opaque tokens, devices, enrollment by recovery
-key or approval, encrypted vault storage with revision checks, password
-change/reset, account deletion, rate limits, audit events, online backup
-and restore, health check; integration tests over HTTP.
+Phase E: desktop client `src-tauri/src/account/`: vault crypto
+(XChaCha20-Poly1305, HKDF-SHA256, crypto_box sealed boxes, recovery key
+encoding), HTTP client (reqwest + rustls, HTTPS only outside tests), token
+and key storage in the OS credential store, sync with three-way merge and
+conflict copies, enrollment flows; commands and Account page; end-to-end
+tests against the in-process server (dev-dependency) with two device
+profiles.

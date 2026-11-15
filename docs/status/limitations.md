@@ -774,6 +774,23 @@ server only; no real provider was asked.
   retention is not set on uploads.
 - **Limits:** 200,000 objects per job, 2,000 manifests per repository.
 
+## Account service (ADR-032)
+
+- **Not deployed; no production email.** Codes and notices go to a
+  development outbox; a real deployment needs hosting, TLS, an email
+  provider and off-host backups (external gates, [server.md](../development/server.md)).
+- **One SQLite connection, hashing under its lock:** roughly 20 sign-ins per
+  second per instance.
+- **Rate limits and the unknown-address lockout are in memory** and start
+  over when the service restarts.
+- **Old access tokens stay valid until they expire** (15 minutes) after a
+  refresh; revocation (sign-out, device revoke, password change or reset,
+  reuse detection) ends them at once.
+- **A pending device sees the recovery wrap** (needed to unlock with the
+  recovery key); the wrap is useless without the 256-bit recovery key.
+- **Metadata is visible to the operator:** email, device names and
+  platforms, sync times and vault size.
+
 ## General
 
 - **No autostart** on login.

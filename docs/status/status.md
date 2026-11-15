@@ -86,6 +86,7 @@ verified byte for byte; the object was deleted again by its version id
 | Provider capability model with evidence (nine capabilities per profile, shown in the account form) and conditional writes (`If-None-Match: *` on `PutObject`/`CompleteMultipartUpload`) only where `conditional_put` is established, which no shipped profile is; downloads report `sha256-verified`, `size-only` or `transfer-only` (2026-11-15) | `cloud/provider.rs`, `cloud/s3/upload.rs`, `verification_of` in `cloud/s3.rs`, `src/CloudAccountForm.svelte` ([ADR-029](../architecture/decisions.md#adr-029-provider-behaviour-is-a-capability-model-with-evidence-levels), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | Operation journal (`operations-journal.sqlite3`: uploads with their multipart id, download temporary files, staging folders, file operations with every planned step, written before they can change anything) and the recovery view (Interrupted work in Cloud Storage: inspect at the provider, dismiss, abort an incomplete multipart upload; Unfinished large uploads per bucket); startup removes only sotyware's own recorded temporary files; the five commands `list_cloud_recovery`, `inspect_cloud_recovery`, `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload` (2026-11-15) | `src-tauri/src/journal.rs`, `SqliteJournal` in `storage.rs`, `cloud/recovery.rs`, hooks in `cloud/s3.rs`, `cloud/s3/upload.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`, `run()` in `lib.rs`; `src/CloudRecovery.svelte`, `src/cloudRecovery.ts` ([cloud-storage.md](../architecture/cloud-storage.md#operation-journal-and-recovery), [ADR-030](../architecture/decisions.md#adr-030-remote-and-local-side-effects-are-journaled-before-they-happen-and-recovery-inspects-instead-of-repeating), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | Backups (ADR-031): jobs from an account's bucket (or folder) to another destination as content-addressed blobs plus one JSON manifest per run; incremental (unchanged objects not transferred, identical content stored once); quick and full verification; health never "healthy" without a passed verification; retention only after a verified, unsuspicious snapshot (mass-change check by content); restore to a folder or a bucket, never overwriting, verified by SHA-256; recovery file export; destination protection (versioning, Object Lock) read and described; the `backup-scheduler` feature; the Backups page; `scripts/recovery/sotyware-restore.py` (Python only) (2026-11-15) | `src-tauri/src/backup/`, `features/backup.rs`, `SqliteBackupStore` in `storage.rs`, `run()` in `lib.rs`; `src/Backup.svelte`, `src/backup.ts`; `scripts/recovery/` ([backup.md](../architecture/backup.md), [recovery guide](../user/recovery.md), [validation](#backups-and-disaster-recovery-2026-11-15)) |
+| Account service (ADR-032), separate crate, tested locally only, not deployed: registration with email verification codes (development outbox), Argon2id passwords, rotating opaque tokens with reuse detection, progressive lockout and rate limits, devices, enrollment by recovery key or approval with a key proof, end-to-end encrypted vault storage with optimistic concurrency, password change and reset, account deletion, audit events, online backup and checked restore, health check (2026-11-15) | `server/` ([accounts.md](../architecture/accounts.md), [server.md](../development/server.md), [validation](#account-service-2026-11-15)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -3735,6 +3736,30 @@ providers; no real provider, no desktop driver, no native Windows run.**
   detected and its file removed.
 - Vitest: `Backup.test.ts` (10) and the navigation test with the Backups
   link.
+
+## Account service (2026-11-15)
+
+Production-readiness work, phase D ([journal](journal.md)): `server/`
+(ADR-032, [server.md](../development/server.md)). **WSL2 only, in process;
+not deployed anywhere, no TLS, no real email.**
+
+- `cargo test --locked` in `server/`: 5 unit tests (Argon2id hashing and
+  verification, tokens/codes/ids, password and email rules, lockout curve,
+  token buckets) and 18 API tests (health; registration answers the same
+  for new and existing addresses; codes single-use, limited to 5 attempts,
+  expiring, needing the password; a pre-registered address cannot be kept
+  by a stranger; sign-in failures identical for known and unknown
+  addresses, lockout and rate limits alike; unverified accounts refused;
+  refresh rotation with reuse revoking the family; access expiry and
+  sign-out; sync setup, enrollment by recovery key with the key proof,
+  optimistic concurrency refusing a stale write; enrollment by approval
+  and expiry; device revocation; password change signing out other
+  devices; password reset keeping the vault but unenrolling every device;
+  account deletion removing everything; no password, token or code in the
+  database file; vault size limit and audit events without secrets; online
+  backup restored after deleting the live database, a damaged backup
+  refused; per-address rate limits). `cargo fmt --check` and `cargo clippy
+  --all-targets --locked -D warnings` clean.
 
 ## See also
 
