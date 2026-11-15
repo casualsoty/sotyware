@@ -250,10 +250,12 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
    - **prepare:** every version equals `X.Y.Z`; `updates.rs` names this
      repository; the tagged commit is on `main`; no release `vX.Y.Z`
      exists; `update-key.pub` holds a real key (not a fixture's, not a
-     private key); the `release` environment exists and admits tags only
-     (a missing required reviewer is a warning); the signing key and the
-     Apple credentials are not repository secrets; unsigned Windows
-     installers are allowed.
+     private key); the `release` environment exists and admits exactly
+     the tag rule `v*` (a missing required reviewer and administrators
+     allowed to bypass are warnings, and so is a `macos-signing`
+     environment admitting anything but `main` and `v*`); the signing key
+     and the Apple credentials are not repository secrets; unsigned
+     Windows installers are allowed.
    - **ci, windows, linux, macos:** `ci.yml` on the commit; the Windows
      installers (`release-build.yml`, unpacked and checked); Linux
      (Ubuntu 22.04: AppImage, deb, rpm); macOS (`macos.yml`: tests on both
@@ -268,21 +270,30 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
      created on the tag (visible only to people with write access); its
      names and sizes are compared and its files downloaded back with the
      token and checked against `SHA256SUMS`; it is published as a
-     **pre-release** (public, never "latest"); every file is downloaded
-     again **anonymously** over HTTPS and verified (signatures, signed
-     versions, SHA-256); then it is marked **latest**, and
+     **pre-release** (public, `make_latest=false`: never "latest"); every
+     file is downloaded again **anonymously** over HTTPS, compared byte for
+     byte with what was signed and verified (signatures, signed versions,
+     SHA-256); then one request sets `prerelease=false` and
+     `make_latest=true`, GitHub's latest release must be this one
+     (`/releases/latest`), and
      `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
-     must serve its manifest. One release runs at a time.
+     and its `.sig` must serve exactly the signed manifest and signature,
+     which must verify. One release runs at a time.
 
    A tag that exists can also be released by hand:
    `gh workflow run release.yml --ref vX.Y.Z -f dry_run=false`.
-5. If any step fails, the previous release stays the latest: installations
-   see nothing. A draft the failed run created is deleted automatically
-   (a draft that existed before is left alone, and stops the run), so
-   after fixing the cause you can **Re-run failed jobs**. A failure after
-   the pre-release was published leaves that pre-release: delete it (with
-   immutability on, GitHub may keep its tag and not let the version be
-   used again) and release a new patch version. Never
+5. If any step before the promotion fails, the previous release stays the
+   latest: installations see nothing. A draft the failed run created is
+   deleted automatically, also when the run is cancelled or times out (a
+   draft that existed before is left alone, and stops the run), so after
+   fixing the cause you can **Re-run failed jobs**. A failure after the
+   pre-release was published leaves that pre-release, and the run says so:
+   delete it (with immutability on, GitHub may keep its tag and not let
+   the version be used again) and release a new patch version. Only the
+   two read-back checks run after the promotion; if one of them fails, the
+   new release, which passed every check before, stays the latest: look at
+   what `releases/latest/download/latest.json` serves before doing
+   anything else. Never
    re-publish an older version or move a published tag (installations
    refuse a lower version than they were offered, and a moved tag breaks
    the URLs in the signed manifest).

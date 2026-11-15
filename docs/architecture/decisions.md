@@ -2242,8 +2242,10 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
     compares the uploaded names and sizes and downloads the files back with
     the token; published as a pre-release, every file is downloaded again
     anonymously over HTTPS and verified with the committed public key; only
-    then is the release marked latest. After a failure the draft this run
-    created is deleted (never one that existed before); a published
+    then is the release marked latest (`prerelease=false`,
+    `make_latest=true`; the pre-release is published with
+    `make_latest=false`). After a failed or cancelled run the draft this
+    run created is deleted (never one that existed before); a published
     pre-release is left for the maintainer.
   - The update signing key (`TAURI_SIGNING_PRIVATE_KEY`, `…_PASSWORD`) is a
     secret of the environment `release`, which admits only `v*` tags
@@ -2251,7 +2253,8 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
     the publish job names that environment and only its signing step
     receives the key; that job installs dependencies with
     `--ignore-scripts` and restores no cache. `prepare` refuses a real
-    release unless the environment exists and admits tags only, and while
+    release unless the environment exists and admits exactly the tag rule
+    `v*`, and while
     the key (or an Apple credential) is a repository or organisation
     secret, which every workflow run could read.
   - The Apple credentials move from repository secrets to the environment

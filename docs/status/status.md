@@ -138,6 +138,91 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Release workflow audit before the first push (2026-11-15)
+
+On branch `fix/release-workflow-audit`, started from `29ec56a` (where
+`main` points): the manifest tool fix is `d159d57`, the CI concurrency
+group `aeef01b`, the rest the commit that adds this entry; not pushed. A
+focused audit of `release.yml`'s GitHub Releases lifecycle, the signing
+key's exposure, the environments, the Ubuntu runners and the Git state.
+Changed:
+
+- **`release.yml` publish:** the pre-release is published with
+  `make_latest=false` as well (before, only GitHub's rule that a
+  pre-release is never latest kept it so); each anonymously downloaded
+  file is compared byte for byte with the signed one; after the promotion
+  (`prerelease=false` and `make_latest=true` in one request) GitHub's
+  `/releases/latest` must name the tag; the endpoint check also fetches
+  `latest.json.sig` through the latest URL and verifies the pair served.
+  The draft cleanup runs with `always()` and acts when `job.status` is not
+  `success`, so a cancelled or timed-out run removes its draft too
+  (before: `failure()` only); a failed deletion is an error (before: it was
+  reported as deleted); a pre-release left by a failure, and a release
+  promoted before a final check failed, are named. The header's "a
+  failure at any point leaves the previous release as the latest" was
+  wrong for the final check, which runs after the promotion; corrected
+  here and in [release.md](../development/release.md#publishing-a-release).
+- **`release.yml` prepare:** the `release` environment must admit exactly
+  the tag rule `v*` (before: any tag rules); administrators allowed to
+  bypass it is a warning; `macos-signing` is checked against `branch main`
+  and `tag v*` (before: only "every branch" was noticed), its absence is a
+  notice.
+- **`ci.yml`:** the concurrency group includes `github.workflow`. Called
+  from `release.yml` the group was the caller's `ci-refs/heads/main` for a
+  dry run on `main`, the same as a push to `main`, so with
+  `cancel-in-progress` either run cancelled the other.
+- **`scripts/update-manifest.mjs`:** started through a symlinked folder
+  it did nothing and exited 0 (`process.argv[1]` was compared unresolved
+  with the module's resolved path), so `verify` passed without verifying;
+  both paths are resolved now, with a new test that fails on `29ec56a`'s
+  tool. `build-release.mjs`, `check-release-binary.mjs`,
+  `check-installer-icons.mjs`, `icons.mjs` and `check-desktop-isolation.mjs`
+  compare `resolve(argv[1])`, which has the same weakness; not changed
+  (no symlinked path on GitHub's runners).
+
+What ran, on WSL2 (Node 24.22.0, Rust 1.99.1), on the final tree:
+`npm run check` (871 files, 0 errors, 0 warnings), `npm run build`,
+`cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
+`npm run test:headless` (Vitest 241, Rust 510 passed, 28 ignored),
+`test:update-manifest` **21 passed** (1 new, failing on `29ec56a`'s tool),
+`test:release-assemble` 5, actionlint 1.7.12 with shellcheck 0.11.0 (0
+findings). The publish job's steps, taken from `release.yml` and
+changed only in the host (a local HTTPS stand-in for the GitHub API and
+downloads), `check-key` (the committed key is empty) and 1 s waits, ran
+with the real `gh` 2.104.0, curl, bash, node and Tauri CLI and a
+throwaway key in nine scenarios: success; a failing draft check,
+anonymous check, upload or endpoint check; an existing release; an
+existing draft; cancellation after the upload and after the pre-release.
+`gh` sent: create `draft: true` without `make_latest`; pre-release
+`draft: false, prerelease: true, make_latest: "false"`; promotion
+`prerelease: false, make_latest: "true"`. The release already there,
+`v0.1.0`, was never written to and stayed latest in every scenario except
+success and the endpoint failure (which happens after the promotion).
+The prepare check with stubbed answers and jq 1.8.2: seven environment
+settings, each with the intended message.
+
+Found, not changed:
+
+- `ubuntu-latest` moves from Ubuntu 24.04 to 26.04 between 2026-10-19 and
+  2026-11-19 (GitHub changelog of 2026-09-17, runner-images issue 14748),
+  so `ci.yml`, `desktop-virtual.yml`, `isolation-guard.yml` and
+  `release.yml`'s prepare, rehearse and publish jobs may run on either
+  image; `libwebkit2gtk-4.1-dev` exists in 26.04, the other packages and
+  Python 3.14 were not checked. The `ubuntu-22.04` dates in release.md and
+  `release.yml` match GitHub's announcement (deprecated 2026-09-17,
+  brownouts from 2027-03-23, removed 2027-04-17): no action needed yet.
+- Drafts are addressed by tag name ([limitations.md](limitations.md#updates-adr-033-adr-036-adr-039)).
+- `macos.yml`'s package job, the one holding the Apple credentials, runs
+  `npm ci` with install scripts (only `fsevents` has one) and the build
+  with the signing keychain unlocked.
+- GitHub state read again (read only): no environment, ruleset, Actions
+  secret, variable or release; release immutability off; every action
+  allowed, SHA pinning not required.
+- **Not run:** any GitHub workflow, a real signing key, the environments,
+  GitHub's real `releases/latest` redirect and `make_latest` handling, the
+  new test on Windows (a junction there), anything on macOS, any
+  installation.
+
 ### Releases in the public source repository (2026-11-15)
 
 On branch `feat/releases-in-public-repository`, started from `77b1923`

@@ -840,6 +840,12 @@ server only; no real provider was asked.
   with release immutability on it cannot be repaired, only deleted, and
   its version is used up. Whether GitHub lets an immutable pre-release be
   marked latest afterwards is documented but not yet tried.
+- **The publish job addresses its draft by tag name** (`gh release …
+  vX.Y.Z`, which asks GitHub for the release of that tag). It refuses to
+  start while any release or draft of the tag exists, but a second draft
+  of the same tag created by hand during the run could be the one checked,
+  published or cleaned up; addressing the draft by its id would close that
+  window.
 - **No update was ever installed, and `release.yml` never ran:** download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the

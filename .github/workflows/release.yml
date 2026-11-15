@@ -41,13 +41,18 @@
 #                verifies everything (scripts/release-assemble.sh), uploads a
 #                DRAFT (visible to maintainers only), compares the uploaded
 #                files and downloads them back with the token, publishes it as
-#                a PRE-RELEASE (public, never "latest"), downloads every file
-#                anonymously over HTTPS and verifies it again with the
-#                committed public key, and only then makes it the LATEST
-#                release, which releases/latest/download/latest.json follows.
-#                A failure before the pre-release deletes the draft this run
-#                created (never one found before); a failure
-#                at any point leaves the previous release as the latest.
+#                a PRE-RELEASE (public, make_latest=false), downloads every
+#                file anonymously over HTTPS, compares it with what was signed
+#                and verifies it again with the committed public key, and
+#                only then makes it the LATEST release (prerelease=false,
+#                make_latest=true), which releases/latest/download/latest.json
+#                follows; the last step checks that URL serves this
+#                manifest and signature.
+#                A failed or cancelled run deletes the draft it created while
+#                that is still a draft (never one found before, never a
+#                published release). A failure before the promotion leaves
+#                the previous release as the latest; only the last check
+#                runs after it, on a release that passed every check.
 #     rehearse - dry runs only, no environment: the same signing and checks
 #                with a throwaway key; uploads the files as an artifact.
 #
@@ -191,16 +196,28 @@ jobs:
             else
               rules=$(api "repos/$GITHUB_REPOSITORY/environments/release/deployment-branch-policies" | jq -r '.branch_policies[] | "\(.type) \(.name)"') || rules=""
               echo "release environment admits: ${rules:-nothing readable}"
-              if [ -z "$rules" ] || echo "$rules" | grep -qv '^tag '; then
-                refuse "the release environment must admit tags only (a tag rule v*, no branch rule)"
+              if [ "$rules" != "tag v*" ]; then
+                refuse "the release environment must admit exactly one rule, the tag pattern v* (no branch rule)"
               fi
             fi
             echo "$envjson" | jq -e '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' > /dev/null \
               || echo "::warning::the release environment has no required reviewer: a pushed tag reaches the signing key without anyone approving it"
+            echo "$envjson" | jq -e '.can_admins_bypass == false' > /dev/null \
+              || echo "::warning::the release environment lets administrators bypass its protection rules: untick Allow administrators to bypass configured protection rules (docs/development/release.md#secrets)"
           fi
+          # The Apple credentials' environment: the branch main (dry runs)
+          # and the tag v* (releases), nothing else. Only warned about:
+          # without signed and notarized builds macOS stays out of a release.
           if macjson=$(api "repos/$GITHUB_REPOSITORY/environments/macos-signing"); then
-            echo "$macjson" | jq -e '.deployment_branch_policy != null' > /dev/null \
-              || echo "::warning::the macos-signing environment admits every branch: restrict it to main and v* tags before storing Apple credentials there"
+            macrules=$(echo "$macjson" | jq -r 'if .deployment_branch_policy == null then "every branch and tag" elif .deployment_branch_policy.custom_branch_policies then "custom" else "protected branches" end')
+            if [ "$macrules" = "custom" ]; then
+              macrules=$(api "repos/$GITHUB_REPOSITORY/environments/macos-signing/deployment-branch-policies" | jq -r '.branch_policies[] | "\(.type) \(.name)"' | sort | paste -sd, -) || macrules=""
+            fi
+            echo "macos-signing environment admits: ${macrules:-nothing readable}"
+            [ "$macrules" = "branch main,tag v*" ] \
+              || echo "::warning::the macos-signing environment must admit only the branch main and the tag v*: restrict it before storing Apple credentials there (docs/development/release.md#secrets)"
+          else
+            echo "::notice::the macos-signing environment does not exist: the macOS package job will create it without protection; restrict it before storing Apple credentials there (docs/development/release.md#secrets)"
           fi
 
           if [ "$DRY_RUN" != "true" ]; then
@@ -497,12 +514,15 @@ jobs:
           sha=${ref#* }
           [ "${ref%% *}" = "tag" ] && sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object.sha)
           [ "$sha" = "$GITHUB_SHA" ] || { echo "::error::$TAG now names $sha, but this run built $GITHUB_SHA"; exit 1; }
-          # GitHub never makes a pre-release the latest release.
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          # GitHub never makes a pre-release the latest release; make_latest
+          # defaults to true for a newly published release, so it is sent as
+          # false as well.
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
 
       # Through the public download URLs, as an installation fetches them:
       # no token, HTTPS only. A just-published file can answer 404 for a
-      # moment, hence the retries on every error.
+      # moment, hence the retries on every error. Each file must be the one
+      # signed above, byte for byte, and verify on its own.
       - name: Verify the published files as installations see them
         env:
           KINDS: ${{ steps.files.outputs.kinds }}
@@ -512,42 +532,86 @@ jobs:
           mkdir -p "$d"
           for f in $(cd "$RUNNER_TEMP/release" && ls); do
             curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors --proto '=https' --proto-redir '=https' -o "$d/$f" "$BASE$f"
+            cmp "$d/$f" "$RUNNER_TEMP/release/$f"
           done
           node scripts/update-manifest.mjs verify --manifest "$d/latest.json" --pubkey src-tauri/update-key.pub --artifacts "$d" --base-url "$BASE" --require "$KINDS"
           (cd "$d" && sha256sum -c SHA256SUMS)
 
+      # The promotion: prerelease=false and make_latest=true in one request.
+      # Then GitHub's own answer for the latest release must be this one.
       - name: Make it the latest release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+        run: |
+          set -eu
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+          for _ in 1 2 3 4 5 6; do
+            got=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '"\(.tag_name) draft=\(.draft) prerelease=\(.prerelease)"' 2>/dev/null) || got="no latest release"
+            if [ "$got" = "$TAG draft=false prerelease=false" ]; then
+              echo "the latest release is $got"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::GitHub's latest release is $got, not $TAG"
+          exit 1
 
+      # What installations fetch: latest.json and latest.json.sig through
+      # the "latest" URL, the very files signed above, verifying together.
       - name: The update endpoint now serves this release
+        env:
+          KINDS: ${{ steps.files.outputs.kinds }}
         run: |
           set -eu
           url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+          s="$RUNNER_TEMP/served"
+          mkdir -p "$s"
           for _ in 1 2 3 4 5 6; do
-            curl -fsSL --proto '=https' --proto-redir '=https' -o "$RUNNER_TEMP/served.json" "$url" || true
-            if cmp -s "$RUNNER_TEMP/served.json" "$RUNNER_TEMP/release/latest.json"; then
-              echo "$url is the manifest of $TAG"
+            rm -f "$s/latest.json" "$s/latest.json.sig"
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$s/latest.json" "$url" || true
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$s/latest.json.sig" "$url.sig" || true
+            if cmp -s "$s/latest.json" "$RUNNER_TEMP/release/latest.json" && cmp -s "$s/latest.json.sig" "$RUNNER_TEMP/release/latest.json.sig"; then
+              node scripts/update-manifest.mjs verify --manifest "$s/latest.json" --sig "$s/latest.json.sig" --pubkey src-tauri/update-key.pub --base-url "$BASE" --require "$KINDS"
+              echo "$url and its .sig are the signed manifest of $TAG"
               exit 0
             fi
             sleep 10
           done
-          echo "::error::$url does not serve this release's manifest"
+          echo "::error::$url (or its .sig) does not serve this release's manifest"
           exit 1
 
-      # Only an unpublished draft that this run created is removed: it is
-      # invisible to users and would block re-running the failed jobs. A
-      # draft that existed before the run, and a published pre-release, are
-      # left for the maintainer (release.md#publishing-a-release).
-      - name: Remove this run's draft after a failure
-        if: ${{ failure() }}
+      # Runs after every step, also when the run was cancelled or timed out,
+      # and acts only when the job did not succeed. Only an unpublished
+      # draft that this run created is removed: it is invisible to users and
+      # would block re-running the failed jobs. A draft that existed before
+      # the run, and a published release, are left for the maintainer
+      # (release.md#publishing-a-release).
+      - name: Remove this run's draft after a failure or cancellation
+        if: ${{ always() }}
         env:
           GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           set -u
+          [ "$JOB_STATUS" != "success" ] || exit 0
           [ -e "$RUNNER_TEMP/draft-created-by-this-run" ] || exit 0
-          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
-            echo "::warning::the draft $TAG was deleted; the tag stays"
-          fi
+          state=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '"draft=\(.isDraft) prerelease=\(.isPrerelease)"' 2>/dev/null) || state="none"
+          case "$state" in
+            "draft=true "*)
+              if gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes; then
+                echo "::warning::the draft $TAG was deleted; the tag stays"
+              else
+                echo "::error::the draft $TAG could not be deleted: delete it by hand before re-running (docs/development/release.md#publishing-a-release)"
+                exit 1
+              fi
+              ;;
+            "draft=false prerelease=true")
+              echo "::error::$TAG stays a public pre-release that did not pass every check; it is not the latest release. Delete it and release a new patch version (docs/development/release.md#publishing-a-release)"
+              ;;
+            "draft=false prerelease=false")
+              echo "::warning::$TAG passed every check and was made the latest release; only a later check failed (docs/development/release.md#publishing-a-release)"
+              ;;
+            *)
+              echo "no release $TAG to clean up ($state)"
+              ;;
+          esac

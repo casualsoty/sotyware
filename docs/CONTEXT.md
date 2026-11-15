@@ -59,7 +59,16 @@ Rust 507 (recorder build 535), the virtual display 139/0/0 and every Linux
 Cloud Storage driver phase (files 99/99) against the real binary, after an
 AT-SPI audit that found and fixed text WebKitGTK hid from screen readers; the release commands rehearsed with the real
 Tauri CLI and a throwaway key. Not run: `macos.yml`, `release.yml`, any
-Mac, the Windows drivers after the redesign.
+Mac, the Windows drivers after the redesign. A **pre-push audit of the
+release workflow** (2026-11-15, branch `fix/release-workflow-audit`, not
+pushed; [status](status/status.md#release-workflow-audit-before-the-first-push-2026-11-15))
+made the promotion explicit and read back (pre-release with
+`make_latest=false`, then `prerelease=false` and `make_latest=true`),
+deletes a cancelled run's draft too, tightened the environment checks,
+and fixed `ci.yml`'s concurrency group (a release dry run on `main` and a
+push to `main` cancelled each other) and `update-manifest.mjs` exiting 0
+unchecked when started through a symlink; the publish steps ran only
+against a local stand-in for GitHub.
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
