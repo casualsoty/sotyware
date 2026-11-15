@@ -160,9 +160,8 @@ into every build; `release.yml` refuses to publish anywhere else.
 Publishing needs no token besides the workflow's own `GITHUB_TOKEN`.
 
 Before the first release, all of the following must be true. Read back on
-2026-11-15 after the dry run at `8125739`: the last one is, both
-environments exist with their rules but `release` holds no signing key
-yet, and the others are not done:
+2026-11-15, after the release key was committed: items 2, 3 and 5 are
+done, 1 and 4 are not:
 
 1. **The repository settings are made** ([below](#repository-settings)).
 2. **The `release` environment exists**, admits only `v*` tags and holds
@@ -170,9 +169,13 @@ yet, and the others are not done:
    ([Secrets](#secrets)). `macos-signing` is needed before **any** run of
    `release.yml`, a dry run included: its macOS package job names it, and
    GitHub would create it without protection. Both were created by hand
-   on 2026-11-15, with the rules in [Secrets](#secrets) and no secret.
+   on 2026-11-15 with the rules in [Secrets](#secrets); `release` holds
+   `TAURI_SIGNING_PRIVATE_KEY` and its password since that day,
+   `macos-signing` no secret.
 3. **A release key exists** and its public half is in
-   `src-tauri/update-key.pub` ([below](#update-signing-key)).
+   `src-tauri/update-key.pub` ([below](#update-signing-key)): since
+   2026-11-15, key id `3A6E8F2D58D68E0D`. Whether the secret is its
+   private half is checked by step 4 there and by the publish job's probe.
 4. **Unsigned Windows installers are allowed on purpose**, as long as no
    Authenticode certificate exists ([above](#signing-not-set-up)): the
    repository variable `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` is `true`.

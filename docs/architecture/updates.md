@@ -6,9 +6,11 @@ source and restart:
 [ADR-036](decisions.md#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033),
 where releases are published and who can sign:
 [ADR-039](decisions.md#adr-039-releases-are-published-in-the-public-source-repository-with-github_token-signing-credentials-live-in-protected-environments)).
-**Not usable yet**: `src-tauri/update-key.pub` holds no public key and no
-release has been published, so release builds say "Updates are not set
-up in this build". What was tested, and
+**Not usable yet**: no release has been published. `src-tauri/update-key.pub`
+holds the release key's public half since 2026-11-15, so builds made from
+then on check GitHub's latest release and, until the first one is
+published, report that `casualsoty/sotyware` has no published release with
+update information yet (HTTP 404). What was tested, and
 where: [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15).
 How to publish: [release.md](../development/release.md#publishing-a-release).
 
@@ -168,10 +170,11 @@ deleted) is verified by both the script's and the Rust tests.
 ## Keys and configuration
 
 - **Release key:** `src-tauri/update-key.pub` holds the public half (the
-  base64 line `tauri signer generate` writes), compiled in. It is empty
-  until the maintainer generates the pair; such a build reports updates as
-  not set up. `npm run check:update-key` (in `test:headless`), `release.yml`
-  and a Rust test refuse a private key, more than one key line and the
+  base64 line `tauri signer generate` writes), compiled in: since
+  2026-11-15 the maintainer's key, id `3A6E8F2D58D68E0D`. A build without
+  a key line reports updates as not set up. `npm run check:update-key`
+  (in `test:headless`), `release.yml` and a Rust test refuse a private
+  key, more than one key line and the
   signing fixtures' throwaway keys (`scripts/fixtures/**/test-key.pub`,
   test-only). The private key and its password are the GitHub secrets
   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` of
@@ -189,7 +192,10 @@ deleted) is verified by both the script's and the Rust tests.
 - **Debug and test-profile builds** read `SOTYWARE_UPDATE_ENDPOINT` and
   `SOTYWARE_UPDATE_PUBKEY` and accept loopback HTTP, so tests run against a
   local server with keys generated for the test. Release builds ignore
-  both variables.
+  both variables. Without both, a debug or test-profile build uses the
+  compiled-in key and GitHub like a release build, so `npm run tauri dev`
+  and the desktop tests' builds check GitHub 60 s after they start (the
+  drivers set neither variable).
 
 ## Commands and state
 

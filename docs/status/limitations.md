@@ -813,11 +813,26 @@ server only; no real provider was asked.
 
 ## Updates (ADR-033, ADR-036, ADR-039)
 
-- **Not usable yet:** `src-tauri/update-key.pub` holds no public key (no
-  release key exists), the `release` environment that would hold the
-  private key exists (since 2026-11-15) but holds no secret, and no
-  release has been published. Release builds say updates are not set up
+- **Not usable yet:** no release has been published. The release key
+  exists since 2026-11-15 (its public half in `src-tauri/update-key.pub`,
+  the private half and its password in the `release` environment), so
+  builds made from then on check GitHub's latest release and report that
+  none with update information exists yet (HTTP 404)
   ([release.md](../development/release.md#github-releases)).
+- **Development and desktop-test builds check GitHub too:** a debug or
+  test-profile build without `SOTYWARE_UPDATE_ENDPOINT` and
+  `SOTYWARE_UPDATE_PUBKEY` uses the compiled-in key like a release build,
+  so with `update-check` on (the default) it fetches `latest.json` from
+  github.com 60 s after starting and then daily. The desktop drivers set
+  neither variable; the answer shows only in the update panels, which no
+  driver checks (the shell's notification appears only for an available
+  or installed update), and without network it is a network error there.
+- **`check-key` lets a stray character through:** Node decodes base64
+  leniently, so a key line ending in a `%` copied from a terminal (zsh's
+  mark for output without a final newline; 2026-11-15) passed
+  `npm run check:update-key`, and would pass `release.yml`'s prepare. The
+  Rust tests decode strictly and failed on it, so `ci.yml` and the
+  release's own `ci` job stop such a key before anything is signed.
 - **The signing key's protection depends on repository settings,** of
   which only the environments exist (2026-11-15: `release` admits only
   the tag `v*` and needs the owner's approval): the tag ruleset for `v*`

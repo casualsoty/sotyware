@@ -1618,7 +1618,7 @@ Not covered by any test: installing an update on any platform, the Windows
 installer or `request_restart` starting the new version, data surviving an
 update (needs two signed releases;
 [release.md](release.md#testing-updates-locally)), `release.yml`'s
-publish job (never run: no release key; the dry run passed on GitHub at
+publish job (never run; the dry run passed on GitHub at
 `8125739`, [status](../status/status.md#release-dry-runs-2026-11-15)).
 
 ## Cloud Storage UI end-to-end test

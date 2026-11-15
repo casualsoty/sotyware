@@ -12,3 +12,4 @@
 # `npm run check:update-key` (part of test:headless) and release.yml refuse
 # a private key, more than one key line, and the throwaway keys of the test
 # fixtures (scripts/fixtures/**/test-key.pub), which are for tests only.
+dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBNkU4RjJENThENjhFMEQKUldRTmp0WllMWTl1T3V4ZnhuSjJzSUYwZnZkMHdteW1hV1A2VVRScDcxNGpMOTZhZFJOTFVUNXcK

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -91,7 +91,7 @@ verified byte for byte; the object was deleted again by its version id
 | Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
 | Desktop shell and design system (ADR-035): sidebar (sections, storage accounts opening their bucket, Add storage account, Account, Settings), Overview with storage/backups/version summaries, Settings (Appearance System/Light/Dark saved per device and applied to the window, Features, About & updates), one update notification, keyboard shortcuts, focus to the page title on navigation; every page and panel restyled on design tokens and a shared vocabulary, narrow-window overlay sidebar | `src/App.svelte`, `src/Sidebar.svelte`, `src/Overview.svelte`, `src/Settings.svelte`, `src/styles/`, `src/theme.ts`, `src/Icon.svelte`, `src/updatesModel.svelte.ts` ([frontend.md](../architecture/frontend.md)) |
 | macOS support (ADR-037): login keychain credentials with OSStatus classification, menu bar (Quit ⌘Q through `AppControl::quit`, Edit, Window), Dock click shows the dashboard, `bundle.macOS` (10.15, hardened runtime, .dmg), `macos.yml` (Apple Silicon and Intel runners, each checked to be native; tests, Keychain round trip in a throwaway keychain; since ADR-039 on every pull request to and push to `main`, and signing and notarization only in the `macos-signing` environment when secrets exist); **never compiled or run here, never run on GitHub** | `src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`, `lib.rs`, `tauri.conf.json`, `.github/workflows/macos.yml` ([macos.md](../development/macos.md)) |
-| Updates from GitHub Releases of this public repository, `casualsoty/sotyware` (ADR-036, ADR-039; ADR-038's separate release repository was dropped): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (dry run with a throwaway key; real release: environment `release`, `GITHUB_TOKEN`, draft → pre-release → verified → latest), `update-manifest.mjs` and `release-assemble.sh` for every platform; **no key, never released**; the environments `release` and `macos-signing` exist without a secret, and a dry run passed on GitHub at `8125739` (run 43735919504; [dry runs](#release-dry-runs-2026-11-15)), the publish job never ran | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `scripts/release-assemble.sh`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
+| Updates from GitHub Releases of this public repository, `casualsoty/sotyware` (ADR-036, ADR-039; ADR-038's separate release repository was dropped): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (dry run with a throwaway key; real release: environment `release`, `GITHUB_TOKEN`, draft → pre-release → verified → latest), `update-manifest.mjs` and `release-assemble.sh` for every platform; **never released**; the release key exists (public half in `update-key.pub`, key id `3A6E8F2D58D68E0D`; private half and password in the `release` environment; [key](#release-key-committed-2026-11-15)), `macos-signing` exists without a secret, and a dry run passed on GitHub at `8125739` (run 43735919504; [dry runs](#release-dry-runs-2026-11-15)), the publish job never ran | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `scripts/release-assemble.sh`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -137,6 +137,45 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Release key committed (2026-11-15)
+
+The maintainer generated the release key pair on their own machine and
+stored the private key and its password as `TAURI_SIGNING_PRIVATE_KEY`
+and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the `release` environment
+(17:15 and 17:16 UTC; read back by name, the values cannot be read). The
+public half is now the key line of `src-tauri/update-key.pub`: 152 base64
+characters decoding to `minisign public key: 3A6E8F2D58D68E0D` and a
+42-byte Ed25519 key with that id. Whether the stored secret is its
+private half is not checked here: that is step 4 of
+[release.md](../development/release.md#update-signing-key) on the
+maintainer's machine, and the publish job's probe before it signs.
+
+The line arrived with a `%` at its end, zsh's mark for output without a
+final newline, copied from the terminal with the key. `npm run
+check:update-key` accepted that line (Node's base64 decoding skips the
+character); the Rust tests, which decode strictly, failed on it
+(`the_production_source_is_github_and_the_committed_key`,
+`the_compiled_in_key_is_never_a_signing_fixture`), so CI would have
+stopped it. The `%` was removed; the guard's leniency is a
+[limitation](limitations.md#updates-adr-033-adr-036-adr-039).
+
+**Behaviour:** builds made from this commit check
+`https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
+with that key (the `update-check` feature, on by default: 60 s after
+starting, then daily) and report that `casualsoty/sotyware` has no
+published release with update information yet (HTTP 404) until the first
+release. Debug and test-profile builds without the `SOTYWARE_UPDATE_*`
+variables do the same, the desktop drivers' builds included; no driver
+checks the update panels, and the shell's notification appears only for
+an available or installed update.
+
+What ran, on WSL2: `npm run check:update-key`; the Rust update tests
+(26) before and after the fix; `npm run test:headless` (the guards,
+Vitest 241, Rust 511 passed, 28 ignored); the recorder build 539 passed,
+28 ignored. **Not run:** the key-pair check (the maintainer's step),
+any desktop test with the key, any GitHub workflow (the push runs
+`ci.yml` and `macos.yml`), a release.
 
 ### Release dry runs (2026-11-15)
 

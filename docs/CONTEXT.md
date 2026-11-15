@@ -50,9 +50,12 @@ signing step, dry runs sign with a throwaway key, the Apple credentials
 live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
 file can never hold a fixture's or a private key. **Not usable yet:** no
-release key in `src-tauri/update-key.pub`, no ruleset; the environments
-`release` and `macos-signing` were created by hand on 2026-11-15 (no
-secret), and `release.yml` ran only as a dry run: it failed at
+release published, no ruleset. The release key exists since 2026-11-15:
+its public half in `src-tauri/update-key.pub` (key id
+`3A6E8F2D58D68E0D`), the private half and its password in the `release`
+environment, created by hand that day like `macos-signing`
+([status](status/status.md#release-key-committed-2026-11-15)).
+`release.yml` ran only as a dry run: it failed at
 `ecf4339` on one test on the Intel Mac and passed at `8125739` with
 `rehearse` (run 43735919504; nothing published;
 [dry runs](status/status.md#release-dry-runs-2026-11-15),
@@ -282,8 +285,10 @@ update server exist), all tested headless against in-process servers only.
   transfer, file operation or backup; Overview panel; automatic checks are
   the `update-check` feature; `scripts/update-manifest.mjs` makes and
   checks manifests in `release.yml`'s publish job, which publishes in this
-  public repository (ADR-039). `src-tauri/update-key.pub` holds no key, so
-  release builds say updates are not set up. Tested with test keys, a local server, the
+  public repository (ADR-039). `src-tauri/update-key.pub` holds the
+  release key's public half since 2026-11-15, so builds check GitHub's
+  latest release, which does not exist yet (HTTP 404 until the first
+  release). Tested with test keys, a local server, the
   plugin on Tauri's mock runtime and a fixture signed by the real Tauri
   CLI; **no update was ever installed**.
 
