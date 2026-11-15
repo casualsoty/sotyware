@@ -33,7 +33,8 @@ pub struct Place {
     pub name: String,
     /// The folder it is in.
     pub parent: String,
-    /// Milliseconds since 1970 (added, or last opened).
+    /// Milliseconds since 1970 (added, or last opened); never earlier than
+    /// the place of its kind recorded before it.
     pub touched: i64,
 }
 
@@ -232,6 +233,32 @@ mod tests {
 
     fn open(dir: &TempDir) -> CloudPlaces {
         CloudPlaces::load(SqlitePlacesStore::open(&dir.path("places.sqlite3")))
+    }
+
+    /// Recent items stay in the order they were recorded when several share
+    /// a millisecond (a fast machine) or the clock goes back: before, ties
+    /// were broken by name, so the trim could keep old items and drop new
+    /// ones.
+    #[test]
+    fn recent_items_keep_their_recording_order_in_one_millisecond_and_when_the_clock_goes_back() {
+        let dir = TempDir::new("places-order");
+        let mut s = SqlitePlacesStore::open(&dir.path("places.sqlite3")).unwrap();
+        for n in 0..40 {
+            s.put("a", "recent", &format!("f{n:02}"), "b", 1_000, RECENT_KEEP)
+                .unwrap();
+        }
+        let paths = |s: &SqlitePlacesStore| -> Vec<String> {
+            s.list("a").unwrap().into_iter().map(|r| r.path).collect()
+        };
+        let newest_first: Vec<String> = (10..40).rev().map(|n| format!("f{n:02}")).collect();
+        assert_eq!(paths(&s), newest_first, "the oldest went first");
+        // Opened again with the clock set back: still the newest.
+        s.put("a", "recent", "f20", "b", 500, RECENT_KEEP).unwrap();
+        s.put("a", "recent", "new", "b", 400, RECENT_KEEP).unwrap();
+        let after = paths(&s);
+        assert_eq!(after[..3], ["new", "f20", "f39"]);
+        assert_eq!(after.len(), RECENT_KEEP);
+        assert!(!after.contains(&"f10".to_owned()), "{after:?}");
     }
 
     #[test]

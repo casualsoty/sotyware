@@ -379,7 +379,11 @@ impl SqlitePlacesStore {
     }
 
     /// Adds or refreshes a place; for `recent`, keeps only the `keep`
-    /// newest of the account.
+    /// newest of the account. The place is stored as newer than every other
+    /// of its kind there: at `now_ms`, or one millisecond after the newest
+    /// when `now_ms` is not later than that. So the order is the order of
+    /// the calls, also when several share a millisecond or the clock went
+    /// back.
     pub fn put(
         &mut self,
         account: &str,
@@ -392,7 +396,9 @@ impl SqlitePlacesStore {
         let mut write = || -> rusqlite::Result<()> {
             let tx = self.conn.transaction()?;
             tx.execute(
-                "INSERT INTO places (account_id, kind, path, bucket, touched_ms) VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO places (account_id, kind, path, bucket, touched_ms) VALUES (?1, ?2, ?3, ?4,
+                     MAX(?5, (SELECT COALESCE(MAX(touched_ms), 0) + 1 FROM places
+                              WHERE account_id = ?1 AND kind = ?2)))
                  ON CONFLICT (account_id, kind, path) DO UPDATE SET bucket = excluded.bucket,
                      touched_ms = excluded.touched_ms",
                 params![account, kind, path, bucket, now_ms],
