@@ -51,7 +51,10 @@ live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
 file can never hold a fixture's or a private key. **Not usable yet:** no
 release key in `src-tauri/update-key.pub`, no environment or ruleset
-configured, `release.yml` never run. On this tree, WSL2 only:
+configured, `release.yml` never run. Its first dry run needs
+`macos-signing` created by hand first, or the run creates it without
+protection ([readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
+On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the
 Linux Cloud Storage phases (local 16, hang 8, browse 17, download 22,

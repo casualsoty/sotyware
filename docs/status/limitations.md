@@ -825,6 +825,10 @@ server only; no real provider was asked.
   repository secret, but it cannot stop another workflow from naming an
   unprotected environment, and it only warns when no reviewer is set
   ([release.md](../development/release.md#repository-settings)).
+  `macos-signing` has to be created by hand before the first run of
+  `release.yml`, a dry run included, or of `macos.yml` with `package`:
+  their macOS package job would create it without protection, and
+  `prepare` only notes that it is missing.
 - **The Windows installers are not Authenticode-signed**; publishing them
   needs the explicit opt-in `SOTYWARE_ALLOW_UNSIGNED_WINDOWS`.
 - **The Linux packages are built on `ubuntu-22.04`,** which GitHub removes
@@ -838,17 +842,39 @@ server only; no real provider was asked.
   key; only a real release's publish job (or the local check in
   [release.md](../development/release.md#update-signing-key)) proves that
   the secret matches `update-key.pub`.
-- **A failure after the pre-release is published** leaves that
-  pre-release visible on the releases page (not offered to installations);
-  with release immutability on it cannot be repaired, only deleted, and
-  its version is used up. Whether GitHub lets an immutable pre-release be
-  marked latest afterwards is documented but not yet tried.
-- **The publish job addresses its draft by tag name** (`gh release …
-  vX.Y.Z`, which asks GitHub for the release of that tag). It refuses to
-  start while any release or draft of the tag exists, but a second draft
-  of the same tag created by hand during the run could be the one checked,
-  published or cleaned up; addressing the draft by its id would close that
-  window.
+- **A failure after the pre-release is published and before the
+  promotion** leaves that pre-release visible on the releases page (not
+  offered to installations); with release immutability on it cannot be
+  repaired, only deleted, and its version is used up. GitHub documents
+  that an immutable release can still be switched between pre-release and
+  latest; not yet tried.
+- **A failure after the promotion request** (the `/releases/latest`
+  read-back or the endpoint check) leaves a full release that GitHub was
+  asked to make the latest and that installations may already be
+  offered. Its files passed every check before the promotion; the run's
+  warning calls it the latest release without having confirmed that
+  ([release.md](../development/release.md#publishing-a-release)).
+- **The draft is deleted only while the runner lives:** the deletion is a
+  step of the publish job, so a force-cancel (which skips `always()`
+  steps) or a lost runner leaves the draft, and the next attempt stops at
+  it until it is deleted by hand.
+- **The publish job finds its release by tag name** (`gh release …
+  vX.Y.Z`). `gh` asks for the published release of the tag and for a
+  draft of it at once and takes the first answer; with two drafts of the
+  tag it acts on the one GitHub's GraphQL `release(tagName:)` returns,
+  without an error (seen with `gh` 2.104.0 against a local stand-in,
+  2026-11-15). The job refuses to start while a release or draft of the
+  tag exists, but counts a failed lookup as none, and nothing stops a
+  second release of the tag being made during the run. A later step can
+  then check, publish or promote the other release (a draft cannot become
+  the latest; the read-back then fails), and the deletion can remove a
+  draft the run did not make and keep its own. Only someone with write
+  access can make a release (today only the owner; no workflow but this
+  job has `contents: write`), and no unverified file can become the
+  latest: every file is compared byte for byte with the signed ones
+  before the promotion, and `latest.json` with its `.sig` after it.
+  Addressing the release by its id from its creation on would close this
+  ([status](status.md#release-rehearsal-readiness-2026-11-15)).
 - **No update was ever installed, and `release.yml` never ran:** download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the

@@ -2245,8 +2245,14 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
     then is the release marked latest (`prerelease=false`,
     `make_latest=true`; the pre-release is published with
     `make_latest=false`). After a failed or cancelled run the draft this
-    run created is deleted (never one that existed before); a published
-    pre-release is left for the maintainer.
+    run created is deleted (never one the job found when it started; not
+    after a force-cancel or a lost runner, which skip that step); a
+    published pre-release is left for the maintainer, and a failure after
+    the promotion request leaves a full release that GitHub was asked to
+    make the latest. Every step finds the release by its tag name, so a
+    second release of the tag made during the run, which takes write
+    access, can be the one a later step acts on
+    ([limitations](../status/limitations.md#updates-adr-033-adr-036-adr-039)).
   - The update signing key (`TAURI_SIGNING_PRIVATE_KEY`, `…_PASSWORD`) is a
     secret of the environment `release`, which admits only `v*` tags
     (recommended: a required reviewer, administrators not bypassing). Only
@@ -2264,9 +2270,12 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
     never touches the release key or the `release` environment: the job
     `rehearse` signs with a throwaway key made in the run, so every
     platform and the whole manifest chain can be rehearsed before the key,
-    the environments or a tag exist. Signing and checking are one script,
-    `scripts/release-assemble.sh`, shared by `rehearse` and `publish` and
-    tested with the real Tauri CLI.
+    the `release` environment or a tag exist. `macos-signing` must exist
+    first: the macOS package job runs in it, and GitHub creates a missing
+    environment that a running job names, without protection (a skipped
+    job, such as `publish` in a dry run, creates none). Signing and
+    checking are one script, `scripts/release-assemble.sh`, shared by
+    `rehearse` and `publish` and tested with the real Tauri CLI.
   - `macos.yml` runs like `ci.yml`, on every pull request to and push to
     `main`, on both architectures natively (`macos-15`, `macos-15-intel`;
     each job checks it is not translated by Rosetta and that rustc's host

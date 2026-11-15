@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -137,6 +137,137 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Release rehearsal readiness (2026-11-15)
+
+`4bf4ef0` (the record of the runs below; four files under `docs/`) was
+checked against `origin/main` (`ec42d41`, its parent: one commit ahead,
+none behind; no secret-like text) and pushed normally, `ec42d41..4bf4ef0`.
+GitHub's `main` is `4bf4ef0`, and **no workflow started**: every changed
+path is in `ci.yml`'s and `macos.yml`'s `paths-ignore` and outside
+`isolation-guard.yml`'s paths (the run list, read back afterwards, still
+ends at `ec42d41`). Then an audit of `release.yml`,
+`scripts/release-assemble.sh` and `scripts/update-manifest.mjs` before
+the first dry run. Nothing was dispatched, created or configured on
+GitHub; only documentation changed, not committed.
+
+GitHub, read only: no environment, ruleset, Actions secret or variable,
+release, tag or deployment; every action allowed, SHA pinning not
+required, the default token read-only, approval required only for
+first-time contributors' fork pull requests, release immutability off,
+`main` unprotected; one collaborator (the owner), no deploy key;
+`release.yml` active on `main`, never run.
+
+What holds:
+
+- The order of ADR-039: draft with `--verify-tag`, names and sizes
+  compared, files downloaded back and checked against `SHA256SUMS`;
+  pre-release with `make_latest=false`; every file downloaded anonymously
+  over HTTPS, compared byte for byte with the signed one and verified;
+  one request with `prerelease=false` and `make_latest=true`;
+  `/releases/latest` must name the tag; `latest.json` and its `.sig`
+  through the latest URL must equal the signed pair and verify. Until the
+  promotion request the previous release stays the latest (a draft or a
+  pre-release cannot be the latest).
+- The signing key reaches only the publish job's signing step (no cache,
+  `npm ci --ignore-scripts`), the write token only the steps that call the
+  API; every other job is read-only, and the environments are named
+  literally.
+- `release.yml`'s concurrency group holds only release runs and never
+  cancels a running one; the groups of the called `ci.yml` and
+  `release-build.yml` include the caller's name, and `macos.yml`'s the
+  event name, so a release run and a push or pull request never cancel
+  each other.
+- A dry run cannot publish: its publish job is skipped and no other job
+  has a write token. It needs no production credential.
+
+Found:
+
+1. **A dry run creates `macos-signing` if it is missing,** without
+   protection: the macOS package job runs in it. A skipped job creates
+   no environment (`macos.yml`'s package job, skipped on every push,
+   never created one; no environment or deployment exists after the
+   pushes at `d9cf561` and `ec42d41`), so the skipped publish job creates
+   no `release`. **Minimum setup before the dry run:** `macos-signing`
+   admitting the branch `main` and the tag `v*`.
+2. **The release is found by tag name**
+   ([limitations](limitations.md#updates-adr-033-adr-036-adr-039)). With
+   the real `gh` 2.104.0 against a local stand-in for the API (scratch
+   only): with two drafts of one tag, `gh release view` and
+   `gh release delete` acted on the one GraphQL `release(tagName:)`
+   returned, without an error, and left the other; with a pre-release
+   and a draft of one tag, `gh release edit --prerelease=false --latest`
+   patched whichever of its two lookups answered first (the draft, once
+   the published lookup was slowed by 0.6 s; it exited 0 and nothing
+   became the latest). **Not exploitable** without write access to the
+   repository (today only the owner; no workflow but publish has
+   `contents: write`; fork pull requests get read-only tokens), and then
+   still no unverified file can become the latest. What it can do: point
+   a later step at the other release (caught by the byte comparisons or
+   the read-back) and make the deletion remove a draft the run did not
+   make while keeping its own. Two drafts can also arise without anyone
+   acting: the check before signing counts a failed lookup as "no
+   release", so a draft left by an earlier run (force-cancel, lost runner,
+   a failed deletion) and one failing lookup make a second one.
+3. **Reporting after the promotion:** for a full release the deletion
+   step warns that it "was made the latest release; only a later check
+   failed", also when the `/releases/latest` read-back is what failed or
+   the run was cancelled there; for a pre-release it says "did not pass
+   every check" also when only the promotion request failed; a failed
+   lookup there is reported as "no release … to clean up". `release.md`
+   said the release "stays the latest" after a failure past the
+   promotion; corrected.
+4. **Concurrency:** `macos.yml`'s group is `macos-<event>-<ref>`, so a
+   dry run on `main` shares it with a manual `macos.yml` run on `main`.
+   Neither cancels the other while running, but they queue, and a third
+   run cancels the waiting one (GitHub keeps one waiting run per group
+   unless `queue: max`, which actionlint 1.7.12 refuses as an unknown
+   key); the workflow's comment says such runs are "never cancelled by
+   anything else". A waiting release run can be replaced the same way,
+   before it has started anything.
+5. **What a dry run reports:** publish shows as skipped and `prepare`
+   warns about each missing setting, but its two checks for a real release
+   (commit on `main`, no release of the tag) are skipped without a message
+   and nothing lists what a dry run leaves out; `release.md` now does.
+6. In the signing step, `update-manifest.mjs create` and the probe's
+   `check-signature` run with the key in their environment (the
+   repository's scripts, standard library only, never reading it);
+   `release-assemble.sh` removes it only before `verify`.
+7. `release.yml`'s header says only the last check runs after the
+   promotion; two do (the read-back and the endpoint check).
+
+Proposed, not changed (a dry run never reaches the publish steps):
+
+- The check before signing: list the tag's releases
+  (`gh api --paginate repos/casualsoty/sotyware/releases`) and stop on any
+  match or a failed request, instead of `gh release view`'s exit status.
+- The deletion step: delete only when exactly one release of the tag
+  exists and it is a draft, by its id; otherwise name the ids and delete
+  nothing; report a failed lookup as one; for a full release, say what
+  `/releases/latest` names instead of asserting it.
+- Complete fix of item 2: take the draft's id right after
+  `gh release create` (exactly one draft of the tag, else stop) and use
+  it in every later step, `/releases/latest` compared by id.
+- `macos.yml`: `github.workflow` in its concurrency group, as in
+  `ci.yml`; `release.yml`: the header corrected. Optionally `prepare`
+  could stop when `macos-signing` is missing instead of noting it.
+
+Docs corrected: [release.md](../development/release.md#github-releases)
+(what must exist; the rehearsal: `macos-signing` first, what runs, what
+never runs, what it changes; the three failure cases; the tag-name lookup;
+waiting runs; the setup order; read-back commands for both
+environments), ADR-039, [limitations.md](limitations.md#updates-adr-033-adr-036-adr-039),
+testing.md, macos.md and CONTEXT.md.
+
+What ran, on WSL2: actionlint 1.7.12 with shellcheck 0.11.0 on the seven
+workflows (unchanged; 0 findings), shellcheck on `release-assemble.sh`,
+`test:update-manifest` 21/21, `test:release-assemble` 5/5 (the real Tauri
+CLI 2.12.4, throwaway keys), the `gh` experiment above, the new read-back
+command's jq on sample answers, the environment endpoints anonymously (the
+list 200, each missing environment 404), the links on the changed lines.
+**Not run:** `release.yml` or any other workflow, any setting change,
+GitHub's choice between two drafts of one tag (undocumented), the deletion
+step after a real timeout.
 
 ### Hosted runs at `ec42d41`: macOS passes (2026-11-15)
 

@@ -159,30 +159,33 @@ in the `release_repository!` macro in `src-tauri/src/updates.rs`, compiled
 into every build; `release.yml` refuses to publish anywhere else.
 Publishing needs no token besides the workflow's own `GITHUB_TOKEN`.
 
-Before the first release, all of the following must be true; **none of
-them is yet** (checked 2026-11-15):
+Before the first release, all of the following must be true; **only the
+last one is** (read back 2026-11-15, after `4bf4ef0` was pushed):
 
 1. **The repository settings are made** ([below](#repository-settings)).
 2. **The `release` environment exists**, admits only `v*` tags and holds
-   the signing key; `macos-signing` exists for Mac packages
-   ([Secrets](#secrets)).
+   the signing key; `macos-signing` exists, admitting `main` and `v*`
+   ([Secrets](#secrets)). `macos-signing` is needed before **any** run of
+   `release.yml`, a dry run included: its macOS package job names it, and
+   GitHub would create it without protection.
 3. **A release key exists** and its public half is in
    `src-tauri/update-key.pub` ([below](#update-signing-key)).
 4. **Unsigned Windows installers are allowed on purpose**, as long as no
    Authenticode certificate exists ([above](#signing-not-set-up)): the
    repository variable `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` is `true`.
    Without it `release.yml` refuses to publish.
-5. **`release.yml` is on `main`**: GitHub starts a workflow by hand only
-   once its file is on the default branch (a pushed tag starts it from the
-   tagged commit's copy).
+5. **`release.yml` is on `main`** (it is, since `d9cf561`): GitHub starts
+   a workflow by hand only once its file is on the default branch (a
+   pushed tag starts it from the tagged commit's copy).
 
 ### Repository settings
 
 Once, by hand, in **Settings** of `casualsoty/sotyware`. On 2026-11-15 the
 repository had: Actions allowing every action, SHA pinning not required,
 the default `GITHUB_TOKEN` read-only, Actions not allowed to approve pull
-requests, no environment, no ruleset, no secret or variable, release
-immutability off.
+requests, approval required only for first-time contributors' fork pull
+requests, no environment, no ruleset, no secret or variable, no
+protection on `main`, release immutability off.
 
 - **Actions → General**
   - **Actions permissions:** *Allow casualsoty, and select non-casualsoty,
@@ -238,14 +241,36 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
    on `main`.
 2. Rehearse (recommended before the first release and after workflow
    changes): `gh workflow run release.yml --ref main` (`dry_run` is the
-   default for a manual run). Every platform is built and tested, the
-   updater packages and `latest.json` are signed with a **throwaway key**
-   made in the run and verified, and the files are kept as the
-   `release-dry-run` artifact (7 days). Nothing is published, and neither
-   the release key nor the `release` environment is used, so this works
-   before either exists. The files are not release material: nothing
-   trusts that key. The macOS package job runs in `macos-signing`, which
-   must admit `main` for this.
+   default for a manual run). **Create `macos-signing` first**
+   ([Secrets](#secrets), step 2): the macOS package job runs in it, and a
+   running job that names a missing environment makes GitHub create it
+   without protection. Nothing else has to exist: the release key, the
+   `release` environment and the repository variable are not used, and
+   `prepare` warns about each. The skipped publish job names `release`,
+   but a skipped job creates no environment (`macos.yml`'s package job,
+   skipped on every push, never created `macos-signing`).
+   - **What runs:** `prepare` (the versions must agree; the repository in
+     `updates.rs`, the release key, repository secrets, both environments
+     and the Windows opt-in are only warned about), `ci.yml`, the Windows
+     installers, the Linux packages, the macOS tests and unsigned
+     packages, then `rehearse`: every updater package and `latest.json`
+     signed with a **throwaway key** made in the run and verified with its
+     public half, `SHA256SUMS` checked, the files kept as the
+     `release-dry-run` artifact (7 days).
+   - **What never runs:** `prepare`'s checks that the commit is on `main`
+     and that no release of the tag exists (skipped without a message),
+     and the whole publish job (shown as skipped): the release key probe,
+     the draft and its comparison, the pre-release, the anonymous
+     downloads, the promotion and both read-backs.
+   - **What it changes:** no job gets a write token, so no release, tag
+     or file of the repository can change. It may save build caches for
+     `main`, as a push does, and it records a deployment to
+     `macos-signing`. Its artifacts, the unsigned installers among them,
+     can be downloaded by any signed-in GitHub user while they are kept
+     (the repository is public). They are not release material: nothing
+     trusts that key.
+   - From any branch but `main` the macOS package job is refused by
+     `macos-signing`'s rules, and the run fails.
 3. Tag and push: `git tag -s vX.Y.Z -m "sotyware X.Y.Z" -m "<release
    notes>"`, `git push origin vX.Y.Z`. The tag's message becomes the
    published release notes and the notes the app shows.
@@ -281,25 +306,52 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
      (`/releases/latest`), and
      `https://github.com/casualsoty/sotyware/releases/latest/download/latest.json`
      and its `.sig` must serve exactly the signed manifest and signature,
-     which must verify. One release runs at a time.
+     which must verify. One release runs at a time: a second run waits,
+     and since GitHub keeps one waiting run per concurrency group, a third
+     cancels the waiting one before it has started anything (start that
+     one again).
 
    A tag that exists can also be released by hand:
    `gh workflow run release.yml --ref vX.Y.Z -f dry_run=false`.
-5. If any step before the promotion fails, the previous release stays the
-   latest: installations see nothing. A draft the failed run created is
-   deleted automatically, also when the run is cancelled or times out (a
-   draft that existed before is left alone, and stops the run), so after
-   fixing the cause you can **Re-run failed jobs**. A failure after the
-   pre-release was published leaves that pre-release, and the run says so:
-   delete it (with immutability on, GitHub may keep its tag and not let
-   the version be used again) and release a new patch version. Only the
-   two read-back checks run after the promotion; if one of them fails, the
-   new release, which passed every check before, stays the latest: look at
-   what `releases/latest/download/latest.json` serves before doing
-   anything else. Never
-   re-publish an older version or move a published tag (installations
-   refuse a lower version than they were offered, and a moved tag breaks
-   the URLs in the signed manifest).
+5. What a failure leaves depends on how far the publish job got (if an
+   earlier job fails, publish never starts and nothing changes). Once its
+   upload has started, its last step reads the release's flags and names
+   the case:
+   - **Before the pre-release** (the checks and signing, the upload, the
+     draft's comparison): nothing is public and the previous release
+     stays the latest. A draft this run made is deleted, also after a
+     cancellation or the job's timeout, so after fixing the cause you can
+     **Re-run failed jobs**. A draft that existed before is left alone and
+     stops the run. A force-cancel or a lost runner skips the deletion:
+     delete the draft by hand, or the next attempt stops at it.
+   - **After the pre-release, before the promotion** (the anonymous check,
+     or the promotion request itself): the release stays a public
+     pre-release, never the latest, so installations, which follow the
+     latest release, see nothing; the run says it did not pass every check
+     (also when only the promotion request failed). Delete it (with
+     immutability on, GitHub may keep its tag and not let the version be
+     used again) and release a new patch version.
+   - **After the promotion request** (the `/releases/latest` read-back or
+     the endpoint check failed, or the run was cancelled there): the
+     release is a full release that GitHub was asked to make the latest,
+     and installations may already be offered it; its files passed every
+     check before the promotion. The run's warning says it "was made the
+     latest release", which the run did not confirm when the read-back is
+     what failed. Look at what
+     `gh api repos/casualsoty/sotyware/releases/latest` names and what
+     `releases/latest/download/latest.json` serves before doing anything
+     else. Do not delete it in haste: installations that saw its manifest
+     refuse every lower version from then on.
+
+   The job finds its release by the tag name (`gh release … vX.Y.Z`). It
+   refuses to start while a release or draft of the tag exists, but it
+   counts a failed lookup as none, and a second release of the tag made
+   during the run (only someone with write access can make one) can be the
+   one a later step or the deletion acts on
+   ([limitations](../status/limitations.md#updates-adr-033-adr-036-adr-039)).
+   Never re-publish an older version or move a published tag
+   (installations refuse a lower version than they were offered, and a
+   moved tag breaks the URLs in the signed manifest).
 
 Assets of a release (version 0.2.0 shown), all under
 `https://github.com/casualsoty/sotyware/releases/download/v0.2.0/`:
@@ -350,11 +402,15 @@ is there (its `prepare` job, which names no environment, only checks
 whether those names are visible to it, which they are only as repository
 or organisation secrets).
 
-**Set up**, before pushing the first release tag (a job that names an
-environment that does not exist makes GitHub create it, without any
-protection):
+**Set up**, `macos-signing` before the first run of `release.yml` (a dry
+run included) or of `macos.yml` with `package`, and the rest before
+pushing the first release tag. A running job that names an environment
+that does not exist makes GitHub create it, without any protection; a
+skipped job does not.
 
-1. **Settings → Environments → New environment** `release`:
+1. **Settings → Environments → New environment** `release` (a dry run
+   only warns while it is missing; creating it first lets the dry run
+   check its rules for real):
    - **Required reviewers:** yourself (leave *Prevent self-review* off:
      you are the only maintainer, and it would block your own approval).
    - **Allow administrators to bypass configured protection rules:** off.
@@ -364,13 +420,17 @@ protection):
    - **Environment secrets:** `TAURI_SIGNING_PRIVATE_KEY` and
      `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
      ([how](#update-signing-key)).
-2. **New environment** `macos-signing`: deployment rules **branch** `main`
-   and **tag** `v*` (dry runs from `main` package macOS too); a reviewer
-   is optional (every Mac packaging run, dry runs included, would wait for
-   it). Secrets: the six `APPLE_*` values, once a Developer ID certificate
-   exists ([macos.md](macos.md#signing-and-notarization)). If a packaging
-   run created it already, it is unprotected and empty: restrict it before
-   adding a secret.
+2. **New environment** `macos-signing`, **before the first dry run**:
+   **Deployment branches and tags → Selected branches and tags**, a
+   **Branch** rule `main` and a **Tag** rule `v*` (dry runs from `main`
+   package macOS too); **Allow administrators to bypass configured
+   protection rules** off; a reviewer is optional (every Mac packaging
+   run, dry runs included, would wait for it). No secret for a rehearsal:
+   without the Apple values the build is unsigned and macOS stays out of
+   the release. Secrets: the six `APPLE_*` values, once a Developer ID
+   certificate exists ([macos.md](macos.md#signing-and-notarization)). If
+   a packaging run created it already, it is unprotected and empty:
+   restrict it before adding a secret.
 3. **Secrets and variables → Actions → Variables → New repository
    variable** `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` = `true`, only once you
    accept publishing unsigned Windows installers:
@@ -379,13 +439,26 @@ protection):
    gh variable set SOTYWARE_ALLOW_UNSIGNED_WINDOWS --repo casualsoty/sotyware --body true
    ```
 
-4. Check the environment the way `release.yml` does:
+4. Check the environments the way `release.yml` does:
 
    ```bash
    gh api repos/casualsoty/sotyware/environments/release/deployment-branch-policies --jq '.branch_policies[] | "\(.type) \(.name)"'
    ```
 
    It must print `tag v*` and nothing else.
+
+   ```bash
+   gh api repos/casualsoty/sotyware/environments/release --jq '{can_admins_bypass, reviewers: [.protection_rules[] | select(.type == "required_reviewers") | .reviewers[].reviewer.login], deployment_branch_policy}'
+   ```
+
+   It must show `"can_admins_bypass": false`, your login as the reviewer
+   and `"custom_branch_policies": true`.
+
+   ```bash
+   gh api repos/casualsoty/sotyware/environments/macos-signing/deployment-branch-policies --jq '.branch_policies[] | "\(.type) \(.name)"'
+   ```
+
+   It must print `branch main` and `tag v*`, and nothing else.
 
 ### Update signing key
 

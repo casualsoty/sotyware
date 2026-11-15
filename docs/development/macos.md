@@ -109,7 +109,9 @@ Two jobs per architecture, each on its own runner (table above):
   the release files (`.dmg`, `.app.tar.gz`, `status.txt`). It runs in the
   environment **`macos-signing`**, the only place the Apple credentials
   are ([release.md](release.md#secrets)); it signs and notarizes when they
-  are there.
+  are there. Create that environment before the first packaging run,
+  `release.yml` dry runs included: a job that names a missing environment
+  makes GitHub create it without protection.
 
 No Apple account or secret is needed to validate the code.
 

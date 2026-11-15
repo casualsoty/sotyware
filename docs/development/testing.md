@@ -2456,6 +2456,9 @@ gh workflow run release.yml --ref main
 ```
 
 The last one is a release dry run ([release.md](release.md#publishing-a-release)).
+The last two run the macOS package job in the `macos-signing`
+environment: create it first ([release.md](release.md#secrets)), or GitHub
+creates it, without protection, when that job starts.
 
 ### Automatic headless workflow (`ci.yml`)
 
