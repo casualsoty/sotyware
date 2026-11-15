@@ -46,6 +46,7 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 | Single-instance IPC | named mutex `<identifier>-sim` + hidden message window, `WM_COPYDATA` | D-Bus session bus name `<identifier>.SingleInstance` |
 | Focus on second launch | subject to foreground-lock rules; plugin calls `AllowSetForegroundWindow` | up to the window manager / compositor |
 | Build host | must build on Windows, from a Windows path | native or WSL2 |
+| Application manifest | Common Controls v6 manifest embedded by the linker into every binary, unit-test binaries included (`build.rs`, ADR-034); without it a test that builds a Tauri app does not start | none |
 
 `<identifier>` is `com.sotyware.desktop` from `src-tauri/tauri.conf.json`.
 Changing the identifier changes the single-instance lock names.

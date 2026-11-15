@@ -160,6 +160,14 @@ Reliability scenarios the audit traced and their current behaviour:
   rows lingered in free pages), CI job `server`, operations guide
   `docs/development/server.md`.
 
+- Native Windows 11 (headless only, fresh copy): everything passed except
+  the Rust unit tests, whose binary did not start (`STATUS_ENTRYPOINT_NOT_FOUND`):
+  the Phase F mock-runtime tests link Common Controls v6 code and the test
+  binary had no manifest. Fixed with ADR-034 (the linker embeds
+  `tauri-build`'s manifest into every Windows binary); then 480 passed, 0
+  failed, 28 ignored on Windows. The C: drive filled up once during the
+  run (the copy's staticlib build); its build output was deleted.
+
 - Phase G done: security review. `cargo audit` (app: 2 `quick-xml`
   advisories, test-only through `s3s`; unsound `lru`/`glib` and five
   unmaintained crates, none reachable; server: none) and `npm audit`
@@ -201,6 +209,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | `4896f78` + ADR-034 | native Windows 11 (build 26200), copy | `npm ci`; `npm run check`; `npm run test:headless`; `test:update-manifest`; clippy; server `cargo test`; after the fix `cargo test --locked` | check clean; guards ok; Vitest 213; update-manifest 8/8; clippy 0; server 5 + 20; Rust first did not start (0xC0000139), after ADR-034 480 passed, 0 failed, 28 ignored |
 | 2026-11-15 | Phase G | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `cargo fmt --check`; `cargo audit`; `npm audit`; `cargo build --release --locked` + strings check + release-binary guard | guards ok; Vitest 213; Rust 494 passed, 28 ignored; recorder 522 passed, 28 ignored; clippy 0/0; fmt clean; audits as in the threat model; release binary without overrides, guard ok |
 | 2026-11-15 | Phase F | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `test:update-manifest`; release-binary and isolation guard self-tests; profile helpers; `npm run check` | guards ok; Vitest 213; Rust 492 passed, 28 ignored (14 update tests; 2 mutants caught); recorder 520 passed, 28 ignored; update-manifest 8/8; guards 39/39 and 9/9; helpers 10 OK; clippy 0/0; check clean |
 | 2026-11-15 | Phase E | WSL2 | `npm run test:headless`; clippy (default, test-profile, server); recorder tests; server tests; profile helpers | guards ok; Vitest 205; Rust 478 passed, 28 ignored; recorder 506 passed; server 5 + 20; clippy 0/0/0; helpers OK. Clippy found an ignored 409 in conflict resolution (fixed) |

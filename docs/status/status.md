@@ -3861,6 +3861,38 @@ Production-readiness work, phase G ([journal](journal.md)); WSL2 only.
   clippy `-D warnings` clean for the default and test-profile builds;
   `cargo fmt --check` clean.
 
+## Native Windows 11 headless run of the mission's work (2026-11-15)
+
+Native Windows 11 Home, build 26200, x64 (the development machine), a fresh
+copy `C:\dev\sotyware-prodready` of the working tree at `4896f78` plus the
+fix below; Node and Rust 1.99.1 from the Windows `PATH`. **Headless only:**
+no app was started, no desktop input, no real profile touched, no
+provider contacted.
+
+- `npm ci`, `npm run check` (0 errors, 0 warnings), the guards of
+  `test:headless` (rfd patch, release binary, desktop isolation, icons) and
+  Vitest 213 passed; `npm run test:update-manifest` 8/8; `cargo clippy
+  --all-targets -D warnings` exit 0 (before the fix); the account service
+  `cargo test --locked` 5 unit + 20 API tests passed.
+- **Defect found:** the Rust unit-test binary did not start
+  (`0xC0000139`, `STATUS_ENTRYPOINT_NOT_FOUND`): since the update tests
+  build a Tauri app on the mock runtime (`211b44a`), the binary imports
+  `TaskDialogIndirect` and the window-subclass functions from Common
+  Controls v6 but had no manifest asking for it. The Phase E tree's test
+  binary imports nothing from `comctl32` (checked by building it). Fixed
+  by ADR-034; then `cargo test --locked` passed: **480 passed, 0 failed,
+  28 ignored** (the Linux-only tests are compiled out), all 14 update tests
+  included (the plugin on the mock runtime, the CLI-signed fixture).
+- With the fix, the test binaries and a Windows debug build of the app
+  binary each carry exactly one manifest (resource ID 1, Common Controls
+  6.0.0.0); the app binary's icon group equals `icon.ico` and its version
+  resource is present. Release build, installers and installation not
+  run on Windows in this session.
+- C: ran out of space once while linking the app's staticlib in the copy
+  (the build failed); the copy's build output was deleted at once and
+  again after the last build; free space afterwards 15.9 GB (16.2 GB
+  before the run).
+
 ## See also
 
 - [limitations.md](limitations.md): known limitations.

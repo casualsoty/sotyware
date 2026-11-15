@@ -1947,3 +1947,31 @@ design: [updates.md](updates.md).
   restart would meet its own single-instance lock). Manifests carry no
   generic `windows-x86_64` entry, so a build without an installer marker is
   offered nothing.
+
+## ADR-034: On Windows the linker embeds the Common Controls manifest into every binary, test binaries included
+
+Status: Accepted (2026-11-15). Code: `src-tauri/build.rs`
+(`embed_windows_manifest`), `src-tauri/windows-app-manifest.xml`.
+
+- **Context:** a Windows program that imports `TaskDialogIndirect` or the
+  window-subclass functions needs Common Controls v6, which Windows loads
+  only for a program whose manifest asks for it; without one the loader
+  stops it with `STATUS_ENTRYPOINT_NOT_FOUND` before `main`. `tauri-build`
+  puts that manifest into the app binary as a resource, but not into test
+  binaries. Since the update tests build a Tauri app on the mock runtime
+  (ADR-033), the unit-test binary links that code too, and on native
+  Windows 11 it did not start (found 2026-11-15, before anything was
+  pushed).
+- **Decision:** for Windows MSVC targets `build.rs` gives `tauri-build`
+  `WindowsAttributes::new_without_app_manifest()` and passes the linker
+  `/MANIFEST:EMBED /MANIFESTINPUT:windows-app-manifest.xml`, a copy of
+  `tauri-build`'s own default manifest. This is the approach Tauri
+  documents for testing on Windows.
+- **Rejected:** skipping the mock-runtime tests on Windows (Windows is the
+  release platform; those tests matter most there); moving them to an
+  integration test (they need crate-private items).
+- **Consequences:** the app binary's manifest is unchanged in content (one
+  manifest, resource ID 1, checked on a native Windows debug build; icons
+  and version resource as before). A change of `tauri-build`'s default
+  manifest must be copied by hand.
+

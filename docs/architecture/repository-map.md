@@ -95,7 +95,8 @@ Where things are. Generated and ignored paths are listed in
 ├── src-tauri/                Rust crate and Tauri configuration
 │   ├── Cargo.toml            Crate `sotyware`, lib `sotyware_lib`, dependencies, release profile
 │   ├── Cargo.lock            Pinned Rust dependency tree
-│   ├── build.rs              tauri_build with an app manifest declaring the app's 38 commands
+│   ├── build.rs              tauri_build with an app manifest declaring the app's commands; on Windows the linker embeds windows-app-manifest.xml into every binary (ADR-034)
+│   ├── windows-app-manifest.xml  The Common Controls v6 manifest (a copy of tauri-build's default), embedded by the linker on Windows
 │   ├── tauri.conf.json       Product name, identifier, window `main`, CSP, bundles, dev/build hooks
 │   ├── capabilities/
 │   │   └── default.json      Frontend permissions for window `main` (hide is added at runtime, tray mode only)

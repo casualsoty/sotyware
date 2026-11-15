@@ -3,8 +3,8 @@ fn main() {
     test_profile_guard();
     // Declaring the app's commands makes each one need a permission
     // (`allow-<command>`) in a capability, instead of being open to every window.
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
-        tauri_build::AppManifest::new().commands(&[
+    let mut attributes =
+        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "operating_mode",
             "list_features",
             "set_feature_enabled",
@@ -82,9 +82,34 @@ fn main() {
             "install_update",
             "cancel_update",
             "postpone_update",
-        ]),
-    ))
-    .expect("failed to run tauri-build");
+        ]));
+    if windows_msvc_target() {
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+        embed_windows_manifest();
+    }
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
+}
+
+fn windows_msvc_target() -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+}
+
+/// Windows: the Common Controls v6 manifest (the one tauri-build would
+/// embed, `windows-app-manifest.xml`) is embedded by the linker into every
+/// linked artifact, not as a resource of the app binary only. Unit tests that
+/// build a Tauri app on the mock runtime link code importing
+/// `TaskDialogIndirect` and the window-subclass functions, which only
+/// Common Controls v6 exports: without the manifest the test binary does not
+/// even start (`STATUS_ENTRYPOINT_NOT_FOUND`). This is the approach Tauri
+/// documents for testing on Windows; the app binary's manifest is unchanged.
+fn embed_windows_manifest() {
+    let manifest =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-app-manifest.xml");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
 }
 
 /// The request recorder (ADR-024) is for controlled integration runs only:
