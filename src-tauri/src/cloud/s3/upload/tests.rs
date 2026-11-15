@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use super::super::super::test_server::{
-    Inject, Pace, TempDir, TestServer, ThrottledLink, sha256_hex,
+    CONDITIONAL_PROFILE, Inject, Pace, TempDir, TestServer, ThrottledLink, sha256_hex,
 };
 use super::super::{ClientOptions, Verification};
 use super::*;
@@ -304,6 +304,128 @@ async fn a_multipart_upload_checks_the_destination_again_before_completing() {
     assert_eq!(count(&ops, "CompleteMultipartUpload"), 0, "{ops:?}");
     assert!(server.open_multipart_files().is_empty());
     assert_eq!(fs::read(&theirs).unwrap(), b"theirs");
+}
+
+/// A store whose profile has conditional writes established (tests only,
+/// ADR-029); the test server enforces `If-None-Match: *` like Amazon.
+fn conditional_store(server: &TestServer) -> S3Store {
+    let mut account = server.resolved("local", &[BUCKET]);
+    account.profile = &CONDITIONAL_PROFILE;
+    S3Store::new(account, server.credentials(), options())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_an_established_capability_no_conditional_header_is_sent() {
+    let server = server().await;
+    let s = store(&server);
+    let dir = TempDir::new("up-uncond");
+    let small = dir.file("small", 10 * 1024, 1);
+    let large = dir.file("large", 12 * MIB, 2);
+    let control = Arc::new(TransferControl::new());
+    run(&s, "small", &small, &control).await.0.unwrap();
+    let control = Arc::new(TransferControl::new());
+    run(&s, "large", &large, &control).await.0.unwrap();
+    assert_eq!(server.conditional_ops(), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conditional_upload_sends_if_none_match_and_succeeds_on_a_free_key() {
+    let server = server().await;
+    let s = conditional_store(&server);
+    let dir = TempDir::new("up-cond-free");
+    let small = dir.file("small", 10 * 1024, 1);
+    let large = dir.file("large", 12 * MIB, 2);
+    let control = Arc::new(TransferControl::new());
+    let report = run(&s, "small", &small, &control).await.0.unwrap();
+    assert_eq!(report.sha256, sha256_hex(&fs::read(&small).unwrap()));
+    let control = Arc::new(TransferControl::new());
+    run(&s, "large", &large, &control).await.0.unwrap();
+    assert_eq!(
+        server.conditional_ops(),
+        ["PutObject", "CompleteMultipartUpload"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conditional_put_refused_for_another_writers_object_stores_nothing() {
+    let server = server().await;
+    let s = conditional_store(&server);
+    let dir = TempDir::new("up-cond-race");
+    let src = dir.file("src", 10 * 1024, 3);
+    // Another client creates the key after the HEAD check, right before
+    // this PUT reaches the provider.
+    let theirs = server.object_path(BUCKET, "raced");
+    let theirs2 = theirs.clone();
+    server.inject(
+        "PutObject",
+        None,
+        1,
+        Inject::Run(Arc::new(move || fs::write(&theirs2, b"theirs").unwrap())),
+    );
+    let (result, _) = run(&s, "raced", &src, &Arc::new(TransferControl::new())).await;
+    let e = expect_err(result);
+    assert!(matches!(e.error, StorageError::AlreadyExists(_)), "{e:?}");
+    assert_eq!(e.remote, RemoteOutcome::NothingStored);
+    assert_eq!(fs::read(&theirs).unwrap(), b"theirs", "never overwritten");
+    assert_eq!(server.conditional_ops(), ["PutObject"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conditional_put_that_finds_its_own_content_succeeds() {
+    let server = server().await;
+    let s = conditional_store(&server);
+    let dir = TempDir::new("up-cond-own");
+    let src = dir.file("src", 10 * 1024, 4);
+    let sha = sha256_hex(&fs::read(&src).unwrap());
+    // As if an earlier attempt of this PUT was stored and its answer lost:
+    // the same bytes with the same SHA-256 metadata are already there.
+    let (object, metadata) = (
+        server.object_path(BUCKET, "own"),
+        server.metadata_path(BUCKET, "own"),
+    );
+    let (src2, sha2) = (src.clone(), sha.clone());
+    server.inject(
+        "PutObject",
+        None,
+        1,
+        Inject::Run(Arc::new(move || {
+            fs::copy(&src2, &object).unwrap();
+            fs::write(
+                &metadata,
+                format!("{{\"user_metadata\":{{\"sotyware-sha256\":\"{sha2}\"}}}}"),
+            )
+            .unwrap();
+        })),
+    );
+    let (result, _) = run(&s, "own", &src, &Arc::new(TransferControl::new())).await;
+    let report = result.expect("the stored object is exactly this upload");
+    assert_eq!(report.sha256, sha);
+    assert_eq!(server.conditional_ops(), ["PutObject"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conditional_completion_refused_for_another_writer_aborts_and_stores_nothing() {
+    let server = server().await;
+    let s = conditional_store(&server);
+    let dir = TempDir::new("up-cond-complete");
+    let src = dir.file("src", 12 * MIB, 5);
+    let theirs = server.object_path(BUCKET, "raced-mp");
+    let theirs2 = theirs.clone();
+    server.inject(
+        "CompleteMultipartUpload",
+        None,
+        1,
+        Inject::Run(Arc::new(move || fs::write(&theirs2, b"theirs").unwrap())),
+    );
+    let (result, _) = run(&s, "raced-mp", &src, &Arc::new(TransferControl::new())).await;
+    let e = expect_err(result);
+    assert!(matches!(e.error, StorageError::AlreadyExists(_)), "{e:?}");
+    assert_eq!(e.remote, RemoteOutcome::NothingStored);
+    let ops = server.ops();
+    assert_eq!(count(&ops, "AbortMultipartUpload"), 1, "{ops:?}");
+    assert!(server.open_multipart_files().is_empty());
+    assert_eq!(fs::read(&theirs).unwrap(), b"theirs", "never overwritten");
+    assert_eq!(server.conditional_ops(), ["CompleteMultipartUpload"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -2,6 +2,7 @@
   import { onDestroy, untrack } from "svelte";
   import {
     addAccount,
+    CAPABILITY_NAMES,
     CloudCommandError,
     updateAccount,
     type AccountInfo,
@@ -124,6 +125,28 @@
         </select>
       {/if}
     </div>
+    {#if profile && profile.capabilities.length > 0}
+      <details class="capabilities">
+        <summary>What {profile.name} guarantees</summary>
+        <p class="hint">
+          Versioning: {profile.versioning === "always"
+            ? "always on"
+            : profile.versioning === "optional"
+              ? "optional, per bucket"
+              : "unknown"}. "Assumed" means Amazon S3's behaviour, not checked at this provider.
+        </p>
+        <ul>
+          {#each profile.capabilities as c (c.name)}
+            <li data-capability={c.name}>
+              <span>{CAPABILITY_NAMES[c.name] ?? c.name}</span>:
+              <strong>{c.support}</strong>{#if c.evidence !== null && c.support !== "assumed"}<span class="evidence"
+                  >{` (${c.evidence})`}</span
+                >{/if}
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
     <div class="field">
       <label for="{idPrefix}-label">Name</label>
       <input id="{idPrefix}-label" type="text" bind:value={label} required placeholder="Photos" autocomplete="off" />
@@ -264,6 +287,16 @@
   .hint {
     font-size: 0.85em;
     color: #6b6b73;
+  }
+
+  .capabilities {
+    margin-bottom: 0.6rem;
+    font-size: 0.85em;
+  }
+
+  .capabilities ul {
+    margin: 0.3rem 0 0;
+    padding-left: 1.2rem;
   }
 
   .actions {

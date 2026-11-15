@@ -44,6 +44,7 @@ pub struct TestServer {
     /// ([`HELPER_KEY_ID`]).
     keyed: Arc<Mutex<Vec<(String, String)>>>,
     injections: Arc<Mutex<Vec<Injection>>>,
+    conditional: Arc<Mutex<Vec<String>>>,
     root: PathBuf,
     task: JoinHandle<()>,
 }
@@ -93,6 +94,13 @@ struct Access {
     operations: Arc<Mutex<Vec<String>>>,
     keyed: Arc<Mutex<Vec<(String, String)>>>,
     injections: Arc<Mutex<Vec<Injection>>>,
+    /// Where s3s-fs keeps objects, to enforce `If-None-Match: *` the way
+    /// Amazon documents it (412 when the key exists). s3s-fs itself ignores
+    /// the header. Servers without s3s-fs get a folder that never holds an
+    /// object, so nothing is refused there.
+    root: PathBuf,
+    /// The operations that carried `If-None-Match: *`, in order.
+    conditional: Arc<Mutex<Vec<String>>>,
 }
 
 // Written out instead of with `#[async_trait]`, which would be a new
@@ -115,6 +123,17 @@ impl S3Access for Access {
             .credentials()
             .map(|c| c.access_key.clone())
             .unwrap_or_default();
+        let if_none_match = (op == "PutObject" || op == "CompleteMultipartUpload")
+            && cx
+                .headers()
+                .get("if-none-match")
+                .is_some_and(|v| v.as_bytes() == b"*");
+        let target = match cx.s3_path() {
+            s3s::path::S3Path::Object { bucket, key } => {
+                Some(self.root.join(bucket.as_ref()).join(key.as_ref()))
+            }
+            _ => None,
+        };
         Box::pin(async move {
             if !signed {
                 return Err(s3s::s3_error!(AccessDenied, "Signature is required"));
@@ -139,17 +158,23 @@ impl S3Access for Access {
                     })
             };
             match action {
-                None => Ok(()),
+                None => {}
                 Some(Inject::InternalError) => {
-                    Err(s3s::s3_error!(InternalError, "injected by the test"))
+                    return Err(s3s::s3_error!(InternalError, "injected by the test"));
                 }
-                Some(Inject::Deny) => Err(s3s::s3_error!(AccessDenied, "injected by the test")),
+                Some(Inject::Deny) => {
+                    return Err(s3s::s3_error!(AccessDenied, "injected by the test"));
+                }
                 Some(Inject::Hang) => std::future::pending().await,
-                Some(Inject::Run(f)) => {
-                    f();
-                    Ok(())
+                Some(Inject::Run(f)) => f(),
+            }
+            if if_none_match {
+                self.conditional.lock().unwrap().push(op.clone());
+                if target.is_some_and(|p| p.is_file()) {
+                    return Err(s3s::s3_error!(PreconditionFailed, "the key exists"));
                 }
             }
+            Ok(())
         })
     }
 }
@@ -628,11 +653,14 @@ impl TestServer {
         let operations = Arc::new(Mutex::new(Vec::new()));
         let keyed = Arc::new(Mutex::new(Vec::new()));
         let injections = Arc::new(Mutex::new(Vec::new()));
+        let conditional = Arc::new(Mutex::new(Vec::new()));
         builder.set_access(Access {
             denied: denied.to_vec(),
             operations: Arc::clone(&operations),
             keyed: Arc::clone(&keyed),
             injections: Arc::clone(&injections),
+            root: root.clone(),
+            conditional: Arc::clone(&conditional),
         });
         let service = builder.build();
 
@@ -658,9 +686,15 @@ impl TestServer {
             operations,
             keyed,
             injections,
+            conditional,
             root,
             task,
         }
+    }
+
+    /// The operations that carried `If-None-Match: *` so far.
+    pub fn conditional_ops(&self) -> Vec<String> {
+        self.conditional.lock().unwrap().clone()
     }
 
     /// Applies `action` to the next `times` requests of operation `op`
@@ -763,6 +797,27 @@ impl TestServer {
         }
     }
 }
+
+/// A provider profile for tests only: the generic S3-compatible one with
+/// conditional writes established, so the `If-None-Match` path of uploads
+/// runs against this server (which enforces it like Amazon documents).
+/// Says nothing about any real provider.
+pub static CONDITIONAL_PROFILE: crate::cloud::provider::ProviderProfile = {
+    use crate::cloud::provider::{Evidence, S3_COMPATIBLE, Support};
+    let mut capabilities = S3_COMPATIBLE.capabilities;
+    capabilities.conditional_put = Support::Yes(Evidence::Documented);
+    crate::cloud::provider::ProviderProfile {
+        id: "test-conditional",
+        name: "Test service with conditional writes",
+        endpoint: S3_COMPATIBLE.endpoint,
+        addressing: S3_COMPATIBLE.addressing,
+        sdk_checksums: S3_COMPATIBLE.sdk_checksums,
+        limits: S3_COMPATIBLE.limits,
+        capabilities,
+        known_regions: &[],
+        documentation: S3_COMPATIBLE.documentation,
+    }
+};
 
 impl Drop for TestServer {
     fn drop(&mut self) {

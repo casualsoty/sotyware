@@ -122,8 +122,14 @@ Called once per file by upload batches ([Uploading files](#uploading-files)).
    `AlreadyExists` before any file data is sent; nothing is overwritten on
    purpose. A multipart upload checks again right before completing. Between
    check and write another client can still create the object, which the
-   upload then replaces (or, on a versioned bucket, hides): no
-   `If-None-Match: *` is sent, because Backblaze does not document it.
+   upload then replaces (or, on a versioned bucket, hides), unless the
+   provider's `conditional_put` capability is established (ADR-029): then
+   `PutObject` and `CompleteMultipartUpload` carry `If-None-Match: *`, and a
+   412 answer is inspected (`HeadObject`): this upload's own content (an SDK
+   retry after a lost answer) counts as uploaded, anything else fails with
+   `AlreadyExists` and nothing stored (an open multipart upload is aborted).
+   No shipped profile has it established: Backblaze and Hetzner do not
+   document it and it was never verified at either.
 5. **Sending** (stage `sending`): parts are streamed from the file
    (`ByteStream::read_from().offset().length()`, 64 KiB chunks), one after
    another, so memory use does not grow with the file size. Each request

@@ -123,6 +123,16 @@ Reliability scenarios the audit traced and their current behaviour:
   `download::tests::without_a_size_or_a_checksum_only_the_transfer_is_claimed`,
   the download panel test in `CloudBrowser.test.ts`.
 
+- Phase B, A5 + A4: provider capability model (`Support`/`Evidence`,
+  nine capabilities per profile, shown in the account form) and
+  conditional writes (`If-None-Match: *` on `PutObject` and
+  `CompleteMultipartUpload`) used only where `conditional_put` is
+  established — no shipped profile; a 412 is inspected by `HeadObject`
+  (own content after a lost answer = success; otherwise `AlreadyExists`,
+  nothing stored, multipart aborted). The test server now enforces
+  `If-None-Match` like Amazon documents it and records which requests
+  carried it.
+
 ## Tests run during the mission
 
 (Exact commands and counts, newest last.)
@@ -131,6 +141,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | A4/A5 change | WSL2 | same + `cargo test --features request-recorder --target-dir target/recorder --lib` | Rust 422 passed, 27 ignored; recorder build 450 passed, 27 ignored; Vitest 180; check clean; clippy exit 0 |
 
 ## Open defects and blockers
 

@@ -59,6 +59,19 @@ provider account was used.
 | SDK checksum headers (CRC32, `aws-chunked`) | not documented | not documented |
 | Billing | USD, card or invoice; no credit card needed to sign up. **VAT for French consumers not found** on official pages | EUR, prices excl. VAT; **VAT rate for French consumers not found** on official pages |
 
+## Capabilities and their evidence
+
+What sotyware relies on per provider is data in `cloud/provider.rs`
+(`Capabilities`, ADR-029) and shown in the account form ("What … guarantees").
+Each value is `yes`/`no` with its evidence (documented, or verified at the
+provider on a recorded date), `assumed` (Amazon S3's documented behaviour,
+not checked there) or `unknown`. Only documented or verified values switch
+behaviour on (today only conditional writes depend on it, and no provider has
+them established). Verified at Backblaze (2026-11-13, the opt-in upload
+tests): `AbortMultipartUpload` and `ListMultipartUploads`. Nothing is verified
+at Hetzner. A run against sotyware's local test servers is never evidence for
+a provider.
+
 ## Cost estimate
 
 Assumptions:

@@ -70,13 +70,117 @@ pub enum Versioning {
     Unknown,
 }
 
-/// What a provider supports beyond plain object storage.
+/// Where a statement about a provider's behaviour comes from (ADR-029).
+/// A run against sotyware's local test servers is never evidence about a
+/// real provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Evidence {
+    /// The provider's official documentation says so.
+    Documented,
+    /// An opt-in test against the real provider showed it (the run is
+    /// recorded in docs/status/status.md).
+    VerifiedAtProvider {
+        /// The date of the run, `YYYY-MM-DD`.
+        date: &'static str,
+    },
+    /// Amazon S3's documented behaviour, assumed but not checked at this
+    /// provider.
+    AssumedFromS3,
+}
+
+/// Whether a provider has a behaviour, and how sotyware knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Support {
+    Yes(Evidence),
+    No(Evidence),
+    /// Nothing documented and nothing verified.
+    Unknown,
+}
+
+impl Support {
+    /// Whether code may rely on the behaviour: documented or verified at
+    /// the provider, not merely assumed from Amazon S3.
+    pub fn established(self) -> bool {
+        matches!(
+            self,
+            Self::Yes(Evidence::Documented | Evidence::VerifiedAtProvider { .. })
+        )
+    }
+
+    /// The value the dashboard shows: `yes`, `no`, `assumed` or `unknown`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Yes(Evidence::AssumedFromS3) => "assumed",
+            Self::Yes(_) => "yes",
+            Self::No(_) => "no",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Where the statement comes from, for the dashboard.
+    pub fn evidence(self) -> Option<&'static str> {
+        match self {
+            Self::Yes(e) | Self::No(e) => Some(match e {
+                Evidence::Documented => "documented",
+                Evidence::VerifiedAtProvider { .. } => "verified at the provider",
+                Evidence::AssumedFromS3 => "Amazon S3 behaviour, not checked here",
+            }),
+            Self::Unknown => None,
+        }
+    }
+}
+
+/// What a provider supports beyond plain object storage, each behaviour
+/// with its evidence (ADR-029). Code that depends on one of them asks here,
+/// never the provider id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub versioning: Versioning,
     /// Object Lock (governance and compliance retention, legal hold).
-    pub object_lock: bool,
+    /// Whether a bucket has it switched on is read from the bucket.
+    pub object_lock: Support,
+    /// `DeleteObject` on a versioned bucket adds a delete marker and says so
+    /// (`x-amz-delete-marker`).
+    pub delete_markers: Support,
+    /// `ListObjectVersions` lists versions and delete markers.
+    pub version_listing: Support,
+    /// `If-None-Match: *` on `PutObject` and `CompleteMultipartUpload` is
+    /// enforced: the write fails with 412 when the key exists. Uploads send
+    /// it only when this is established; otherwise the HEAD-then-write race
+    /// remains (ADR-021).
+    pub conditional_put: Support,
+    /// `x-amz-copy-source-if-match` is enforced on `CopyObject`. Sent
+    /// anyway (a copy is verified by `HeadObject` afterwards).
+    pub copy_if_match: Support,
+    /// `CopyObject` with `MetadataDirective: COPY` keeps user metadata
+    /// (sotyware's `sotyware-sha256`).
+    pub metadata_on_copy: Support,
+    /// `AbortMultipartUpload` removes an incomplete upload and its parts.
+    pub multipart_abort: Support,
+    /// `ListMultipartUploads` lists incomplete multipart uploads.
+    pub list_multipart_uploads: Support,
+    /// Presigned `GetObject` URLs (share links) work.
+    pub presigned_get: Support,
 }
+
+impl Capabilities {
+    /// Each capability's name, as the dashboard lists it, with its value.
+    pub fn entries(&self) -> [(&'static str, Support); 9] {
+        [
+            ("object-lock", self.object_lock),
+            ("delete-markers", self.delete_markers),
+            ("version-listing", self.version_listing),
+            ("conditional-put", self.conditional_put),
+            ("copy-if-match", self.copy_if_match),
+            ("metadata-on-copy", self.metadata_on_copy),
+            ("multipart-abort", self.multipart_abort),
+            ("list-multipart-uploads", self.list_multipart_uploads),
+            ("presigned-get", self.presigned_get),
+        ]
+    }
+}
+
+const S3: Support = Support::Yes(Evidence::AssumedFromS3);
 
 /// How the endpoint URL is found for an account.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,9 +242,23 @@ pub const BACKBLAZE_B2: ProviderProfile = ProviderProfile {
         max_single_put: 5_000_000_000,
         max_object_size: 10_000_000_000_000,
     },
+    // Verified at Backblaze by the opt-in upload tests on 2026-11-13
+    // (status.md: "Uploads at Backblaze"): multipart aborts answered 204 and
+    // left no upload; `ListMultipartUploads` was accepted with a
+    // prefix-restricted key. Everything else: documented or assumed.
     capabilities: Capabilities {
         versioning: Versioning::Always,
-        object_lock: true,
+        object_lock: Support::Yes(Evidence::Documented),
+        delete_markers: S3,
+        version_listing: Support::Yes(Evidence::Documented),
+        // Not documented for the S3-compatible API (checked 2026-11-15);
+        // never verified: uploads keep the HEAD check only.
+        conditional_put: Support::Unknown,
+        copy_if_match: S3,
+        metadata_on_copy: S3,
+        multipart_abort: Support::Yes(Evidence::VerifiedAtProvider { date: "2026-11-13" }),
+        list_multipart_uploads: Support::Yes(Evidence::VerifiedAtProvider { date: "2026-11-13" }),
+        presigned_get: Support::Yes(Evidence::Documented),
     },
     // One region per Backblaze account, chosen at sign-up. The region id is
     // shown with the bucket's endpoint in the web console.
@@ -183,9 +301,19 @@ pub const HETZNER: ProviderProfile = ProviderProfile {
         max_single_put: 5_000_000_000,
         max_object_size: 5_000_000_000_000,
     },
+    // Nothing verified at Hetzner: no account was available for the opt-in
+    // tests.
     capabilities: Capabilities {
         versioning: Versioning::Optional,
-        object_lock: true,
+        object_lock: Support::Yes(Evidence::Documented),
+        delete_markers: S3,
+        version_listing: S3,
+        conditional_put: Support::Unknown,
+        copy_if_match: S3,
+        metadata_on_copy: S3,
+        multipart_abort: S3,
+        list_multipart_uploads: S3,
+        presigned_get: Support::Yes(Evidence::Documented),
     },
     known_regions: &[
         KnownRegion {
@@ -213,9 +341,20 @@ pub const S3_COMPATIBLE: ProviderProfile = ProviderProfile {
     addressing: Addressing::Path,
     sdk_checksums: SdkChecksums::WhenRequired,
     limits: S3_LIMITS,
+    // A service sotyware knows nothing about: Amazon's behaviour is
+    // assumed where a wrong assumption is caught by a later check, unknown
+    // where it would remove a safety check.
     capabilities: Capabilities {
         versioning: Versioning::Unknown,
-        object_lock: false,
+        object_lock: Support::Unknown,
+        delete_markers: S3,
+        version_listing: S3,
+        conditional_put: Support::Unknown,
+        copy_if_match: S3,
+        metadata_on_copy: S3,
+        multipart_abort: S3,
+        list_multipart_uploads: S3,
+        presigned_get: S3,
     },
     known_regions: &[],
     documentation: "https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html",
@@ -262,6 +401,41 @@ mod tests {
                 "{}: the largest object must fit in max_parts parts",
                 p.id
             );
+        }
+    }
+
+    #[test]
+    fn only_documented_or_verified_behaviour_is_established() {
+        assert!(Support::Yes(Evidence::Documented).established());
+        assert!(Support::Yes(Evidence::VerifiedAtProvider { date: "2026-11-13" }).established());
+        assert!(!Support::Yes(Evidence::AssumedFromS3).established());
+        assert!(!Support::No(Evidence::Documented).established());
+        assert!(!Support::Unknown.established());
+        assert_eq!(Support::Yes(Evidence::AssumedFromS3).label(), "assumed");
+        assert_eq!(Support::Unknown.evidence(), None);
+    }
+
+    #[test]
+    fn conditional_writes_stay_off_until_verified_at_a_provider() {
+        // Sending If-None-Match where it is not enforced would give a false
+        // sense of safety; ADR-029 keeps it off until a provider run shows it.
+        // Change this together with the recorded run, never on its own.
+        for p in PROVIDERS {
+            assert!(!p.capabilities.conditional_put.established(), "{}", p.id);
+        }
+    }
+
+    #[test]
+    fn verified_capabilities_carry_a_date() {
+        for p in PROVIDERS {
+            for (name, support) in p.capabilities.entries() {
+                if let Support::Yes(Evidence::VerifiedAtProvider { date })
+                | Support::No(Evidence::VerifiedAtProvider { date }) = support
+                {
+                    assert_eq!(date.len(), 10, "{} {name}", p.id);
+                    assert!(date.starts_with("20"), "{} {name}", p.id);
+                }
+            }
         }
     }
 

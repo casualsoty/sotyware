@@ -40,6 +40,12 @@ const PROVIDERS: ProviderInfo[] = [
       { id: "eu-central-003", location: "Amsterdam, NL" },
       { id: "us-west-004", location: "US West" },
     ],
+    versioning: "always",
+    capabilities: [
+      { name: "conditional-put", support: "unknown", evidence: null },
+      { name: "multipart-abort", support: "yes", evidence: "verified at the provider" },
+      { name: "copy-if-match", support: "assumed", evidence: "Amazon S3 behaviour, not checked here" },
+    ],
   },
   {
     id: "hetzner",
@@ -47,8 +53,18 @@ const PROVIDERS: ProviderInfo[] = [
     endpointRequired: false,
     defaultRegion: "fsn1",
     knownRegions: [{ id: "fsn1", location: "Falkenstein, DE" }],
+    versioning: "optional",
+    capabilities: [],
   },
-  { id: "s3-compatible", name: "S3-compatible service", endpointRequired: true, defaultRegion: "us-east-1", knownRegions: [] },
+  {
+    id: "s3-compatible",
+    name: "S3-compatible service",
+    endpointRequired: true,
+    defaultRegion: "us-east-1",
+    knownRegions: [],
+    versioning: "unknown",
+    capabilities: [],
+  },
 ];
 
 function account(overrides: Partial<AccountInfo> = {}): AccountInfo {
@@ -367,6 +383,26 @@ describe("adding an account", () => {
     expect(credentialFields(root).every((i) => i.autocomplete === "off")).toBe(true);
   });
 
+  it("says what the chosen provider guarantees, with the evidence", async () => {
+    const root = await render();
+    await click(root, "Add account");
+    const details = root.querySelector("details.capabilities");
+    expect(details).not.toBeNull();
+    expect(text(details!.querySelector("summary"))).toBe("What Backblaze B2 guarantees");
+    expect(text(details)).toContain("Versioning: always on");
+    const item = (name: string): string => text(details!.querySelector(`[data-capability="${name}"]`));
+    expect(item("conditional-put")).toContain("Refuses to overwrite during upload (conditional writes): unknown");
+    expect(item("multipart-abort")).toContain("yes (verified at the provider)");
+    // An assumption is labelled as one, not as a guarantee.
+    expect(item("copy-if-match")).toContain("Copies only an unchanged source: assumed");
+    // A provider with nothing listed shows no section.
+    const select = field(root, "Provider");
+    select.value = "hetzner";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    expect(root.querySelector("details.capabilities")).toBeNull();
+  });
+
   it("sends the form to Rust, lists the new account and keeps no credentials", async () => {
     const root = await render();
     await click(root, "Add account");
@@ -675,6 +711,10 @@ describe("cloud command wrappers", () => {
       "invalid connection check",
     );
     expect(() => parseProvider({ ...PROVIDERS[0], knownRegions: [{ id: 1 }] })).toThrow("invalid region");
+    expect(() => parseProvider({ ...PROVIDERS[0], capabilities: [{ name: "x", support: "maybe", evidence: null }] })).toThrow(
+      "invalid capability",
+    );
+    expect(() => parseProvider({ ...PROVIDERS[0], capabilities: undefined })).toThrow("invalid provider");
   });
 
   it("turn structured rejections into typed errors and nothing else", () => {

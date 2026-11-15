@@ -97,6 +97,17 @@ export interface RegionInfo {
   location: string;
 }
 
+// `CapabilityInfo` in dashboard.rs (ADR-029).
+export const CAPABILITY_SUPPORT = ["yes", "no", "assumed", "unknown"] as const;
+export type CapabilitySupport = (typeof CAPABILITY_SUPPORT)[number];
+
+export interface CapabilityInfo {
+  name: string;
+  support: CapabilitySupport;
+  /** Where the statement comes from; null when unknown. */
+  evidence: string | null;
+}
+
 export interface ProviderInfo {
   id: string;
   name: string;
@@ -104,7 +115,23 @@ export interface ProviderInfo {
   endpointRequired: boolean;
   defaultRegion: string;
   knownRegions: RegionInfo[];
+  /** `always`, `optional` or `unknown`. */
+  versioning: string;
+  capabilities: CapabilityInfo[];
 }
+
+/** Plain-language names of the provider capabilities (ADR-029). */
+export const CAPABILITY_NAMES: Record<string, string> = {
+  "object-lock": "Object Lock (retention)",
+  "delete-markers": "Deletes keep versions as delete markers",
+  "version-listing": "Lists earlier versions",
+  "conditional-put": "Refuses to overwrite during upload (conditional writes)",
+  "copy-if-match": "Copies only an unchanged source",
+  "metadata-on-copy": "Keeps the stored checksum when copying",
+  "multipart-abort": "Removes cancelled large uploads",
+  "list-multipart-uploads": "Lists unfinished large uploads",
+  "presigned-get": "Share links",
+};
 
 // `ConnectionCheck` in dashboard.rs.
 export interface ConnectionCheck {
@@ -382,10 +409,23 @@ export function parseProvider(value: unknown): ProviderInfo {
     typeof value["name"] !== "string" ||
     typeof value["endpointRequired"] !== "boolean" ||
     typeof value["defaultRegion"] !== "string" ||
-    !Array.isArray(value["knownRegions"])
+    !Array.isArray(value["knownRegions"]) ||
+    typeof value["versioning"] !== "string" ||
+    !Array.isArray(value["capabilities"])
   ) {
     throw invalid("provider", value);
   }
+  const capabilities = value["capabilities"].map((c: unknown): CapabilityInfo => {
+    if (
+      !isRecord(c) ||
+      typeof c["name"] !== "string" ||
+      !oneOf(CAPABILITY_SUPPORT, c["support"]) ||
+      !(c["evidence"] === null || typeof c["evidence"] === "string")
+    ) {
+      throw invalid("capability", c);
+    }
+    return { name: c["name"], support: c["support"], evidence: c["evidence"] };
+  });
   const knownRegions = value["knownRegions"].map((r: unknown) => {
     if (!isRecord(r) || typeof r["id"] !== "string" || typeof r["location"] !== "string") {
       throw invalid("region", r);
@@ -398,6 +438,8 @@ export function parseProvider(value: unknown): ProviderInfo {
     endpointRequired: value["endpointRequired"],
     defaultRegion: value["defaultRegion"],
     knownRegions,
+    versioning: value["versioning"],
+    capabilities,
   };
 }
 

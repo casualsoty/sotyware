@@ -66,9 +66,13 @@
 //! **Conflicts.** The destination is checked before any data is sent and,
 //! for multipart, again right before completion. Between the check and the
 //! write another client can still create the object, which the upload then
-//! replaces (or, on a versioned bucket, hides behind a new version): no
-//! conditional write (`If-None-Match: *`) is sent, because not every
-//! provider supports it (Backblaze's support is not documented).
+//! replaces (or, on a versioned bucket, hides behind a new version), unless
+//! the provider's `conditional_put` capability is established (ADR-029):
+//! then `PutObject` and `CompleteMultipartUpload` carry `If-None-Match: *`,
+//! and a 412 answer fails the upload with [`StorageError::AlreadyExists`]
+//! and nothing stored. No shipped profile has it established yet
+//! (Backblaze's and Hetzner's support is not documented or verified), so
+//! the race stays for them.
 //!
 //! **After the commit point**, a failure is reported with
 //! [`RemoteOutcome::NeedsInspection`]: the provider may have stored the
@@ -538,6 +542,11 @@ impl Body for ProbedBody {
     }
 }
 
+/// A 412 answer: the precondition of a conditional request did not hold.
+fn precondition_failed(error: &StorageError) -> bool {
+    matches!(error, StorageError::Provider { status: 412, .. })
+}
+
 enum Step<T> {
     Done(T),
     Cancelled,
@@ -622,6 +631,16 @@ impl S3Store {
             parts,
             version_id,
         })
+    }
+
+    /// Whether writes carry `If-None-Match: *`: only where the provider is
+    /// known to enforce it (ADR-029).
+    fn conditional_put(&self) -> bool {
+        self.account
+            .profile
+            .capabilities
+            .conditional_put
+            .established()
     }
 
     /// Settings for requests that carry file data: no read timeout and no
@@ -906,6 +925,7 @@ impl S3Store {
                 .await
                 .map_err(UploadError::nothing)?
         };
+        let conditional = self.conditional_put();
         let send = self
             .client
             .put_object()
@@ -913,6 +933,7 @@ impl S3Store {
             .key(key)
             .content_length(i64::try_from(size).unwrap_or(i64::MAX))
             .metadata(SHA256_METADATA, &first.sha256)
+            .set_if_none_match(conditional.then(|| "*".to_owned()))
             .body(body)
             .customize()
             .config_override(self.upload_config())
@@ -922,7 +943,18 @@ impl S3Store {
                 "{key}: the provider answered before the whole file was sent"
             )),
             Ok(Ok(out)) => return Ok(out.version_id().map(str::to_owned)),
-            Ok(Err(e)) => self.send_failure(classify("upload", e), &probe).await,
+            Ok(Err(e)) => {
+                let e = classify("upload", e);
+                // The provider enforced If-None-Match: the key holds an
+                // object. Either another writer took it between the check
+                // and the write (nothing of this upload was stored), or an
+                // SDK retry found this upload's own first attempt, whose
+                // answer was lost. Only the stored object can tell.
+                if conditional && precondition_failed(&e) {
+                    return self.after_precondition(bucket, key, first).await;
+                }
+                self.send_failure(e, &probe).await
+            }
             Err(e) => e,
         };
         Err(UploadError {
@@ -999,12 +1031,14 @@ impl S3Store {
             }
         };
         // Past the commit point: not cancellable.
+        let conditional = self.conditional_put();
         let completed = self
             .client
             .complete_multipart_upload()
             .bucket(bucket)
             .key(key)
             .upload_id(&upload_id)
+            .set_if_none_match(conditional.then(|| "*".to_owned()))
             .multipart_upload(
                 CompletedMultipartUpload::builder()
                     .set_parts(Some(parts))
@@ -1019,6 +1053,31 @@ impl S3Store {
             }
             Err(e) => {
                 let error = classify("complete multipart upload", e);
+                // If-None-Match enforced: the key holds an object, another
+                // writer's or (an SDK retry of the completion) this
+                // upload's own. An upload id still open is aborted either
+                // way.
+                if conditional && precondition_failed(&error) {
+                    let ours = self.after_precondition(bucket, key, first).await;
+                    let abort = self.abort(bucket, key, &upload_id).await;
+                    if abort == Abort::Failed {
+                        return Err(UploadError {
+                            error: ours.err().map_or_else(
+                                || StorageError::Provider {
+                                    status: 412,
+                                    code: String::new(),
+                                    message: format!(
+                                        "{key}: stored and verified, but its incomplete multipart upload could not be aborted"
+                                    ),
+                                },
+                                |e| e.error,
+                            ),
+                            remote: RemoteOutcome::IncompleteParts { upload_id },
+                        });
+                    }
+                    control.set_multipart(None);
+                    return ours;
+                }
                 // The completion may have taken effect even though it failed
                 // here; an abort that still finds the upload proves it did not.
                 let remote = match self.abort(bucket, key, &upload_id).await {
@@ -1156,6 +1215,33 @@ impl S3Store {
 
     /// Checks the stored object (the version created, if the provider named
     /// one): its size and the SHA-256 metadata must be what was sent.
+    /// After a conditional write was refused (412): whether the key holds
+    /// exactly this upload's content (size and SHA-256 metadata), which
+    /// means an earlier attempt of this same request was stored and its
+    /// answer lost. Then the upload succeeded (its version id is unknown).
+    /// Otherwise the key belongs to another writer and nothing of this
+    /// upload was stored; if the object cannot be read, that is unknown.
+    async fn after_precondition(
+        &self,
+        bucket: &str,
+        key: &str,
+        first: &FirstPass,
+    ) -> Result<Option<String>, UploadError> {
+        match self
+            .verify_upload(bucket, key, None, first.stamp.len, &first.sha256)
+            .await
+        {
+            Ok(()) => Ok(None),
+            Err(StorageError::Integrity(_)) => Err(UploadError::nothing(
+                StorageError::AlreadyExists(key.to_owned()),
+            )),
+            Err(error) => Err(UploadError {
+                error,
+                remote: RemoteOutcome::NeedsInspection,
+            }),
+        }
+    }
+
     async fn verify_upload(
         &self,
         bucket: &str,

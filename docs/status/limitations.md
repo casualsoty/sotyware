@@ -477,7 +477,10 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   checked by `HeadObject` before any data is sent (and before completing a
   multipart upload); another client that creates the same key in between is
   overwritten (or, on a versioned bucket, hidden behind the new version). No
-  conditional write is sent: Backblaze does not document `If-None-Match`.
+  conditional write is sent to Backblaze, Hetzner or a generic service: none
+  documents `If-None-Match`, and it was never verified at either provider.
+  The mechanism exists (ADR-029) and is tested only against the local test
+  server, which enforces the header as Amazon documents it.
   The checks and the verification need a key that may read objects as well
   as write them.
 - **Incomplete multipart uploads can remain.** A failed or cancelled

@@ -33,7 +33,7 @@ use tauri::State;
 
 use super::account::{AccountConfig, AccountError, AccountStore, Accounts};
 use super::credentials::{CredentialError, CredentialStore, Credentials, Secret};
-use super::provider::{self, EndpointRule, PROVIDERS};
+use super::provider::{self, EndpointRule, PROVIDERS, Versioning};
 use super::s3::{ClientOptions, StorageError};
 use crate::features::StoreError;
 
@@ -68,6 +68,20 @@ pub struct ProviderInfo {
     /// The region the form starts with.
     pub default_region: &'static str,
     pub known_regions: Vec<RegionInfo>,
+    /// `always`, `optional` or `unknown` (ADR-029).
+    pub versioning: &'static str,
+    /// What the provider guarantees, with the evidence (ADR-029).
+    pub capabilities: Vec<CapabilityInfo>,
+}
+
+/// One behaviour of a provider, as the dashboard shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityInfo {
+    pub name: &'static str,
+    /// `yes`, `no`, `assumed` or `unknown`.
+    pub support: &'static str,
+    pub evidence: Option<&'static str>,
 }
 
 /// Every supported provider, in [`PROVIDERS`] order.
@@ -88,6 +102,21 @@ pub fn providers() -> Vec<ProviderInfo> {
                 .map(|r| RegionInfo {
                     id: r.id,
                     location: r.location,
+                })
+                .collect(),
+            versioning: match p.capabilities.versioning {
+                Versioning::Always => "always",
+                Versioning::Optional => "optional",
+                Versioning::Unknown => "unknown",
+            },
+            capabilities: p
+                .capabilities
+                .entries()
+                .into_iter()
+                .map(|(name, s)| CapabilityInfo {
+                    name,
+                    support: s.label(),
+                    evidence: s.evidence(),
                 })
                 .collect(),
         })
@@ -1180,16 +1209,38 @@ mod tests {
             serde_json::json!({"id": "eu-central-003", "location": "Amsterdam, NL"})
         );
         assert_eq!(list[1]["defaultRegion"], "fsn1");
+        let mut generic = list[2].clone();
+        let caps = generic
+            .as_object_mut()
+            .unwrap()
+            .remove("capabilities")
+            .unwrap();
         assert_eq!(
-            list[2],
+            generic,
             serde_json::json!({
                 "id": "s3-compatible",
                 "name": "S3-compatible service",
                 "endpointRequired": true,
                 "defaultRegion": "us-east-1",
-                "knownRegions": []
+                "knownRegions": [],
+                "versioning": "unknown"
             })
         );
+        // Every capability is listed, with its evidence where there is one.
+        assert_eq!(caps.as_array().unwrap().len(), 9);
+        assert_eq!(
+            caps[3],
+            serde_json::json!({"name": "conditional-put", "support": "unknown", "evidence": null})
+        );
+        assert_eq!(
+            list[0]["capabilities"][6],
+            serde_json::json!({
+                "name": "multipart-abort",
+                "support": "yes",
+                "evidence": "verified at the provider"
+            })
+        );
+        assert_eq!(list[0]["versioning"], "always");
     }
 
     #[test]
