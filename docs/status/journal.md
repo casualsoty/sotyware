@@ -160,6 +160,21 @@ Reliability scenarios the audit traced and their current behaviour:
   rows lingered in free pages), CI job `server`, operations guide
   `docs/development/server.md`.
 
+- Phase F done: updates (ADR-033): `updates.rs` (signed manifest
+  verified with minisign before the plugin sees it, version floor in
+  `updates.sqlite3`, platform entry, `restore_update` cross-check, SHA-256
+  after the plugin's signature and signed-version check, install gate and
+  `release_resources` before the installer ends the process), five
+  commands, `update-check` feature, Overview panel,
+  `scripts/update-manifest.mjs` (+ fixture signed by the real Tauri CLI
+  with a throwaway key), gated signing steps in `release-build.yml`.
+  Findings while building it: the plugin's `UpdaterBuilder::build` needs
+  an endpoint even for `restore_update` (a reserved `.invalid` URL is
+  set); its download builds a reqwest client without a TLS provider (ours
+  is passed in); on Windows `install` ends the process itself (cleanup
+  moved into `release_resources`); a restart from inside would meet the
+  single-instance lock (not done; Linux reports "installed").
+
 - Phase E done: desktop client (`account/`: crypto, vault merge, HTTPS
   client, service, 20 commands), Account page, `OsSecretStore`,
   `account.sqlite3`; end-to-end tests with the service in process. A design
@@ -175,6 +190,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | Phase F | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `test:update-manifest`; release-binary and isolation guard self-tests; profile helpers; `npm run check` | guards ok; Vitest 213; Rust 492 passed, 28 ignored (14 update tests; 2 mutants caught); recorder 520 passed, 28 ignored; update-manifest 8/8; guards 39/39 and 9/9; helpers 10 OK; clippy 0/0; check clean |
 | 2026-11-15 | Phase E | WSL2 | `npm run test:headless`; clippy (default, test-profile, server); recorder tests; server tests; profile helpers | guards ok; Vitest 205; Rust 478 passed, 28 ignored; recorder 506 passed; server 5 + 20; clippy 0/0/0; helpers OK. Clippy found an ignored 409 in conflict resolution (fixed) |
 | 2026-11-15 | Phase D | WSL2 | `cd server && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked` | 5 unit + 18 API tests passed; clippy 0 |
 | 2026-11-15 | Phase C | WSL2 | `npm run test:headless`; clippy both builds; recorder tests; `--ignored` Python recovery test; profile helpers | guards ok; Vitest 197; Rust 458 passed, 28 ignored; recorder 486 passed, 28 ignored; clippy 0/0; Python recovery test 1 passed; helpers 10 OK |
@@ -187,8 +203,10 @@ None yet beyond the audit table.
 
 ## External gates (cannot be completed autonomously)
 
-- Production update signing key and its safe storage (CI secret) — the
-  mechanism uses test keys only.
+- Production update signing key and its safe storage (CI secret), and an
+  HTTPS update server — the mechanism uses test keys only; release builds
+  have updates switched off. Installing a real update (two signed builds,
+  disposable Windows 11) has not been done.
 - Production account service hosting, domain, TLS certificate, SMTP for
   verification and reset mails, server backups storage.
 - Code signing for the Windows installers (already an open roadmap item).
@@ -199,8 +217,7 @@ None yet beyond the audit table.
 
 ## Next concrete task
 
-Phase F: updates with `tauri-plugin-updater` behind a separately signed
-manifest (ADR-033): `updates.rs` (manifest verification with minisign, version
-floor, channel, platform entry, SHA-256 after download), commands and an
-Updates section, test keys generated in tests, a local update server in
-tests, `scripts/update-manifest.mjs` for releases, release workflow wiring.
+Phase G: security review: `cargo audit`/`npm audit` where available, the
+data folder's permissions on Linux (audit A9), logging review for secrets,
+threat-model status; then Phase H (production-readiness audit and the final
+report).

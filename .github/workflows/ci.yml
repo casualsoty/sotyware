@@ -117,6 +117,10 @@ jobs:
       # release-build.yml; its tests use fixtures built in memory.
       - name: test the installer icon check
         run: npm run test:installer-icons
+      # The update manifest tool (ADR-033) against the fixture the real
+      # Tauri signer produced (no key needed) and keys made in the test.
+      - name: test the update manifest tool
+        run: npm run test:update-manifest
       # Desktop tests run in test profiles only (ADR-027): the static check
       # of the drivers is part of test:headless; these are the guards' and
       # helpers' own tests.

@@ -811,6 +811,25 @@ server only; no real provider was asked.
 - **Losing the recovery key and every enrolled device** makes the vault
   unrecoverable by design; storage data is unaffected.
 
+## Updates (ADR-033)
+
+- **Switched off in release builds:** no release signing key and no update
+  server exist (`updates::PRODUCTION` is `None`); the Overview says updates
+  are not set up. Steps to turn them on:
+  [release.md](../development/release.md#updates).
+- **No update was ever installed:** download, verification and refusal
+  are tested against a local server with the plugin on Tauri's mock
+  runtime; starting the Windows installer, the restart and that the data
+  folder and credentials survive are not tested.
+- **The first manifest a fresh installation sees sets its floor;** before
+  that any validly signed, newer manifest is accepted. Manifests do not
+  expire, so a server (or someone between it and the user, without the key)
+  can withhold an update.
+- **Off Windows** the plugin installs without ending sotyware; the new
+  version runs from the next start (Linux is not a release target).
+- **No delta updates, no background download:** the whole installer is
+  downloaded when the user clicks Update now.
+
 ## General
 
 - **No autostart** on login.

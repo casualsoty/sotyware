@@ -23,8 +23,12 @@ The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
 into the folder shown, and file management (ADR-026; audited 2026-11-14
 and driven on the Linux virtual display and the native Windows 11 desktop
-against local servers only, never at a real provider); **no overwrite,
-backups or other product features exist**. Desktop tests run only a
+against local servers only, never at a real provider); the operation
+journal and recovery view (ADR-030), backups (ADR-031), optional accounts
+with end-to-end encrypted sync (ADR-032; service not deployed) and signed
+updates (ADR-033; switched off in release builds until a release key and
+update server exist), all tested headless against in-process servers only.
+**No overwrite or other product features exist**. Desktop tests run only a
 **test-profile build** that cannot reach the user's data (ADR-027).
 
 - Two operating modes, chosen once at startup:
@@ -41,7 +45,8 @@ backups or other product features exist**. Desktop tests run only a
   in `features::builtin()` and run by a `FeatureRegistry`. Enabled ones start in
   `setup`, and running ones stop on exit. A failing feature becomes `failed`
   without affecting the others. The dashboard lists them and has an enable
-  checkbox per feature. The only feature is `example` (does nothing visible).
+  checkbox per feature. The features are `example` (does nothing visible),
+  `backup-scheduler` (ADR-031) and `update-check` (ADR-033).
   [features.md](architecture/features.md).
 - Feature preferences (both modes): each user switch is saved in
   `preferences.sqlite3` in Tauri's `app_local_data_dir()`
@@ -195,11 +200,24 @@ backups or other product features exist**. Desktop tests run only a
   conflict copies; rollback refused; revoke + atomic key rotation. Release
   builds have no service configured (`PRODUCTION_SERVER = None`). Tested
   end to end with the service in process and several device profiles.
+- **Updates** (2026-11-15, ADR-033, [updates.md](architecture/updates.md)):
+  a minisign-signed `sotyware-update.json` is verified (signature, format,
+  channel, version floor against replays, HTTPS package entry with
+  signature and SHA-256) before `tauri-plugin-updater` receives exactly
+  it; the package's signature and signed version and its SHA-256 are
+  checked before installing, only on **Update now**, never during a
+  transfer, file operation or backup; Overview panel; automatic checks are
+  the `update-check` feature; `scripts/update-manifest.mjs` makes and
+  checks manifests in `release-build.yml` (only with a signing secret).
+  `PRODUCTION = None`: no key or server exists, so release builds say
+  updates are not set up. Tested with test keys, a local server, the
+  plugin on Tauri's mock runtime and a fixture signed by the real Tauri
+  CLI; **no update was ever installed**.
 
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
+src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
 src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs; tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
@@ -230,10 +248,10 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
   commands of ADR-026, the five recovery commands of ADR-030, the nine
-  backup commands of ADR-031 and the 20 account commands of ADR-032 (72 in
-  all; listed in
+  backup commands of ADR-031, the 20 account commands of ADR-032 and the
+  five update commands of ADR-033 (77 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
-  `allow-<command>` permission each; no `dialog:`/`fs:` permission) and, in tray
+  `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
   runtime). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored

@@ -14,6 +14,7 @@ mod backup;
 mod example;
 mod preferences;
 mod registry;
+mod updates;
 
 use std::fmt;
 
@@ -31,6 +32,7 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
     vec![
         Box::new(example::Example::default()),
         Box::new(backup::BackupScheduler),
+        Box::new(updates::UpdateCheck),
     ]
 }
 

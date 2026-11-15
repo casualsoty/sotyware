@@ -1882,7 +1882,8 @@ Status: Accepted (2026-11-15). Code: `server/` (account service),
     rustls on ring and the OS roots, no redirects, HTTPS only (loopback
     HTTP for development); account secrets live in the OS credential
     store under their own entry prefix; no production service is
-    configured (`PRODUCTION_SERVER = None`). 20 commands (72 in all).
+    configured (`PRODUCTION_SERVER = None`). 20 commands (72 in all; 77
+    with the update commands of ADR-033).
 - **Rejected:** password-derived vault keys (a weak or reused password would
   expose every credential to whoever obtains the server data); server-side
   key escrow (a backdoor); a third-party identity provider (adds an external
@@ -1896,9 +1897,10 @@ Status: Accepted (2026-11-15). Code: `server/` (account service),
 
 ## ADR-033: Updates use tauri-plugin-updater behind a separately signed manifest, installed only on the user's click
 
-Status: Accepted (2026-11-15). Code: `src-tauri/src/updates.rs`, page
-`src/Updates.svelte`, release tooling `scripts/update-manifest.mjs`; design:
-[updates.md](updates.md).
+Status: Accepted (2026-11-15), implemented the same day. Code:
+`src-tauri/src/updates.rs`, feature `src-tauri/src/features/updates.rs`,
+page `src/Updates.svelte`, release tooling `scripts/update-manifest.mjs`;
+design: [updates.md](updates.md).
 
 - **Context:** releases should reach users without manual reinstalls, but an
   update channel is the most powerful attack path into every installation.
@@ -1922,7 +1924,26 @@ Status: Accepted (2026-11-15). Code: `src-tauri/src/updates.rs`, page
   maintains); trusting the plugin's unsigned `latest.json` alone (a
   tampered manifest could point a higher version number at an older signed
   artifact); silent automatic installation (restarts during transfers).
-- **Consequences:** two signatures per release (artifact and manifest), both
-  produced and checked by `scripts/update-manifest.mjs` in the release
-  workflow. No production key exists yet: the mechanism is tested with a
-  test key generated for the tests.
+- **Consequences:** two signatures per release (artifact and manifest),
+  both made by the official `tauri signer sign --app-version` (it handles
+  Tauri's encrypted key format and binds the version) and checked by
+  `scripts/update-manifest.mjs`, which writes the manifest only from
+  verified installers. No production key exists yet: the mechanism is
+  tested with keys generated in the tests and a fixture signed once by the
+  real Tauri CLI with a throwaway key (its private half deleted). New
+  dependencies: `tauri-plugin-updater` (rustls without a provider: sotyware
+  passes its own ring-based TLS configuration), `minisign-verify` (the
+  manifest signature; already used by the plugin), `semver`.
+- **Implementation notes (2026-11-15):** the verified manifest is handed to
+  the plugin with `Updater::restore_update` (no second fetch; it forces the
+  signed-version check); `UpdaterBuilder::build` insists on an endpoint, so
+  a reserved `https://plugin-endpoint.invalid/` is configured and never
+  fetched. The automatic checks are the built-in feature `update-check`
+  (default on), so a user can stop sotyware from contacting the update
+  server by itself. On Windows the plugin ends the process after starting
+  the installer; sotyware runs `release_resources` (the same cleanup as
+  `RunEvent::Exit`) in the plugin's `on_before_exit` hook. Off Windows the
+  plugin returns after installing and sotyware does not restart itself (a
+  restart would meet its own single-instance lock). Manifests carry no
+  generic `windows-x86_64` entry, so a build without an installer marker is
+  offered nothing.

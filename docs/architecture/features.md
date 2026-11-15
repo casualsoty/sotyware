@@ -10,11 +10,15 @@ The user's enable/disable choice is saved and survives restarts
 Third-party plugins, WASM and a management UI do not exist
 ([what is deferred](#deferred)).
 
-Today there are two features: `example`, which does nothing visible (it
+Today there are three features: `example`, which does nothing visible (it
 demonstrates the lifecycle and gives the dashboard and the desktop tests a
-feature to list and switch), and `backup-scheduler` ("Scheduled backups",
+feature to list and switch), `backup-scheduler` ("Scheduled backups",
 on by default, 2026-11-15, ADR-031), which starts and stops the backup
-scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)).
+scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)), and
+`update-check` ("Automatic update checks", on by default, 2026-11-15,
+ADR-033), which starts and stops the automatic update checks of
+`crate::updates` (one minute after startup, then daily; nothing when no
+update source is configured; see [updates.md](updates.md#flow)).
 
 ## Pieces
 

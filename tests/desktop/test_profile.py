@@ -30,7 +30,8 @@ MARKER_FILE = "sotyware-test-profile.json"
 ACK_FILE = "sotyware-test-profile-ack.json"
 # The databases the app reports in its acknowledgement (storage.rs).
 STORES = ("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3",
-          "operations-journal.sqlite3", "backup.sqlite3", "account.sqlite3")
+          "operations-journal.sqlite3", "backup.sqlite3", "account.sqlite3",
+          "updates.sqlite3")
 PURPOSE = "sotyware-desktop-test-profile"
 BUILD_MARKER = b"sotyware-test-profile-build"
 IDENTIFIER = "com.sotyware.desktop.test"

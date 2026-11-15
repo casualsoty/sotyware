@@ -74,20 +74,27 @@ pub struct Http {
     client: reqwest::Client,
 }
 
+/// The TLS configuration of sotyware's own HTTPS clients (the account
+/// service, updates): rustls on ring with the operating system's root
+/// certificates. Never aws-lc-rs, never a process-wide default provider.
+pub fn tls_config() -> Result<rustls::ClientConfig, String> {
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().certs {
+        let _ = roots.add(cert);
+    }
+    Ok(rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| e.to_string())?
+    .with_root_certificates(roots)
+    .with_no_client_auth())
+}
+
 impl Http {
     pub fn new(base: &str) -> Result<Self, String> {
         let base = check_url(base)?;
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().certs {
-            let _ = roots.add(cert);
-        }
-        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .map_err(|e| e.to_string())?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+        let tls = tls_config()?;
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(tls)
             .redirect(reqwest::redirect::Policy::none())

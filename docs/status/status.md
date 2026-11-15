@@ -87,6 +87,7 @@ verified byte for byte; the object was deleted again by its version id
 | Operation journal (`operations-journal.sqlite3`: uploads with their multipart id, download temporary files, staging folders, file operations with every planned step, written before they can change anything) and the recovery view (Interrupted work in Cloud Storage: inspect at the provider, dismiss, abort an incomplete multipart upload; Unfinished large uploads per bucket); startup removes only sotyware's own recorded temporary files; the five commands `list_cloud_recovery`, `inspect_cloud_recovery`, `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload` (2026-11-15) | `src-tauri/src/journal.rs`, `SqliteJournal` in `storage.rs`, `cloud/recovery.rs`, hooks in `cloud/s3.rs`, `cloud/s3/upload.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`, `run()` in `lib.rs`; `src/CloudRecovery.svelte`, `src/cloudRecovery.ts` ([cloud-storage.md](../architecture/cloud-storage.md#operation-journal-and-recovery), [ADR-030](../architecture/decisions.md#adr-030-remote-and-local-side-effects-are-journaled-before-they-happen-and-recovery-inspects-instead-of-repeating), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | Backups (ADR-031): jobs from an account's bucket (or folder) to another destination as content-addressed blobs plus one JSON manifest per run; incremental (unchanged objects not transferred, identical content stored once); quick and full verification; health never "healthy" without a passed verification; retention only after a verified, unsuspicious snapshot (mass-change check by content); restore to a folder or a bucket, never overwriting, verified by SHA-256; recovery file export; destination protection (versioning, Object Lock) read and described; the `backup-scheduler` feature; the Backups page; `scripts/recovery/sotyware-restore.py` (Python only) (2026-11-15) | `src-tauri/src/backup/`, `features/backup.rs`, `SqliteBackupStore` in `storage.rs`, `run()` in `lib.rs`; `src/Backup.svelte`, `src/backup.ts`; `scripts/recovery/` ([backup.md](../architecture/backup.md), [recovery guide](../user/recovery.md), [validation](#backups-and-disaster-recovery-2026-11-15)) |
 | Account service (ADR-032), separate crate, tested locally only, not deployed: registration with email verification codes (development outbox), Argon2id passwords, rotating opaque tokens with reuse detection, progressive lockout and rate limits, devices, enrollment by recovery key or approval with a key proof, end-to-end encrypted vault storage with optimistic concurrency, password change and reset, account deletion, audit events, online backup and checked restore, health check (2026-11-15) | `server/` ([accounts.md](../architecture/accounts.md), [server.md](../development/server.md), [validation](#account-service-2026-11-15)) |
+| Updates (ADR-033): signed `sotyware-update.json` verified before `tauri-plugin-updater` gets exactly it; version floor against replays; package signature, signed version and SHA-256 checked; install only on Update now and not during transfers, file operations or backups; Overview panel; `update-check` feature; `updates.sqlite3`; `scripts/update-manifest.mjs` and gated signing steps in `release-build.yml`. Switched off in release builds: no production key or update server (2026-11-15) | `src-tauri/src/updates.rs`, `features/updates.rs`, `SqliteUpdateState` in `storage.rs`, `release_resources` in `lib.rs`; `src/Updates.svelte`, `src/updates.ts`; `scripts/update-manifest.mjs` ([updates.md](../architecture/updates.md), [validation](#updates-2026-11-15)) |
 | Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
@@ -109,12 +110,12 @@ Nothing else exists: no product features (only the example feature and
 cloud storage: accounts, browsing, transfers and the file management of
 ADR-026, the operation journal of ADR-030 and the backups of ADR-031), no
 settings, no persistence other than the feature choices, the cloud storage
-accounts and their favorites and recent items, the operation journal and
-the backup jobs, no overwriting
+accounts and their favorites and recent items, the operation journal,
+the backup jobs, the account state and the update state, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
 own, content search, transfer queue UI or download history, no
 sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 72 listed in
+plugins, and no custom command other than the 77 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -3790,6 +3791,42 @@ no desktop driver, no native Windows run.**
 - Server: the atomic rotation endpoint and a device re-wrap endpoint, with
   tests (20 API tests in all).
 - Vitest: `Account.test.ts` (8).
+
+## Updates (2026-11-15)
+
+Production-readiness work, phase F ([journal](journal.md)): ADR-033.
+**WSL2 only; a local HTTP server on a loopback port; keys generated in the
+tests; no update was downloaded from a real server or installed; nothing
+run on native Windows; no production key or update server exists.**
+
+- Rust `updates::tests` (14): a signed newer manifest is offered with the
+  installer-specific entry; a manifest changed by one byte, signed by
+  another key, unsigned or signed as an artifact is refused; format and
+  channel checked; a validly signed manifest below the version floor is
+  refused as a replay (also after a restart, the floor is stored), the
+  running version or older is "up to date"; the package entry must exist,
+  use HTTPS (loopback HTTP only in test builds) and carry a signature and a
+  64-digit SHA-256; postponing; nothing is stored or offered after a failed
+  check. Through the real plugin on Tauri's mock runtime: exactly the
+  verified release is downloaded; a package signed for another version,
+  without a version or by another key, other bytes than signed, and a
+  validly signed package whose SHA-256 differs from the manifest are all
+  refused; a stalled download is cancelled (event `cancelled`, nothing
+  installed) and a second one is refused while one runs. A manifest and two
+  stand-in installers signed by the real `tauri signer sign --app-version`
+  (throwaway key, private half deleted) verify. Two mutations (SHA-256
+  check removed, floor check disabled) each made tests fail.
+- Node `scripts/update-manifest.test.mjs` (8): the same CLI fixture
+  verifies; a changed manifest or installer, an older target and another
+  key are refused; `create` refuses installers signed for another version,
+  without a version or by another key, plain HTTP and missing signatures.
+- Vitest `Updates.test.ts` (8) and the App tests (Overview now asks
+  `update_status`).
+- Totals on WSL2: `npm run test:headless` exit 0 (guards ok, Vitest 213,
+  Rust 492 passed, 28 ignored); recorder build 520 passed, 28 ignored;
+  clippy `-D warnings` clean for the default and test-profile builds;
+  `npm run check` clean; release-binary guard 39/39, isolation guard 9/9,
+  profile helpers 10/10.
 
 ## See also
 

@@ -34,7 +34,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   recovery tool (ADR-031), and an optional sotyware account with
   end-to-end encrypted sync of storage accounts and backup jobs (ADR-032;
   the service exists in `server/` but is not deployed: release builds have
-  no service configured). No other product features exist yet. Current milestone and status:
+  no service configured), and signed application updates (ADR-033; no
+  production signing key or update server exists, so release builds have
+  updates switched off). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -63,6 +65,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | enrolled device | a computer whose sealed copy of the account key is stored at the service (unlocked with the recovery key or approved by another enrolled device) |
 | provider capability | one behaviour a provider may or may not have (conditional writes, delete markers, …) with its evidence: documented, verified at the provider, assumed from Amazon S3, or unknown (ADR-029) |
 | test profile | a directory a desktop test creates for one run; a test-profile build (Cargo feature `test-profile`) refuses to start without one and keeps its databases, webview data and credentials (own namespace) inside it (ADR-027) |
+| update manifest / version floor | `sotyware-update.json`, the minisign-signed description of a release (version, channel, per-platform installer URL, signature and SHA-256) / the highest version a verified manifest ever offered this installation; anything lower is refused as a replay (ADR-033) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
 spelling ("behaviour").
@@ -106,6 +109,10 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | Account service client (ADR-032): `reqwest` (already in the tree through Tauri; `json`, `rustls-no-provider`: the TLS config is built with ring, never aws-lc-rs), `rustls` (`ring`, `std`, `tls12`), `rustls-native-certs` (both already in the tree) | `0.13`, `0.23`, `0.8` | 0.13.5, 0.23.46, 0.8.5 |
 | `sotyware-server` (path `../server`) and `axum` (dev only: the end-to-end account tests run the service in process) | path, `0.8` | 0.1.0, 0.8.9 |
 | `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; already in the tree; also dev-only for `hook_assumptions.rs`) | `1`, `1` | 1.11.3, 1.4.3 |
+| `tauri-plugin-updater` (desktop targets only, no default features, `rustls-tls`: rustls without a provider, sotyware passes its ring-based TLS configuration; driven from Rust only, ADR-033) | `2` | 2.14.1 |
+| `minisign-verify` (the update manifest's signature, ADR-033; already in the tree through the updater) | `0.3` | 0.3.0 |
+| `semver` (update versions and the version floor, ADR-033; already in the tree through Tauri) | `1` | 1.0.28 |
+| `minisign` (dev only: signs test manifests and packages with keys generated in the tests) and `tauri` feature `test` (dev only: the mock runtime that drives the updater plugin in tests) | `0.7`, `2` | 0.7.9, 2.12.5 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
 | `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
 | `zbus-secret-service-keyring-store` (Linux only, `rt-async-io-crypto-rust`: Secret Service on the existing `zbus`) | `1` | 1.0.1 |
@@ -238,7 +245,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `cloud::keyring::OsSecretStore` (entries `sotyware-account/<name>`),
   local state in `account.sqlite3`; `PRODUCTION_SERVER` is `None`;
   `SOTYWARE_ACCOUNT_SERVER` only in debug and test-profile builds; page
-  `src/Account.svelte`
+  `src/Account.svelte`.
+  **Updates** (ADR-033, [updates.md](docs/architecture/updates.md)):
+  `src-tauri/src/updates.rs` (`Updates` managed state, five commands,
+  `updates.sqlite3` with the version floor): a minisign-signed manifest is
+  verified with the compiled-in key (`PRODUCTION` is `None`; endpoint and
+  key from `SOTYWARE_UPDATE_*` only in debug and test-profile builds)
+  before `tauri-plugin-updater` gets exactly that manifest
+  (`restore_update`), downloads, verifies the package signature and its
+  version, then sotyware checks the SHA-256 and installs only on the user's
+  click while nothing else runs; `release_resources` (lib.rs) runs before
+  the installer ends the process; automatic checks are the built-in feature
+  `update-check`; page `src/Updates.svelte` on the Overview; release tool
+  `scripts/update-manifest.mjs`
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
@@ -278,7 +297,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `src/CloudFolderPicker.svelte`, `src/CloudProperties.svelte`,
   `src/CloudBulkDownload.svelte`, `src/CloudDeleted.svelte`,
   `src/CloudRecovery.svelte`, `src/Modal.svelte`, `src/Backup.svelte`,
-  `src/Account.svelte`;
+  `src/Account.svelte`, `src/Updates.svelte`;
   pure list logic in `src/fileList.ts`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
@@ -303,13 +322,15 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `start_backup_task`, `cancel_backup_task`, `list_backup_snapshots`,
   `restore_backup`, `export_backup_manifest`, `check_backup_protection`) and
   the 20 account commands of ADR-032 (`account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`)
+  and the five update commands of ADR-033 (`update_status`,
+  `check_for_update`, `install_update`, `cancel_update`, `postpone_update`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/backup.ts` and `src/account.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/backup.ts`, `src/account.ts` and `src/updates.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events (download progress,
   upload, operation, several-item download and drop notices use per-call
-  Tauri channels, not events), no `dialog:` or `fs:` permission. CSP:
+  Tauri channels, not events), no `dialog:`, `fs:` or `updater:` permission. CSP:
   `img-src 'self' data:` added for previews (ADR-026).
 
 - **Account service (`server/`, ADR-032):** a separate Rust crate (not
@@ -328,15 +349,15 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
-journal, the backup jobs and the account state, no settings, autostart,
-third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
+journal, the backup jobs, the account state and the update state, no settings, autostart,
+third-party plugin system, feature-management UI, a deployed account service, production email delivery, a production update key or update server, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
 sotyware's own, content search, transfer queue UI or download history,
 credential
 import or any credential fallback outside the OS store, restic
 integration, encrypted backups, backup notifications, cost estimator, custom
-event, background (periodic) sync, or custom command besides the 72 listed above. Never describe these as existing.
+event, background (periodic) sync, or custom command besides the 77 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -447,6 +468,7 @@ Every coding agent must:
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
    `CloudDrops`, `Journal`/`JournalLink` (operation journal), `Backups` and
    the backup `model`/`engine`, `AccountService`, `account::crypto`,
+   `Updates`/`release_resources` (updates),
    `account::vault`, `SecretStore`, provider
    `Capabilities`/`Support`, `test_server::Versioned`, `CredentialNamespace`, the test
    profile helpers (`test_profile.rs`, `tests/desktop/test_profile.py`,

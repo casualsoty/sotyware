@@ -134,6 +134,54 @@ unsigned one.
   checked before signing changed it (signing changes the hash: record the
   hash after signing).
 
+## Updates
+
+The update mechanism (ADR-033, [updates.md](../architecture/updates.md)) is
+built and tested against local servers with test keys, but **switched off in
+release builds**: `updates::PRODUCTION` in `src-tauri/src/updates.rs` is
+`None`. Turning it on needs, in this order, and each step needs the
+maintainer's explicit decision (none may be faked or replaced by a test
+key):
+
+1. **Release key.** On a trusted offline machine: `npx tauri signer generate
+   -w sotyware-update.key` with a strong password. Keep the private key and
+   its password outside the repository (a password manager or hardware
+   backup; losing it means no installation can be updated again, leaking it
+   means anyone can ship an update). The public key is the `.pub` file's
+   content (base64).
+2. **Update server.** An HTTPS host that serves the manifest and its `.sig`
+   directly (no redirect) at a stable URL, e.g.
+   `https://updates.<domain>/stable/sotyware-update.json`, and the
+   installers under a versioned folder. A domain, hosting and TLS
+   certificate are paid, external gates.
+3. **Compile them in.** Set `PRODUCTION` to `Some((manifest URL, public
+   key))`; commit, review, release that build by hand once (it is the first
+   one that can receive updates).
+4. **CI.** Store the private key and password as the secrets
+   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` of a
+   protected environment, and the public key as the variable
+   `SOTYWARE_UPDATE_PUBKEY` (it must equal the compiled-in one). Then
+   `release-build.yml`, started with `update_base_url`, signs both
+   installers and a manifest with `tauri signer sign --app-version` and
+   verifies them with `scripts/update-manifest.mjs`. It does not upload
+   anything yet.
+5. **Order with Authenticode.** Code signing (above) changes the installer
+   bytes, so the update signatures and SHA-256 must be made **after** it.
+6. **Publish** the installers and their `.sig` files first, then the
+   manifest and its `.sig` (a manifest must never name a file that is not
+   there yet). Check them from outside with
+   `node scripts/update-manifest.mjs verify --manifest <downloaded manifest>
+   --pubkey <public key> --artifacts <downloaded installers>`.
+7. **Before the first real update:** install release N on a disposable
+   Windows 11 machine, publish N+1 to a staging URL with a separate test
+   key and a build that trusts it, update through the dashboard, and record
+   that the data folder, credential entries and settings survived (not done
+   yet).
+
+Never re-publish an older version under the same channel: installations
+remember the highest version they were offered and refuse anything lower
+as a replay.
+
 ## Installation test plan (disposable Windows 11)
 
 **Never on a machine with a real sotyware installation or real data.** The

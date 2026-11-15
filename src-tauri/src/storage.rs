@@ -652,6 +652,68 @@ impl crate::account::StateStore for SqliteAccountState {
     }
 }
 
+/// The update state (ADR-033): the version floor, the last check and a
+/// postponed version, as one JSON row. No secret, no path.
+pub const UPDATES_FILE_NAME: &str = "updates.sqlite3";
+
+/// Schema of [`UPDATES_FILE_NAME`]; append only.
+pub const UPDATES_MIGRATIONS: &[&str] = &["CREATE TABLE update_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL
+    ) STRICT;"];
+
+pub struct SqliteUpdateState {
+    conn: Connection,
+}
+
+impl SqliteUpdateState {
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, UPDATES_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+/// The update state store `run()` uses: [`UPDATES_FILE_NAME`] in `dir`.
+pub fn open_update_state(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::account::StateStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteUpdateState::open(
+        &dir.join(UPDATES_FILE_NAME),
+    )?))
+}
+
+impl crate::account::StateStore for SqliteUpdateState {
+    fn load(&mut self) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT state FROM update_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(sql_error("cannot read the update state"))
+    }
+
+    fn save(&mut self, state: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO update_state (id, state) VALUES (1, ?1)
+                 ON CONFLICT (id) DO UPDATE SET state = excluded.state",
+                [state],
+            )
+            .map(drop)
+            .map_err(sql_error("cannot save the update state"))
+    }
+
+    fn clear(&mut self) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM update_state", [])
+            .map(drop)
+            .map_err(sql_error("cannot clear the update state"))
+    }
+}
+
 /// The operation journal (ADR-030), separate from the other databases so
 /// its schema evolves on its own. Local paths are stored here and nowhere
 /// else; the file never leaves the device.

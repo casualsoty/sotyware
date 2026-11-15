@@ -1558,6 +1558,32 @@ nothing the recorder did not see sent. The helper's own requests (seeding,
 recording that is incomplete fails the run as "count unknown", never as
 "no requests".
 
+## Update tests
+
+```bash
+cd src-tauri && cargo test --lib updates::
+npm run test:update-manifest
+```
+
+`src-tauri/src/updates/tests.rs` (ADR-033) signs manifests and stand-in
+installers with minisign keys generated in the test (`minisign` dev
+dependency), serves them from an axum server on a loopback port and drives
+the real `tauri-plugin-updater` on Tauri's mock runtime (`tauri` feature
+`test`, dev only). It never installs: on Linux the plugin would replace the
+running test binary, on Windows start an installer. It covers the manifest
+checks (signature, format, channel, version floor, platform entry, HTTPS),
+the stored floor and postponing, the plugin's download with every way a
+package can differ from the signed manifest, cancelling a stalled download,
+and a manifest and installers signed once by the real `tauri signer sign
+--app-version` (`scripts/fixtures/update/`, throwaway key, public half
+only). `scripts/update-manifest.test.mjs` checks the release tool against
+the same fixture and keys made with Node's crypto. `src/Updates.test.ts`
+covers the panel with mocked commands and channels.
+
+Not covered by any test: installing an update, the Windows installer
+restarting sotyware, data surviving an update (needs two signed release
+builds; [release.md](release.md#updates)).
+
 ## Cloud Storage UI end-to-end test
 
 Opt-in, never in CI: the release binary's Cloud Storage page driven like a
@@ -1784,7 +1810,8 @@ official mocks (`mockWindows`, `mockIPC` from `@tauri-apps/api/mocks`) in place 
 the Rust side. The mocked Rust side answers `operating_mode` with `"tray"` unless
 a test says otherwise. It checks that:
 
-- the page asks for the mode once on mount and makes no other call;
+- the page asks for the mode once on mount and makes no other call (its
+  Features and Updates panels ask `list_features` and `update_status`);
 - in tray mode, "Hide dashboard" sends exactly `plugin:window|hide` for window
   `main` once per click, a failing or denied call shows the error in a
   `role="alert"`, and a successful retry clears it;
@@ -2335,12 +2362,12 @@ and `windows-latest`; only the manual `release-build.yml` builds installers.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
-| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
+| `ci.yml`, job `headless (ubuntu-latest)` | **automatic**: pull request to `main`, push to `main`; also manual | `ubuntu-latest` | `npm ci`, `npm run check`, `npm run build`, `cargo fetch --locked`, `npm run check:rfd-patch`, `npm run test:rfd-patch-guard`, the release-binary and desktop-isolation guards' self-tests, the icon check's tests (`npm run test:icons`), the installer icon check's tests (`npm run test:installer-icons`), the update manifest tool's tests (`npm run test:update-manifest`), the test-profile helpers' tests, `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, the same clippy for the test-profile build (`--features test-profile --target-dir target/test-profile`), `npm run test:headless`, then `cargo test --locked --features request-recorder --target-dir target/recorder` (the recorder and test-profile unit tests) | A. headless |
 | `ci.yml`, job `headless (windows-latest)` | same | `windows-latest` | same commands except the recorder-build `cargo test`, native Windows (MSVC Rust, no WSL), the PowerShell test-profile helpers' self-test instead of the Python one; does not start sotyware | A. headless |
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
-| `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Nothing signed, uploaded or published | release artifacts (no install) |
+| `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Only with the secret `TAURI_SIGNING_PRIVATE_KEY` (+ password), the variable `SOTYWARE_UPDATE_PUBKEY` and the input `update_base_url`: both installers and an update manifest signed with `tauri signer sign --app-version` and verified by `scripts/update-manifest.mjs` (ADR-033; never run: no key exists). Nothing uploaded or published | release artifacts (no install) |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the

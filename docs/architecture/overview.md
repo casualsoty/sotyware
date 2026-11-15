@@ -75,7 +75,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 72 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 77 custom commands
   and one built-in call. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -115,7 +115,9 @@ Boundaries that hold today:
   `export_backup_manifest`, `check_backup_protection`
   ([backup.md](backup.md#commands-and-page)), and the 20 account
   commands of ADR-032: `account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`
-  ([accounts.md](accounts.md)); none returns a
+  ([accounts.md](accounts.md)), and the five update commands of ADR-033:
+  `update_status`, `check_for_update`, `install_update`, `cancel_update`,
+  `postpone_update` ([updates.md](updates.md)); none returns a
   stored credential or a local path (a share link carries the access key
   id, never the secret). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
   tray mode only). There is no other custom command, and there are **no custom

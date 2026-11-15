@@ -8,13 +8,14 @@ Where things are. Generated and ignored paths are listed in
 ├── AGENTS.md                 Canonical instructions for coding agents
 ├── CLAUDE.md                 Claude Code entry point (imports AGENTS.md)
 ├── README.md                 Human-facing overview and quick start
+├── .gitattributes            Keeps the signed update fixtures byte-exact (no line-ending conversion)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, guard self-tests, fmt, clippy (default and test-profile build), test:headless
 │       ├── isolation-guard.yml  Automatic for changes to tests/desktop/** or the guard (which ci.yml skips): desktop isolation guard, its self-test, the Python profile helpers' tests
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
 │       ├── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
-│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); nothing signed or uploaded
+│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); with a signing secret and an update base URL also the update signatures and manifest (ADR-033); nothing uploaded or published
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
@@ -43,6 +44,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Account.svelte        The Account section (ADR-032): sign in, create, verify, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or approval with a fingerprint; sync, conflicts, devices, requests, revoke, rotate, password, delete
 │   ├── Account.test.ts       Tests of the Account section (mocked account commands)
 │   ├── account.ts            Typed wrappers for the 20 account commands
+│   ├── Updates.svelte        The Overview's Updates panel (ADR-033): version, check, Update now / Later, progress, Cancel, verification and failure messages
+│   ├── Updates.test.ts       Its tests (mocked update commands and channels)
+│   ├── updates.ts            Typed wrappers for the five update commands; validates responses and events
 │   ├── Modal.svelte          Modal dialog (focus kept inside, Escape closes)
 │   ├── CloudFileManager.test.ts  Tests of the file manager (mocked commands and channels)
 │   ├── CloudBrowser.test.ts  Tests of the bucket browser and its downloads, opened from the Cloud Storage section
@@ -79,6 +83,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── check-installer-icons.test.mjs  Its tests with in-memory fixtures (node --test, npm run test:installer-icons)
 │   ├── icons.mjs         The application icons from src-tauri/icons/source (npm run icons, through tauri icon; writes icon.ico itself) and their check (npm run check:icons, in test:headless)
 │   ├── icons.test.mjs    Its tests (node --test, npm run test:icons)
+│   ├── update-manifest.mjs  Creates sotyware-update.json from signed installers and verifies a signed manifest and its installers (ADR-033; signing itself is tauri signer sign --app-version)
+│   ├── update-manifest.test.mjs  Its tests (node --test, npm run test:update-manifest)
+│   ├── fixtures/update/  A manifest and two stand-in installers signed once by the real Tauri CLI with a throwaway key (public key only; private key deleted); verified by the script's tests and src-tauri/src/updates/tests.rs
 │   └── recovery/
 │       └── sotyware-restore.py  Restores a backup snapshot without sotyware (Python standard library only, SigV4); tested against the in-process server by backup::tests (ignored by default, run in ci.yml) (ADR-031)
 ├── package-lock.json         Pinned JS dependency tree
@@ -100,10 +107,11 @@ Where things are. Generated and ignored paths are listed in
 │   │   └── rfd/              rfd 0.17.2 as published, `com.rs` changed: Windows dialog paths as `OsString` + tests
 │   └── src/
 │       ├── main.rs           Binary entry point → sotyware_lib::run()
-│       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
+│       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle (release_resources: what every exit and an update install release), operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
 │       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031); SqliteAccountState: account.sqlite3 (ADR-032) + tests (incl. restarts with the built-in features)
+│       ├── updates.rs        Updates (ADR-033): signed-manifest verification, version floor, platform choice, plugin cross-check, download with SHA-256 check, install gate, the five commands; updates/tests.rs (test keys, local server, the plugin on the mock runtime, the Tauri CLI fixture)
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031); SqliteAccountState: account.sqlite3 (ADR-032); SqliteUpdateState: updates.sqlite3 (ADR-033) + tests (incl. restarts with the built-in features)
 │       ├── journal.rs        The operation journal (ADR-030): Journal, JournalLink, JournalStore trait, startup cleanup of sotyware's own recorded temporary files + tests
 │       ├── account/          sotyware accounts and encrypted sync (ADR-032): mod.rs (AccountService, StateStore, the 20 commands), crypto.rs (envelopes, wraps, sealed boxes, recovery key, key proof, fingerprint), vault.rs (vault document, three-way merge), client.rs (HTTPS client, ring TLS), tests.rs (end to end with the service in process and several device profiles)
 │       ├── backup/           Backups (ADR-031): mod.rs (Backups service, BackupStore trait, scheduler, the nine commands), model.rs (manifest format, plan, change check, retention, health; pure), engine.rs (run, verify, prune, restore over two S3Stores), tests.rs (disaster-recovery tests against two in-process servers, incl. the Python recovery tool)
@@ -147,7 +155,8 @@ Where things are. Generated and ignored paths are listed in
 │           ├── preferences.rs  FeaturePreferences, PreferenceStore trait: startup choice, save after a switch, failure policy + tests
 │           ├── registry.rs   FeatureRegistry: registration, lifecycle table, per-feature locking, start_all/stop_all + tests
 │           ├── example.rs    The example feature + tests
-│           └── backup.rs     The backup-scheduler feature: starts and stops the backup scheduler (ADR-031)
+│           ├── backup.rs     The backup-scheduler feature: starts and stops the backup scheduler (ADR-031)
+│           └── updates.rs    The update-check feature: starts and stops the automatic update checks (ADR-033)
 └── tests/
     └── desktop/              Desktop tests of the release binary, always a test-profile build (ADR-027)
         ├── check-ps-variables.ps1  Static check of the Windows test scripts (parses only, runs nothing): fails if one scope spells a variable two ways ($out/$Out are one variable in PowerShell)
@@ -176,7 +185,7 @@ Where things are. Generated and ignored paths are listed in
 | --- | --- |
 | Where does the app start? | `src-tauri/src/main.rs` → `run()` in `src-tauri/src/lib.rs` |
 | Where are Tauri plugins registered? | `run()` in `lib.rs`, on the builder; the single-instance plugin must stay first |
-| Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`; the six cloud account commands in `cloud/dashboard.rs`; `list_cloud_folder` in `cloud/browser.rs`; `download_cloud_file`, `cancel_cloud_download` and `retry_cloud_download` in `cloud/download.rs`; `upload_cloud_files`, `upload_cloud_folder`, `cancel_cloud_upload` and `retry_cloud_upload` in `cloud/upload.rs`; the file-management commands (ADR-026) in `cloud/operations.rs`, `cloud/manage.rs`, `cloud/bulk_download.rs`, `cloud/places.rs` and `cloud/drop.rs`; the recovery commands (ADR-030) in `cloud/recovery.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-<command, with ->` in `capabilities/default.json`) |
+| Where are Tauri commands defined? | `operating_mode` in `lib.rs`; `list_features` and `set_feature_enabled` in `features/mod.rs`; the six cloud account commands in `cloud/dashboard.rs`; `list_cloud_folder` in `cloud/browser.rs`; `download_cloud_file`, `cancel_cloud_download` and `retry_cloud_download` in `cloud/download.rs`; `upload_cloud_files`, `upload_cloud_folder`, `cancel_cloud_upload` and `retry_cloud_upload` in `cloud/upload.rs`; the file-management commands (ADR-026) in `cloud/operations.rs`, `cloud/manage.rs`, `cloud/bulk_download.rs`, `cloud/places.rs` and `cloud/drop.rs`; the recovery commands (ADR-030) in `cloud/recovery.rs`; the backup commands in `backup/mod.rs`; the account commands in `account/mod.rs`; the update commands in `updates.rs`. All are registered with `invoke_handler` in `run()` and declared in the app manifest in `build.rs` (permissions `allow-<command, with ->` in `capabilities/default.json`) |
 | Where are built-in features? | `src-tauri/src/features/`: listed in `builtin()` in `mod.rs`, run by `FeatureRegistry` in `registry.rs`; how to add one: [features.md](features.md#adding-a-built-in-feature) |
 | Where are feature choices stored? | Policy: `features/preferences.rs`; SQLite, schema and migrations: `storage.rs`; loaded in `run()` in `lib.rs` before the event loop; the file is `preferences.sqlite3` in the app's local data folder ([features.md](features.md#persistence)) |
 | Where is cloud storage? | `src-tauri/src/cloud/`; the dashboard's commands in `cloud/dashboard.rs`, `cloud/browser.rs` and `cloud/download.rs`, its page in `src/CloudStorage.svelte` (browser: `src/CloudBrowser.svelte`, upload panel: `src/CloudUpload.svelte`; upload commands in `cloud/upload.rs`); accounts database in `storage.rs`, loaded in `run()`; design: [cloud-storage.md](cloud-storage.md), providers: [cloud-providers.md](cloud-providers.md) |

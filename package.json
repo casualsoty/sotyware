@@ -24,6 +24,7 @@
     "test:installer-icons": "node --test scripts/check-installer-icons.test.mjs",
     "build:test-profile": "tauri build --no-bundle --features test-profile -- --target-dir target/test-profile",
     "test:profile-helpers": "python3 -m unittest tests/desktop/test_profile_test.py",
+    "test:update-manifest": "node --test scripts/update-manifest.test.mjs",
     "test:desktop:virtual": "bash tests/desktop/virtual.sh",
     "test:desktop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/windows.ps1",
     "test:desktop:windows:isolated": "powershell -NoProfile -ExecutionPolicy Bypass -File tests/desktop/windows-isolated.ps1"

@@ -17,6 +17,7 @@ interface IpcCall {
 const MODE_CMD = "operating_mode"; // #[tauri::command] in src-tauri/src/lib.rs
 const LIST_CMD = "list_features"; // #[tauri::command] in src-tauri/src/features/mod.rs; tested in Features.test.ts
 const HIDE_CMD = "plugin:window|hide";
+const UPDATE_CMD = "update_status"; // #[tauri::command] in src-tauri/src/updates.rs; tested in Updates.test.ts
 
 let calls: IpcCall[];
 let mode: unknown;
@@ -28,6 +29,18 @@ let app: ReturnType<typeof mount> | undefined;
 function backend(cmd: string): unknown {
   if (cmd === LIST_CMD) {
     return { features: [], storageError: null };
+  }
+  if (cmd === UPDATE_CMD) {
+    return {
+      configured: false,
+      current: "0.1.0",
+      channel: "stable",
+      lastCheckMs: null,
+      available: null,
+      postponed: false,
+      error: null,
+      blockedBy: [],
+    };
   }
   return cmd === MODE_CMD ? mode : null;
 }
@@ -93,7 +106,7 @@ function hideCalls(): IpcCall[] {
 describe("dashboard in tray mode", () => {
   it("asks Rust for the mode and the feature list once each, and nothing else, when it renders", async () => {
     await render();
-    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD]);
+    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD, UPDATE_CMD]);
   });
 
   it("renders the heading, the tray hint and a plain button, no error", async () => {
@@ -193,7 +206,7 @@ describe("dashboard in dashboard-only mode", () => {
     expect(findHideButton(root)).toBeUndefined();
     expect(root.querySelectorAll("button")).toHaveLength(0);
     expect(root.textContent).not.toContain("from the system tray");
-    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD]);
+    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD, UPDATE_CMD]);
   });
 });
 

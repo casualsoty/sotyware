@@ -6,6 +6,7 @@
   import Backup from "./Backup.svelte";
   import CloudStorage from "./CloudStorage.svelte";
   import Features from "./Features.svelte";
+  import Updates from "./Updates.svelte";
 
   // Decided once by the Rust side (`OperatingMode` in src-tauri/src/lib.rs):
   // "tray" when the tray icon exists, "dashboard-only" when no tray host is available.
@@ -94,6 +95,7 @@
   {/if}
   {#if section === "overview"}
     <Features />
+    <Updates />
   {:else if section === "cloud-storage"}
     <CloudStorage />
   {:else if section === "backups"}

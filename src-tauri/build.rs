@@ -77,6 +77,11 @@ fn main() {
             "account_change_password",
             "account_reset_password",
             "account_delete",
+            "update_status",
+            "check_for_update",
+            "install_update",
+            "cancel_update",
+            "postpone_update",
         ]),
     ))
     .expect("failed to run tauri-build");

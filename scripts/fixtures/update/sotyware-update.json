@@ -1,0 +1,20 @@
+{
+  "format": "sotyware-update",
+  "formatVersion": 1,
+  "channel": "stable",
+  "version": "0.2.0",
+  "notes": "Test fixture: not a real release.",
+  "pub_date": "2026-11-15T12:00:00Z",
+  "platforms": {
+    "windows-x86_64-nsis": {
+      "url": "https://updates.example.invalid/0.2.0/sotyware_0.2.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUkkxbVJEUFFpSVpqOUlFdm4zeEM1T2dldk44aCtLdjdPeE1WR2J2bkxQM3VJemMxTDQydXJGSnA5MlRJS3hneWpYYWF3b29nc0tXT0IxS0VMRFBZbEY0ZEw1QjEwMlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzEyNjk4CWZpbGU6c290eXdhcmVfMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCnJCM21aajh6eDBVV1FtOVF1V0FPNUgyQmMrcDErdlRMeWRTTS9CTmp6NTBicUV3bDBGTEZYYmN2OUJLeE1nc0xrWlpaZjhMSW5STHlIbFdWRU5wUUNnPT0K",
+      "sha256": "8d0df9dc30e9219129b1730a1964e73f117ea0e8adef2cb4794081e6c5d5923e"
+    },
+    "windows-x86_64-msi": {
+      "url": "https://updates.example.invalid/0.2.0/sotyware_0.2.0_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUkkxbVJEUFFpSWFqdmg0WmpNaE5VRkRKZE1MK1cyVTZibEI4ZGhTOFoyWk05QXNaZHFEeVpMVzFrRGJsclhld1FqZkhuZ2pNbFZHeWltNkFsZVAxaUVhZW5lTWh1TXdrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzEyNjk4CWZpbGU6c290eXdhcmVfMC4yLjBfeDY0X2VuLVVTLm1zaQl2ZXJzaW9uOjAuMi4wCmJ2ZUV1WDEwbG5QdkJCY3VJQXdRMFRpVUJsajlTdENWLzdkTGJqbGVTZVhLUGd1MEtHOC92VERZZWc4aWlETmdmKzdYMVFBMWh0R2dMN2Y1SVBFN0F3PT0K",
+      "sha256": "49729664cd9fcd93347a54facc24529c3e6bb1eae8decd106c6b06737b6a2ef8"
+    }
+  }
+}

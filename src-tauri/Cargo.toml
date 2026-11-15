@@ -97,6 +97,17 @@ strip = true
 # the common item dialog on Windows) and tauri-plugin-fs, which it requires.
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+# Application updates (ADR-033), driven from Rust only (no `updater:`
+# permission for the page). Only `rustls-tls` (rustls without a crypto
+# provider: sotyware passes its own ring-based TLS configuration); no `zip`
+# (Windows installers are served unzipped) and no `system-proxy`.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
+# Verifies sotyware's signed update manifest (ADR-033) with the same
+# minisign scheme the updater plugin uses for artifacts (already in the tree
+# through it).
+minisign-verify = "0.3"
+# Already in the tree through Tauri: release versions in the update check.
+semver = "1"
 
 [dev-dependencies]
 # Already in the dependency tree through tauri; used by tests that check
@@ -119,6 +130,10 @@ http = "1"
 # account and sync tests (account/tests.rs). Test-only; never in a build.
 sotyware-server = { path = "../server" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+# Signs test update manifests and artifacts with keys generated in the test
+# (never a real key), and the mock runtime to drive the updater plugin.
+minisign = "0.7"
+tauri = { version = "2", features = ["tray-icon", "test"] }
 # Already in the tree through s3s and the AWS SDK: the test server's object
 # bodies (slow, stalled or cut-off streams) implement `Stream` over `Bytes`.
 bytes = "1"

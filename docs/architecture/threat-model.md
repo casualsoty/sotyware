@@ -108,17 +108,27 @@ and the [journal](../status/journal.md), not here.
 
 ### Malicious update server / compromised update artifact
 
-- *Controls:* `tauri-plugin-updater` verifies each artifact's minisign
-  signature with the public key compiled into the app; sotyware additionally
-  requires a separately signed manifest (same key family, verified before the
-  updater is used), refuses versions not newer than the running one and not
-  newer than the highest version it has seen offered (replay/downgrade), and
-  checks the artifact's SHA-256 against the signed manifest. HTTPS is
-  required in release builds. Nothing installs without the user's click.
+- *Controls (implemented 2026-11-15, [updates.md](updates.md)):* sotyware
+  verifies a separately signed manifest with the compiled-in public key
+  before reading it; installs only a version newer than the running one and
+  refuses one lower than the highest version a verified manifest ever
+  offered this installation (replay/rollback); hands exactly that manifest
+  to `tauri-plugin-updater` (no second, unsigned fetch), whose package
+  signature must name the same version; checks the package's SHA-256
+  against the signed manifest; HTTPS only, no redirect for the manifest.
+  The plugin's own commands are unreachable from the page (no `updater:`
+  permission). Nothing installs without the user's click, and not while a
+  transfer, file operation or backup runs. Tested with test keys and a
+  fixture signed by the real Tauri CLI (`updates/tests.rs`,
+  `scripts/update-manifest.test.mjs`).
 - *Residual:* whoever holds the update signing key can ship arbitrary code.
   The key must live outside the repository (CI secret or offline). A
-  production key does **not** exist yet; release builds without a configured
-  key have updates disabled.
+  production key does **not** exist yet; release builds have updates
+  switched off (`updates::PRODUCTION` is `None`). A fresh installation has
+  no version floor yet, so the first manifest it sees can be any validly
+  signed one, newer than the installed version. A withheld update (the
+  server answering an old manifest, or nothing) is not detected beyond the
+  floor: there is no expiry on manifests.
 
 ### Malicious local process (same user)
 
@@ -198,7 +208,8 @@ and the [journal](../status/journal.md), not here.
    (credentials can be re-entered from the provider console).
 4. A fresh device can be served an old vault by a malicious service.
 5. The update signing key holder can ship code; production key not yet
-   created.
+   created, so updates are off in release builds. Manifests do not expire,
+   so a server can withhold updates (never roll back below the floor).
 6. Check-then-write races remain where providers lack conditional writes.
 7. Backups are stored as plaintext objects (readable by anyone with read
    access to the backup bucket), chosen so they stay restorable with

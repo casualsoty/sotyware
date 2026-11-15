@@ -77,6 +77,11 @@
     "allow-account-resolve-conflict",
     "allow-account-change-password",
     "allow-account-reset-password",
-    "allow-account-delete"
+    "allow-account-delete",
+    "allow-update-status",
+    "allow-check-for-update",
+    "allow-install-update",
+    "allow-cancel-update",
+    "allow-postpone-update"
   ]
 }

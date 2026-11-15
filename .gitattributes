@@ -1,0 +1,4 @@
+# Signed update test fixtures (scripts/update-manifest.test.mjs and
+# src-tauri/src/updates/tests.rs): their bytes are covered by signatures
+# and SHA-256 hashes, so no line-ending conversion.
+scripts/fixtures/update/** -text

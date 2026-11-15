@@ -30,7 +30,7 @@ $script:Env = "SOTYWARE_TEST_PROFILE"
 $script:MarkerFile = "sotyware-test-profile.json"
 $script:AckFile = "sotyware-test-profile-ack.json"
 # The databases the app reports in its acknowledgement (storage.rs).
-$script:Stores = @("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3", "operations-journal.sqlite3", "backup.sqlite3", "account.sqlite3")
+$script:Stores = @("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3", "operations-journal.sqlite3", "backup.sqlite3", "account.sqlite3", "updates.sqlite3")
 $script:Purpose = "sotyware-desktop-test-profile"
 $script:BuildMarker = "sotyware-test-profile-build"
 $script:Identifier = "com.sotyware.desktop.test"

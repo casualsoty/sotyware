@@ -41,6 +41,7 @@ mod storage;
 #[cfg(any(test, feature = "test-profile"))]
 mod test_profile;
 mod tray;
+pub(crate) mod updates;
 
 use std::sync::Arc;
 
@@ -277,6 +278,10 @@ pub fn run() {
         // The native save dialog for cloud downloads, used from Rust only; no
         // capability grants the frontend a `dialog:` permission (ADR-020).
         builder = builder.plugin(tauri_plugin_dialog::init());
+        // Updates (ADR-033), driven from Rust only: no capability grants the
+        // frontend an `updater:` permission; the page uses sotyware's own
+        // update commands, which verify a signed manifest first.
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     let app = builder
@@ -367,7 +372,12 @@ pub fn run() {
             account::account_resolve_conflict,
             account::account_change_password,
             account::account_reset_password,
-            account::account_delete
+            account::account_delete,
+            updates::update_status,
+            updates::check_for_update,
+            updates::install_update,
+            updates::cancel_update,
+            updates::postpone_update
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -563,6 +573,18 @@ pub fn run() {
     app.manage(account_service);
     app.manage(backups);
     app.manage(journal);
+    // Updates (ADR-033): release builds have no update source configured
+    // until a production key and endpoint exist; the `update-check` feature
+    // starts the automatic checks in `setup` through this link.
+    let updates = updates::Updates::new(
+        updates::configured_source(),
+        storage::open_update_state(clone_dir(&data_dir)),
+    );
+    let _ = updates::CHECK_LINK.set((
+        Arc::clone(&updates),
+        updates::Updates::current(&app.package_info().version.to_string()),
+    ));
+    app.manage(updates);
     // Tells the test driver which process, paths and credential namespace
     // this is; it compares them with what it set up before touching the
     // window (ADR-027). Without it the driver refuses to go on, so a failed
@@ -577,6 +599,7 @@ pub fn run() {
             storage::JOURNAL_FILE_NAME,
             storage::BACKUP_FILE_NAME,
             storage::ACCOUNT_STATE_FILE_NAME,
+            storage::UPDATES_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -593,44 +616,54 @@ pub fn run() {
         // running features the chance to release their resources. Stopping here
         // is not a user choice, so no preference changes. Then wait for a save
         // in progress and refuse new ones, so none is cut off halfway.
-        RunEvent::Exit => {
-            if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
-                registry.stop_all();
-            }
-            if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
-                prefs.close();
-            }
-            // A running download is cancelled; its temporary file is removed
-            // before the process ends (bounded wait, ADR-020).
-            if let Some(downloads) = app.try_state::<Arc<cloud::download::CloudDownloads>>() {
-                downloads.shutdown(cloud::download::SHUTDOWN_WAIT);
-            }
-            // A running upload batch is cancelled and incomplete multipart
-            // uploads are aborted (bounded wait, ADR-022).
-            if let Some(uploads) = app.try_state::<Arc<cloud::upload::CloudUploads>>() {
-                uploads.shutdown(cloud::upload::SHUTDOWN_WAIT);
-            }
-            // A running download of several files is cancelled and its
-            // staging folder removed (bounded wait, ADR-026).
-            if let Some(bulk) = app.try_state::<Arc<cloud::bulk_download::BulkDownloads>>() {
-                bulk.shutdown(cloud::bulk_download::SHUTDOWN_WAIT);
-            }
-            // A running file operation stops after its requests in flight
-            // (bounded wait, ADR-026).
-            if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
-                ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
-            }
-            // A running backup task is cancelled; the scheduler stops
-            // (bounded wait, ADR-031).
-            if let Some(backups) = app.try_state::<Arc<backup::Backups>>() {
-                backups.shutdown(backup::SHUTDOWN_WAIT);
-            }
-            // Last, so the aborts of a quit are recorded (bounded wait).
-            #[cfg(feature = "request-recorder")]
-            cloud::recorder::finish_installed();
-        }
+        RunEvent::Exit => release_resources(app),
         _ => {}
     });
+}
+
+/// What every end of the process releases: running features stop, a save in
+/// progress finishes and new ones are refused, transfers, operations and
+/// backups are cancelled (bounded waits). Called on `RunEvent::Exit` and by
+/// the updater just before it ends the process to install (Windows,
+/// ADR-033). Stopping here is not a user choice, so no preference changes.
+pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
+        registry.stop_all();
+    }
+    if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
+        prefs.close();
+    }
+    // A running download is cancelled; its temporary file is removed
+    // before the process ends (bounded wait, ADR-020).
+    if let Some(downloads) = app.try_state::<Arc<cloud::download::CloudDownloads>>() {
+        downloads.shutdown(cloud::download::SHUTDOWN_WAIT);
+    }
+    // A running upload batch is cancelled and incomplete multipart
+    // uploads are aborted (bounded wait, ADR-022).
+    if let Some(uploads) = app.try_state::<Arc<cloud::upload::CloudUploads>>() {
+        uploads.shutdown(cloud::upload::SHUTDOWN_WAIT);
+    }
+    // A running download of several files is cancelled and its
+    // staging folder removed (bounded wait, ADR-026).
+    if let Some(bulk) = app.try_state::<Arc<cloud::bulk_download::BulkDownloads>>() {
+        bulk.shutdown(cloud::bulk_download::SHUTDOWN_WAIT);
+    }
+    // A running file operation stops after its requests in flight
+    // (bounded wait, ADR-026).
+    if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
+        ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
+    }
+    // A running backup task is cancelled; the scheduler stops
+    // (bounded wait, ADR-031).
+    if let Some(backups) = app.try_state::<Arc<backup::Backups>>() {
+        backups.shutdown(backup::SHUTDOWN_WAIT);
+    }
+    if let Some(updates) = app.try_state::<Arc<updates::Updates>>() {
+        updates.shutdown();
+    }
+    // Last, so the aborts of a quit are recorded (bounded wait).
+    #[cfg(feature = "request-recorder")]
+    cloud::recorder::finish_installed();
 }
 
 /// `tauri::Error` is not `Clone`; the stores each take the directory.
@@ -962,7 +995,12 @@ mod tests {
                 "allow-account-resolve-conflict",
                 "allow-account-change-password",
                 "allow-account-reset-password",
-                "allow-account-delete"
+                "allow-account-delete",
+                "allow-update-status",
+                "allow-check-for-update",
+                "allow-install-update",
+                "allow-cancel-update",
+                "allow-postpone-update"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");
