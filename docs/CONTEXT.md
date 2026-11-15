@@ -68,8 +68,10 @@ Intel Mac, passed at `8125739` with `rehearse`, and passed again at
 `f846bdd` with the key and every setting and no warning
 ([final dry run](status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15),
 [readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
-Still to do: the installation test on a disposable Windows 11, with the
-published installers.
+The maintainer runs `v0.1.0` on their personal Windows 11 and reports it
+working ([status](status/status.md#v010-installed-by-the-maintainer-2026-11-15));
+still to do: the full installation test on a disposable Windows 11, with
+the published installers.
 On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the

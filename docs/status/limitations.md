@@ -823,9 +823,12 @@ server only; no real provider was asked.
   ([status](status.md#first-release-v010-2026-11-15)).
 - **`v0.1.0` was published before the installation test** that the
   support scope names as the condition for Windows 11
-  ([release.md](../development/release.md#support-scope)): installing,
-  upgrading and uninstalling its installers on a real Windows 11 were never
-  tried, and as an immutable release it cannot be changed: a problem found
+  ([release.md](../development/release.md#support-scope)). One install on
+  the maintainer's personal Windows 11 is reported working (which
+  installer, the build and the update check not recorded;
+  [status](status.md#v010-installed-by-the-maintainer-2026-11-15)); the
+  other installer, upgrading, uninstalling and reinstalling were never
+  tried. As an immutable release it cannot be changed: a problem found
   needs a new version.
 - **Development and desktop-test builds check GitHub too:** a debug or
   test-profile build without `SOTYWARE_UPDATE_ENDPOINT` and

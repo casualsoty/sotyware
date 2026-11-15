@@ -10,7 +10,7 @@ it with a date.
 
 | Platform | Code and builds | Release support |
 | --- | --- | --- |
-| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**; `v0.1.0` (2026-11-15) was published before its installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do |
+| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**; `v0.1.0` (2026-11-15) was published before its installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do; the maintainer runs it on their personal Windows 11 and reports it working ([status](../status/status.md#v010-installed-by-the-maintainer-2026-11-15)) |
 | Windows 10 | the same binary; never run | **not validated, not claimed.** Do not list it as supported |
 | Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop.** Releases carry the AppImage, deb and rpm for testing, labelled as such in the release notes |
 | macOS (Apple Silicon, Intel) | builds and tests only on GitHub's hosted macOS runners ([macos.md](macos.md)); never run on a Mac a person used | **not validated.** Releases carry Mac packages only when they are signed and notarized; none can be until a Developer ID certificate exists |
