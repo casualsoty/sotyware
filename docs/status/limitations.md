@@ -836,13 +836,15 @@ server only; no real provider was asked.
   `npm run check:update-key`, and would pass `release.yml`'s prepare. The
   Rust tests decode strictly and failed on it, so `ci.yml` and the
   release's own `ci` job stop such a key before anything is signed.
-- **The signing key's protection depends on repository settings,** of
-  which only the environments exist (2026-11-15: `release` admits only
-  the tag `v*` and needs the owner's approval): the tag ruleset for `v*`
-  does not. `release.yml` refuses a real release while the environment is
-  missing or admits a branch, or while the key is a repository secret,
-  but it cannot stop another workflow from naming an unprotected
-  environment, and it only warns when no reviewer is set
+- **The signing key's protection depends on repository settings,** made
+  on 2026-11-15: `release` admits only the tag `v*` and needs the owner's
+  approval, and the `v*` tag rulesets let only an administrator create a
+  tag and nobody move or delete one. They are settings, not code: nothing
+  in the repository keeps them as they are. `release.yml` refuses a real
+  release while the environment is missing or admits a branch, or while
+  the key is a repository secret, but it cannot stop another workflow
+  from naming an unprotected environment, only warns when no reviewer is
+  set and does not check the rulesets
   ([release.md](../development/release.md#repository-settings)).
   `macos-signing` has to exist before any run of `release.yml`, a dry run
   included, or of `macos.yml` with `package` (it was created by hand on
@@ -863,8 +865,9 @@ server only; no real provider was asked.
   the secret matches `update-key.pub`.
 - **A failure after the pre-release is published and before the
   promotion** leaves that pre-release visible on the releases page (not
-  offered to installations); with release immutability on it cannot be
-  repaired, only deleted, and its version is used up. GitHub documents
+  offered to installations); release immutability is on (since
+  2026-11-15), so it cannot be repaired, only deleted, and its version is
+  used up. GitHub documents
   that an immutable release can still be switched between pre-release and
   latest; not yet tried.
 - **A failure after the promotion request** (the `/releases/latest`
@@ -895,9 +898,10 @@ server only; no real provider was asked.
   Addressing the release by its id from its creation on would close this
   ([status](status.md#release-rehearsal-readiness-2026-11-15)).
 - **No update was ever installed, and `release.yml` ran only as a dry
-  run** (passed at `8125739`, 2026-11-15; its publish job never ran, so
-  nothing was ever uploaded to, published on or read back from GitHub
-  Releases; [status](status.md#release-dry-runs-2026-11-15)): download,
+  run** (passed at `8125739` and, with the release key and every setting,
+  at `f846bdd`, 2026-11-15; its publish job never ran, so nothing was ever
+  uploaded to, published on or read back from GitHub Releases;
+  [status](status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)): download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
   release commands were rehearsed locally with the real Tauri CLI and a

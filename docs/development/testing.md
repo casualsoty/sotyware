@@ -1618,8 +1618,9 @@ Not covered by any test: installing an update on any platform, the Windows
 installer or `request_restart` starting the new version, data surviving an
 update (needs two signed releases;
 [release.md](release.md#testing-updates-locally)), `release.yml`'s
-publish job (never run; the dry run passed on GitHub at
-`8125739`, [status](../status/status.md#release-dry-runs-2026-11-15)).
+publish job (never run; dry runs passed on GitHub at `8125739` and
+`f846bdd`,
+[status](../status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)).
 
 ## Cloud Storage UI end-to-end test
 
@@ -2437,7 +2438,7 @@ on `main` since `d9cf561`, 2026-11-15).
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Signs nothing; called by `release.yml` with `upload: true` it uploads the two checked installers as the `windows-installers` artifact, which `release.yml`'s publish job signs (ADR-036). Nothing published | release artifacts (no install) |
 | `macos.yml` | **automatic**: pull request to `main`, push to `main` (same skipped paths as `ci.yml`); **manual**; or called by `release.yml` with `package: true` (ADR-037, ADR-039; failed one test on both architectures at `d9cf561`, passed at `ec42d41`: [status](../status/status.md#hosted-runs-at-ec42d41-macos-passes-2026-11-15)) | `macos-15` (Apple Silicon, M1) + `macos-15-intel` (Intel) | job `macOS tests` per architecture: native machine and rustc host checked (no Rosetta), `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; no secret. Job `macOS package` (only with `package`, environment `macos-signing`): `npm run build:release` without caches, binary architecture and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
-| `release.yml` | **tag `vX.Y.Z`**; or manual, a **dry run** by default, on any branch (ADR-036, ADR-039; dry runs only: failed at `ecf4339` on one test, passed at `8125739`, 2026-11-15: [status](../status/status.md#release-dry-runs-2026-11-15)) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | prepare: versions (and tag), `updates.rs` names this repository; for a real release also the commit on `main`, no existing release, `update-key.pub` a real key, the `release` environment tag-only, no signing secret at repository level, unsigned Windows installers allowed (warnings in a dry run); `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then **rehearse** (dry run: throwaway key, `scripts/release-assemble.sh`, artifact `release-dry-run`) or **publish** (environment `release`: tag re-checked, key probe, `release-assemble.sh`, draft with `--verify-tag`, files compared and downloaded back, pre-release, anonymous download verified, latest, endpoint checked; [release.md](release.md#publishing-a-release)) | release |
+| `release.yml` | **tag `vX.Y.Z`**; or manual, a **dry run** by default, on any branch (ADR-036, ADR-039; dry runs only: failed at `ecf4339` on one test, passed at `8125739` and, with the release key and every setting, at `f846bdd`, 2026-11-15: [status](../status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | prepare: versions (and tag), `updates.rs` names this repository; for a real release also the commit on `main`, no existing release, `update-key.pub` a real key, the `release` environment tag-only, no signing secret at repository level, unsigned Windows installers allowed (warnings in a dry run); `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then **rehearse** (dry run: throwaway key, `scripts/release-assemble.sh`, artifact `release-dry-run`) or **publish** (environment `release`: tag re-checked, key probe, `release-assemble.sh`, draft with `--verify-tag`, files compared and downloaded back, pre-release, anonymous download verified, latest, endpoint checked; [release.md](release.md#publishing-a-release)) | release |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2628,7 +2629,10 @@ on Apple Silicon and 19 min 19 s on Intel**, each to the end. The
 `release.yml` dry run at `8125739` took **23 min** in all, set by the
 Intel macOS package (22 min 29 s, a release build without caches); its
 Windows installers took 9 min 20 s and its Linux packages 6 min 59 s
-([status](../status/status.md#release-dry-runs-2026-11-15)).
+([status](../status/status.md#release-dry-runs-2026-11-15)); the one at
+`f846bdd` 22.5 min (Intel macOS package 21 min 48 s, Windows installers
+10 min 43 s, Linux packages 6 min 52 s;
+[status](../status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)).
 
 Per run: open the run in the **Actions** tab; the summary shows each job's
 duration (see

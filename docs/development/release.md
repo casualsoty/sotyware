@@ -159,9 +159,9 @@ in the `release_repository!` macro in `src-tauri/src/updates.rs`, compiled
 into every build; `release.yml` refuses to publish anywhere else.
 Publishing needs no token besides the workflow's own `GITHUB_TOKEN`.
 
-Before the first release, all of the following must be true. Read back on
-2026-11-15, after the release key was committed: items 2, 3 and 5 are
-done, 1 and 4 are not:
+Before the first release, all of the following must be true; **all five
+are** (read back 2026-11-15, after the final dry run at `f846bdd`; the
+installation test below is still to do):
 
 1. **The repository settings are made** ([below](#repository-settings)).
 2. **The `release` environment exists**, admits only `v*` tags and holds
@@ -191,8 +191,10 @@ repository had: Actions allowing every action, SHA pinning not required,
 the default `GITHUB_TOKEN` read-only, Actions not allowed to approve pull
 requests, approval required only for first-time contributors' fork pull
 requests, no environment, no ruleset, no secret or variable, no
-protection on `main`, release immutability off. Later that day the two
-environments were created ([Secrets](#secrets)); the rest is unchanged.
+protection on `main`, release immutability off. Later that day the
+maintainer made every setting below, release immutability included, and
+created both environments ([Secrets](#secrets)); all read back the same
+day ([status](../status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)).
 
 - **Actions → General**
   - **Actions permissions:** *Allow casualsoty, and select non-casualsoty,
@@ -257,7 +259,10 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
    but a skipped job creates no environment (`macos.yml`'s package job,
    skipped on every push, never created `macos-signing`). First passed at
    `8125739` (run 43735919504, 23 min;
-   [status](../status/status.md#release-dry-runs-2026-11-15)).
+   [status](../status/status.md#release-dry-runs-2026-11-15)), then with
+   the release key and every setting at `f846bdd` (run 43746112094, 22.5
+   min, no warning;
+   [status](../status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15)).
    - **What runs:** `prepare` (the versions must agree; the repository in
      `updates.rs`, the release key, repository secrets, both environments
      and the Windows opt-in are only warned about), `ci.yml`, the Windows

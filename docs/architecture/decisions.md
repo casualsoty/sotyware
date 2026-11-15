@@ -2302,10 +2302,9 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
   every release also carries GitHub's "Source code" archives of the tagged
   commit. The maintainer configures, once, the two environments, a tag
   ruleset for `v*` and the repository's Actions settings
-  ([release.md](../development/release.md#repository-settings)); only
-  the environments exist (since 2026-11-15; `release` holds the signing
-  key since that day). A publish job's token can publish files, but
-  installations
+  ([release.md](../development/release.md#repository-settings)); all of
+  them exist since 2026-11-15, and `release` holds the signing key. A
+  publish job's token can publish files, but installations
   refuse anything the release key did not sign, and the version floor
   refuses replays. Whoever can push a `v*` tag can start a release; the tag
   ruleset and the environment's reviewer decide whether it reaches the

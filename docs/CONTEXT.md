@@ -50,16 +50,21 @@ signing step, dry runs sign with a throwaway key, the Apple credentials
 live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
 file can never hold a fixture's or a private key. **Not usable yet:** no
-release published, no ruleset. The release key exists since 2026-11-15:
-its public half in `src-tauri/update-key.pub` (key id
-`3A6E8F2D58D68E0D`), the private half and its password in the `release`
-environment, created by hand that day like `macos-signing`
-([status](status/status.md#release-key-committed-2026-11-15)).
-`release.yml` ran only as a dry run: it failed at
-`ecf4339` on one test on the Intel Mac and passed at `8125739` with
-`rehearse` (run 43735919504; nothing published;
-[dry runs](status/status.md#release-dry-runs-2026-11-15),
+release published. Every release setting exists since 2026-11-15: the
+release key (public half in `src-tauri/update-key.pub`, key id
+`3A6E8F2D58D68E0D`; private half and password in the `release`
+environment, created by hand that day like `macos-signing`;
+[key](status/status.md#release-key-committed-2026-11-15)), the
+`SOTYWARE_ALLOW_UNSIGNED_WINDOWS` variable, the `v*` tag and `main`
+rulesets, the Actions settings and release immutability. `release.yml`
+ran only as a dry run: it failed at `ecf4339` on one test on the Intel
+Mac, passed at `8125739` with `rehearse`, and passed again at `f846bdd`
+with the key and every setting and no warning (run 43746112094; nothing
+published;
+[final dry run](status/status.md#release-settings-complete-and-the-final-dry-run-2026-11-15),
 [readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
+Still to do: the installation test on a disposable Windows 11, then the
+`v0.1.0` tag.
 On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the
@@ -375,8 +380,8 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   recent items recorded in one millisecond were trimmed by name (fixed in
   the store: each is stored as newer than every other); the test server
   now reads a request it refuses with 412 to its end, which Windows lost
-  under the reset connection. `f178d3b` passed everywhere once re-run;
-  the fixes ran on WSL2 only.
+  under the reset connection. `f178d3b` passed everywhere once re-run,
+  and the fixes (`f846bdd`) passed on every platform.
 - **Late-part wait test on a busy runner** (2026-11-15, test code only,
   [status.md](status/status.md#the-late-part-wait-test-on-a-busy-runner-2026-11-15)):
   the first `release.yml` dry run failed only on the Intel Mac, where
