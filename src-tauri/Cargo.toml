@@ -46,6 +46,22 @@ keyring-core = "1"
 # Already in the tree through Tauri: backup manifests and job configurations
 # (ADR-031), and the recorder's JSON Lines (ADR-024).
 serde_json = "1"
+# The end-to-end encrypted account vault (ADR-032), RustCrypto crates only:
+# XChaCha20-Poly1305 for the vault and the recovery wrap, X25519 sealed
+# boxes (libsodium's crypto_box_seal construction) for device wraps, and
+# HKDF-SHA256 (already in the tree) to derive keys from the recovery key.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+crypto_box = { version = "0.9", default-features = false, features = ["seal", "salsa20", "getrandom"] }
+hkdf = "0.12"
+zeroize = "1"
+# Already in the tree through reqwest: encoding keys and ciphertext as text.
+base64 = "0.23"
+# The account service client (ADR-032): already in the tree through Tauri.
+# rustls without a built-in provider: the TLS configuration is built with
+# ring (as for aws-sdk-s3) instead of aws-lc-rs, which needs CMake/NASM.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
 # Only with the `request-recorder` feature (ADR-024), both already in the
 # tree through aws-sdk-s3: the SDK types its interceptor reads (`Metadata`,
 # `RequestAttempts`, `Storable`), which aws-sdk-s3 does not re-export.
@@ -99,6 +115,10 @@ hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
 # Already in the tree through hyper and the AWS SDK: the request types of
 # the test server's ListMultipartUploads route (s3s-fs answers 501 to it).
 http = "1"
+# The account service itself (server/), run in process by the end-to-end
+# account and sync tests (account/tests.rs). Test-only; never in a build.
+sotyware-server = { path = "../server" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 # Already in the tree through s3s and the AWS SDK: the test server's object
 # bodies (slow, stalled or cut-off streams) implement `Stream` over `Bytes`.
 bytes = "1"

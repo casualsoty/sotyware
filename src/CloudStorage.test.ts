@@ -289,7 +289,7 @@ describe("navigation", () => {
     expect(sent(LIST_CLOUD_ACCOUNTS)).toHaveLength(0);
     expect(buttons(root).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
     const links = [...root.querySelectorAll<HTMLAnchorElement>("nav a")];
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups", "Account"]);
     expect(links[0]?.getAttribute("aria-current")).toBe("page");
 
     links[1]?.click();

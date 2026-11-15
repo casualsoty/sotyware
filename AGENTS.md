@@ -29,9 +29,12 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   sorting and filters, properties, previews, share links, several-item
   downloads, folder and drag-and-drop uploads, favorites and recent items
   (never overwriting), an operation journal with a recovery view for
-  work interrupted by a crash (ADR-030), and backups to an independent
+  work interrupted by a crash (ADR-030), backups to an independent
   destination with verification, retention, restore and a standalone
-  recovery tool (ADR-031). No other product features exist yet. Current milestone and status:
+  recovery tool (ADR-031), and an optional sotyware account with
+  end-to-end encrypted sync of storage accounts and backup jobs (ADR-032;
+  the service exists in `server/` but is not deployed: release builds have
+  no service configured). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -56,6 +59,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | delete marker | what a delete adds on a versioned bucket instead of removing the object; the versions stay and the file can be restored |
 | operation journal | `operations-journal.sqlite3`: each upload, download temporary file, staging folder and file operation is recorded before it can change anything and removed once its outcome is confirmed; what is left after a crash is shown in the recovery view (ADR-030) |
 | backup job / snapshot | a configured copy of an account's bucket (or folder) into another destination / one completed run's manifest (`snapshots/<job>/<time>-<id>.json`) listing every object and its content blob (ADR-031) |
+| vault / account key / recovery key | the end-to-end encrypted sync document / the random key that encrypts it / the 256-bit key shown once that can unwrap the account key on a new computer (ADR-032) |
+| enrolled device | a computer whose sealed copy of the account key is stored at the service (unlocked with the recovery key or approved by another enrolled device) |
 | provider capability | one behaviour a provider may or may not have (conditional writes, delete markers, …) with its evidence: documented, verified at the provider, assumed from Amazon S3, or unknown (ADR-029) |
 | test profile | a directory a desktop test creates for one run; a test-profile build (Cargo feature `test-profile`) refuses to start without one and keeps its databases, webview data and credentials (own namespace) inside it (ADR-027) |
 
@@ -97,6 +102,9 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `http-body` (the upload request body's `Body` trait, ADR-021; already in the tree through `aws-sdk-s3` and hyper) | `1` | 1.1.0 |
 | `sha2` (already in the tree through Tauri) | `0.10` | 0.10.9 |
 | `serde_json` (already in the tree through Tauri; backup manifests and job configurations, ADR-031, and the recorder) | `1` | 1.0.154 |
+| Vault cryptography (ADR-032, RustCrypto): `chacha20poly1305` (XChaCha20-Poly1305; `alloc`, `getrandom`), `crypto_box` (X25519 sealed boxes; `seal`, `salsa20`, `getrandom`), `hkdf` (already in the tree), `zeroize`, `base64` (already in the tree) | `0.10`, `0.9`, `0.12`, `1`, `0.23` | 0.10.1, 0.9.1, 0.12.4, 1.9.1, 0.23.1 |
+| Account service client (ADR-032): `reqwest` (already in the tree through Tauri; `json`, `rustls-no-provider`: the TLS config is built with ring, never aws-lc-rs), `rustls` (`ring`, `std`, `tls12`), `rustls-native-certs` (both already in the tree) | `0.13`, `0.23`, `0.8` | 0.13.5, 0.23.46, 0.8.5 |
+| `sotyware-server` (path `../server`) and `axum` (dev only: the end-to-end account tests run the service in process) | path, `0.8` | 0.1.0, 0.8.9 |
 | `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; already in the tree; also dev-only for `hook_assumptions.rs`) | `1`, `1` | 1.11.3, 1.4.3 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
 | `windows-native-keyring-store` (Windows only, no default features: Credential Manager) | `1` | 1.1.0 |
@@ -220,7 +228,17 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   verify, prune, restore over two `S3Store`s through a spool folder;
   `mod.rs`: `Backups` managed state with `backup.sqlite3`, one task at a
   time, the scheduler, nine commands); the `backup-scheduler` feature;
-  page `src/Backup.svelte`; standalone `scripts/recovery/sotyware-restore.py`
+  page `src/Backup.svelte`; standalone `scripts/recovery/sotyware-restore.py`.
+  **Accounts and sync** (ADR-032): `src-tauri/src/account/` (`crypto.rs`:
+  XChaCha20-Poly1305 envelopes, HKDF recovery and key-proof derivations,
+  X25519 sealed boxes, recovery key format, fingerprints; `vault.rs`: the
+  vault document and three-way merge with conflict copies; `client.rs`:
+  HTTPS to the service (loopback HTTP only for development); `mod.rs`:
+  `AccountService`, 20 commands); secrets in the OS store through
+  `cloud::keyring::OsSecretStore` (entries `sotyware-account/<name>`),
+  local state in `account.sqlite3`; `PRODUCTION_SERVER` is `None`;
+  `SOTYWARE_ACCOUNT_SERVER` only in debug and test-profile builds; page
+  `src/Account.svelte`
   ([cloud-storage.md](docs/architecture/cloud-storage.md#dashboard),
   [ADR-016](docs/architecture/decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter),
   [ADR-017](docs/architecture/decisions.md#adr-017-cloud-account-credentials-live-only-in-the-os-credential-store),
@@ -259,7 +277,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `src/CloudUpload.svelte`, `src/CloudOperation.svelte`,
   `src/CloudFolderPicker.svelte`, `src/CloudProperties.svelte`,
   `src/CloudBulkDownload.svelte`, `src/CloudDeleted.svelte`,
-  `src/CloudRecovery.svelte`, `src/Modal.svelte`, `src/Backup.svelte`;
+  `src/CloudRecovery.svelte`, `src/Modal.svelte`, `src/Backup.svelte`,
+  `src/Account.svelte`;
   pure list logic in `src/fileList.ts`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
@@ -282,10 +301,11 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `abort_cloud_incomplete_upload`) and the nine backup commands of ADR-031
   (`list_backups`, `save_backup_job`, `remove_backup_job`,
   `start_backup_task`, `cancel_backup_task`, `list_backup_snapshots`,
-  `restore_backup`, `export_backup_manifest`, `check_backup_protection`)
+  `restore_backup`, `export_backup_manifest`, `check_backup_protection`) and
+  the 20 account commands of ADR-032 (`account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts` and `src/backup.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/backup.ts` and `src/account.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`). No other custom command, no custom events (download progress,
   upload, operation, several-item download and drop notices use per-call
@@ -308,7 +328,7 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
-journal and the backup jobs, no settings, autostart,
+journal, the backup jobs and the account state, no settings, autostart,
 third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
@@ -316,7 +336,7 @@ sotyware's own, content search, transfer queue UI or download history,
 credential
 import or any credential fallback outside the OS store, restic
 integration, encrypted backups, backup notifications, cost estimator, custom
-event, or custom command besides the 52 listed above. Never describe these as existing.
+event, background (periodic) sync, or custom command besides the 72 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -426,7 +446,8 @@ Every coding agent must:
    `CloudAccounts`, `cloud::browser`, `CloudDownloads`/`TransferControl`,
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
    `CloudDrops`, `Journal`/`JournalLink` (operation journal), `Backups` and
-   the backup `model`/`engine`, provider
+   the backup `model`/`engine`, `AccountService`, `account::crypto`,
+   `account::vault`, `SecretStore`, provider
    `Capabilities`/`Support`, `test_server::Versioned`, `CredentialNamespace`, the test
    profile helpers (`test_profile.rs`, `tests/desktop/test_profile.py`,
    `TestProfile.psm1`), the capability file) before

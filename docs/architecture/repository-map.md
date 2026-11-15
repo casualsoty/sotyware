@@ -40,6 +40,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Backup.svelte         The Backups section (ADR-031): jobs with health, form, run/verify/retention tasks with progress and Cancel, snapshots, restore, recovery file, protection
 │   ├── Backup.test.ts        Tests of the Backups section (mocked backup commands and channels)
 │   ├── backup.ts             Typed wrappers for the nine backup commands; validates responses and events
+│   ├── Account.svelte        The Account section (ADR-032): sign in, create, verify, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or approval with a fingerprint; sync, conflicts, devices, requests, revoke, rotate, password, delete
+│   ├── Account.test.ts       Tests of the Account section (mocked account commands)
+│   ├── account.ts            Typed wrappers for the 20 account commands
 │   ├── Modal.svelte          Modal dialog (focus kept inside, Escape closes)
 │   ├── CloudFileManager.test.ts  Tests of the file manager (mocked commands and channels)
 │   ├── CloudBrowser.test.ts  Tests of the bucket browser and its downloads, opened from the Cloud Storage section
@@ -100,8 +103,9 @@ Where things are. Generated and ignored paths are listed in
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle, operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
 │       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031) + tests (incl. restarts with the built-in features)
+│       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031); SqliteAccountState: account.sqlite3 (ADR-032) + tests (incl. restarts with the built-in features)
 │       ├── journal.rs        The operation journal (ADR-030): Journal, JournalLink, JournalStore trait, startup cleanup of sotyware's own recorded temporary files + tests
+│       ├── account/          sotyware accounts and encrypted sync (ADR-032): mod.rs (AccountService, StateStore, the 20 commands), crypto.rs (envelopes, wraps, sealed boxes, recovery key, key proof, fingerprint), vault.rs (vault document, three-way merge), client.rs (HTTPS client, ring TLS), tests.rs (end to end with the service in process and several device profiles)
 │       ├── backup/           Backups (ADR-031): mod.rs (Backups service, BackupStore trait, scheduler, the nine commands), model.rs (manifest format, plan, change check, retention, health; pure), engine.rs (run, verify, prune, restore over two S3Stores), tests.rs (disaster-recovery tests against two in-process servers, incl. the Python recovery tool)
 │       ├── cloud/            Cloud storage: backend, the dashboard's account commands, the bucket browser, downloads, upload batches and file management (ADR-026)
 │       │   ├── mod.rs        Module overview, re-exports SqliteAccountStore

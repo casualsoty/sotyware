@@ -733,6 +733,160 @@ async fn a_revoked_device_loses_its_sessions_and_its_key_copy() {
 }
 
 #[tokio::test]
+async fn after_a_rotation_other_enrolled_devices_get_the_new_wrap_with_the_new_proof() {
+    let s = server("rewrap");
+    s.register_verified("w@example.org", PW).await;
+    let a = s.sign_in("w@example.org", PW, "desktop", KEY_A).await;
+    let at = tok(&a, "accessToken");
+    s.call(
+        "PUT",
+        "/v1/recovery",
+        Some(&at),
+        Some(json!({ "wrap": "rw1", "newKeyProof": "p1" })),
+    )
+    .await;
+    s.call(
+        "PUT",
+        "/v1/devices/current/wrap",
+        Some(&at),
+        Some(json!({ "wrap": "wa1", "keyProof": "p1" })),
+    )
+    .await;
+    let b = s.sign_in("w@example.org", PW, "laptop", KEY_B).await;
+    let bt = tok(&b, "accessToken");
+    s.call(
+        "PUT",
+        "/v1/devices/current/wrap",
+        Some(&bt),
+        Some(json!({ "wrap": "wb1", "keyProof": "p1" })),
+    )
+    .await;
+    // A rotates: new recovery wrap and proof, then B's new wrap.
+    let (st, _) = s
+        .call(
+            "PUT",
+            "/v1/recovery",
+            Some(&at),
+            Some(json!({ "wrap": "rw2", "keyProof": "p1", "newKeyProof": "p2" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let path = format!("/v1/devices/{}/wrap", tok(&b, "deviceId"));
+    let (st, _) = s
+        .call(
+            "PUT",
+            &path,
+            Some(&at),
+            Some(json!({ "wrap": "wb2", "keyProof": "p1" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "the old proof no longer counts");
+    let (st, _) = s
+        .call(
+            "PUT",
+            &path,
+            Some(&at),
+            Some(json!({ "wrap": "wb2", "keyProof": "p2" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (_, w) = s
+        .call("GET", "/v1/devices/current/wrap", Some(&bt), None)
+        .await;
+    assert_eq!(w["wrap"], "wb2");
+}
+
+#[tokio::test]
+async fn a_key_rotation_changes_everything_at_once_or_nothing() {
+    let s = server("rotate");
+    s.register_verified("k@example.org", PW).await;
+    let a = s.sign_in("k@example.org", PW, "desktop", KEY_A).await;
+    let at = tok(&a, "accessToken");
+    s.call(
+        "PUT",
+        "/v1/recovery",
+        Some(&at),
+        Some(json!({ "wrap": "rw1", "newKeyProof": "p1" })),
+    )
+    .await;
+    s.call(
+        "PUT",
+        "/v1/devices/current/wrap",
+        Some(&at),
+        Some(json!({ "wrap": "wa1", "keyProof": "p1" })),
+    )
+    .await;
+    s.call(
+        "PUT",
+        "/v1/vault",
+        Some(&at),
+        Some(json!({ "expectedRevision": 0, "envelope": "v1", "keyProof": "p1" })),
+    )
+    .await;
+    let b = s.sign_in("k@example.org", PW, "laptop", KEY_B).await;
+    s.call(
+        "PUT",
+        "/v1/devices/current/wrap",
+        Some(&tok(&b, "accessToken")),
+        Some(json!({ "wrap": "wb1", "keyProof": "p1" })),
+    )
+    .await;
+    let a_id = tok(&a, "deviceId");
+    // A stale revision: nothing changes (old proof still valid).
+    let (st, _) = s
+        .call(
+            "POST",
+            "/v1/keys/rotate",
+            Some(&at),
+            Some(json!({
+                "recoveryWrap": "rw2", "keyProof": "p1", "newKeyProof": "p2", "expectedRevision": 0,
+                "envelope": "v2", "deviceWraps": [{ "deviceId": a_id, "wrap": "wa2" }]
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let (_, r) = s.call("GET", "/v1/recovery", Some(&at), None).await;
+    assert_eq!(r["wrap"], "rw1");
+    // The real rotation: B is not listed (revoked meanwhile, say) and loses
+    // its wrap; A's and the recovery wrap and vault change together.
+    let (st, body) = s
+        .call(
+            "POST",
+            "/v1/keys/rotate",
+            Some(&at),
+            Some(json!({
+                "recoveryWrap": "rw2", "keyProof": "p1", "newKeyProof": "p2", "expectedRevision": 1,
+                "envelope": "v2", "deviceWraps": [{ "deviceId": a_id, "wrap": "wa2" }]
+            })),
+        )
+        .await;
+    assert_eq!((st, body["revision"].as_i64()), (StatusCode::OK, Some(2)));
+    let (_, r) = s.call("GET", "/v1/recovery", Some(&at), None).await;
+    assert_eq!(r["wrap"], "rw2");
+    let (_, w) = s
+        .call("GET", "/v1/devices/current/wrap", Some(&at), None)
+        .await;
+    assert_eq!(w["wrap"], "wa2");
+    let (st, _) = s
+        .call("GET", "/v1/vault", Some(&tok(&b, "accessToken")), None)
+        .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "an unlisted device must enroll again"
+    );
+    let (st, _) = s
+        .call(
+            "PUT",
+            "/v1/vault",
+            Some(&at),
+            Some(json!({ "expectedRevision": 2, "envelope": "x", "keyProof": "p1" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "the old proof is retired");
+}
+
+#[tokio::test]
 async fn a_password_change_signs_out_the_other_devices() {
     let s = server("pwchange");
     s.register_verified("c@example.org", PW).await;

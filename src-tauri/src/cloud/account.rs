@@ -455,6 +455,15 @@ impl Accounts {
         Ok(())
     }
 
+    /// The account's credentials, for the end-to-end encrypted vault only
+    /// (ADR-032): they never leave Rust except inside its ciphertext.
+    pub(crate) fn credentials_for_sync(&self, id: &str) -> Result<Credentials, AccountError> {
+        if !self.lock().configs.iter().any(|c| c.id == id) {
+            return Err(AccountError::Unknown(id.into()));
+        }
+        self.credentials.load(id).map_err(AccountError::Credentials)
+    }
+
     /// The client settings every account's store is built with.
     pub fn options(&self) -> &ClientOptions {
         &self.options

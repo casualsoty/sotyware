@@ -2,9 +2,11 @@
 
 Status: design accepted 2026-11-15
 ([ADR-032](decisions.md#adr-032-sotyware-accounts-are-a-separate-service-synced-configuration-is-end-to-end-encrypted-with-a-recovery-key-and-device-keys)).
-The service (`server/`) is implemented and tested locally; what else is
-implemented is recorded in [status.md](../status/status.md) and the
-[journal](../status/journal.md). Threats: [threat-model.md](threat-model.md).
+The service (`server/`) and the desktop client (`src-tauri/src/account/`,
+Account page) are implemented and tested locally (end to end, the service in
+process, several device profiles); nothing is deployed and release builds
+have no service configured. Details in [status.md](../status/status.md) and
+the [journal](../status/journal.md). Threats: [threat-model.md](threat-model.md).
 Operating the service: [server.md](../development/server.md).
 
 **Key proof.** The service cannot check that a device holds the account
@@ -116,11 +118,20 @@ or removes storage account configurations and their OS credential store
 entries; remote objects are never touched.
 
 **Revoke a device:** `DELETE /v1/devices/{id}` ends its sessions and deletes
-its wrap. The revoking device then rotates: new AK (new `kid`), vault
-re-encrypted, wrapped to every remaining trusted device and, after the user
-enters the recovery key (or generates a new one), to the recovery key. The UI
-says plainly that the revoked device may still hold credentials it decrypted
-before and that provider keys should be rotated at the provider.
+its wrap, and the next sync removes it from the vault's trusted devices.
+The page then offers to rotate: new AK (new `kid`), the vault re-encrypted,
+the new key wrapped to the recovery key (typed, or a new one shown once)
+and sealed to every remaining trusted device, all in **one transaction**
+at the service (`POST /v1/keys/rotate`: recovery wrap, key proof, vault and
+device wraps change together or not at all; enrolled devices not listed
+must enroll again). Other devices notice the new `kid` and fetch their new
+wrap. The UI says plainly that the revoked device may still hold
+credentials it decrypted before and that provider keys should be rotated
+at the provider.
+
+**When sync runs:** after sign-in with access, set-up, unlock, approval,
+approving another device, revocation, rotation, conflict resolution, and
+"Sync now". There is no background (periodic) sync yet.
 
 **Password change / reset:** change needs the old password and revokes other
 sessions; reset (`/v1/password/reset/request` → always `202`, code by mail;

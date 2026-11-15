@@ -87,6 +87,7 @@ verified byte for byte; the object was deleted again by its version id
 | Operation journal (`operations-journal.sqlite3`: uploads with their multipart id, download temporary files, staging folders, file operations with every planned step, written before they can change anything) and the recovery view (Interrupted work in Cloud Storage: inspect at the provider, dismiss, abort an incomplete multipart upload; Unfinished large uploads per bucket); startup removes only sotyware's own recorded temporary files; the five commands `list_cloud_recovery`, `inspect_cloud_recovery`, `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`, `abort_cloud_incomplete_upload` (2026-11-15) | `src-tauri/src/journal.rs`, `SqliteJournal` in `storage.rs`, `cloud/recovery.rs`, hooks in `cloud/s3.rs`, `cloud/s3/upload.rs`, `cloud/bulk_download.rs`, `cloud/operations.rs`, `run()` in `lib.rs`; `src/CloudRecovery.svelte`, `src/cloudRecovery.ts` ([cloud-storage.md](../architecture/cloud-storage.md#operation-journal-and-recovery), [ADR-030](../architecture/decisions.md#adr-030-remote-and-local-side-effects-are-journaled-before-they-happen-and-recovery-inspects-instead-of-repeating), [validation](#storage-reliability-phase-b-2026-11-15)) |
 | Backups (ADR-031): jobs from an account's bucket (or folder) to another destination as content-addressed blobs plus one JSON manifest per run; incremental (unchanged objects not transferred, identical content stored once); quick and full verification; health never "healthy" without a passed verification; retention only after a verified, unsuspicious snapshot (mass-change check by content); restore to a folder or a bucket, never overwriting, verified by SHA-256; recovery file export; destination protection (versioning, Object Lock) read and described; the `backup-scheduler` feature; the Backups page; `scripts/recovery/sotyware-restore.py` (Python only) (2026-11-15) | `src-tauri/src/backup/`, `features/backup.rs`, `SqliteBackupStore` in `storage.rs`, `run()` in `lib.rs`; `src/Backup.svelte`, `src/backup.ts`; `scripts/recovery/` ([backup.md](../architecture/backup.md), [recovery guide](../user/recovery.md), [validation](#backups-and-disaster-recovery-2026-11-15)) |
 | Account service (ADR-032), separate crate, tested locally only, not deployed: registration with email verification codes (development outbox), Argon2id passwords, rotating opaque tokens with reuse detection, progressive lockout and rate limits, devices, enrollment by recovery key or approval with a key proof, end-to-end encrypted vault storage with optimistic concurrency, password change and reset, account deletion, audit events, online backup and checked restore, health check (2026-11-15) | `server/` ([accounts.md](../architecture/accounts.md), [server.md](../development/server.md), [validation](#account-service-2026-11-15)) |
+| Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -113,7 +114,7 @@ the backup jobs, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
 own, content search, transfer queue UI or download history, no
 sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 52 listed in
+plugins, and no custom command other than the 72 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -3760,6 +3761,35 @@ not deployed anywhere, no TLS, no real email.**
   backup restored after deleting the live database, a damaged backup
   refused; per-address rate limits). `cargo fmt --check` and `cargo clippy
   --all-targets --locked -D warnings` clean.
+
+## Accounts and encrypted sync on the desktop (2026-11-15)
+
+Production-readiness work, phase E ([journal](journal.md)):
+`src-tauri/src/account/` and the Account page (ADR-032). **WSL2 only, the
+service in process on a loopback port, device profiles with in-memory
+secret and credential stores; no deployed service, no OS credential store,
+no desktop driver, no native Windows run.**
+
+- Rust unit tests: crypto (recovery key round trip and checksum, vault
+  bound to key/account/format with tampering and downgrade refused, fresh
+  nonces, recovery wrap, sealed boxes per device and account, key proof
+  and fingerprints), vault merge (one-sided changes, stale device, conflict
+  copies, deletions never beating a change), client URL rules.
+- End-to-end tests (`account/tests.rs`, 9): configuration and credentials
+  reach a second device only through ciphertext (the service's database
+  holds neither the storage secret, the account name, the account key nor
+  the recovery key; a password alone opens nothing; a wrong recovery key
+  is refused); concurrent edits produce a conflict copy the user resolves;
+  deletions propagate; approval with matching fingerprints; revocation
+  cuts the device off, atomic key rotation moves the others to the new
+  key, the old key no longer opens the vault, the recovery key keeps
+  working, and a rotation with a new recovery key retires the old one; an
+  older vault served again is refused; after a password reset only the
+  recovery key unlocks; sign-out and account deletion keep local storage
+  accounts; without a configured service nothing is sent.
+- Server: the atomic rotation endpoint and a device re-wrap endpoint, with
+  tests (20 API tests in all).
+- Vitest: `Account.test.ts` (8).
 
 ## See also
 

@@ -32,6 +32,7 @@
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
+pub(crate) mod account;
 pub(crate) mod backup;
 pub mod cloud;
 mod features;
@@ -346,7 +347,27 @@ pub fn run() {
             backup::list_backup_snapshots,
             backup::restore_backup,
             backup::export_backup_manifest,
-            backup::check_backup_protection
+            backup::check_backup_protection,
+            account::account_status,
+            account::account_register,
+            account::account_verify,
+            account::account_sign_in,
+            account::account_sign_out,
+            account::account_set_up_sync,
+            account::account_check_recovery_key,
+            account::account_unlock,
+            account::account_request_approval,
+            account::account_approval_status,
+            account::account_enrollments,
+            account::account_answer_enrollment,
+            account::account_devices,
+            account::account_revoke_device,
+            account::account_rotate_keys,
+            account::account_sync,
+            account::account_resolve_conflict,
+            account::account_change_password,
+            account::account_reset_password,
+            account::account_delete
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -483,7 +504,7 @@ pub fn run() {
     cloud::recorder::start_from_env();
     app.manage(Arc::new(cloud::dashboard::CloudAccounts::load(
         storage::open_account_store(clone_dir(&data_dir)),
-        Arc::new(cloud::keyring::OsCredentialStore::new(namespace)),
+        Arc::new(cloud::keyring::OsCredentialStore::new(namespace.clone())),
         cloud::s3::ClientOptions::default(),
     )));
     // Favorites and recent items (ADR-026): a separate small database; an
@@ -527,6 +548,19 @@ pub fn run() {
         Arc::clone(&backups),
         Arc::clone(&app.state::<Arc<cloud::dashboard::CloudAccounts>>()),
     ));
+    // The optional sotyware account (ADR-032): no request is sent unless
+    // the user signs in, and release builds have no service configured.
+    // Same namespace as the storage credentials (a test profile's own),
+    // entries under their own prefix.
+    let secret_namespace = namespace;
+    let account_service = account::AccountService::new(
+        account::configured_server(),
+        Arc::new(cloud::keyring::OsSecretStore::new(secret_namespace)),
+        storage::open_account_state(clone_dir(&data_dir)),
+        Arc::clone(&app.state::<Arc<cloud::dashboard::CloudAccounts>>()),
+    );
+    account_service.with_backups(Arc::clone(&backups));
+    app.manage(account_service);
     app.manage(backups);
     app.manage(journal);
     // Tells the test driver which process, paths and credential namespace
@@ -542,6 +576,7 @@ pub fn run() {
             storage::PLACES_FILE_NAME,
             storage::JOURNAL_FILE_NAME,
             storage::BACKUP_FILE_NAME,
+            storage::ACCOUNT_STATE_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -851,7 +886,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -907,7 +942,27 @@ mod tests {
                 "allow-list-backup-snapshots",
                 "allow-restore-backup",
                 "allow-export-backup-manifest",
-                "allow-check-backup-protection"
+                "allow-check-backup-protection",
+                "allow-account-status",
+                "allow-account-register",
+                "allow-account-verify",
+                "allow-account-sign-in",
+                "allow-account-sign-out",
+                "allow-account-set-up-sync",
+                "allow-account-check-recovery-key",
+                "allow-account-unlock",
+                "allow-account-request-approval",
+                "allow-account-approval-status",
+                "allow-account-enrollments",
+                "allow-account-answer-enrollment",
+                "allow-account-devices",
+                "allow-account-revoke-device",
+                "allow-account-rotate-keys",
+                "allow-account-sync",
+                "allow-account-resolve-conflict",
+                "allow-account-change-password",
+                "allow-account-reset-password",
+                "allow-account-delete"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

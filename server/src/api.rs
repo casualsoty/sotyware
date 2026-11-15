@@ -167,9 +167,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/password-reset/confirm", post(reset_confirm))
         .route("/v1/recovery", get(get_recovery).put(put_recovery))
         .route("/v1/vault", get(get_vault).put(put_vault))
+        .route("/v1/keys/rotate", post(rotate_keys))
         .route("/v1/devices", get(list_devices))
         .route("/v1/devices/current/wrap", get(get_wrap).put(put_wrap))
         .route("/v1/devices/{id}", delete(revoke_device))
+        .route("/v1/devices/{id}/wrap", axum::routing::put(put_device_wrap))
         .route(
             "/v1/enrollments",
             post(request_enrollment).get(list_enrollments),
@@ -912,6 +914,85 @@ async fn put_vault(
     .await
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceWrap {
+    device_id: String,
+    wrap: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Rotate {
+    recovery_wrap: String,
+    key_proof: String,
+    new_key_proof: String,
+    expected_revision: i64,
+    envelope: String,
+    device_wraps: Vec<DeviceWrap>,
+}
+
+/// Replaces the account key in one transaction: the recovery wrap, the key
+/// proof, the vault (re-encrypted) and the wraps of the listed enrolled
+/// devices change together or not at all, so no crash can leave them under
+/// different keys. Enrolled devices not listed lose their wrap (they must
+/// enroll again).
+async fn rotate_keys(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Rotate>,
+) -> ApiResult<Response> {
+    check_blob("recovery wrap", &body.recovery_wrap, 4096)?;
+    check_blob("key proof", &body.new_key_proof, 256)?;
+    check_blob("vault", &body.envelope, crate::MAX_VAULT)?;
+    if body.device_wraps.len() > 1000
+        || body
+            .device_wraps
+            .iter()
+            .any(|d| d.wrap.is_empty() || d.wrap.len() > 4096)
+    {
+        return Err(ApiError::bad("invalid device wraps"));
+    }
+    authed(&state, &headers, move |c, now, who| {
+        if who.device.state != "enrolled" {
+            return Err(ApiError::forbidden("not-enrolled", "this device has no key"));
+        }
+        check_proof(&who.account, &body.key_proof)?;
+        let tx = c.unchecked_transaction()?;
+        let devices = db::devices(&tx, &who.account.id)?;
+        for d in &body.device_wraps {
+            if !devices.iter().any(|x| x.id == d.device_id && x.state == "enrolled") {
+                return Err(ApiError::bad("a listed device is not an enrolled device of this account"));
+            }
+        }
+        if let Err(current) = db::put_vault(
+            &tx,
+            &who.account.id,
+            body.expected_revision,
+            &body.envelope,
+            &who.device.id,
+            now,
+        )? {
+            return Ok((
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "conflict", "message": "another device changed the vault; merge and try again", "revision": current })),
+            )
+                .into_response());
+        }
+        db::set_recovery(&tx, &who.account.id, &body.recovery_wrap, &digest(&body.new_key_proof))?;
+        for d in devices.iter().filter(|d| d.state == "enrolled") {
+            match body.device_wraps.iter().find(|w| w.device_id == d.id) {
+                Some(w) => db::set_device(&tx, &d.id, "enrolled", Some(&w.wrap))?,
+                None => db::set_device(&tx, &d.id, "pending", None)?,
+            }
+        }
+        tx.commit()?;
+        db::audit(c, now, Some(&who.account.id), Some(&who.device.id), "keys-rotated");
+        Ok(Json(json!({ "revision": body.expected_revision + 1 })).into_response())
+    })
+    .await
+}
+
 // ---------------------------------------------------------------- devices
 
 async fn list_devices(
@@ -935,6 +1016,33 @@ async fn list_devices(
             })
             .collect();
         Ok(Json(json!({ "devices": list })))
+    })
+    .await
+}
+
+/// Stores a re-wrapped account key for another enrolled device after a key
+/// rotation (the proof is the new key's).
+async fn put_device_wrap(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<WrapPut>,
+) -> ApiResult<StatusCode> {
+    check_blob("device wrap", &body.wrap, 4096)?;
+    authed(&state, &headers, move |c, now, who| {
+        check_proof(&who.account, &body.key_proof)?;
+        let d = db::device(c, &id)?
+            .filter(|d| d.account_id == who.account.id && d.state == "enrolled")
+            .ok_or_else(|| ApiError::not_found("no-device", "no such enrolled device"))?;
+        db::set_device(c, &d.id, "enrolled", Some(&body.wrap))?;
+        db::audit(
+            c,
+            now,
+            Some(&who.account.id),
+            Some(&d.id),
+            "device-rewrapped",
+        );
+        Ok(StatusCode::NO_CONTENT)
     })
     .await
 }

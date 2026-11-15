@@ -787,6 +787,63 @@ impl CloudAccounts {
         }
     }
 
+    /// Every account with its credentials (`None` when this computer has
+    /// none stored), for the encrypted vault (ADR-032). Rust only.
+    pub(crate) fn export_for_sync(
+        &self,
+    ) -> Result<Vec<(AccountConfig, Option<Credentials>)>, CommandError> {
+        let accounts = self.accounts()?;
+        let mut out = Vec::new();
+        for config in accounts.list() {
+            let creds = match accounts.credentials_for_sync(&config.id) {
+                Ok(c) => Some(c),
+                Err(AccountError::Credentials(CredentialError::NotFound { .. })) => None,
+                Err(e) => return Err(e.into()),
+            };
+            out.push((config, creds));
+        }
+        Ok(out)
+    }
+
+    /// Adds or updates an account from the vault, keeping its id: the
+    /// credentials first (a new account is added with them; an existing
+    /// one gets them only if they differ), then the configuration.
+    pub(crate) fn import_synced(
+        &self,
+        config: AccountConfig,
+        credentials: Option<&Credentials>,
+    ) -> Result<(), CommandError> {
+        let accounts = self.accounts()?;
+        let id = config.id.clone();
+        match accounts.list().into_iter().find(|c| c.id == id) {
+            None => {
+                let Some(creds) = credentials else {
+                    return Err(CommandError::new(
+                        ErrorKind::CredentialsMissing,
+                        "the synced account has no key",
+                    ));
+                };
+                accounts.add(config, creds)?;
+            }
+            Some(current) => {
+                if let Some(creds) = credentials {
+                    let same = accounts.credentials_for_sync(&id).is_ok_and(|c| {
+                        c.access_key_id == creds.access_key_id
+                            && c.secret_access_key.expose() == creds.secret_access_key.expose()
+                    });
+                    if !same {
+                        accounts.set_credentials(&id, creds)?;
+                    }
+                }
+                if current != config {
+                    accounts.update(config)?;
+                }
+            }
+        }
+        self.changed(&id);
+        Ok(())
+    }
+
     /// An account's provider id and endpoint (for a backup manifest).
     /// Does not touch the credential store.
     pub(crate) fn provider_and_endpoint(&self, id: &str) -> Result<(String, String), CommandError> {

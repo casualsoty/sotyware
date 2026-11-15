@@ -183,6 +183,18 @@ backups or other product features exist**. Desktop tests run only a
   ([user guide](user/recovery.md)); scheduler feature `backup-scheduler`;
   Backups page. Disaster scenarios tested against two in-process servers
   only; never at a real provider.
+- **sotyware accounts and encrypted sync** (2026-11-15, ADR-032,
+  [accounts.md](architecture/accounts.md)): service in `server/` (not
+  deployed; [server.md](development/server.md)); desktop client
+  `src-tauri/src/account/` and Account page. Storage accounts (with keys)
+  and backup jobs sync inside a vault encrypted with XChaCha20-Poly1305
+  under a random account key, wrapped by a recovery key (shown once,
+  retyped to confirm) and sealed to each enrolled device's X25519 key; a
+  password never unlocks it; new computers unlock with the recovery key
+  or an approval with matching fingerprints; three-way merge with
+  conflict copies; rollback refused; revoke + atomic key rotation. Release
+  builds have no service configured (`PRODUCTION_SERVER = None`). Tested
+  end to end with the service in process and several device profiles.
 
 ## Repository at a glance
 
@@ -217,8 +229,9 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
-  commands of ADR-026, the five recovery commands of ADR-030 and the nine
-  backup commands of ADR-031 (52 in all; listed in
+  commands of ADR-026, the five recovery commands of ADR-030, the nine
+  backup commands of ADR-031 and the 20 account commands of ADR-032 (72 in
+  all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at

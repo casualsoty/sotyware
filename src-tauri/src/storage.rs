@@ -585,6 +585,73 @@ impl BackupStore for SqliteBackupStore {
     }
 }
 
+/// The sotyware account's local state (ADR-032): which account and device
+/// this is, the highest vault revision seen, the last synced vault
+/// (ciphertext) and sync times. No secret: tokens and keys are in the OS
+/// credential store.
+pub const ACCOUNT_STATE_FILE_NAME: &str = "account.sqlite3";
+
+/// Schema of [`ACCOUNT_STATE_FILE_NAME`]; append only.
+pub const ACCOUNT_STATE_MIGRATIONS: &[&str] = &[
+    // 1: one row holding the state as JSON.
+    "CREATE TABLE account_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL
+    ) STRICT;",
+];
+
+pub struct SqliteAccountState {
+    conn: Connection,
+}
+
+impl SqliteAccountState {
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, ACCOUNT_STATE_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+/// The account state store `run()` uses: [`ACCOUNT_STATE_FILE_NAME`] in `dir`.
+pub fn open_account_state(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::account::StateStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteAccountState::open(
+        &dir.join(ACCOUNT_STATE_FILE_NAME),
+    )?))
+}
+
+impl crate::account::StateStore for SqliteAccountState {
+    fn load(&mut self) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT state FROM account_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(sql_error("cannot read the account state"))
+    }
+
+    fn save(&mut self, state: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO account_state (id, state) VALUES (1, ?1)
+                 ON CONFLICT (id) DO UPDATE SET state = excluded.state",
+                [state],
+            )
+            .map(drop)
+            .map_err(sql_error("cannot save the account state"))
+    }
+
+    fn clear(&mut self) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM account_state", [])
+            .map(drop)
+            .map_err(sql_error("cannot clear the account state"))
+    }
+}
+
 /// The operation journal (ADR-030), separate from the other databases so
 /// its schema evolves on its own. Local paths are stored here and nowhere
 /// else; the file never leaves the device.

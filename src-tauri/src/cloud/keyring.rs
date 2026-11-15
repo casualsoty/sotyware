@@ -193,6 +193,128 @@ impl CredentialStore for OsCredentialStore {
     }
 }
 
+/// Named secrets of the sotyware account (ADR-032): the refresh token, the
+/// device's private key and the account key. Kept in the same OS
+/// credential store and namespace as the storage credentials, but under
+/// their own entry prefix (`sotyware-account/<name>`), so no storage
+/// account id can ever name one of them.
+pub trait SecretStore: Send + Sync {
+    fn get(&self, name: &str) -> Result<Option<zeroize::Zeroizing<String>>, CredentialError>;
+    fn set(&self, name: &str, value: &str) -> Result<(), CredentialError>;
+    /// Deleting a missing secret is not an error.
+    fn delete(&self, name: &str) -> Result<(), CredentialError>;
+}
+
+/// The OS credential store, for [`SecretStore`] entries.
+pub struct OsSecretStore {
+    namespace: CredentialNamespace,
+    platform: Mutex<Option<Arc<KeyringStore>>>,
+}
+
+impl OsSecretStore {
+    pub fn new(namespace: CredentialNamespace) -> Self {
+        Self {
+            namespace,
+            platform: Mutex::new(None),
+        }
+    }
+
+    fn with_entry<T>(
+        &self,
+        name: &str,
+        op: impl FnOnce(&Entry) -> Result<T, KeyringError>,
+    ) -> Result<T, CredentialError> {
+        if !is_kebab_case(name) {
+            return Err(CredentialError::Invalid {
+                account_id: name.to_owned(),
+                reason: "a secret name must be lowercase kebab-case".into(),
+            });
+        }
+        let mut platform = self.platform.lock().unwrap_or_else(|e| e.into_inner());
+        let store = match platform.as_ref() {
+            Some(store) => Arc::clone(store),
+            None => {
+                let store = open_platform_store().map_err(|e| classify(e, name))?;
+                *platform = Some(Arc::clone(&store));
+                store
+            }
+        };
+        let user = format!("{}sotyware-account/{name}", self.namespace.user_prefix);
+        #[cfg(windows)]
+        let entry = {
+            let target = format!("{}/{user}", self.namespace.service());
+            let modifiers = HashMap::from([("target", target.as_str()), ("persistence", "Local")]);
+            store.build(self.namespace.service(), &user, Some(&modifiers))
+        };
+        #[cfg(target_os = "linux")]
+        let entry = {
+            let label = format!("sotyware account {name}");
+            let modifiers = HashMap::from([("label", label.as_str())]);
+            store.build(self.namespace.service(), &user, Some(&modifiers))
+        };
+        #[cfg(not(any(windows, target_os = "linux")))]
+        let entry = store.build(
+            self.namespace.service(),
+            &user,
+            None::<&HashMap<&str, &str>>,
+        );
+        let entry = entry.map_err(|e| classify(e, name))?;
+        op(&entry).map_err(|e| classify(e, name))
+    }
+}
+
+impl SecretStore for OsSecretStore {
+    fn get(&self, name: &str) -> Result<Option<zeroize::Zeroizing<String>>, CredentialError> {
+        match self.with_entry(name, Entry::get_password) {
+            Ok(v) => Ok(Some(zeroize::Zeroizing::new(v))),
+            Err(CredentialError::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn set(&self, name: &str, value: &str) -> Result<(), CredentialError> {
+        self.with_entry(name, |e| e.set_password(value))
+    }
+
+    fn delete(&self, name: &str) -> Result<(), CredentialError> {
+        match self.with_entry(name, Entry::delete_credential) {
+            Err(CredentialError::NotFound { .. }) => Ok(()),
+            other => other,
+        }
+    }
+}
+
+/// A [`SecretStore`] in memory (tests).
+#[cfg(test)]
+#[derive(Default)]
+pub struct MemorySecretStore {
+    pub entries: Mutex<HashMap<String, String>>,
+}
+
+#[cfg(test)]
+impl SecretStore for MemorySecretStore {
+    fn get(&self, name: &str) -> Result<Option<zeroize::Zeroizing<String>>, CredentialError> {
+        Ok(self
+            .entries
+            .lock()
+            .unwrap()
+            .get(name)
+            .cloned()
+            .map(zeroize::Zeroizing::new))
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), CredentialError> {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(name.into(), value.into());
+        Ok(())
+    }
+    fn delete(&self, name: &str) -> Result<(), CredentialError> {
+        self.entries.lock().unwrap().remove(name);
+        Ok(())
+    }
+}
+
 #[cfg(windows)]
 fn open_platform_store() -> Result<Arc<KeyringStore>, KeyringError> {
     Ok(windows_native_keyring_store::Store::new()?)

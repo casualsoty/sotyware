@@ -1875,6 +1875,14 @@ Status: Accepted (2026-11-15). Code: `server/` (account service),
     than the newest revision they have seen. Local paths, temporary state,
     SQLite internals and running operations are never synced.
   - **Optional:** without an account nothing changes for local-only users.
+  - **Implementation (2026-11-15):** a key proof (one-way HKDF of the
+    account key, stored hashed) gates every vault write, device wrap,
+    approval and recovery-wrap change; key rotation is one atomic
+    service operation (`/v1/keys/rotate`); the client uses `reqwest` with
+    rustls on ring and the OS roots, no redirects, HTTPS only (loopback
+    HTTP for development); account secrets live in the OS credential
+    store under their own entry prefix; no production service is
+    configured (`PRODUCTION_SERVER = None`). 20 commands (72 in all).
 - **Rejected:** password-derived vault keys (a weak or reused password would
   expose every credential to whoever obtains the server data); server-side
   key escrow (a backdoor); a third-party identity provider (adds an external

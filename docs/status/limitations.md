@@ -791,6 +791,26 @@ server only; no real provider was asked.
 - **Metadata is visible to the operator:** email, device names and
   platforms, sync times and vault size.
 
+## Accounts on the desktop (ADR-032)
+
+- **Not usable in release builds yet:** no production service exists, so
+  `PRODUCTION_SERVER` is `None` and the Account page says accounts are not
+  available. Development and test-profile builds can point
+  `SOTYWARE_ACCOUNT_SERVER` at a service.
+- **No background sync:** changes reach another computer when it syncs
+  (sign-in, unlock, approval, key operations, "Sync now").
+- **A fresh device cannot detect a rolled-back vault** (it has never seen a
+  newer revision); existing devices refuse one.
+- **Revoked devices keep what they decrypted;** rotate the keys and the
+  storage keys at the providers after losing a computer.
+- **Only storage accounts and backup jobs sync;** favorites, recent items
+  and feature switches stay per device.
+- **Tested with in-memory secret stores only;** the OS credential store
+  path (`OsSecretStore`) shares the code of the storage credentials but
+  was not run with account secrets on Windows or Linux.
+- **Losing the recovery key and every enrolled device** makes the vault
+  unrecoverable by design; storage data is unaffected.
+
 ## General
 
 - **No autostart** on login.
