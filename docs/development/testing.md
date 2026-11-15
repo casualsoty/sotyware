@@ -120,12 +120,16 @@ is a test-profile build too. Neither can be packaged
 ## Headless tests
 
 ```bash
-npm run test:headless        # = check:rfd-patch && check:release-binary && check:desktop-isolation && check:icons && test:frontend && test:rust
+npm run test:headless        # = check:rfd-patch && check:release-binary && check:desktop-isolation && check:icons && check:update-key && test:frontend && test:rust
 ```
 
 `check:rfd-patch` is not a test but a guard: it fails if Cargo no longer
 builds rfd from the local patch
 ([patches/README.md](../../src-tauri/patches/README.md), ADR-023).
+`check:update-key` is one too: `src-tauri/update-key.pub` may be empty
+(updates off) but must never hold a private key, more than one key line or
+the throwaway key of a signing fixture (`scripts/fixtures/**/test-key.pub`,
+ADR-038).
 `check:release-binary` is another: it fails if a default (or any other
 feature) turns on the request recorder (ADR-024,
 [below](#request-recorder-tests)).
@@ -2388,9 +2392,14 @@ GitHub Actions, in `.github/workflows/`. The repository is **private on GitHub
 Free**, so hosted-runner time comes out of a small monthly allowance (see
 [GitHub Free budget](#github-free-budget)). Only the headless workflow runs
 automatically; the desktop tests and the release build run only when started
-by hand. Only `release.yml` (on a tag) uses secrets, uploads artifacts and
-publishes a release; `macos.yml` uses the Apple secrets when they exist and
-runs on `macos-15` and `macos-15-intel`. Nothing runs on a schedule.
+by hand, except `macos.yml`, which also runs on a pull request labelled
+`macos`. Only `release.yml` (on a tag) uses the update key and the release
+token, and publishes a release, to the public release repository
+`casualsoty/sotyware-releases` (ADR-038); `macos.yml` uses the Apple
+secrets when they exist (never on a pull request) and runs on `macos-15`
+and `macos-15-intel`. Nothing runs on a schedule. A workflow can be started
+by hand only once its file is on the default branch (`macos.yml` and
+`release.yml` are not on `main` yet).
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
@@ -2399,9 +2408,9 @@ runs on `macos-15` and `macos-15-intel`. Nothing runs on a schedule.
 | `isolation-guard.yml` | **automatic**, only for changes to `tests/desktop/**`, the guard or the desktop workflows (which `ci.yml` skips) | `ubuntu-latest` + `windows-latest` | Linux: `node scripts/check-desktop-isolation.mjs`, its self-test, the Python test-profile helpers' tests, and a check that every desktop workflow running a driver runs `check:desktop-isolation` and `build:test-profile` and no plain `tauri build`/`build:release`; Windows: `test-profile-selftest.ps1` (no Rust, no npm install, a few minutes) | A. headless |
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
-| `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Only with the secret `TAURI_SIGNING_PRIVATE_KEY` (+ password), the variable `SOTYWARE_UPDATE_PUBKEY` and the input `update_base_url`: both installers and an update manifest signed with `tauri signer sign --app-version` and verified by `scripts/update-manifest.mjs` (ADR-033; never run: no key exists). Nothing uploaded or published | release artifacts (no install) |
-| `macos.yml` | **manual**, or called by `release.yml` with `package: true` (ADR-037; never run yet) | `macos-15` (Apple Silicon) + `macos-15-intel` | per architecture: `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; with `package`: `npm run build:release`, binary and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
-| `release.yml` | **tag `vX.Y.Z`**, or manual on a tag (dry run by default; ADR-036; never run yet: no key, private repository) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | version/tag check, signing secret against `update-key.pub`, public repository check; `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then sign, write and verify `latest.json`, draft → pre-release → public download verified → latest ([release.md](release.md#publishing-a-release)) | release |
+| `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Signs nothing; called by `release.yml` with `upload: true` it uploads the two checked installers as the `windows-installers` artifact, which `release.yml`'s publish job signs (ADR-036). Nothing published | release artifacts (no install) |
+| `macos.yml` | **pull request to `main` labelled `macos`**, **manual**, or called by `release.yml` with `package: true` (ADR-037; never run yet) | `macos-15` (Apple Silicon) + `macos-15-intel` | per architecture: `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; with `package`: `npm run build:release`, binary and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
+| `release.yml` | **tag `vX.Y.Z`**, or manual on a tag (dry run by default; ADR-036, ADR-038; never run yet: no key, no release repository) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | version/tag check; the release repository (read from `updates.rs`) separate, public and free of source; outside a dry run the commit on `main`, the release token, no existing release, unsigned Windows installers allowed; `update-key.pub` a real key (not a fixture's) matching the signing secret; `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then sign, write and verify `latest.json`, draft in `casualsoty/sotyware-releases` → pre-release → anonymous download verified → latest ([release.md](release.md#publishing-a-release)) | release |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2422,6 +2431,10 @@ gh workflow run release-build.yml --ref main
 ```bash
 gh workflow run macos.yml --ref main -f package=false
 ```
+
+Before `macos.yml` is on `main`, open a pull request and add the label
+`macos` to it instead (`gh pr edit <number> --add-label macos`; create the
+label once with `gh label create macos`).
 
 ### Automatic headless workflow (`ci.yml`)
 

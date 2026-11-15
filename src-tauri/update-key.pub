@@ -8,3 +8,7 @@
 # up. The private key and its password never enter this repository: they
 # live in the GitHub secrets TAURI_SIGNING_PRIVATE_KEY and
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD (docs/development/release.md).
+#
+# `npm run check:update-key` (part of test:headless) and release.yml refuse
+# a private key, more than one key line, and the throwaway keys of the test
+# fixtures (scripts/fixtures/**/test-key.pub), which are for tests only.

@@ -119,10 +119,16 @@ and the [journal](../status/journal.md), not here.
   signature must name the same version; checks the package's SHA-256
   against the signed manifest; HTTPS only, and at most five redirects,
   each to HTTPS (GitHub's `releases/latest/download/` redirects twice). The
-  signing key is used in one job of `release.yml` (bound to the protected
+  signing key is used in one job of `release.yml` (bound to the
   `release` environment), never in a build job whose dependencies' build
   scripts could read it; the job checks the secret against the committed
-  public key first.
+  public key first, and the committed key can never be a signing fixture's
+  throwaway key or a private key (`check-key`, ADR-038). Releases live in a
+  separate public repository holding only distribution files
+  (`casualsoty/sotyware-releases`, ADR-038); the token that writes there
+  (`SOTYWARE_RELEASES_TOKEN`, fine-grained, Contents on that repository
+  only) is given only to the steps that run `gh release` and cannot sign,
+  so a leaked token can publish files installations refuse, not updates.
   The plugin's own commands are unreachable from the page (no `updater:`
   permission). Nothing installs without the user's click, and not while a
   transfer, file operation or backup runs. Tested with test keys and a
@@ -135,7 +141,13 @@ and the [journal](../status/journal.md), not here.
   no version floor yet, so the first manifest it sees can be any validly
   signed one, newer than the installed version. A withheld update (the
   server answering an old manifest, or nothing) is not detected beyond the
-  floor: there is no expiry on manifests.
+  floor: there is no expiry on manifests. Whoever controls the release
+  repository (the account, or the release token) can delete releases or
+  mark an older one latest, which installations see as "up to date" (the
+  floor refuses anything lower than what they were offered). On GitHub
+  Free a private repository has no environments, so the update key and
+  release token are repository secrets readable by any workflow run of the
+  source repository ([release.md](../development/release.md#secrets)).
 
 ### Malicious local process (same user)
 

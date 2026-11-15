@@ -1,7 +1,17 @@
-# Publishes a sotyware release on GitHub Releases, the source of updates
-# (ADR-036, docs/development/release.md#publishing-a-release).
+# Publishes a sotyware release (ADR-036, ADR-038,
+# docs/development/release.md#publishing-a-release).
 #
-#   git tag -s v0.2.0 -m "sotyware 0.2.0" && git push origin v0.2.0
+# Two repositories. This one, the source repository, stays private: it
+# builds, tests and signs. The public release repository named in
+# src-tauri/src/updates.rs (`release_repository!`, today
+# casualsoty/sotyware-releases) receives only distribution files: the
+# installers, their minisign signatures, latest.json, latest.json.sig and
+# SHA256SUMS. Installations fetch
+#   https://github.com/<release repository>/releases/latest/download/latest.json
+# anonymously; GitHub would serve a private repository's assets only to
+# signed-in clients. Nothing here pushes code to the release repository.
+#
+#   git tag -s v0.2.0 -m "sotyware 0.2.0" -m "<release notes>" && git push origin v0.2.0
 #
 # or, for a tag that exists, `gh workflow run release.yml --ref v0.2.0`
 # (run on the tag itself: every job builds the commit the workflow runs
@@ -11,31 +21,43 @@
 # Order, and what stops it:
 #  1. prepare  - the tag is vX.Y.Z and equals the version in package.json,
 #                package-lock.json, Cargo.toml, Cargo.lock and
-#                tauri.conf.json; the committed public key
-#                (src-tauri/update-key.pub) exists and matches the signing
-#                secret; the releases can be downloaded by installations
-#                (the repository is public).
+#                tauri.conf.json; the release repository is not this one,
+#                is public and holds no source code; the committed public
+#                key (src-tauri/update-key.pub) is a real key, not a test
+#                fixture's, and matches the signing secret. Outside a dry
+#                run also: the tagged commit is on main, the release token
+#                exists, the release does not exist yet, and unsigned
+#                Windows installers were explicitly allowed.
 #  2. ci       - ci.yml on the tagged commit (Linux and Windows).
 #  3. builds   - Windows installers (release-build.yml: MSI + NSIS, checked
 #                and unpacked), Linux (AppImage, deb, rpm on Ubuntu 22.04),
 #                macOS aarch64 and x86_64 (macos.yml: .app, .dmg, signed
 #                and notarized when the Apple secrets exist).
-#  4. publish  - the only job with the update signing key: signs every
-#                updater artifact with `tauri signer sign --app-version`,
-#                writes latest.json for exactly the platforms that were
-#                built (macOS only when signed and notarized) and signs it,
-#                verifies all of it with the committed public key, uploads
-#                it to a DRAFT release, checks the uploaded asset list,
+#  4. publish  - the only job with the update signing key and the release
+#                token, each given only to the steps that need it: signs
+#                every updater artifact with `tauri signer sign
+#                --app-version`, writes latest.json for exactly the
+#                platforms that were built (macOS only when signed and
+#                notarized) and signs it, verifies all of it with the
+#                committed public key, uploads it to a DRAFT release in the
+#                release repository, checks the uploaded asset list,
 #                publishes it as a PRE-RELEASE, downloads every file through
-#                its public URL and verifies it again, and only then marks it
-#                the latest release, which is what
+#                its public URL without a token and verifies it again, and
+#                only then marks it the latest release, which is what
 #                releases/latest/download/latest.json follows. A failure at
 #                any point leaves the previous release as the latest.
 #
-# Secrets (environment `release`, docs/development/release.md#secrets):
-#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updates),
-#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-#   APPLE_API_ISSUER, APPLE_API_KEY_ID, APPLE_API_KEY (macOS, optional).
+# Secrets and variables (docs/development/release.md#secrets):
+#   environment `release`: TAURI_SIGNING_PRIVATE_KEY,
+#     TAURI_SIGNING_PRIVATE_KEY_PASSWORD (updates), SOTYWARE_RELEASES_TOKEN
+#     (fine-grained token: Contents read and write on the release
+#     repository only);
+#   repository: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+#     APPLE_SIGNING_IDENTITY, APPLE_API_ISSUER, APPLE_API_KEY_ID,
+#     APPLE_API_KEY (macOS, optional; repository secrets because a job that
+#     calls a reusable workflow cannot name an environment);
+#   repository variable SOTYWARE_ALLOW_UNSIGNED_WINDOWS=true while no
+#     Authenticode certificate exists.
 name: release
 
 on:
@@ -51,8 +73,10 @@ on:
 permissions:
   contents: read
 
+# One release at a time, whatever the tag: two runs racing would decide
+# which one ends up "latest" by timing.
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 env:
@@ -67,6 +91,7 @@ jobs:
     environment: release
     outputs:
       version: ${{ steps.version.outputs.version }}
+      repository: ${{ steps.repository.outputs.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,20 +122,80 @@ jobs:
           done
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      - name: Installations can download the release (public repository)
+      - run: npm ci
+
+      # The repository the installed app fetches from is the one compiled
+      # in (src-tauri/src/updates.rs); this workflow never names another.
+      # GITHUB_TOKEN can read another repository only if it is public, which
+      # is what installations need: anonymous access.
+      - name: The release repository is separate, public and holds no source code
+        id: repository
         env:
-          PRIVATE: ${{ github.event.repository.private }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$PRIVATE" = "true" ] && [ "$DRY_RUN" != "true" ]; then
-            echo "::error::$GITHUB_REPOSITORY is private: GitHub serves release assets of a private repository only to signed-in clients, so no installation could download latest.json. Make the repository public or publish releases elsewhere (docs/development/release.md#github-releases), or run with dry_run."
+          set -eu
+          # Always fatal: the compiled-in source must not be this repository.
+          repo=$(node scripts/update-manifest.mjs release-repository --not "$GITHUB_REPOSITORY")
+          echo "repository=$repo" >> "$GITHUB_OUTPUT"
+          echo "release repository: $repo"
+          # Fatal outside a dry run; a dry run can rehearse the builds before
+          # the release repository is set up.
+          refuse() {
+            if [ "$DRY_RUN" = "true" ]; then echo "::warning::$1 (dry run: continuing)"; else echo "::error::$1"; exit 1; fi
+          }
+          if ! private=$(gh api "repos/$repo" --jq .private 2>/dev/null); then
+            refuse "$repo cannot be read without signing in: create it as a PUBLIC repository (docs/development/release.md#the-public-release-repository)"
+            exit 0
+          fi
+          [ "$private" = "false" ] || refuse "$repo is private: installations could not download its releases"
+          # A release also carries GitHub's "Source code" archives of the
+          # release repository's own files: only a README, a licence and
+          # similar notes may be there, never sotyware's source.
+          if ! entries=$(gh api "repos/$repo/contents" --jq '.[].name' 2>/dev/null); then
+            refuse "$repo has no commit yet: add a README.md (docs/development/release.md#the-public-release-repository)"
+            exit 0
+          fi
+          for e in $entries; do
+            case "$e" in
+              README.md|README|LICENSE|LICENSE.md|LICENSE.txt|SECURITY.md|.gitattributes|.gitignore|.github) ;;
+              *) refuse "$repo holds '$e'; the release repository may hold only README, LICENSE, SECURITY.md and .github, never source code" ;;
+            esac
+          done
+
+      - name: Outside a dry run, the release may be published
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ steps.repository.outputs.repository }}
+          RELEASES_TOKEN: ${{ secrets.SOTYWARE_RELEASES_TOKEN }}
+          ALLOW_UNSIGNED_WINDOWS: ${{ vars.SOTYWARE_ALLOW_UNSIGNED_WINDOWS }}
+        run: |
+          set -eu
+          # Only commits that reached main are released.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          case "$status" in
+            identical|behind) ;;
+            *) echo "::error::$TAG ($GITHUB_SHA) is not on main (compare: $status)"; exit 1 ;;
+          esac
+          # No Authenticode certificate exists (release.md#signing-not-set-up):
+          # publishing unsigned Windows installers must be a decision, not a
+          # missing secret going unnoticed.
+          [ "${ALLOW_UNSIGNED_WINDOWS:-}" = "true" ] || { echo "::error::the Windows installers are not Authenticode-signed (no certificate is configured). Set the repository variable SOTYWARE_ALLOW_UNSIGNED_WINDOWS to true to publish them unsigned on purpose (docs/development/release.md#secrets)"; exit 1; }
+          [ -n "${RELEASES_TOKEN:-}" ] || { echo "::error::the SOTYWARE_RELEASES_TOKEN secret is missing (docs/development/release.md#secrets)"; exit 1; }
+          export GH_TOKEN="$RELEASES_TOKEN"
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::error::$REPO already has a release $TAG (perhaps a draft); refusing to change it"
+            exit 1
+          fi
+          if gh api "repos/$REPO/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "::error::$REPO already has a tag $TAG; refusing to release over it"
             exit 1
           fi
 
-      - run: npm ci
-
-      # A probe signed with the secret must verify with the committed public
-      # key: a release must never ship a build that cannot verify its own
-      # updates.
+      # The committed key must be a real public key (not a test fixture's,
+      # not a private key) and a probe signed with the secret must verify
+      # with it: a release must never ship a build that cannot verify its
+      # own updates.
       - name: The signing secret matches src-tauri/update-key.pub
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -118,13 +203,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -eu
-          key=$(grep -v '^#' src-tauri/update-key.pub | grep -v '^[[:space:]]*$' | head -1 || true)
-          [ -n "$key" ] || { echo "::error::src-tauri/update-key.pub holds no public key (docs/development/release.md#update-signing-key)"; exit 1; }
-          [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || { echo "::error::the TAURI_SIGNING_PRIVATE_KEY secret is missing"; exit 1; }
+          node scripts/update-manifest.mjs check-key > /dev/null
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] || { echo "::error::the TAURI_SIGNING_PRIVATE_KEY secret is missing (docs/development/release.md#update-signing-key)"; exit 1; }
           probe="$RUNNER_TEMP/probe.txt"
           echo "sotyware release key probe $GITHUB_RUN_ID" > "$probe"
           npx tauri signer sign --app-version "$VERSION" "$probe" > /dev/null
-          node scripts/update-manifest.mjs check-signature --pubkey "$key" --file "$probe" --version "$VERSION"
+          node scripts/update-manifest.mjs check-signature --pubkey src-tauri/update-key.pub --file "$probe" --version "$VERSION"
 
   ci:
     needs: prepare
@@ -141,7 +225,14 @@ jobs:
     uses: ./.github/workflows/macos.yml
     with:
       package: true
-    secrets: inherit
+    # Only the Apple secrets, never the update key or the release token.
+    secrets:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
 
   linux:
     needs: prepare
@@ -176,9 +267,11 @@ jobs:
       - name: Build the AppImage, deb and rpm
         run: npm run build:release
       - name: Collect and check the packages
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -eu
-          v="${{ needs.prepare.outputs.version }}"
+          v="$VERSION"
           out="$RUNNER_TEMP/linux-packages"
           mkdir -p "$out"
           b=src-tauri/target/release/bundle
@@ -199,11 +292,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: release
+    # GITHUB_TOKEN only reads this repository (the tag's message); the
+    # release repository is written with SOTYWARE_RELEASES_TOKEN.
     permissions:
-      contents: write
+      contents: read
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
-      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ needs.prepare.outputs.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -222,6 +317,7 @@ jobs:
         id: files
         run: |
           set -eu
+          [ -n "$REPO" ] || { echo "::error::no release repository from prepare"; exit 1; }
           in="$RUNNER_TEMP/built"
           out="$RUNNER_TEMP/release"
           mkdir -p "$out"
@@ -239,7 +335,27 @@ jobs:
           echo "kinds=$kinds" >> "$GITHUB_OUTPUT"
           echo "macOS: $macos"
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
+          echo "base=https://github.com/${REPO}/releases/download/${TAG}/" >> "$GITHUB_OUTPUT"
           ls -l "$out"
+
+      # actions/checkout turns an annotated tag into a lightweight one, so
+      # its message is read through the API (this repository, read-only).
+      # The message is published: it becomes the release notes in the
+      # release repository and in the app.
+      - name: Release notes from the tag's message
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          notes="$RUNNER_TEMP/notes.md"
+          : > "$notes"
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')
+          if [ "${ref%% *}" = "tag" ]; then
+            # Without a PGP or SSH signature block.
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/${ref#* }" --jq .message | sed -e '/^-----BEGIN/,$d' > "$notes"
+          fi
+          [ -n "$(tr -d '[:space:]' < "$notes")" ] || git log -1 --format=%B > "$notes"
+          cat "$notes"
 
       # The only step that sees the update signing key. The Tauri CLI reads
       # it from the environment and never prints it.
@@ -248,11 +364,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           KINDS: ${{ steps.files.outputs.kinds }}
+          BASE: ${{ steps.files.outputs.base }}
         run: |
           set -eu
           r="$RUNNER_TEMP/release"
           v="$VERSION"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
+          node scripts/update-manifest.mjs check-key > /dev/null
           args=""
           for kind in $(echo "$KINDS" | tr ',' ' '); do
             case "$kind" in
@@ -263,27 +380,22 @@ jobs:
               rpm) f="sotyware-${v}-1.x86_64.rpm" ;;
               app-aarch64) f="sotyware_${v}_aarch64.app.tar.gz" ;;
               app-x64) f="sotyware_${v}_x64.app.tar.gz" ;;
+              *) echo "::error::unknown kind $kind"; exit 1 ;;
             esac
             npx tauri signer sign --app-version "$v" "$r/$f" > /dev/null
             args="$args --$kind $r/$f"
           done
-          notes="$RUNNER_TEMP/notes.md"
-          # The annotated tag's message, without a signature; else the commit's.
-          git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$TAG" | sed -e '/^-----BEGIN/,$d' > "$notes"
-          [ -n "$(tr -d '[:space:]' < "$notes")" ] || git log -1 --format=%B > "$notes"
-          key=$(grep -v '^#' src-tauri/update-key.pub | grep -v '^[[:space:]]*$' | head -1)
-          node scripts/update-manifest.mjs create --version "$v" --base-url "$base" --pubkey "$key" --notes-file "$notes" --out "$r/latest.json" $args
+          node scripts/update-manifest.mjs create --version "$v" --base-url "$BASE" --pubkey src-tauri/update-key.pub --notes-file "$RUNNER_TEMP/notes.md" --out "$r/latest.json" $args
           npx tauri signer sign --app-version "$v" "$r/latest.json" > /dev/null
 
       - name: Verify every file with the committed public key alone
         env:
           KINDS: ${{ steps.files.outputs.kinds }}
+          BASE: ${{ steps.files.outputs.base }}
         run: |
           set -eu
           r="$RUNNER_TEMP/release"
-          key=$(grep -v '^#' src-tauri/update-key.pub | grep -v '^[[:space:]]*$' | head -1)
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
-          node scripts/update-manifest.mjs verify --manifest "$r/latest.json" --pubkey "$key" --artifacts "$r" --base-url "$base" --require "$KINDS"
+          node scripts/update-manifest.mjs verify --manifest "$r/latest.json" --pubkey src-tauri/update-key.pub --artifacts "$r" --base-url "$BASE" --require "$KINDS"
           (cd "$r" && sha256sum * > SHA256SUMS && cat SHA256SUMS)
 
       - name: Keep the files (dry run)
@@ -294,9 +406,12 @@ jobs:
           path: ${{ runner.temp }}/release
           retention-days: 7
 
-      - name: Upload to a draft release
+      # A draft is visible only to people with write access to the release
+      # repository; nothing is public yet.
+      - name: Upload to a draft release in the release repository
         if: ${{ env.DRY_RUN != 'true' }}
         env:
+          GH_TOKEN: ${{ secrets.SOTYWARE_RELEASES_TOKEN }}
           MACOS: ${{ steps.files.outputs.macos }}
         run: |
           set -eu
@@ -305,62 +420,70 @@ jobs:
           {
             cat "$RUNNER_TEMP/notes.md"
             echo
-            echo "Windows 11 is the validated platform (docs/development/release.md#support-scope). Linux builds are provided for testing; macOS: $MACOS."
+            echo "Windows 11 is the platform this release is validated on. The Linux packages are provided for testing and have not been validated on a real desktop. macOS: $MACOS."
             echo
-            echo "Every package and latest.json carry a minisign signature of sotyware's release key; SHA256SUMS lists their hashes."
+            echo "Every package and latest.json carry a minisign signature of sotyware's release key; SHA256SUMS lists their hashes. The source code is not published here."
           } > "$body"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "::error::a release named $TAG exists already; refusing to change it"
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::error::$REPO already has a release $TAG; refusing to change it"
             exit 1
           fi
-          gh release create "$TAG" --draft --verify-tag --title "sotyware $VERSION" --notes-file "$body" "$r"/*
+          # The tag is created in the release repository, on its default
+          # branch, when the draft is published; the source commit is named
+          # only in the notes' text, if at all.
+          gh release create "$TAG" --repo "$REPO" --draft --title "sotyware $VERSION" --notes-file "$body" "$r"/*
 
       - name: Check the draft holds exactly these files
         if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.SOTYWARE_RELEASES_TOKEN }}
         run: |
           set -eu
           r="$RUNNER_TEMP/release"
-          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"' | sort > "$RUNNER_TEMP/uploaded.txt"
+          gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | "\(.name) \(.size)"' | sort > "$RUNNER_TEMP/uploaded.txt"
           (cd "$r" && for f in *; do echo "$f $(stat -c %s "$f")"; done) | sort > "$RUNNER_TEMP/local.txt"
           diff "$RUNNER_TEMP/local.txt" "$RUNNER_TEMP/uploaded.txt"
 
       - name: Publish as a pre-release (not yet the latest)
         if: ${{ env.DRY_RUN != 'true' }}
-        run: gh release edit "$TAG" --draft=false --prerelease --latest=false
+        env:
+          GH_TOKEN: ${{ secrets.SOTYWARE_RELEASES_TOKEN }}
+        run: gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
 
-      # Through the public download URLs, as an installation fetches them,
-      # without a token.
+      # Through the public download URLs, as an installation fetches them:
+      # no token, HTTPS only.
       - name: Verify the published files as installations see them
         if: ${{ env.DRY_RUN != 'true' }}
         env:
           KINDS: ${{ steps.files.outputs.kinds }}
+          BASE: ${{ steps.files.outputs.base }}
         run: |
           set -eu
           d="$RUNNER_TEMP/downloaded"
           mkdir -p "$d"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/"
           for f in $(cd "$RUNNER_TEMP/release" && ls); do
-            curl -fsSL --retry 5 --retry-delay 5 --proto '=https' -o "$d/$f" "$base$f"
+            curl -fsSL --retry 5 --retry-delay 5 --proto '=https' --proto-redir '=https' -o "$d/$f" "$BASE$f"
           done
-          key=$(grep -v '^#' src-tauri/update-key.pub | grep -v '^[[:space:]]*$' | head -1)
-          node scripts/update-manifest.mjs verify --manifest "$d/latest.json" --pubkey "$key" --artifacts "$d" --base-url "$base" --require "$KINDS"
+          node scripts/update-manifest.mjs verify --manifest "$d/latest.json" --pubkey src-tauri/update-key.pub --artifacts "$d" --base-url "$BASE" --require "$KINDS"
           (cd "$d" && sha256sum -c SHA256SUMS)
 
       - name: Make it the latest release
         if: ${{ env.DRY_RUN != 'true' }}
-        run: gh release edit "$TAG" --prerelease=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.SOTYWARE_RELEASES_TOKEN }}
+        run: gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest
 
       - name: The update endpoint now serves this release
         if: ${{ env.DRY_RUN != 'true' }}
         run: |
           set -eu
           for i in 1 2 3 4 5 6; do
-            curl -fsSL --proto '=https' -o "$RUNNER_TEMP/served.json" "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" || true
+            curl -fsSL --proto '=https' --proto-redir '=https' -o "$RUNNER_TEMP/served.json" "https://github.com/${REPO}/releases/latest/download/latest.json" || true
             if cmp -s "$RUNNER_TEMP/served.json" "$RUNNER_TEMP/release/latest.json"; then
-              echo "releases/latest/download/latest.json is the manifest of $TAG"
+              echo "https://github.com/${REPO}/releases/latest/download/latest.json is the manifest of $TAG"
               exit 0
             fi
             sleep 10
           done
-          echo "::error::releases/latest/download/latest.json does not serve this release's manifest"
+          echo "::error::https://github.com/${REPO}/releases/latest/download/latest.json does not serve this release's manifest"
           exit 1

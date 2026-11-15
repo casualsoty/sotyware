@@ -365,11 +365,16 @@ fn a_build_without_a_release_key_has_no_update_source() {
 
 #[test]
 fn the_production_source_is_github_and_the_committed_key() {
-    // The manifest of the release GitHub marks as latest (ADR-036).
+    // The manifest of the release GitHub marks as latest (ADR-036), in the
+    // public release repository, never the private source one (ADR-038).
     assert_eq!(
         MANIFEST_URL,
         format!("https://github.com/{RELEASE_REPOSITORY}/releases/latest/download/latest.json")
     );
+    assert_eq!(RELEASE_REPOSITORY, "casualsoty/sotyware-releases");
+    let (owner, name) = RELEASE_REPOSITORY.split_once('/').unwrap();
+    assert!(!owner.is_empty() && !name.contains('/'));
+    assert_ne!(name, "sotyware", "the source repository is private");
     // Either no key yet (updates off) or one that decodes as minisign.
     match production_pubkey() {
         None => assert!(production().is_none()),
@@ -380,6 +385,35 @@ fn the_production_source_is_github_and_the_committed_key() {
             let src = production().unwrap();
             assert_eq!(src.manifest_url, MANIFEST_URL);
             assert_eq!(src.channel, "stable");
+        }
+    }
+}
+
+/// The signing fixtures' throwaway keys are for tests only: if one of them
+/// were committed as the release key, anyone holding a copy of the deleted
+/// private half (or a fixture made with it) could sign "updates". The key
+/// id (bytes 2..10 of the decoded key) is what a signature names.
+#[test]
+fn the_compiled_in_key_is_never_a_signing_fixture() {
+    fn key_id(b64: &str) -> Vec<u8> {
+        let text = text_of(b64).expect("base64 of a minisign key");
+        let line = text.lines().nth(1).expect("a key line");
+        B64.decode(line.trim()).expect("base64 key")[2..10].to_vec()
+    }
+    let fixtures = [
+        include_str!("../../../scripts/fixtures/update/test-key.pub"),
+        include_str!("../../../scripts/fixtures/update-github/test-key.pub"),
+    ];
+    for f in fixtures {
+        assert_eq!(key_id(f).len(), 8);
+    }
+    if let Some(pk) = production_pubkey() {
+        for f in fixtures {
+            assert_ne!(
+                key_id(pk),
+                key_id(f),
+                "src-tauri/update-key.pub holds a test fixture's key"
+            );
         }
     }
 }

@@ -55,24 +55,30 @@ Not started unless status.md says so. Scope and procedures:
    at `f9a0c71` ([status](status.md#hosted-runs-at-f9a0c71-icons-pushed-2026-11-14));
    Explorer, Start menu, other scalings and the installers are part of the
    installation test (3).
-6. Updates through GitHub Releases (ADR-036, implemented 2026-11-15 but
-   not usable): decide whether the repository (or a separate releases
-   repository) becomes public; generate the release key offline and commit
-   its public half to `src-tauri/update-key.pub`; create the protected
-   `release` environment with the signing secrets; run `release.yml` as a
-   dry run on a tag, then publish release N; install it on a disposable
-   machine, publish N+1 and update through the notification, checking the
-   data folder and credentials survive
-   ([release.md](../development/release.md#github-releases)). Each step
-   needs the maintainer's decision.
+6. Updates through GitHub Releases (ADR-036, ADR-038; implemented
+   2026-11-15 but not usable). Decided 2026-11-15: the source repository
+   stays private and releases go to the public `casualsoty/sotyware-releases`.
+   Left, each by the maintainer: create that repository
+   ([release.md](../development/release.md#the-public-release-repository));
+   decide on GitHub Pro for the `release` environment or repository secrets
+   ([secrets](../development/release.md#secrets)); create the release
+   token; generate the release key offline and commit its public half to
+   `src-tauri/update-key.pub`
+   ([update signing key](../development/release.md#update-signing-key));
+   set `SOTYWARE_ALLOW_UNSIGNED_WINDOWS` or add Authenticode signing; merge
+   so `release.yml` is on `main`; run it as a dry run on a tag, then
+   publish release N; install it on a disposable machine, publish N+1 and
+   update through the notification, checking the data folder and
+   credentials survive.
 7. Run the redesigned dashboard through the Windows drivers
    (`windows.ps1`, `windows-cloud-ui.ps1`, updated but not run) and look at
    it in WebView2 at 100 % and 150 %.
 
 ## macOS (after ADR-037)
 
-1. Run `macos.yml` by hand (both architectures, `package: true`); fix what
-   the first real compile and test run finds.
+1. Run `macos.yml` (both architectures; before it is on `main`, through a
+   pull request labelled `macos`, then by hand with `package: true`); fix
+   what the first real compile and test run finds.
 2. Obtain an Apple Developer ID certificate and an App Store Connect API
    key; set the secrets ([macos.md](../development/macos.md#signing-and-notarization));
    run `macos.yml` again and check signing and notarization.

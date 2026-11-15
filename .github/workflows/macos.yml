@@ -4,9 +4,15 @@
 #
 # Not on every push: the repository is private on GitHub Free, where macOS
 # runner minutes are billed at about ten times the Linux rate
-# (docs/development/testing.md#ci). It runs when started by hand (Actions
-# tab, or `gh workflow run macos.yml --ref <branch>`), and from
-# release.yml, which calls it with `package: true`.
+# (docs/development/testing.md#ci). It runs
+# - on a pull request to main that carries the label `macos` (added, or a
+#   new commit pushed while it is there): the way to validate a branch
+#   before this file is on main, since GitHub starts a workflow by hand
+#   only once it exists on the default branch;
+# - when started by hand (Actions tab, or `gh workflow run macos.yml --ref
+#   <branch>`), once this file is on main;
+# - from release.yml, which calls it with `package: true`.
+# A pull request run never packages or signs.
 #
 # What it runs: the same headless checks as ci.yml (svelte-check, Vite
 # build, the rfd and release-binary guards, Vitest, cargo fmt/clippy and
@@ -15,18 +21,27 @@
 # the runner user's login keychain).
 #
 # Packaging (`package: true`): `npm run build:release` makes sotyware.app
-# and the .dmg. Signing and notarization happen only when the repository
-# has the Apple secrets (docs/development/macos.md#signing-and-notarization);
-# each secret is handed only to the step that needs it:
+# and the .dmg. Signing and notarization happen only when the Apple secrets
+# exist (docs/development/macos.md#signing-and-notarization); each secret is
+# handed only to the step that needs it:
 #   APPLE_CERTIFICATE (base64 .p12 of a "Developer ID Application"
 #   certificate), APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
 #   APPLE_API_ISSUER, APPLE_API_KEY_ID, APPLE_API_KEY (the .p8 contents).
-# Without them the build is an unsigned development build, and says so in
-# the uploaded `macos-<arch>/status.txt`; release.yml then leaves macOS out
-# of the release and of latest.json.
+# They are repository secrets: started by hand this workflow reads them by
+# name; release.yml passes exactly these six (declared below), never the
+# update signing key or the release token. Without them the build is an
+# unsigned development build and says so in the uploaded
+# `macos-<arch>/status.txt`; release.yml then leaves macOS out of the
+# release and of latest.json, so an unsigned Mac build is never published.
+#
+# No secret is needed for the tests: `gh workflow run macos.yml --ref
+# <branch>` validates both architectures without any Apple account.
 name: macos
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       package:
@@ -38,9 +53,28 @@ on:
       package:
         type: boolean
         default: false
+    secrets:
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_SIGNING_IDENTITY:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      APPLE_API_KEY:
+        required: false
 
 permissions:
   contents: read
+
+# A newer commit or label on the same pull request replaces the older run;
+# a release's call is never cancelled by anything else.
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,6 +82,12 @@ env:
 jobs:
   macos:
     name: macOS (${{ matrix.arch }})
+    # Pull requests only with the `macos` label (and only when that label
+    # is what was added, or the code changed).
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(github.event.pull_request.labels.*.name, 'macos') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'macos'))
     strategy:
       # Each architecture's result on its own.
       fail-fast: false

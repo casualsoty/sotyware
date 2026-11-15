@@ -21,8 +21,9 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 ## What works today
 
-**Redesign, macOS, GitHub Releases updates** (2026-11-15, uncommitted on
-`afeb894`; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
+**Redesign, macOS, GitHub Releases updates** (2026-11-15, committed as
+`2e3972e` on branch `feat/desktop-redesign-macos-github-updates`, not
+pushed; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
 the dashboard is a desktop shell (sidebar with sections and storage
 accounts, Overview with summaries, Settings with Appearance/Features/About
 & updates, one update notification) on one token-based design system with
@@ -34,9 +35,16 @@ exist; [macos.md](development/macos.md), ADR-037); updates come from the
 latest GitHub release's signed `latest.json`, with bounded HTTPS redirects,
 platform entries for Windows, macOS and Linux, Restart now after in-place
 installs, and `release.yml` publishing draft → pre-release → verified →
-latest (ADR-036). **Not usable yet:** no release key in
-`src-tauri/update-key.pub`, and the repository is private (GitHub serves
-private release assets only to signed-in clients). Tested: Vitest 240,
+latest (ADR-036). **Releases go to the separate public repository
+`casualsoty/sotyware-releases`** (ADR-038, committed after `70a9e62`, not pushed;
+[status](status/status.md#public-release-repository-signing-key-guard-and-ci-readiness-2026-11-15)):
+the source repository stays private, the installed app fetches the
+release repository's `latest.json` anonymously, `release.yml` publishes
+there with a release-only token after checking that it is public and holds
+no source, and the release key file can never hold a fixture's or a
+private key. **Not usable yet:** no release key in
+`src-tauri/update-key.pub`, and the release repository has not been
+created. Tested: Vitest 240,
 Rust 507 (recorder build 535), the virtual display 139/0/0 and every Linux
 Cloud Storage driver phase (files 99/99) against the real binary, after an
 AT-SPI audit that found and fixed text WebKitGTK hid from screen readers; the release commands rehearsed with the real
@@ -233,8 +241,9 @@ update server exist), all tested headless against in-process servers only.
   checked before installing, only on **Update now**, never during a
   transfer, file operation or backup; Overview panel; automatic checks are
   the `update-check` feature; `scripts/update-manifest.mjs` makes and
-  checks manifests in `release-build.yml` (only with a signing secret).
-  `PRODUCTION = None`: no key or server exists, so release builds say
+  checks manifests in `release.yml`'s publish job, which publishes to the
+  public release repository (ADR-038). `src-tauri/update-key.pub` holds no
+  key and the release repository does not exist, so release builds say
   updates are not set up. Tested with test keys, a local server, the
   plugin on Tauri's mock runtime and a fixture signed by the real Tauri
   CLI; **no update was ever installed**.

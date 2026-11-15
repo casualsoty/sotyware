@@ -58,15 +58,30 @@ pub struct Source {
     pub channel: String,
 }
 
-/// The GitHub repository whose published releases carry the manifest
-/// (ADR-036). Its releases must be public: GitHub serves the assets of a
-/// private repository only to signed-in clients.
-pub const RELEASE_REPOSITORY: &str = "casualsoty/sotyware";
+/// The one place the release repository is written; [`RELEASE_REPOSITORY`]
+/// and [`MANIFEST_URL`] are built from it, and `release.yml` reads it from
+/// here (`update-manifest.mjs release-repository`).
+macro_rules! release_repository {
+    () => {
+        "casualsoty/sotyware-releases"
+    };
+}
+
+/// The public GitHub repository whose published releases carry the
+/// installers and the manifest (ADR-036, ADR-038). It holds distribution
+/// files and release metadata only, never source code: the source
+/// repository stays private, and GitHub serves a private repository's
+/// release assets only to signed-in clients, while installations fetch
+/// anonymously.
+pub const RELEASE_REPOSITORY: &str = release_repository!();
 
 /// The manifest of the release GitHub marks as latest (never a draft or a
 /// pre-release): GitHub answers with a redirect to that release's asset.
-pub const MANIFEST_URL: &str =
-    "https://github.com/casualsoty/sotyware/releases/latest/download/latest.json";
+pub const MANIFEST_URL: &str = concat!(
+    "https://github.com/",
+    release_repository!(),
+    "/releases/latest/download/latest.json"
+);
 
 /// How many redirects one fetch may follow (GitHub uses two: the tag's
 /// download URL, then its asset store).
@@ -606,8 +621,18 @@ impl Updates {
             .user_agent(concat!("sotyware/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| UpdateError::Network(e.to_string()))?;
+        // Named in a 404 only when it is really where this build looks (not
+        // a development endpoint).
+        let not_found = if src.manifest_url == MANIFEST_URL {
+            format!(
+                "{RELEASE_REPOSITORY} has no published release with update information yet (HTTP 404)"
+            )
+        } else {
+            "no published release has update information yet (HTTP 404)".to_owned()
+        };
         let fetch = |url: String| {
             let client = &client;
+            let not_found = not_found.clone();
             async move {
                 let r = client
                     .get(&url)
@@ -616,10 +641,8 @@ impl Updates {
                     .map_err(|e| UpdateError::Network(e.without_url().to_string()))?;
                 if r.status() == reqwest::StatusCode::NOT_FOUND {
                     // No published release carries update information yet
-                    // (or the repository's releases are not public).
-                    return Err(UpdateError::Network(format!(
-                        "no published release of {RELEASE_REPOSITORY} has update information (HTTP 404)"
-                    )));
+                    // (or the release repository is not public).
+                    return Err(UpdateError::Network(not_found));
                 }
                 if !r.status().is_success() {
                     return Err(UpdateError::Network(format!(

@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { createManifest, main, readPublicKey, signedVersion, verifyManifest, verifySignature } from "./update-manifest.mjs";
+import { checkReleaseKey, createManifest, main, readPublicKey, releaseRepository, signedVersion, verifyManifest, verifySignature } from "./update-manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = join(here, "fixtures", "update");
@@ -291,6 +291,98 @@ describe("the GitHub release fixture (every platform, real Tauri CLI)", () => {
     assert.equal(m.pub_date, "2026-11-15T12:00:00Z");
     for (const e of Object.values(m.platforms)) {
       assert.equal(signedVersion(verifySignature(readFileSync(join(dir, e.url.slice(BASE.length))), e.signature, pub)), "0.2.0");
+    }
+  });
+});
+
+describe("the public release repository (ADR-038)", () => {
+  const RELEASES = "https://github.com/casualsoty/sotyware-releases/releases/download/v1.4.0/";
+
+  test("is read from src-tauri/src/updates.rs, the one place it is written", () => {
+    const rust = readFileSync(join(here, "..", "src-tauri", "src", "updates.rs"), "utf8");
+    assert.equal(releaseRepository(rust), "casualsoty/sotyware-releases");
+    // MANIFEST_URL is built from the same literal, not written twice.
+    assert.doesNotMatch(rust, /"https:\/\/github\.com\/casualsoty\//);
+  });
+
+  test("refuses a missing or malformed name and the source repository itself", () => {
+    assert.throws(() => releaseRepository("pub const X: &str = \"a/b\";"), /no release_repository! macro/);
+    for (const bad of ["", "casualsoty", "a/b/c", "-x/y", "x/..", "x/y z"]) {
+      assert.throws(() => releaseRepository(`macro_rules! release_repository { () => { "${bad}" }; }`), /not a GitHub repository/, bad);
+    }
+    const log = console.log;
+    console.log = () => {};
+    try {
+      assert.equal(main(["release-repository", "--not", "casualsoty/sotyware"]), 0);
+      assert.throws(() => main(["release-repository", "--not", "CasualSoty/Sotyware-Releases"]), /is this \(private source\) repository/);
+    } finally {
+      console.log = log;
+    }
+  });
+
+  test("manifests point into the public repository, never the private one", () => {
+    const key = testKey();
+    const pub = readPublicKey(key.pubkey);
+    const { nsis, msi } = artifactsSignedWith(key, "1.4.0");
+    const m = createManifest({ version: "1.4.0", baseUrl: RELEASES, publicKey: pub, artifacts: { nsis, msi } });
+    assert.equal(m.platforms["windows-x86_64-nsis"].url, `${RELEASES}sotyware_1.4.0_x64-setup.exe`);
+    const bytes = Buffer.from(JSON.stringify(m));
+    assert.equal(verifyManifest({ bytes, signature: null, publicKey: pub, baseUrl: RELEASES, require: ["nsis", "msi"] }).version, "1.4.0");
+    const source = createManifest({ version: "1.4.0", baseUrl: "https://github.com/casualsoty/sotyware/releases/download/v1.4.0/", publicKey: pub, artifacts: { nsis } });
+    assert.throws(() => verifyManifest({ bytes: Buffer.from(JSON.stringify(source)), signature: null, publicKey: pub, baseUrl: RELEASES }), /is not under/);
+  });
+});
+
+describe("check-key: the release key is never a test fixture", () => {
+  const fixtureKeys = [join(fixture, "test-key.pub"), join(here, "fixtures", "update-github", "test-key.pub")];
+  const comments = "# sotyware's update signing key: the PUBLIC half only\n#\n";
+
+  test("the committed update-key.pub passes (no key yet, or a real one)", () => {
+    const text = readFileSync(join(here, "..", "src-tauri", "update-key.pub"), "utf8");
+    const key = checkReleaseKey(text);
+    assert.ok(key === null || typeof key === "string");
+  });
+
+  test("accepts one real public key and returns its line", () => {
+    const key = testKey();
+    assert.equal(checkReleaseKey(`${comments}${key.pubkey}\n`), key.pubkey);
+    assert.equal(checkReleaseKey(comments), null);
+  });
+
+  test("refuses every fixture key, a secret key, two keys and garbage", () => {
+    for (const f of fixtureKeys) {
+      const line = readFileSync(f, "utf8").trim();
+      assert.throws(() => checkReleaseKey(`${comments}${line}\n`), /test fixture key/, f);
+    }
+    const secret = Buffer.from("untrusted comment: rsign encrypted secret key\nRWRTY0IyAAAA\n").toString("base64");
+    assert.throws(() => checkReleaseKey(`${comments}${secret}\n`), /SECRET key/);
+    assert.throws(() => checkReleaseKey(`${testKey().pubkey}\n${testKey().pubkey}\n`), /one key line, not 2/);
+    assert.throws(() => checkReleaseKey("bm90IGEga2V5\n"), /update-key\.pub: not a minisign/);
+    assert.throws(() => checkReleaseKey(`${testKey().pubkey}\n`, mkdtempSync(join(work, "nofix-"))), /no test-key\.pub/);
+  });
+
+  test("from the command line: a missing key fails unless allowed; the key is printed", () => {
+    const dir = mkdtempSync(join(work, "ck-"));
+    const file = join(dir, "update-key.pub");
+    writeFileSync(file, comments);
+    const out = [];
+    const log = console.log;
+    const err = console.error;
+    console.log = (l) => out.push(l);
+    console.error = () => {};
+    try {
+      assert.throws(() => main(["check-key", "--key-file", file]), /holds no public key/);
+      assert.equal(main(["check-key", "--key-file", file, "--allow-missing"]), 0);
+      assert.deepEqual(out, []);
+      const key = testKey();
+      writeFileSync(file, `${comments}${key.pubkey}\n`);
+      assert.equal(main(["check-key", "--key-file", file]), 0);
+      assert.deepEqual(out, [key.pubkey]);
+      // --pubkey takes the same commented file.
+      assert.deepEqual(readPublicKey(file).keyId, readPublicKey(key.pubkey).keyId);
+    } finally {
+      console.log = log;
+      console.error = err;
     }
   });
 });

@@ -69,9 +69,22 @@ versions have run anything; older versions are not tested.
 
 ## CI
 
-`.github/workflows/macos.yml`, started by hand or by `release.yml`
-(macOS minutes are billed at about ten times the Linux rate on a private
-repository, so it does not run on every push). Per architecture: the
+`.github/workflows/macos.yml` (macOS minutes are billed at about ten times
+the Linux rate on a private repository, so it does not run on every push).
+It runs:
+
+- on a pull request to `main` labelled **`macos`** (when the label is
+  added, and again for every commit pushed while it is there). This is how
+  a branch is validated before `macos.yml` is on `main`: GitHub starts a
+  workflow by hand only once its file is on the default branch. Such a run
+  never packages or signs and gets no secret;
+- by hand, once the file is on `main`: Actions tab, or
+  `gh workflow run macos.yml --ref <branch>` (add `-f package=true` for an
+  unsigned `.app` and `.dmg` without Apple secrets);
+- from `release.yml`, with `package: true`.
+
+No Apple account or secret is needed to validate the code. Per
+architecture: the
 headless checks of `ci.yml` (svelte-check, Vite build, the guards, Vitest,
 fmt, clippy for the normal and the test-profile build, `cargo test` with the
 in-process S3, updater and account-service tests), the OS credential store
@@ -86,7 +99,13 @@ Signing needs an Apple Developer Program membership (paid) and a
 **Developer ID Application** certificate; notarization needs an App Store
 Connect API key with the Developer role. Neither exists yet.
 
-Repository secrets (environment `release`; never in a file, never printed):
+**Repository** secrets (Settings → Secrets and variables → Actions →
+Repository secrets; never in a file, never printed). Not environment
+secrets: `release.yml` passes these six to the reusable `macos.yml`, and a
+job that calls a reusable workflow cannot name an environment, so an
+environment secret would never reach it and every Mac build would be
+unsigned and left out of the release
+([release.md](release.md#secrets)):
 
 | Secret | What |
 | --- | --- |

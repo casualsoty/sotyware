@@ -2031,7 +2031,9 @@ Status: Accepted (2026-11-15). Code: `src/App.svelte`, `src/Sidebar.svelte`,
 
 ## ADR-036: Updates come from the latest GitHub release (`latest.json`), signed and verified as in ADR-033
 
-Status: Accepted (2026-11-15). Supersedes ADR-033's update source. Code:
+Status: Accepted (2026-11-15). Supersedes ADR-033's update source. Where
+the releases live (a separate public repository) is superseded by
+[ADR-038](#adr-038-releases-are-published-to-a-separate-public-repository-casualsotysotyware-releases). Code:
 `src-tauri/src/updates.rs`, `src-tauri/update-key.pub`,
 `scripts/update-manifest.mjs`, `.github/workflows/release.yml`; design:
 [updates.md](updates.md), procedure:
@@ -2140,3 +2142,58 @@ Status: Accepted (2026-11-15). Code: `src-tauri/Cargo.toml`
   `apple-native-keyring-store` 1.0.2 (macOS only); `security-framework`
   3.7.0 was already in the tree.
 
+## ADR-038: Releases are published to a separate public repository (`casualsoty/sotyware-releases`)
+
+Status: Accepted (2026-11-15). Supersedes ADR-036 in one point: where the
+releases live.
+Code: `src-tauri/src/updates.rs` (`release_repository!`,
+`RELEASE_REPOSITORY`, `MANIFEST_URL`), `.github/workflows/release.yml`,
+`scripts/update-manifest.mjs` (`release-repository`, `check-key`);
+procedure: [release.md](../development/release.md#the-public-release-repository).
+
+- **Context:** ADR-036 takes updates from the latest GitHub release, which
+  installations must download without signing in. The source repository
+  is private and stays private, and GitHub serves a private repository's
+  release assets only to signed-in clients.
+- **Decision:** releases are published to the public repository
+  `casualsoty/sotyware-releases`, which holds distribution files and
+  release metadata only: per release the installers, their minisign
+  signatures, `latest.json`, `latest.json.sig` and `SHA256SUMS`, and on its
+  default branch nothing but a README, a licence or similar notes. The
+  installed app fetches
+  `https://github.com/casualsoty/sotyware-releases/releases/latest/download/latest.json`
+  (+ `.sig`) anonymously; the manifest's package URLs point into that
+  repository's tag folder. The repository is written in one place, the
+  `release_repository!` macro in `updates.rs`, from which `RELEASE_REPOSITORY`
+  and `MANIFEST_URL` are built; `release.yml` reads it from there
+  (`update-manifest.mjs release-repository`) and refuses it if it is the
+  source repository itself, is not public, or holds anything besides those
+  notes on its default branch (a release also carries GitHub's "Source
+  code" archives of that branch). Builds, tests and signing stay in the
+  private source repository; only the publish job writes to the release
+  repository, with a fine-grained token (`SOTYWARE_RELEASES_TOKEN`:
+  Contents read and write on that repository only) given to exactly the
+  steps that call `gh release`; `GITHUB_TOKEN` stays read-only. The release
+  tag is created in the release repository, on its default branch, when the
+  draft is published; the source tag keeps its signature in the source
+  repository. Signature verification is unchanged (ADR-033, ADR-036): the
+  release key, not the repository, is the authority. The release key file
+  is checked so the signing fixtures' throwaway keys (test-only) and a
+  pasted private key can never become the release key
+  (`update-manifest.mjs check-key` in `test:headless` and `release.yml`, and
+  a Rust test).
+- **Rejected:** making the source repository public (decided against by
+  the maintainer); another host for the files (a domain, TLS and hosting
+  again, ADR-036's reason); GitHub Pages in the release repository (one
+  more publishing path and a branch with content; release assets suffice);
+  `GITHUB_TOKEN` (it cannot write to another repository); a classic
+  personal token (it would reach every repository of the account).
+- **Consequences:** the maintainer creates the release repository once
+  (public, initialised with a README) and a fine-grained token for it,
+  which expires and must be renewed. A compromised token can publish to
+  the release repository but cannot sign: installations refuse anything
+  not signed by the release key, and the version floor refuses replays. The
+  release notes (the source tag's message) become public. Moving releases
+  to another repository later means a release built with the new
+  `release_repository!` published at the old place first, since
+  installations follow only the URL compiled into them.

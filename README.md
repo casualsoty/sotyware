@@ -57,10 +57,11 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   only ever stores ciphertext; a recovery key shown once, device approval,
   revocation and key rotation. **Not available to users yet:** the service
   (`server/`) is not deployed and release builds have none configured.
-- **Signed updates from GitHub Releases**, installed only when you click
-  "Update" and never during a transfer or backup. **Not usable yet:** no
-  release signing key exists and the repository's releases are not public,
-  so no release has been published.
+- **Signed updates from GitHub Releases** of the public release repository
+  `casualsoty/sotyware-releases` (installers and update files only),
+  installed only when you click "Update" and never during a transfer or
+  backup. **Not usable yet:** no release signing key exists and the release
+  repository has not been created, so no release has been published.
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger

@@ -12,7 +12,15 @@
 //   verify  checks a manifest, its signature and (optionally) the local
 //           artifacts it names: format, channel, HTTPS URLs under the
 //           expected folder, exactly the required platforms, artifact
-//           signatures with the right version, SHA-256.
+//           signatures with the right version, SHA-256;
+//   check-signature  one file signed for a version by the key (the release
+//           job's check that the signing secret matches the committed key);
+//   check-key  the committed public key (src-tauri/update-key.pub) is one
+//           minisign Ed25519 public key, not a private key pasted by
+//           mistake and not one of the test fixtures' throwaway keys
+//           (scripts/fixtures/**/test-key.pub); prints it;
+//   release-repository  prints the public release repository named in
+//           src-tauri/src/updates.rs (ADR-038), the one place it is written.
 //
 // It never reads or prints a private key. Only Node's standard library.
 //
@@ -30,10 +38,19 @@
 //
 //   node scripts/update-manifest.mjs check-signature --pubkey <file|base64> \
 //     --file <f> --version 0.2.0 [--sig <f>.sig]
+//
+//   node scripts/update-manifest.mjs check-key [--key-file src-tauri/update-key.pub] \
+//     [--fixtures scripts/fixtures] [--allow-missing]
+//
+//   node scripts/update-manifest.mjs release-repository \
+//     [--source src-tauri/src/updates.rs] [--not <owner/name>]
+//
+// --pubkey takes a key file (comment lines starting with # are skipped, as
+// in src-tauri/update-key.pub) or the base64 line itself.
 
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const FORMAT = "sotyware-update";
@@ -90,10 +107,28 @@ function minisignText(value) {
   return decoded.trim();
 }
 
+/** The key lines of a key file: neither empty nor a `#` comment (the rule
+ * `pubkey_in` in src-tauri/src/updates.rs applies to update-key.pub). */
+export function keyLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+}
+
 /** A public key from a file or a base64 string (as `tauri signer generate` writes it). */
 export function readPublicKey(value) {
-  const raw = existsSync(value) ? readFileSync(value, "utf8") : value;
-  const lines = minisignText(raw).split(/\r?\n/);
+  let raw = value;
+  if (existsSync(value)) {
+    const text = readFileSync(value, "utf8");
+    // A key file such as update-key.pub: comments, then the base64 line.
+    raw = text.trimStart().startsWith("untrusted comment:") ? text : (keyLines(text)[0] ?? "");
+  }
+  const text = minisignText(raw);
+  if (/secret key/i.test(text.split(/\r?\n/)[0])) {
+    fail("this is a minisign SECRET key, not a public key");
+  }
+  const lines = text.split(/\r?\n/);
   const bytes = Buffer.from(lines[1] ?? "", "base64");
   if (bytes.length !== 42 || bytes.toString("latin1", 0, 2) !== "Ed") {
     fail("not a minisign Ed25519 public key");
@@ -285,12 +320,95 @@ export function verifyManifest({ bytes, signature, publicKey, artifactsDir = nul
   return m;
 }
 
+const here = dirname(fileURLToPath(import.meta.url));
+export const KEY_FILE = join(here, "..", "src-tauri", "update-key.pub");
+export const FIXTURES = join(here, "fixtures");
+export const UPDATES_RS = join(here, "..", "src-tauri", "src", "updates.rs");
+
+/** Every `test-key.pub` below `dir`: the throwaway keys the signing
+ * fixtures were made with. */
+function fixtureKeys(dir) {
+  const found = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) {
+      found.push(...fixtureKeys(p));
+    } else if (e.name === "test-key.pub") {
+      found.push(p);
+    }
+  }
+  return found;
+}
+
+/** Checks the release public key in `keyFileText` (update-key.pub's
+ * content); returns its base64 line, or null when it holds none. Refuses
+ * a private key, more than one key line, anything that is not a minisign
+ * Ed25519 public key, and the key of any signing fixture under
+ * `fixturesDir`, which must hold at least one. */
+export function checkReleaseKey(keyFileText, fixturesDir = FIXTURES) {
+  const lines = keyLines(keyFileText);
+  if (lines.length === 0) {
+    return null;
+  }
+  for (const l of lines) {
+    let decoded = "";
+    try {
+      decoded = Buffer.from(l, "base64").toString("utf8");
+    } catch {
+      // Not base64: reported below.
+    }
+    if (/secret key/i.test(decoded) || /secret key/i.test(l)) {
+      fail("update-key.pub holds a minisign SECRET key: remove it, never commit it, and treat that key as compromised (generate a new pair)");
+    }
+  }
+  if (lines.length > 1) {
+    fail(`update-key.pub must hold one key line, not ${lines.length}`);
+  }
+  let key;
+  try {
+    key = readPublicKey(lines[0]);
+  } catch (e) {
+    fail(`update-key.pub: ${e.message}`);
+  }
+  const fixtures = fixtureKeys(fixturesDir);
+  if (fixtures.length === 0) {
+    fail(`no test-key.pub under ${fixturesDir}: cannot check the key against the test fixtures`);
+  }
+  for (const f of fixtures) {
+    if (readPublicKey(f).keyId.equals(key.keyId)) {
+      fail(`update-key.pub holds the test fixture key ${f}: fixtures are for tests only; generate the release key (docs/development/release.md#update-signing-key)`);
+    }
+  }
+  return lines[0];
+}
+
+/** The public release repository written in src-tauri/src/updates.rs
+ * (the `release_repository!` macro, ADR-038). */
+export function releaseRepository(rustSource) {
+  const m = rustSource.match(/macro_rules!\s+release_repository\s*\{\s*\(\)\s*=>\s*\{\s*"([^"]*)"\s*\};?\s*\}/);
+  if (!m) {
+    fail("src-tauri/src/updates.rs has no release_repository! macro naming the release repository");
+  }
+  const repo = m[1];
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(repo) || repo.split("/")[1].startsWith(".")) {
+    fail(`not a GitHub repository: ${repo}`);
+  }
+  return repo;
+}
+
+/** Options that take no value. */
+const FLAGS = new Set(["allow-missing"]);
+
 function args(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith("--")) {
       fail(`unexpected argument ${a}`);
+    }
+    if (FLAGS.has(a.slice(2))) {
+      out[a.slice(2)] = "true";
+      continue;
     }
     const v = argv[i + 1];
     if (v === undefined || v.startsWith("--")) {
@@ -312,6 +430,28 @@ function need(o, k) {
 export function main(argv) {
   const [command, ...rest] = argv;
   const o = args(rest);
+  if (command === "check-key") {
+    const file = o["key-file"] ?? KEY_FILE;
+    const key = checkReleaseKey(readFileSync(file, "utf8"), o.fixtures ?? FIXTURES);
+    if (key === null) {
+      if (o["allow-missing"] !== "true") {
+        fail(`${file} holds no public key (docs/development/release.md#update-signing-key)`);
+      }
+      console.error(`update-manifest: ${basename(file)} holds no key: release builds have updates switched off`);
+      return 0;
+    }
+    console.error(`update-manifest: ${basename(file)} holds one minisign public key, not a test fixture's`);
+    console.log(key);
+    return 0;
+  }
+  if (command === "release-repository") {
+    const repo = releaseRepository(readFileSync(o.source ?? UPDATES_RS, "utf8"));
+    if (o.not !== undefined && o.not.toLowerCase() === repo.toLowerCase()) {
+      fail(`the release repository ${repo} is this (private source) repository; releases go to a separate public repository (ADR-038)`);
+    }
+    console.log(repo);
+    return 0;
+  }
   const publicKey = readPublicKey(need(o, "pubkey"));
   if (command === "create") {
     const artifacts = {};
@@ -356,7 +496,7 @@ export function main(argv) {
     console.log(`update-manifest: ${basename(file)} is signed by this key for ${version}`);
     return 0;
   }
-  fail("usage: update-manifest.mjs create|verify|check-signature --pubkey <key> …");
+  fail("usage: update-manifest.mjs create|verify|check-signature --pubkey <key> … | check-key | release-repository");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

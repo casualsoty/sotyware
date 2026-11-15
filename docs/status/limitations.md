@@ -811,15 +811,25 @@ server only; no real provider was asked.
 - **Losing the recovery key and every enrolled device** makes the vault
   unrecoverable by design; storage data is unaffected.
 
-## Updates (ADR-033, ADR-036)
+## Updates (ADR-033, ADR-036, ADR-038)
 
 - **Not usable yet, for two reasons:** `src-tauri/update-key.pub` holds no
-  public key (no release key exists), and **the repository is private**:
-  GitHub serves the assets of a private repository only to signed-in
-  clients, so no installation could download `latest.json`. `release.yml`
-  refuses to publish until the repository is public (or releases go to a
-  public repository, [release.md](../development/release.md#github-releases)).
+  public key (no release key exists), and **the public release repository
+  `casualsoty/sotyware-releases` does not exist yet** (the source
+  repository stays private; GitHub serves a private repository's release
+  assets only to signed-in clients). `release.yml` refuses to publish until
+  it exists, is public and holds no source code
+  ([release.md](../development/release.md#the-public-release-repository)).
   Release builds say updates are not set up.
+- **On GitHub Free the `release` environment does not exist** for a private
+  repository: the update key and the release token would have to be
+  repository secrets, readable by every workflow run of the source
+  repository; whether a job naming an unavailable environment runs at all
+  is untested ([release.md](../development/release.md#secrets)).
+- **The Windows installers are not Authenticode-signed**; publishing them
+  needs the explicit opt-in `SOTYWARE_ALLOW_UNSIGNED_WINDOWS`.
+- **The release token expires** (fine-grained tokens do); a release fails
+  at its first `gh release` step until it is renewed.
 - **No update was ever installed, and `release.yml` never ran:** download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
