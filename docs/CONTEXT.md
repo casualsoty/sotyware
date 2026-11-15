@@ -50,10 +50,13 @@ signing step, dry runs sign with a throwaway key, the Apple credentials
 live in `macos-signing`, and `macos.yml` runs natively on both Mac
 architectures on every pull request to and push to `main`. The release key
 file can never hold a fixture's or a private key. **Not usable yet:** no
-release key in `src-tauri/update-key.pub`, no environment or ruleset
-configured, `release.yml` never run. Its first dry run needs
-`macos-signing` created by hand first, or the run creates it without
-protection ([readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
+release key in `src-tauri/update-key.pub`, no ruleset; the environments
+`release` and `macos-signing` were created by hand on 2026-11-15 (no
+secret), and `release.yml` ran only as a dry run: it failed at
+`ecf4339` on one test on the Intel Mac and passed at `8125739` with
+`rehearse` (run 43735919504; nothing published;
+[dry runs](status/status.md#release-dry-runs-2026-11-15),
+[readiness audit](status/status.md#release-rehearsal-readiness-2026-11-15)).
 On this tree, WSL2 only:
 Vitest 241, Rust 510 (recorder build 538), the release tools' tests,
 actionlint with shellcheck clean, the virtual display 139/0/0 and the
@@ -369,8 +372,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   from throttled progress updates. It now cancels from the test hook
   `TransferControl::handed_over` and checks at the abort's arrival that
   part 2 was stored; reproduced and fixed under CPU load on WSL2 (the old
-  test 0/6 there, the new 6/6, its control 10/10; both fail with the
-  wait switched off). Not yet run on GitHub.
+  test 0/6 there, the new 6/6, its control 10/10; the new test fails with
+  the wait switched off). Pushed as `8125739`: `ci.yml` and `macos.yml`
+  passed on every platform, then the repeated dry run.
 - **Upload tests on a single CPU** (2026-11-15, `25eb0f6`,
   [status.md](status/status.md#upload-tests-on-a-single-cpu-2026-11-15)):
   test hooks run in `block_in_place` on a multi-thread runtime, so a

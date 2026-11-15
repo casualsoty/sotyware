@@ -815,20 +815,21 @@ server only; no real provider was asked.
 
 - **Not usable yet:** `src-tauri/update-key.pub` holds no public key (no
   release key exists), the `release` environment that would hold the
-  private key does not exist, and no release has been published. Release
-  builds say updates are not set up
+  private key exists (since 2026-11-15) but holds no secret, and no
+  release has been published. Release builds say updates are not set up
   ([release.md](../development/release.md#github-releases)).
-- **The signing key's protection depends on repository settings** that do
-  not exist yet: the `release` environment's tag rule and reviewer, and a
-  tag ruleset for `v*`. `release.yml` refuses a real release while the
-  environment is missing or admits a branch, or while the key is a
-  repository secret, but it cannot stop another workflow from naming an
-  unprotected environment, and it only warns when no reviewer is set
+- **The signing key's protection depends on repository settings,** of
+  which only the environments exist (2026-11-15: `release` admits only
+  the tag `v*` and needs the owner's approval): the tag ruleset for `v*`
+  does not. `release.yml` refuses a real release while the environment is
+  missing or admits a branch, or while the key is a repository secret,
+  but it cannot stop another workflow from naming an unprotected
+  environment, and it only warns when no reviewer is set
   ([release.md](../development/release.md#repository-settings)).
-  `macos-signing` has to be created by hand before the first run of
-  `release.yml`, a dry run included, or of `macos.yml` with `package`:
-  their macOS package job would create it without protection, and
-  `prepare` only notes that it is missing.
+  `macos-signing` has to exist before any run of `release.yml`, a dry run
+  included, or of `macos.yml` with `package` (it was created by hand on
+  2026-11-15): their macOS package job would create it without
+  protection, and `prepare` only notes that it is missing.
 - **The Windows installers are not Authenticode-signed**; publishing them
   needs the explicit opt-in `SOTYWARE_ALLOW_UNSIGNED_WINDOWS`.
 - **The Linux packages are built on `ubuntu-22.04`,** which GitHub removes
@@ -875,7 +876,10 @@ server only; no real provider was asked.
   before the promotion, and `latest.json` with its `.sig` after it.
   Addressing the release by its id from its creation on would close this
   ([status](status.md#release-rehearsal-readiness-2026-11-15)).
-- **No update was ever installed, and `release.yml` never ran:** download,
+- **No update was ever installed, and `release.yml` ran only as a dry
+  run** (passed at `8125739`, 2026-11-15; its publish job never ran, so
+  nothing was ever uploaded to, published on or read back from GitHub
+  Releases; [status](status.md#release-dry-runs-2026-11-15)): download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
   release commands were rehearsed locally with the real Tauri CLI and a

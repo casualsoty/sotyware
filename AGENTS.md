@@ -41,7 +41,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   Releases of this public repository, `casualsoty/sotyware` (ADR-033,
   ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
   signing key only in the protected `release` environment; no release key
-  exists and the environments have not been created, so release builds
+  exists and the environments hold no secret yet, so release builds
   have updates switched off and no release has been published), in a
   desktop shell with a sidebar, Settings and one design system (ADR-035). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
