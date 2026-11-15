@@ -285,5 +285,5 @@ With the maintainer's approval: push the branch so `ci.yml` (Linux and
 Windows), `isolation-guard.yml` and a manual `release-build.yml` run on
 this tree; then run the desktop drivers (test-profile builds) for the new
 pages; then the external gates above, in the order of
-[release.md](../development/release.md#updates) and
+[release.md](../development/release.md#github-releases) and
 [server.md](../development/server.md#external-gates).

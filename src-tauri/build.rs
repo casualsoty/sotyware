@@ -82,6 +82,7 @@ fn main() {
             "install_update",
             "cancel_update",
             "postpone_update",
+            "restart_after_update",
         ]));
     if windows_msvc_target() {
         attributes = attributes

@@ -1416,7 +1416,7 @@ keys_still_work("a drop from another program")
 
 close_choosers()
 # ======================================================== unversioned bucket
-press(pid, "← Back to accounts")
+press(pid, "Back to accounts")
 ok = wait_for(lambda: "Open bucket" in buttons(pid), 20) and add("Plain", "files-plain", KEY1, SECRET1, ENDPOINT) \
     and wait_for(lambda: "Added Plain" in text(pid), 20)
 opened = False

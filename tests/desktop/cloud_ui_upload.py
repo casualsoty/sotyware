@@ -538,7 +538,7 @@ make("batch8", "a-away.bin", blob(40 * MIB, 8))
 make("batch8", "b-away.txt", b"away")
 ok = go("inbox", "existing.txt") and pick(os.path.join(SRC, "batch8"), ["a-away.bin", "b-away.txt"])
 running = ok and until(sending("a-away.bin", 10), 60)
-left = running and press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 10)
+left = running and press(pid, "Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 10)
 time.sleep(10)  # longer than the rest of a-away.bin would take
 objects, multipart, _ = state()
 created |= {"inbox/a-away.bin", "inbox/b-away.txt"}

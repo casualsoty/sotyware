@@ -3,6 +3,7 @@
   import CloudAccountForm from "./CloudAccountForm.svelte";
   import CloudBrowser from "./CloudBrowser.svelte";
   import CloudRecovery from "./CloudRecovery.svelte";
+  import Icon from "./Icon.svelte";
   import {
     checkAccount,
     CloudCommandError,
@@ -12,14 +13,27 @@
     type AccountInfo,
     type ProviderInfo,
   } from "./cloud";
-  import { CHECK_HINTS, CHECK_LABELS, describeError } from "./cloudMessages";
+  import { CHECK_HINTS, CHECK_LABELS, checkTone, describeError } from "./cloudMessages";
 
-  // Cloud storage accounts: list, add, edit, check and remove, and a
-  // read-only browser of each account's bucket (CloudBrowser.svelte). Nothing
-  // here uploads, downloads or changes objects. Every operation is a Rust
-  // command; the page never sees a stored key.
+  // Cloud storage accounts: list, add, edit, check and remove, and the
+  // browser of each account's bucket (CloudBrowser.svelte). Every operation
+  // is a Rust command; the page never sees a stored key. The shell's sidebar
+  // opens an account's bucket through `browsing` and the add form through
+  // `requestAdd`, and hears about list changes through `onaccountschange`.
 
   type FormState = { mode: "add" } | { mode: "edit"; id: string };
+
+  interface Props {
+    /** The account whose bucket is open (bound by the shell). */
+    browsing?: string | null;
+    /** The shell asks for the add form; answered with `onaddrequested`. */
+    requestAdd?: boolean;
+    onaddrequested?: () => void;
+    /** The list changed (loaded, added, edited, checked, removed). */
+    onaccountschange?: (accounts: AccountInfo[]) => void;
+  }
+
+  let { browsing = $bindable(null), requestAdd = false, onaddrequested, onaccountschange }: Props = $props();
 
   let providers = $state<ProviderInfo[] | null>(null);
   let accounts = $state<AccountInfo[] | null>(null);
@@ -31,8 +45,6 @@
   let checking = $state<Record<string, boolean>>({});
   let confirmingRemove = $state<string | null>(null);
   let removing = $state<string | null>(null);
-  /** The account whose bucket is open in the browser, if any. */
-  let browsing = $state<string | null>(null);
   const browsed = $derived(browsing === null ? null : (accounts?.find((a) => a.id === browsing) ?? null));
 
   function openBrowser(account: AccountInfo): void {
@@ -55,6 +67,21 @@
     browsing = null;
     openForm({ mode: "edit", id });
   }
+
+  // Every change of the list reaches the shell's sidebar.
+  $effect(() => {
+    if (accounts !== null) {
+      onaccountschange?.(accounts);
+    }
+  });
+
+  // The sidebar's "Add storage account": the list must be loaded first.
+  $effect(() => {
+    if (requestAdd && providers !== null && accounts !== null) {
+      openForm({ mode: "add" });
+      onaddrequested?.();
+    }
+  });
 
   async function load(): Promise<void> {
     try {
@@ -122,6 +149,16 @@
     }
   }
 
+  // The credential store's name on this system, as its users know it.
+  const UA = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  const KEYCHAIN = /Mac/.test(UA)
+    ? "the macOS Keychain"
+    : /Windows/.test(UA)
+      ? "Windows Credential Manager"
+      : /Linux|X11/.test(UA)
+        ? "the desktop keyring"
+        : "Windows Credential Manager, the macOS Keychain or the desktop keyring";
+
   function checkedAt(ms: number): string {
     return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
@@ -131,323 +168,306 @@
   });
 </script>
 
-<section aria-labelledby="cloud-storage-heading">
-  <h2 id="cloud-storage-heading">Cloud Storage</h2>
-  <p>
-    Connect sotyware to your cloud storage: Backblaze B2, Hetzner Object Storage or another S3-compatible service.
-    Each account uses one bucket. Access keys are kept in your system's credential store (Windows Credential Manager
-    or the desktop keyring), never in sotyware's own files.
-  </p>
+{#if browsed}
+  {#key browsed.id}
+    <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} />
+  {/key}
+{:else}
+  <div class="page">
+    <section aria-labelledby="cloud-storage-heading">
+      <header class="page-header">
+        <div class="titles">
+          <h1 id="cloud-storage-heading">Cloud Storage</h1>
+          <p class="lede">
+            Connect sotyware to your cloud storage: Backblaze B2, Hetzner Object Storage or another S3-compatible
+            service. Each account uses one bucket. Access keys are kept in your system's credential store ({KEYCHAIN}),
+            never in sotyware's own files.
+          </p>
+        </div>
+        {#if providers && accounts && !storageError && form?.mode !== "add"}
+          <button type="button" class="primary" onclick={() => openForm({ mode: "add" })}><Icon name="plus" size={15} />Add account</button>
+        {/if}
+      </header>
 
-  {#if loadError}
-    <p class="error" role="alert">{loadError}</p>
-  {/if}
-  {#if storageError}
-    <p class="error" role="alert">
-      The account database could not be opened: {storageError}. Accounts cannot be shown or added until this is fixed.
-    </p>
-  {/if}
-
-  {#if browsed}
-    {#key browsed.id}
-      <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} />
-    {/key}
-  {:else if providers && accounts && !storageError}
-    <CloudRecovery {accounts} />
-    {#if form?.mode === "add"}
-      <CloudAccountForm
-        {providers}
-        account={null}
-        onsaved={(info) => saved(info, true)}
-        oncancel={() => (form = null)}
-        onchanged={() => void load()}
-      />
-    {:else}
-      <button type="button" class="primary" onclick={() => openForm({ mode: "add" })}>Add account</button>
-    {/if}
-
-    {#if notice}
-      <p class="notice" role="status">{notice}</p>
-    {/if}
-    {#if actionError}
-      <p class="error" role="alert">{actionError}</p>
-    {/if}
-
-    {#if accounts.length === 0 && form === null}
-      <div class="empty">
-        <p><strong>No storage accounts yet.</strong></p>
-        <p>
-          Add one with a bucket and an application key from your provider's console. A key restricted to that one
-          bucket is enough.
+      {#if loadError}
+        <p class="error" role="alert">{loadError}</p>
+      {/if}
+      {#if storageError}
+        <p class="error" role="alert">
+          The account database could not be opened: {storageError}. Accounts cannot be shown or added until this is fixed.
         </p>
-      </div>
-    {/if}
+      {/if}
 
-    <ul class="accounts">
-      {#each accounts as account (account.id)}
-        <li data-account={account.id}>
-          {#if form?.mode === "edit" && form.id === account.id}
+      {#if providers && accounts && !storageError}
+        <CloudRecovery {accounts} />
+        {#if form?.mode === "add"}
+          <div class="card form-card">
             <CloudAccountForm
               {providers}
-              {account}
-              onsaved={(info) => saved(info, false)}
+              account={null}
+              onsaved={(info) => saved(info, true)}
               oncancel={() => (form = null)}
               onchanged={() => void load()}
             />
-          {:else}
-            <div class="title">
-              <strong class="label">{account.label}</strong>
-              <span class="provider">{account.providerName ?? account.provider}</span>
-            </div>
-            <dl class="meta">
-              <dt>Bucket</dt>
-              <dd class="bucket">{account.bucket ?? "none"}</dd>
-              <dt>Region</dt>
-              <dd>{account.region}</dd>
-              {#if account.endpointUrl}
-                <dt>Endpoint</dt>
-                <dd class="endpoint">{account.endpointUrl}</dd>
-              {/if}
-            </dl>
-            {#if account.configError}
-              <p class="error">This account's settings cannot be used: {account.configError}</p>
-            {/if}
+          </div>
+        {/if}
 
-            <div class="status-line">
-              {#if checking[account.id]}
-                <span class="status checking" role="status">Checking connection…</span>
-              {:else if account.lastCheck}
-                <span
-                  class="status"
-                  class:ok={account.lastCheck.status === "connected"}
-                  class:bad={account.lastCheck.status !== "connected"}
-                  data-status={account.lastCheck.status}
-                >
-                  {CHECK_LABELS[account.lastCheck.status]}
-                </span>
-                <span class="when">checked {checkedAt(account.lastCheck.checkedAt)}</span>
+        {#if notice}
+          <p class="notice success" role="status">{notice}</p>
+        {/if}
+        {#if actionError}
+          <p class="error" role="alert">{actionError}</p>
+        {/if}
+
+        {#if accounts.length === 0 && form === null}
+          <div class="empty">
+            <span class="empty-icon" aria-hidden="true"><Icon name="cloud" size={28} /></span>
+            <p><strong>No storage accounts yet.</strong></p>
+            <p>
+              Add one with a bucket and an application key from your provider's console. A key restricted to that one
+              bucket is enough.
+            </p>
+          </div>
+        {/if}
+
+        <ul class="accounts">
+          {#each accounts as account (account.id)}
+            <li data-account={account.id} class="account" class:editing={form?.mode === "edit" && form.id === account.id}>
+              {#if form?.mode === "edit" && form.id === account.id}
+                <CloudAccountForm
+                  {providers}
+                  {account}
+                  onsaved={(info) => saved(info, false)}
+                  oncancel={() => (form = null)}
+                  onchanged={() => void load()}
+                />
               {:else}
-                <span class="status unknown">Not checked yet</span>
-              {/if}
-            </div>
-            {#if account.lastCheck && !checking[account.id] && account.lastCheck.status !== "connected"}
-              <p class="check-detail">
-                {CHECK_HINTS[account.lastCheck.status]}
-                {#if account.lastCheck.message}<span class="detail">Details: {account.lastCheck.message}</span>{/if}
-              </p>
-            {/if}
-
-            {#if confirmingRemove === account.id}
-              <div class="confirm" role="group" aria-label="Confirm removal of {account.label}">
-                <p>
-                  Remove <strong>{account.label}</strong> from sotyware? Its access key is deleted from this computer's
-                  credential store. The bucket <strong>{account.bucket ?? ""}</strong> and its files at
-                  {account.providerName ?? account.provider} are <strong>not</strong> deleted or changed.
-                </p>
-                <div class="actions">
-                  <button type="button" class="danger" disabled={removing === account.id} onclick={() => remove(account)}>
-                    {removing === account.id ? "Removing…" : "Remove account"}
-                  </button>
-                  <button type="button" disabled={removing === account.id} onclick={() => (confirmingRemove = null)}>
-                    Cancel
-                  </button>
+                <div class="head">
+                  <span class="tile" aria-hidden="true"><Icon name="bucket" size={18} /></span>
+                  <div class="title">
+                    <strong class="label">{account.label}</strong>
+                    <span class="provider">{account.providerName ?? account.provider}</span>
+                  </div>
+                  <div class="status-line">
+                    {#if checking[account.id]}
+                      <span class="badge" role="status"><span class="spinner" aria-hidden="true"></span>Checking connection…</span>
+                    {:else if account.lastCheck}
+                      <span class="status badge {checkTone(account.lastCheck.status)}" data-status={account.lastCheck.status}>
+                        {CHECK_LABELS[account.lastCheck.status]}
+                      </span>
+                      <span class="when">checked {checkedAt(account.lastCheck.checkedAt)}</span>
+                    {:else}
+                      <span class="status badge unknown">Not checked yet</span>
+                    {/if}
+                  </div>
                 </div>
-              </div>
-            {:else}
-              <div class="actions">
-                <button
-                  type="button"
-                  disabled={account.bucket === null || account.configError !== null}
-                  onclick={() => openBrowser(account)}
-                >
-                  Open bucket
-                </button>
-                <button type="button" disabled={checking[account.id] === true} onclick={() => check(account)}>
-                  Check connection
-                </button>
-                <button type="button" onclick={() => openForm({ mode: "edit", id: account.id })}>Edit</button>
-                <button
-                  type="button"
-                  onclick={() => {
-                    actionError = null;
-                    notice = null;
-                    confirmingRemove = account.id;
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            {/if}
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  {:else if !loadError && !storageError}
-    <p>Loading…</p>
-  {/if}
-</section>
+                <dl class="meta meta-list">
+                  <dt>Bucket</dt>
+                  <dd class="bucket">{account.bucket ?? "none"}</dd>
+                  <dt>Region</dt>
+                  <dd>{account.region}</dd>
+                  {#if account.endpointUrl}
+                    <dt>Endpoint</dt>
+                    <dd class="endpoint">{account.endpointUrl}</dd>
+                  {/if}
+                </dl>
+                {#if account.configError}
+                  <p class="error">This account's settings cannot be used: {account.configError}</p>
+                {/if}
+                {#if account.lastCheck && !checking[account.id] && account.lastCheck.status !== "connected"}
+                  <p class="check-detail callout {checkTone(account.lastCheck.status)}">
+                    {CHECK_HINTS[account.lastCheck.status]}
+                    {#if account.lastCheck.message}<span class="detail">Details: {account.lastCheck.message}</span>{/if}
+                  </p>
+                {/if}
+
+                {#if confirmingRemove === account.id}
+                  <div class="confirm callout danger" role="group" aria-label="Confirm removal of {account.label}">
+                    <p>
+                      Remove <strong>{account.label}</strong> from sotyware? Its access key is deleted from this computer's
+                      credential store. The bucket <strong>{account.bucket ?? ""}</strong> and its files at
+                      {account.providerName ?? account.provider} are <strong>not</strong> deleted or changed.
+                    </p>
+                    <div class="actions">
+                      <button
+                        type="button"
+                        class="primary danger"
+                        disabled={removing === account.id}
+                        onclick={() => remove(account)}
+                      >
+                        {removing === account.id ? "Removing…" : "Remove account"}
+                      </button>
+                      <button type="button" disabled={removing === account.id} onclick={() => (confirmingRemove = null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="actions">
+                    <button
+                      type="button"
+                      class="primary"
+                      disabled={account.bucket === null || account.configError !== null}
+                      onclick={() => openBrowser(account)}
+                    >
+                      Open bucket
+                    </button>
+                    <button type="button" disabled={checking[account.id] === true} onclick={() => check(account)}>
+                      Check connection
+                    </button>
+                    <button type="button" class="ghost" onclick={() => openForm({ mode: "edit", id: account.id })}>Edit</button>
+                    <button
+                      type="button"
+                      class="ghost danger"
+                      onclick={() => {
+                        actionError = null;
+                        notice = null;
+                        confirmingRemove = account.id;
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                {/if}
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {:else if !loadError && !storageError}
+        <p class="loading muted" role="status"><span class="spinner" aria-hidden="true"></span> Loading…</p>
+      {/if}
+    </section>
+  </div>
+{/if}
 
 <style>
-  section {
-    margin-top: 1.5rem;
-  }
-
-  h2 {
-    font-size: 1.1em;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-  }
-
   .accounts {
     list-style: none;
+    margin: var(--space-4) 0 0;
     padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+    gap: var(--space-4);
   }
 
-  .accounts > li {
-    padding: 0.75rem 0;
-    border-top: 1px solid rgb(0 0 0 / 10%);
+  .account {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    transition: border-color var(--dur-fast) var(--ease);
+  }
+
+  .account:hover {
+    border-color: var(--border-strong);
+  }
+
+  .account.editing {
+    grid-column: 1 / -1;
+  }
+
+  .account > .actions {
+    margin-top: auto;
+    padding-top: var(--space-4);
+    gap: 6px;
+  }
+
+  .account > .actions button {
+    padding: 0 10px;
+  }
+
+  .head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+  }
+
+  .tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-radius: var(--radius-md);
   }
 
   .title {
     display: flex;
-    gap: 0.5rem;
-    align-items: baseline;
-    flex-wrap: wrap;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .label {
+    font-size: var(--text-md);
+    overflow-wrap: anywhere;
   }
 
   .provider,
-  .when,
-  .meta,
-  .detail {
-    color: #6b6b73;
-    font-size: 0.9em;
-  }
-
-  .meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.1rem 0.75rem;
-    margin: 0.4rem 0;
-  }
-
-  .meta dd {
-    margin: 0;
-    overflow-wrap: anywhere;
+  .when {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
   .status-line {
     display: flex;
-    gap: 0.5rem;
-    align-items: baseline;
-    margin: 0.3rem 0;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    flex: none;
   }
 
-  .status {
-    font-weight: 600;
-    font-size: 0.9em;
+  .when {
+    font-size: var(--text-xs);
   }
 
-  .status.ok {
-    color: #2e7d32;
+  .meta {
+    margin: 0 0 var(--space-1);
   }
 
-  .status.bad {
-    color: #c62828;
-  }
-
-  .status.unknown,
-  .status.checking {
-    color: #6b6b73;
-    font-weight: normal;
+  .meta dd {
+    white-space: pre-wrap;
   }
 
   .check-detail {
-    margin: 0.2rem 0 0.5rem;
-    font-size: 0.9em;
+    margin: var(--space-3) 0 0;
   }
 
   .detail {
     display: block;
+    margin-top: var(--space-1);
+    color: var(--text-muted);
     overflow-wrap: anywhere;
   }
 
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
   .confirm {
-    padding: 0.75rem 1rem;
-    border-left: 3px solid #c62828;
-    background: rgb(0 0 0 / 4%);
-    font-size: 0.95em;
+    margin: var(--space-3) 0 0;
   }
 
-  .confirm p {
-    margin-top: 0;
+  .confirm .actions {
+    margin-top: var(--space-2);
   }
 
-  .danger {
-    color: #fff;
-    background: #c62828;
-    border: 1px solid #c62828;
-    border-radius: 3px;
+  .form-card {
+    margin: var(--space-4) 0;
   }
 
-  .empty {
-    margin: 1rem 0;
-    padding: 0.75rem 1rem;
-    border-left: 3px solid #8a8a93;
-    background: rgb(0 0 0 / 4%);
+  .empty-icon {
+    display: inline-flex;
+    margin-bottom: var(--space-2);
+    color: var(--text-subtle);
   }
 
-  .empty p {
-    margin: 0.25rem 0;
-  }
-
-  .notice {
-    padding: 0.5rem 0.75rem;
-    border-left: 3px solid #2e7d32;
-    background: rgb(0 0 0 / 4%);
-    font-size: 0.95em;
-  }
-
-  .error {
-    color: #c62828;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .accounts > li {
-      border-top-color: rgb(255 255 255 / 12%);
-    }
-
-    .provider,
-    .when,
-    .meta,
-    .detail,
-    .status.unknown,
-    .status.checking {
-      color: #a0a0a8;
-    }
-
-    .status.ok {
-      color: #81c784;
-    }
-
-    .status.bad,
-    .error {
-      color: #ef7070;
-    }
-
-    .confirm,
-    .empty,
-    .notice {
-      background: rgb(255 255 255 / 6%);
-    }
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
 </style>

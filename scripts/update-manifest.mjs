@@ -1,26 +1,35 @@
 #!/usr/bin/env node
-// Creates and verifies sotyware's signed update manifest (ADR-033,
-// docs/architecture/updates.md). Signing is not done here: artifacts and the
-// manifest are signed with the official `tauri signer sign --app-version`
-// (minisign, the key stays in the release environment). This script
+// Creates and verifies sotyware's signed update manifest `latest.json`
+// (ADR-033, ADR-036, docs/architecture/updates.md). Signing is not done
+// here: artifacts and the manifest are signed with the official `tauri
+// signer sign --app-version` (minisign, the key stays in the release job).
+// This script
 //
-//   create  writes sotyware-update.json from signed Windows installers,
-//           after checking every artifact signature and its signed version;
+//   create  writes the manifest from signed updater artifacts (Windows
+//           installers, macOS .app.tar.gz, Linux AppImage/deb/rpm), after
+//           checking every artifact signature and its signed version, with
+//           URLs under the GitHub release's download folder;
 //   verify  checks a manifest, its signature and (optionally) the local
-//           artifacts it names: format, channel, HTTPS URLs, artifact
+//           artifacts it names: format, channel, HTTPS URLs under the
+//           expected folder, exactly the required platforms, artifact
 //           signatures with the right version, SHA-256.
 //
 // It never reads or prints a private key. Only Node's standard library.
 //
 //   node scripts/update-manifest.mjs create --version 0.2.0 \
-//     --base-url https://updates.example.org/0.2.0/ --pubkey <file|base64> \
-//     --nsis <setup.exe> [--msi <x.msi>] [--notes-file notes.md] \
-//     [--pub-date 2026-11-15T12:00:00Z] --out sotyware-update.json
+//     --base-url https://github.com/OWNER/REPO/releases/download/v0.2.0/ \
+//     --pubkey <file|base64> --nsis <setup.exe> [--msi <x.msi>] \
+//     [--app-aarch64 <x.app.tar.gz>] [--app-x64 <x.app.tar.gz>] \
+//     [--appimage <x.AppImage>] [--deb <x.deb>] [--rpm <x.rpm>] \
+//     [--notes-file notes.md] [--pub-date 2026-11-15T12:00:00Z] --out latest.json
 //   (each artifact's signature is read from <artifact>.sig)
 //
-//   node scripts/update-manifest.mjs verify --manifest sotyware-update.json \
-//     --pubkey <file|base64> [--sig sotyware-update.json.sig] [--artifacts <dir>]
-//     [--current 0.1.0]
+//   node scripts/update-manifest.mjs verify --manifest latest.json \
+//     --pubkey <file|base64> [--sig latest.json.sig] [--artifacts <dir>]
+//     [--current 0.1.0] [--base-url <folder>/] [--require nsis,msi,…]
+//
+//   node scripts/update-manifest.mjs check-signature --pubkey <file|base64> \
+//     --file <f> --version 0.2.0 [--sig <f>.sig]
 
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -30,10 +39,35 @@ import { fileURLToPath } from "node:url";
 export const FORMAT = "sotyware-update";
 export const FORMAT_VERSION = 1;
 export const CHANNEL = "stable";
-/** Platform keys, as tauri-plugin-updater names them (`{os}-{arch}-{installer}`).
- * No generic `windows-x86_64` entry: an installation whose installer type
- * is unknown gets no package. */
-export const TARGETS = { nsis: "windows-x86_64-nsis", msi: "windows-x86_64-msi" };
+/** Platform keys, as tauri-plugin-updater names them (`{os}-{arch}-{installer}`),
+ * by artifact kind (the command-line option). No generic `{os}-{arch}`
+ * entry: an installation whose installer type is unknown (a development
+ * build) gets no package. */
+export const TARGETS = {
+  nsis: "windows-x86_64-nsis",
+  msi: "windows-x86_64-msi",
+  "app-aarch64": "darwin-aarch64-app",
+  "app-x64": "darwin-x86_64-app",
+  appimage: "linux-x86_64-appimage",
+  deb: "linux-x86_64-deb",
+  rpm: "linux-x86_64-rpm",
+};
+
+/** What each kind's file is called, so a wrong file is caught before it is
+ * signed into a manifest. */
+const ARTIFACT_NAMES = {
+  nsis: /-setup\.exe$/,
+  msi: /\.msi$/,
+  "app-aarch64": /_aarch64\.app\.tar\.gz$/,
+  "app-x64": /_x64\.app\.tar\.gz$/,
+  appimage: /\.AppImage$/,
+  deb: /\.deb$/,
+  rpm: /\.rpm$/,
+};
+
+/** Names GitHub keeps unchanged as release asset names (it rewrites spaces
+ * and other characters), so a URL built from the file name finds it. */
+export const ASSET_NAME = /^[A-Za-z0-9._-]+$/;
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -162,6 +196,13 @@ export function createManifest({ version, baseUrl, publicKey, artifacts, notes =
     if (!target) {
       fail(`unknown artifact kind ${kind}`);
     }
+    const name = basename(path);
+    if (!ASSET_NAME.test(name)) {
+      fail(`${name}: GitHub would rename this asset; use only letters, digits, dot, dash and underscore`);
+    }
+    if (!ARTIFACT_NAMES[kind].test(name)) {
+      fail(`${name} is not a ${kind} artifact`);
+    }
     const sigPath = `${path}.sig`;
     if (!existsSync(sigPath)) {
       fail(`${basename(path)}: no ${basename(sigPath)} (sign it with tauri signer sign --app-version ${version})`);
@@ -186,7 +227,7 @@ export function createManifest({ version, baseUrl, publicKey, artifacts, notes =
 
 /** Checks a manifest's bytes (signature first), its content and, when
  * `artifactsDir` is given, the artifacts it names. Returns the manifest. */
-export function verifyManifest({ bytes, signature, publicKey, artifactsDir = null, current = null }) {
+export function verifyManifest({ bytes, signature, publicKey, artifactsDir = null, current = null, baseUrl = null, require = null }) {
   if (signature !== null) {
     try {
       verifySignature(bytes, signature, publicKey);
@@ -209,12 +250,22 @@ export function verifyManifest({ bytes, signature, publicKey, artifactsDir = nul
   if (entries.length === 0) {
     fail("manifest: no platform");
   }
+  if (require !== null) {
+    const want = require.map((kind) => TARGETS[kind] ?? fail(`unknown artifact kind ${kind}`)).sort();
+    const got = entries.map(([t]) => t).sort();
+    if (want.join() !== got.join()) {
+      fail(`manifest: platforms ${got.join(", ")}; expected exactly ${want.join(", ")}`);
+    }
+  }
   for (const [target, e] of entries) {
     if (!Object.values(TARGETS).includes(target)) {
       fail(`manifest: unexpected platform ${target}`);
     }
     if (typeof e.url !== "string" || !e.url.startsWith("https://")) {
       fail(`${target}: the URL must use https://`);
+    }
+    if (baseUrl !== null && !e.url.startsWith(baseUrl)) {
+      fail(`${target}: ${e.url} is not under ${baseUrl}`);
     }
     if (typeof e.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(e.sha256) || typeof e.signature !== "string" || e.signature === "") {
       fail(`${target}: needs a signature and a SHA-256`);
@@ -264,8 +315,9 @@ export function main(argv) {
   const publicKey = readPublicKey(need(o, "pubkey"));
   if (command === "create") {
     const artifacts = {};
-    if (o.nsis) artifacts.nsis = o.nsis;
-    if (o.msi) artifacts.msi = o.msi;
+    for (const kind of Object.keys(TARGETS)) {
+      if (o[kind]) artifacts[kind] = o[kind];
+    }
     const m = createManifest({
       version: need(o, "version"),
       baseUrl: need(o, "base-url"),
@@ -288,12 +340,23 @@ export function main(argv) {
       publicKey,
       artifactsDir: o.artifacts ?? null,
       current: o.current ?? null,
+      baseUrl: o["base-url"] ?? null,
+      require: o.require ? o.require.split(",").map((k) => k.trim()).filter(Boolean) : null,
     });
     const what = o.artifacts ? "manifest, signature and artifacts" : "manifest and signature";
     console.log(`update-manifest: ${what} verified for ${m.version}: ${Object.keys(m.platforms).join(", ")}`);
     return 0;
   }
-  fail("usage: update-manifest.mjs create|verify --pubkey <key> …");
+  if (command === "check-signature") {
+    // One file and its .sig, signed for --version: the release job's check
+    // that the signing secret belongs to the committed public key.
+    const file = need(o, "file");
+    const version = need(o, "version");
+    checkArtifact(file, readFileSync(o.sig ?? `${file}.sig`, "utf8").trim(), publicKey, version);
+    console.log(`update-manifest: ${basename(file)} is signed by this key for ${version}`);
+    return 0;
+  }
+  fail("usage: update-manifest.mjs create|verify|check-signature --pubkey <key> …");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

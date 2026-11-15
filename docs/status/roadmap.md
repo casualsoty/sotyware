@@ -55,13 +55,31 @@ Not started unless status.md says so. Scope and procedures:
    at `f9a0c71` ([status](status.md#hosted-runs-at-f9a0c71-icons-pushed-2026-11-14));
    Explorer, Start menu, other scalings and the installers are part of the
    installation test (3).
-6. Updates (ADR-033, implemented 2026-11-15 but switched off): create the
-   release signing key offline, an HTTPS update server, compile both in,
-   store the key as a protected CI secret, then install release N and
-   update it to N+1 through the dashboard on a disposable Windows 11
-   machine, checking the data folder and credentials survive
-   ([release.md](../development/release.md#updates)). Each step needs the
-   maintainer's decision; the server and domain cost money.
+6. Updates through GitHub Releases (ADR-036, implemented 2026-11-15 but
+   not usable): decide whether the repository (or a separate releases
+   repository) becomes public; generate the release key offline and commit
+   its public half to `src-tauri/update-key.pub`; create the protected
+   `release` environment with the signing secrets; run `release.yml` as a
+   dry run on a tag, then publish release N; install it on a disposable
+   machine, publish N+1 and update through the notification, checking the
+   data folder and credentials survive
+   ([release.md](../development/release.md#github-releases)). Each step
+   needs the maintainer's decision.
+7. Run the redesigned dashboard through the Windows drivers
+   (`windows.ps1`, `windows-cloud-ui.ps1`, updated but not run) and look at
+   it in WebView2 at 100 % and 150 %.
+
+## macOS (after ADR-037)
+
+1. Run `macos.yml` by hand (both architectures, `package: true`); fix what
+   the first real compile and test run finds.
+2. Obtain an Apple Developer ID certificate and an App Store Connect API
+   key; set the secrets ([macos.md](../development/macos.md#signing-and-notarization));
+   run `macos.yml` again and check signing and notarization.
+3. On an Apple Silicon and an Intel Mac: the manual check in
+   [macos.md](../development/macos.md#signing-and-notarization), then an
+   update from one signed release to the next.
+4. A monochrome template image for the menu bar icon.
 
 Fixes found during validation come before anything below.
 

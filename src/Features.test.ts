@@ -361,13 +361,24 @@ describe("saved choices", () => {
   });
 });
 
-describe("features on the dashboard", () => {
-  it("lists features below the dashboard content", async () => {
+describe("features in Settings", () => {
+  it("lists features under Settings › Features, not on the Overview", async () => {
     const root = await render(App);
-    expect(root.querySelector("main h1")?.textContent).toBe("sotyware");
+    expect(root.querySelector("main h1")?.textContent).toBe("Overview");
+    expect(root.querySelector("li[data-feature]")).toBeNull();
+    expect(calls.map((c) => c.cmd)).not.toContain(LIST_FEATURES);
+
+    [...root.querySelectorAll<HTMLAnchorElement>("nav a, a")].find((a) => a.textContent?.trim() === "Settings")!.click();
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Settings");
+    [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((t) => t.textContent?.trim() === "Features")!.click();
+    await settle();
     expect(stateText(root, "example")).toBe("Running");
-    // Checkboxes, not buttons: the page's only button stays "Hide dashboard".
-    expect([...root.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Hide dashboard"]);
+    expect(calls.filter((c) => c.cmd === LIST_FEATURES)).toHaveLength(1);
+    // Checkboxes, not buttons: the features panel adds no button of its own.
+    const panel = root.querySelector<HTMLElement>('[role="tabpanel"]')!;
+    expect(panel.querySelectorAll("button")).toHaveLength(0);
+    expect(panel.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
   });
 });
 

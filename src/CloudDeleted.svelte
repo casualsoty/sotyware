@@ -167,42 +167,27 @@
 
 <style>
   .deleted {
-    margin-top: 0.75rem;
+    margin-top: var(--space-3);
   }
 
   h4 {
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
+    font-size: var(--text-md);
     overflow-wrap: anywhere;
   }
 
   .note {
-    color: #4a4a52;
-    font-size: 0.9em;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin: 0.5rem 0;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.95em;
-  }
-
-  th,
   td {
-    text-align: left;
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgb(0 0 0 / 10%);
     vertical-align: top;
   }
 
   .num {
     text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   .key {
@@ -210,35 +195,7 @@
     overflow-wrap: anywhere;
   }
 
-  .problem {
-    border-left: 3px solid #c62828;
-    padding: 0.5rem 1rem;
-    background: rgb(0 0 0 / 4%);
-  }
-
-  button {
-    font: inherit;
-    padding: 0.35rem 0.8rem;
-    cursor: pointer;
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .note {
-      color: #b8b8c0;
-    }
-
-    th,
-    td {
-      border-bottom-color: rgb(255 255 255 / 12%);
-    }
+  tbody tr:hover {
+    background: var(--surface-2);
   }
 </style>

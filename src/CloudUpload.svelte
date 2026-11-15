@@ -640,19 +640,35 @@
 
 <style>
   .upload {
-    margin: 0.75rem 0;
-    padding: 0.5rem 1rem;
-    border-left: 3px solid #1565c0;
-    background: rgb(0 0 0 / 4%);
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
   }
 
   .upload.failed {
-    border-left-color: #c62828;
+    border-color: var(--danger-border);
   }
 
   .upload p {
-    margin: 0.25rem 0;
+    margin: var(--space-1) 0;
     overflow-wrap: anywhere;
+  }
+
+  .upload-destination {
+    font-size: var(--text-sm);
+  }
+
+  .upload-progress,
+  .upload-current {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .upload progress {
+    margin: var(--space-2) 0;
   }
 
   .dest,
@@ -661,63 +677,56 @@
     overflow-wrap: anywhere;
   }
 
-  progress {
-    width: 100%;
-    max-width: 28rem;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin: 0.5rem 0;
+  .upload .actions {
+    margin-top: var(--space-2);
   }
 
   .hint,
   .file-size,
   .file-detail {
-    color: #6b6b73;
-    font-size: 0.9em;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
   }
 
   .attention {
-    font-weight: 600;
+    font-weight: var(--weight-semibold);
   }
 
   .upload-cleanup {
-    margin: 0.5rem 0;
-    padding-left: 1.25rem;
-    font-size: 0.95em;
+    margin: var(--space-2) 0;
+    padding-left: var(--space-5);
+    font-size: var(--text-sm);
   }
 
   /* A batch holds up to 100 files: the list scrolls instead of pushing the
      folder out of view. */
   .upload-files {
     list-style: none;
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
     padding: 0;
     max-height: 15rem;
     overflow-y: auto;
-    border-top: 1px solid rgb(0 0 0 / 10%);
+    font-size: var(--text-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   .upload-files li {
     display: grid;
     grid-template-columns: minmax(0, 1fr) max-content;
-    gap: 0 0.75rem;
-    padding: 0.25rem 0.25rem;
-    border-bottom: 1px solid rgb(0 0 0 / 10%);
+    gap: 0 var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .upload-files li:last-child {
+    border-bottom: none;
   }
 
   .file-size {
     text-align: right;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .file-status,
@@ -726,42 +735,17 @@
     overflow-wrap: anywhere;
   }
 
+  .file-status {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
   li[data-state="failed"] .file-status {
-    color: #c62828;
-    font-weight: 600;
+    color: var(--danger);
+    font-weight: var(--weight-semibold);
   }
 
   li[data-state="completed"] .file-status {
-    color: #2e7d32;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .upload {
-      background: rgb(255 255 255 / 6%);
-      border-left-color: #90caf9;
-    }
-
-    .upload.failed {
-      border-left-color: #ef9a9a;
-    }
-
-    .hint,
-    .file-size,
-    .file-detail {
-      color: #a0a0a8;
-    }
-
-    .upload-files,
-    .upload-files li {
-      border-color: rgb(255 255 255 / 12%);
-    }
-
-    li[data-state="failed"] .file-status {
-      color: #ef9a9a;
-    }
-
-    li[data-state="completed"] .file-status {
-      color: #a5d6a7;
-    }
+    color: var(--success);
   }
 </style>

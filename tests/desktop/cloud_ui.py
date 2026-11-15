@@ -675,7 +675,7 @@ try:
         check("Open bucket: the browser shows the network error with Try again",
               bool(ok) and "The provider could not be reached" in t and "Try again" in buttons(pid)
               and page_has_no_key(t), t)
-        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
+        ok = press(pid, "Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
         check("Back to accounts from the error", bool(ok), str(buttons(pid)))
         ok = edit(pid) and fill(pid, "Name", "Family photos") and button(pid, "Save changes")
         check("rename without re-entering the key",
@@ -747,7 +747,7 @@ try:
               bool(ok) and "item-1004.txt" in t and "Load more" not in buttons(pid), t[-300:])
         ok = press(pid, "Refresh") and wait_for(lambda: "1000 items shown; more are available" in text(pid), 60)
         check("Refresh starts again from the first page", bool(ok), text(pid)[-300:])
-        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        ok = press(pid, "Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
         check("Back to accounts shows the account list again", bool(ok), str(buttons(pid)))
         ok, confirm, removed = remove("Browse")
         check("remove the account afterwards", removed and rows() == [], str(rows()))
@@ -955,7 +955,7 @@ try:
         print(f"  Open bucket at the root: {outcome}", flush=True)
         check("Open bucket at the root: a listing, or Access denied for the prefix-restricted key",
               bool(ok) and outcome in ("listed", "access denied") and page_has_no_key(t), t)
-        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
+        ok = press(pid, "Back to accounts") and wait_for(lambda: "Check connection" in buttons(pid), 10)
         check("Back to accounts from the bucket", bool(ok), str(buttons(pid)))
 
         renamed = f"{label} renamed"
@@ -1060,13 +1060,13 @@ try:
               ok and "1010 items shown." in text(pid) and "Load more" not in buttons(pid), why)
         ok, why = (press(pid, "Refresh") and shows("many/", first_page=True)) or (False, "")
         check("Refresh starts again at the first page", ok and "1000 items shown; more" in text(pid), why)
-        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        ok = press(pid, "Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
         check("Back to accounts", bool(ok), str(buttons(pid)))
         ok = press(pid, "Open bucket") and wait_for(
             lambda: "Root of the bucket" in text(pid) and "Loading" not in text(pid), 60)
         check("Open bucket again starts at the bucket's root",
               bool(ok) and ["sotyware-it", "Folder", "—"] in table_rows(pid), text(pid)[-300:])
-        ok = press(pid, "← Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
+        ok = press(pid, "Back to accounts") and wait_for(lambda: "Open bucket" in buttons(pid), 20)
         ok2, _, removed = remove(label)
         check("remove the account: gone from page, database and keyring",
               bool(ok) and removed and rows() == [], str(rows()))
@@ -1096,7 +1096,12 @@ try:
         saving = ok and wait_for(lambda: "Saving…" in buttons(pid), 5)
         check("add waits on the Secret Service (it never answers)", bool(saving), str(buttons(pid)))
         t0 = time.time()
-        nav = link(pid, "Overview") and wait_for(lambda: "Welcome" in text(pid) and "Features" in text(pid), 5)
+        # The features are under Settings › Features since the redesign.
+        nav = link(pid, "Settings") and wait_for(
+            lambda: any(n == "Features" for n, _ in by_role(pid, Atspi.Role.PAGE_TAB)), 5)
+        tab = [node for n, node in by_role(pid, Atspi.Role.PAGE_TAB) if n == "Features"] if nav else []
+        nav = nav and tab and Atspi.Action.do_action(tab[0], 0) and wait_for(
+            lambda: any(n == "Example" for n, _ in by_role(pid, Atspi.Role.CHECK_BOX)), 5)
         check("while it waits, the window still switches sections", bool(nav) and time.time() - t0 < 5,
               f"{time.time() - t0:.1f}s")
         box = [node for n, node in by_role(pid, Atspi.Role.CHECK_BOX) if n == "Example"]

@@ -150,6 +150,17 @@ aws-smithy-types = "1"
 # `search` (and its regex) is not needed.
 windows-native-keyring-store = { version = "1", default-features = false }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The macOS Keychain for keyring-core (ADR-017, ADR-037): the "legacy"
+# file-based keychain every app may use, signed or not, without a
+# provisioning profile or keychain-access-group entitlement (the
+# data-protection keychain, `protected`, needs both). No default features.
+apple-native-keyring-store = { version = "1", default-features = false, features = ["keychain"] }
+# Already in the tree through the store above; declared only so keyring.rs
+# can name its error type and tell a dismissed prompt or a locked keychain
+# apart from other failures by the OSStatus code. No features are added.
+security-framework = { version = "3", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Not used directly: enables tray-icon's pure-Rust StatusNotifierItem backend
 # (ksni) on the tray-icon that Tauri already depends on. tray-icon selects ksni

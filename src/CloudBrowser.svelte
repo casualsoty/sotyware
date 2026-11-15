@@ -62,6 +62,7 @@
     type SortKey,
   } from "./fileList";
   import { formatSize, shownName } from "./format";
+  import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
   // Browser of one account's bucket, one folder level and one page at a
@@ -91,6 +92,12 @@
   }
 
   let { account, onclose, onedit }: Props = $props();
+
+  // Shortcut labels as this system writes them.
+  const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
+  const MOD = MAC ? "⌘" : "Ctrl+";
+  const DELETE_KEY = MAC ? "⌘⌫" : "Del";
+  let searchInput: HTMLInputElement | undefined = $state();
 
   let prefix = $state("");
   let crumbs = $state<Breadcrumb[]>([]);
@@ -287,6 +294,48 @@
 
   function closeMenu(): void {
     menu = null;
+  }
+
+  /** Keeps the menu inside the window and puts focus on its first item, so
+   * the keyboard can walk it (arrows, Home, End; Escape closes). */
+  function placeMenu(el: HTMLElement): void {
+    const r = el.getBoundingClientRect();
+    const x = Math.max(4, Math.min(r.left, window.innerWidth - r.width - 4));
+    const y = r.bottom > window.innerHeight - 4 ? Math.max(4, r.top - r.height) : r.top;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }
+
+  function menuKey(event: KeyboardEvent): void {
+    const items = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    let next: HTMLElement | undefined;
+    switch (event.key) {
+      case "ArrowDown":
+        next = items[(at + 1) % items.length];
+        break;
+      case "ArrowUp":
+        next = items[(at - 1 + items.length) % items.length];
+        break;
+      case "Home":
+        next = items[0];
+        break;
+      case "End":
+        next = items.at(-1);
+        break;
+      case "Escape":
+      case "Tab":
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenu();
+        return;
+      default:
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    next?.focus();
   }
 
   // ------------------------------------------------------------ actions
@@ -621,6 +670,10 @@
         break;
       case "refresh":
         changed();
+        break;
+      case "find":
+        searchInput?.focus();
+        searchInput?.select();
         break;
       case "open":
         if (focused !== null) {
@@ -989,18 +1042,24 @@
 <svelte:window {onkeydown} onclick={onwindowclick} />
 
 <section class="browser" aria-labelledby="browser-heading" data-browsing={account.id}>
-  <button type="button" class="back" onclick={() => onclose(null)}>← Back to accounts</button>
-  <h3 id="browser-heading" tabindex="-1" bind:this={heading}>{account.label}</h3>
-  <dl class="meta">
-    <dt>Bucket</dt>
-    <dd class="bucket">{bucket}</dd>
-    <dt>Folder</dt>
-    <dd class="path">{prefix === "" ? "Root of the bucket" : prefix}</dd>
-  </dl>
+  <header class="browser-header">
+    <button type="button" class="ghost back" onclick={() => onclose(null)}><Icon name="arrow-left" />Back to accounts</button>
+    <div class="title-row">
+      <span class="tile" aria-hidden="true"><Icon name="bucket" size={18} /></span>
+      <div class="titles">
+        <h1 id="browser-heading" tabindex="-1" bind:this={heading}>{account.label}</h1>
+        <dl class="meta">
+          <div><dt>Bucket</dt><dd class="bucket">{bucket}</dd></div>
+          <div><dt>Folder</dt><dd class="path">{prefix === "" ? "Root of the bucket" : prefix}</dd></div>
+        </dl>
+      </div>
+    </div>
+  </header>
 
   <nav aria-label="Folder path" class="crumbs">
     <ol>
       <li>
+        <span class="crumb-icon" aria-hidden="true"><Icon name="bucket" size={14} /></span>
         {#if crumbs.length === 0}
           <span aria-current="location">{bucket}</span>
         {:else}
@@ -1020,31 +1079,35 @@
   </nav>
 
   <div class="actions toolbar" role="toolbar" aria-label="Folder actions">
-    <button type="button" disabled={parentCrumbs === null} onclick={goUp}>Up one folder</button>
-    <button type="button" onclick={refresh} title="Refresh (Ctrl+R)">Refresh</button>
+    <button type="button" class="ghost" disabled={parentCrumbs === null} onclick={goUp} title="Up one folder"><Icon name="arrow-up" />Up one folder</button>
+    <button type="button" class="ghost" onclick={refresh} title={`Refresh (${MOD}R)`}><Icon name="refresh" />Refresh</button>
+    <span class="divider" aria-hidden="true"></span>
     <button
       type="button"
-      class="upload-action"
+      class="primary upload-action"
       disabled={uploadBusy || uploader === undefined}
       title={uploadBusy ? "An upload is running" : "Upload files into this folder"}
-      onclick={() => uploader?.start(bucket, prefix, crumbs)}>Upload files…</button
+      onclick={() => uploader?.start(bucket, prefix, crumbs)}><Icon name="upload" />Upload files…</button
     >
     <button
       type="button"
+      class="ghost"
       disabled={uploadBusy || uploader === undefined}
       title={uploadBusy ? "An upload is running" : "Upload a folder and everything in it into this folder"}
-      onclick={() => uploader?.startFolder(bucket, prefix, crumbs)}>Upload folder…</button
+      onclick={() => uploader?.startFolder(bucket, prefix, crumbs)}><Icon name="folder-upload" />Upload folder…</button
     >
-    <button type="button" onclick={() => ((typedName = ""), (dialog = { type: "new-folder", error: null, saving: false }))}>New folder…</button>
+    <button type="button" class="ghost" onclick={() => ((typedName = ""), (dialog = { type: "new-folder", error: null, saving: false }))}
+      ><Icon name="folder-plus" />New folder…</button
+    >
     {#if clipboard !== null}
-      <button type="button" disabled={opBusy || view !== "folder"} title="Paste (Ctrl+V)" onclick={paste}>
+      <span class="divider" aria-hidden="true"></span>
+      <button type="button" disabled={opBusy || view !== "folder"} title={`Paste (${MOD}V)`} onclick={paste}>
         {clipboard.mode === "copy" ? "Paste copy" : "Move here"} ({clipboard.items.length})
       </button>
-      <button type="button" onclick={() => (clipboard = null)}>Clear clipboard</button>
+      <button type="button" class="ghost" onclick={() => (clipboard = null)}>Clear clipboard</button>
     {/if}
-    <button type="button" aria-pressed={view === "deleted"} onclick={toggleDeleted}>
-      Deleted items
-    </button>
+    <span class="spacer"></span>
+    <button type="button" class="ghost" aria-pressed={view === "deleted"} onclick={toggleDeleted}><Icon name="restore" />Deleted items</button>
   </div>
 
   <form
@@ -1055,7 +1118,17 @@
       void runSearch(false);
     }}
   >
-    <input type="search" aria-label="Search" placeholder="Search names…" bind:value={query} />
+    <div class="search-box">
+      <Icon name="search" size={15} />
+      <input
+        type="search"
+        aria-label="Search"
+        placeholder="Search names…"
+        title={`Search (${MOD}F)`}
+        bind:value={query}
+        bind:this={searchInput}
+      />
+    </div>
     <select aria-label="Search where" value={searchScope} onchange={(e) => (searchScope = e.currentTarget.value === "bucket" ? "bucket" : "folder")}>
       <option value="folder">In this folder and below</option>
       <option value="bucket">In the whole bucket</option>
@@ -1066,12 +1139,12 @@
     </select>
     <button type="submit" disabled={query.trim() === ""}>Search</button>
     {#if view === "search"}
-      <button type="button" onclick={clearSearch}>Clear search</button>
+      <button type="button" class="ghost" onclick={clearSearch}>Clear search</button>
     {/if}
   </form>
 
   <details class="places">
-    <summary>Favorites ({places.favorites.length}) and recent ({places.recent.length})</summary>
+    <summary><Icon name="star" size={14} />Favorites ({places.favorites.length}) and recent ({places.recent.length})</summary>
     {#if placesError !== null}
       <p role="alert">{describeOperationError(placesError)}</p>
     {/if}
@@ -1081,11 +1154,12 @@
         <ul>
           {#each places.favorites as p (p.path)}
             <li>
-              <button type="button" class="link" onclick={() => openPlace(p)}>
-                <span aria-hidden="true">{p.folder ? "📁" : "📄"}</span> {shownName(p.name)}
-              </button>
+              <span class="place-icon" aria-hidden="true"><Icon name={p.folder ? "folder" : "file"} size={14} /></span>
+              <button type="button" class="link" onclick={() => openPlace(p)}>{shownName(p.name)}</button>
               <span class="where">{p.parent === "" ? bucket : p.parent}</span>
-              <button type="button" class="small" aria-label={`Remove ${shownName(p.name)} from favorites`} onclick={() => void toggleFavorite(p.path)}>✕</button>
+              <button type="button" class="ghost icon small" aria-label={`Remove ${shownName(p.name)} from favorites`} onclick={() => void toggleFavorite(p.path)}
+                ><Icon name="close" size={12} /></button
+              >
             </li>
           {:else}
             <li class="none">No favorites yet. Use “Add to favorites” in a file's or folder's menu.</li>
@@ -1097,9 +1171,8 @@
         <ul>
           {#each places.recent as p (p.path)}
             <li>
-              <button type="button" class="link" onclick={() => openPlace(p)}>
-                <span aria-hidden="true">{p.folder ? "📁" : "📄"}</span> {shownName(p.name)}
-              </button>
+              <span class="place-icon" aria-hidden="true"><Icon name={p.folder ? "folder" : "file"} size={14} /></span>
+              <button type="button" class="link" onclick={() => openPlace(p)}>{shownName(p.name)}</button>
               <span class="where">{p.parent === "" ? bucket : p.parent}</span>
             </li>
           {:else}
@@ -1125,7 +1198,7 @@
 
   {#if dropped !== null}
     {@const d = dropped ?? { drop: 0, files: 0, folders: 0, names: [] }}
-    <div class="notice drop" role="region" aria-label="Dropped files">
+    <div class="notice drop panel" role="region" aria-label="Dropped files">
       <p>
         Dropped: {d.files} file{d.files === 1 ? "" : "s"}{d.folders > 0 ? ` and ${d.folders} folder${d.folders === 1 ? "" : "s"} (with everything in them)` : ""}
         — {d.names.slice(0, 5).map((n) => shownName(n)).join(", ")}{d.names.length > 5 ? ", …" : ""}.
@@ -1141,7 +1214,8 @@
             if (id !== undefined) {
               void uploader?.startDrop(bucket, prefix, crumbs, id);
             }
-          }}>Upload here</button
+          }}
+          class="primary">Upload here</button
         >
         <button type="button" onclick={() => (dropped = null)}>Ignore</button>
       </div>
@@ -1149,22 +1223,25 @@
   {/if}
 
   {#if notice !== null}
-    <p class="notice" class:error={notice.error} role={notice.error ? "alert" : "status"}>
-      {notice.text}
-      <button type="button" class="small" aria-label="Dismiss message" onclick={() => (notice = null)}>✕</button>
+    <!-- Text straight in the paragraph, not in a flex item: WebKitGTK leaves
+         a flex item's text out of the accessibility tree. -->
+    <p class="notice toast" class:error={notice.error} role={notice.error ? "alert" : "status"}>
+      {notice.text}<button type="button" class="ghost icon small dismiss" aria-label="Dismiss message" onclick={() => (notice = null)}
+        ><Icon name="close" size={12} /></button
+      >
     </p>
   {/if}
 
   {#if download !== null}
     <div
-      class="download"
+      class="download panel"
       class:failed={download.state === "failed"}
       data-download-state={download.state}
       data-transfer={download.transfer ?? ""}
       aria-label="Download"
       role="region"
     >
-      <p class="download-name"><strong>{download.fileName}</strong></p>
+      <p class="download-name"><span class="panel-icon" aria-hidden="true"><Icon name="download" size={15} /></span><strong>{download.fileName}</strong></p>
       {#if download.state === "choosing"}
         <p role="status">Choose where to save the file…</p>
       {:else if download.state === "active"}
@@ -1186,7 +1263,7 @@
           <p role="alert">Could not cancel: {describeError(download.error)}</p>
         {/if}
         <div class="actions">
-          <button type="button" disabled={download.transfer === null || download.cancel !== null} onclick={() => void cancelActive()}>
+          <button type="button" class="small" disabled={download.transfer === null || download.cancel !== null} onclick={() => void cancelActive()}>
             Cancel download
           </button>
         </div>
@@ -1195,12 +1272,12 @@
           Downloaded {formatSize(download.bytes)}. {integrityText(download.integrity)}
         </p>
         <div class="actions">
-          <button type="button" onclick={dismissDownload}>Dismiss</button>
+          <button type="button" class="small" onclick={dismissDownload}>Dismiss</button>
         </div>
       {:else if download.state === "cancelled"}
         <p role="status" class="download-result">Download cancelled. Nothing was saved.</p>
         <div class="actions">
-          <button type="button" onclick={dismissDownload}>Dismiss</button>
+          <button type="button" class="small" onclick={dismissDownload}>Dismiss</button>
         </div>
       {:else}
         <div role="alert" class="download-result">
@@ -1208,11 +1285,11 @@
           <p>{describeError(download.error)}</p>
         </div>
         <div class="actions">
-          <button type="button" onclick={() => void retryFailed()}>Try download again</button>
+          <button type="button" class="small primary" onclick={() => void retryFailed()}>Try download again</button>
           {#if fixedByEditing(download.error)}
-            <button type="button" onclick={onedit}>Edit account</button>
+            <button type="button" class="small" onclick={onedit}>Edit account</button>
           {/if}
-          <button type="button" onclick={dismissDownload}>Dismiss</button>
+          <button type="button" class="small" onclick={dismissDownload}>Dismiss</button>
         </div>
       {/if}
     </div>
@@ -1237,8 +1314,8 @@
   {/if}
 
   <div class="listbar">
-    <label>
-      Sort by
+    <label class="sort">
+      <Icon name="sort" size={14} />Sort by
       <select value={sortBy} onchange={(e) => (sortBy = e.currentTarget.value as SortKey)}>
         <option value="listed">Bucket order</option>
         <option value="name">Name</option>
@@ -1249,28 +1326,33 @@
     </label>
     <button
       type="button"
+      class="small"
       aria-label={sortDirection === "ascending" ? "Ascending; switch to descending" : "Descending; switch to ascending"}
       onclick={() => (sortDirection = sortDirection === "ascending" ? "descending" : "ascending")}
       >{sortDirection === "ascending" ? "↑ Ascending" : "↓ Descending"}</button
     >
-    <button type="button" aria-expanded={filterOpen} onclick={() => (filterOpen = !filterOpen)}>
-      Filter{isFiltering(filter) ? " (on)" : ""}
+    <button type="button" class="small" aria-expanded={filterOpen} onclick={() => (filterOpen = !filterOpen)}>
+      <Icon name="filter" size={14} />Filter{isFiltering(filter) ? " (on)" : ""}
     </button>
     {#if isFiltering(filter)}
-      <button type="button" onclick={resetFilter}>Show everything</button>
+      <button type="button" class="small ghost" onclick={resetFilter}>Show everything</button>
     {/if}
-    <span class="hint">Sorting and filtering apply to the {entries.length.toLocaleString()} items loaded.</span>
+    <!-- A paragraph, not a span: WebKitGTK leaves a flex item span's text
+         out of the accessibility tree. -->
+    <p class="hint">Sorting and filtering apply to the {entries.length.toLocaleString()} items loaded.</p>
   </div>
 
   {#if filterOpen}
     <fieldset class="filters">
       <legend>Show only</legend>
-      <label><input type="radio" name="show" value="all" bind:group={filter.show} /> Files and folders</label>
-      <label><input type="radio" name="show" value="files" bind:group={filter.show} /> Files</label>
-      <label><input type="radio" name="show" value="folders" bind:group={filter.show} /> Folders</label>
+      <div class="shows">
+        <label class="check"><input type="radio" name="show" value="all" bind:group={filter.show} /> Files and folders</label>
+        <label class="check"><input type="radio" name="show" value="files" bind:group={filter.show} /> Files</label>
+        <label class="check"><input type="radio" name="show" value="folders" bind:group={filter.show} /> Folders</label>
+      </div>
       <div class="cats">
         {#each CATEGORIES as c (c)}
-          <label><input type="checkbox" checked={filter.categories.includes(c)} onchange={() => toggleCategory(c)} /> {c}</label>
+          <label class="check"><input type="checkbox" checked={filter.categories.includes(c)} onchange={() => toggleCategory(c)} /> {c}</label>
         {/each}
       </div>
       <form
@@ -1292,22 +1374,23 @@
 
   {#if selected.length > 0}
     <div class="selectionbar" role="toolbar" aria-label="Selected items">
-      <span>{selected.length} selected</span>
-      <button type="button" disabled={bulkBusy || downloadBusy} onclick={downloadSelected}>Download</button>
-      <button type="button" disabled={opBusy} onclick={() => copyOrMoveTo("copy")}>Copy to…</button>
-      <button type="button" disabled={opBusy} onclick={() => copyOrMoveTo("move")}>Move to…</button>
-      <button type="button" disabled={opBusy || selected.length !== 1} onclick={renameSelected}>Rename</button>
-      <button type="button" class="danger" disabled={opBusy} onclick={deleteSelected}>Delete</button>
+      <p class="selected-count">{selected.length} selected</p>
+      <button type="button" class="small" disabled={bulkBusy || downloadBusy} onclick={downloadSelected}><Icon name="download" size={14} />Download</button>
+      <button type="button" class="small" disabled={opBusy} onclick={() => copyOrMoveTo("copy")}><Icon name="copy" size={14} />Copy to…</button>
+      <button type="button" class="small" disabled={opBusy} onclick={() => copyOrMoveTo("move")}><Icon name="move" size={14} />Move to…</button>
+      <button type="button" class="small" disabled={opBusy || selected.length !== 1} onclick={renameSelected}><Icon name="edit" size={14} />Rename</button>
+      <button type="button" class="small danger" disabled={opBusy} onclick={deleteSelected}><Icon name="trash" size={14} />Delete</button>
       {#if selected.length === 1 && selected[0]?.kind === "file"}
-        <button type="button" onclick={() => selected[0]?.kind === "file" && showProperties(selected[0].key)}>Properties</button>
+        <button type="button" class="small" onclick={() => selected[0]?.kind === "file" && showProperties(selected[0].key)}><Icon name="info" size={14} />Properties</button>
       {/if}
       {#if selected.length === 1 && selected[0] !== undefined}
         {@const only = selected[0]}
-        <button type="button" onclick={() => void toggleFavorite(entryId(only))}>
-          {favoriteSet.has(entryId(only)) ? "Remove from favorites" : "Add to favorites"}
+        <button type="button" class="small" onclick={() => void toggleFavorite(entryId(only))}>
+          <Icon name="star" size={14} filled={favoriteSet.has(entryId(only))} />{favoriteSet.has(entryId(only)) ? "Remove from favorites" : "Add to favorites"}
         </button>
       {/if}
-      <button type="button" onclick={clearSelection}>Clear selection</button>
+      <span class="spacer"></span>
+      <button type="button" class="small ghost" onclick={clearSelection}>Clear selection</button>
     </div>
   {/if}
 
@@ -1321,7 +1404,7 @@
       <button type="button" onclick={() => void runSearch(true)}>Search further</button>
     {/if}
   {:else if loading === "folder"}
-    <p class="loading" role="status">Loading folder…</p>
+    <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading folder…</p>
   {:else if error?.during === "folder"}
     <div class="problem" role="alert">
       <p><strong>Could not load this folder.</strong></p>
@@ -1335,6 +1418,7 @@
     </div>
   {:else if empty}
     <div class="empty" role="status">
+      <span class="empty-icon" aria-hidden="true"><Icon name="folder" size={28} /></span>
       <p><strong>{prefix === "" ? "This bucket is empty." : "This folder is empty."}</strong></p>
       <p>
         Folders exist only as part of file names in cloud storage, so a folder without files shows up only if a folder
@@ -1354,9 +1438,9 @@
         : ""}.
     </p>
     {#if loading === "more"}
-      <p class="loading" role="status">Loading more…</p>
+      <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading more…</p>
     {:else if nextPage !== null && error === null}
-      <button type="button" onclick={() => void loadMore()}>Load more</button>
+      <button type="button" class="load-more" onclick={() => void loadMore()}>Load more</button>
     {/if}
     {#if error?.during === "more"}
       <div class="problem" role="alert">
@@ -1407,10 +1491,11 @@
             oncontextmenu={(e) => rowMenu(entry, e)}
           >
             <td>
-              <button type="button" class="link name" onclick={() => activate(entry)}>
-                <span aria-hidden="true">📁</span>
-                {shownName(entry.name)}
-              </button>
+              <span class="row-icon folder-icon" aria-hidden="true"><Icon name="folder" size={16} /></span><button
+                type="button"
+                class="link name"
+                onclick={() => activate(entry)}>{shownName(entry.name)}</button
+              >
               {#if view === "search"}<span class="where">in {(hitParents.get(id) ?? "") === "" ? bucket : hitParents.get(id)}</span>{/if}
             </td>
             <td class="num">Folder</td>
@@ -1418,7 +1503,7 @@
             <td>{typeLabel(entry)}</td>
             <td><input type="checkbox" aria-label={`Select ${shownName(entry.name)}`} checked={isSelected} onchange={() => toggleOne(entry)} /></td>
             <td class="row-actions">
-              <button type="button" class="menu-action" aria-label={`More actions for ${shownName(entry.name)}`} aria-haspopup="menu" onclick={(e) => { e.stopPropagation(); menuFor(entry, e); }}>⋯</button>
+              <button type="button" class="menu-action ghost icon small" aria-label={`More actions for ${shownName(entry.name)}`} aria-haspopup="menu" onclick={(e) => { e.stopPropagation(); menuFor(entry, e); }}><Icon name="more" size={16} /></button>
             </td>
           </tr>
         {:else}
@@ -1433,7 +1518,7 @@
             ondblclick={() => activate(entry)}
             oncontextmenu={(e) => rowMenu(entry, e)}
           >
-            <td class="name">{shownName(entry.name)}{#if view === "search"}<span class="where">in {(hitParents.get(id) ?? "") === "" ? bucket : hitParents.get(id)}</span>{/if}</td>
+            <td class="name"><span class="row-icon" aria-hidden="true"><Icon name="file" size={16} /></span>{shownName(entry.name)}{#if view === "search"}<span class="where">in {(hitParents.get(id) ?? "") === "" ? bucket : hitParents.get(id)}</span>{/if}</td>
             <td class="num" title={`${entry.size.toLocaleString()} bytes`}>{formatSize(entry.size)}</td>
             <td>{formatDate(entry.lastModified)}</td>
             <td>{typeLabel(entry)}</td>
@@ -1441,7 +1526,7 @@
             <td class="row-actions">
               <button
                 type="button"
-                class="download-action"
+                class="download-action ghost small"
                 disabled={downloadBusy}
                 aria-label={`Download ${shownName(entry.name)}`}
                 title={downloadBusy ? "Another download is running" : "Download this file"}
@@ -1449,9 +1534,9 @@
                   const f = files.find((x) => x.key === entry.key) ?? { name: entry.name, key: entry.key, size: entry.size, lastModified: entry.lastModified };
                   remember(entry.key);
                   void startDownload(f);
-                }}>Download</button
+                }}><Icon name="download" size={14} />Download</button
               >
-              <button type="button" class="menu-action" aria-label={`More actions for ${shownName(entry.name)}`} aria-haspopup="menu" onclick={(e) => { e.stopPropagation(); menuFor(entry, e); }}>⋯</button>
+              <button type="button" class="menu-action ghost icon small" aria-label={`More actions for ${shownName(entry.name)}`} aria-haspopup="menu" onclick={(e) => { e.stopPropagation(); menuFor(entry, e); }}><Icon name="more" size={16} /></button>
             </td>
           </tr>
         {/if}
@@ -1463,26 +1548,40 @@
 {#if menu !== null && selected.length > 0}
   {@const only = selected.length === 1 ? selected[0] : undefined}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="context-menu" role="menu" aria-label="Actions" tabindex="-1" style={`left:${menu.x}px;top:${menu.y}px`} onclick={(e) => e.stopPropagation()}>
+  <div
+    class="context-menu"
+    role="menu"
+    aria-label="Actions"
+    tabindex="-1"
+    style={`left:${menu.x}px;top:${menu.y}px`}
+    use:placeMenu
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={menuKey}
+  >
     {#if only !== undefined}
-      <button type="button" role="menuitem" onclick={() => { closeMenu(); activate(only); }}>{only.kind === "folder" ? "Open" : "Properties and preview"}</button>
+      <button type="button" role="menuitem" onclick={() => { closeMenu(); activate(only); }}
+        ><Icon name={only.kind === "folder" ? "folder" : "info"} size={15} />{only.kind === "folder" ? "Open" : "Properties and preview"}</button
+      >
     {/if}
-    <button type="button" role="menuitem" disabled={bulkBusy || downloadBusy} onclick={downloadSelected}>Download{selected.length > 1 ? ` ${selected.length} items` : ""}…</button>
-    <button type="button" role="menuitem" disabled={opBusy} onclick={() => copyOrMoveTo("copy")}>Copy to…</button>
-    <button type="button" role="menuitem" disabled={opBusy} onclick={() => copyOrMoveTo("move")}>Move to…</button>
-    <button type="button" role="menuitem" onclick={() => clip("copy")}>Copy (Ctrl+C)</button>
-    <button type="button" role="menuitem" onclick={() => clip("cut")}>Cut (Ctrl+X)</button>
+    <button type="button" role="menuitem" disabled={bulkBusy || downloadBusy} onclick={downloadSelected}
+      ><Icon name="download" size={15} />Download{selected.length > 1 ? ` ${selected.length} items` : ""}…</button
+    >
+    <div class="menu-sep" role="separator"></div>
+    <button type="button" role="menuitem" disabled={opBusy} onclick={() => copyOrMoveTo("copy")}><Icon name="copy" size={15} />Copy to…</button>
+    <button type="button" role="menuitem" disabled={opBusy} onclick={() => copyOrMoveTo("move")}><Icon name="move" size={15} />Move to…</button>
+    <button type="button" role="menuitem" onclick={() => clip("copy")}><span class="menu-gap"></span>Copy ({MOD}C)</button>
+    <button type="button" role="menuitem" onclick={() => clip("cut")}><span class="menu-gap"></span>Cut ({MOD}X)</button>
     {#if only !== undefined}
-      <button type="button" role="menuitem" disabled={opBusy} onclick={renameSelected}>Rename (F2)</button>
+      <button type="button" role="menuitem" disabled={opBusy} onclick={renameSelected}><Icon name="edit" size={15} />Rename (F2)</button>
       <button type="button" role="menuitem" onclick={() => { closeMenu(); void toggleFavorite(entryId(only)); }}>
-        {favoriteSet.has(entryId(only)) ? "Remove from favorites" : "Add to favorites"}
+        <Icon name="star" size={15} filled={favoriteSet.has(entryId(only))} />{favoriteSet.has(entryId(only)) ? "Remove from favorites" : "Add to favorites"}
       </button>
       {#if view === "search"}
-        <button type="button" role="menuitem" onclick={() => { closeMenu(); showInFolder(entryId(only)); }}>Show in folder</button>
+        <button type="button" role="menuitem" onclick={() => { closeMenu(); showInFolder(entryId(only)); }}><Icon name="folder" size={15} />Show in folder</button>
       {/if}
     {/if}
-    <button type="button" role="menuitem" class="danger" disabled={opBusy} onclick={deleteSelected}>Delete (Del)</button>
+    <div class="menu-sep" role="separator"></div>
+    <button type="button" role="menuitem" class="danger" disabled={opBusy} onclick={deleteSelected}><Icon name="trash" size={15} />Delete ({DELETE_KEY})</button>
   </div>
 {/if}
 
@@ -1558,65 +1657,137 @@
 
 <style>
   .browser {
-    margin-top: 0.5rem;
+    padding: var(--space-4) var(--space-8) var(--space-12);
   }
 
-  h3 {
-    font-size: 1.05em;
-    margin: 0.75rem 0 0.25rem;
+  .browser-header {
+    margin-bottom: var(--space-3);
   }
 
-  h3:focus {
-    outline: none;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-  }
-
-  button.link {
-    padding: 0;
-    border: none;
-    background: none;
-    color: #1565c0;
-    text-decoration: underline;
-    text-align: left;
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
   }
 
   .back {
-    margin-bottom: 0.25rem;
+    margin-left: calc(-1 * var(--space-2));
+    margin-bottom: var(--space-3);
+    color: var(--text-muted);
+    font-weight: var(--weight-regular);
+  }
+
+  .tile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    flex: none;
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    border-radius: var(--radius-md);
+  }
+
+  .titles {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+
+  h1 {
+    overflow-wrap: anywhere;
+  }
+
+  h1:focus {
+    outline: none;
   }
 
   .meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.1rem 0.75rem;
-    margin: 0.4rem 0;
-    color: #6b6b73;
-    font-size: 0.9em;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--space-4);
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
+
+  .meta > div {
+    display: flex;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  .meta dt::after {
+    content: ":";
   }
 
   .meta dd {
     margin: 0;
+    color: var(--text);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
+  }
+
+  .search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 var(--space-2);
+  }
+
+  .search-box {
+    flex: 1 1 16rem;
+  }
+
+  .search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    color: var(--text-subtle);
+  }
+
+  .search-box :global(.icon) {
+    position: absolute;
+    left: 10px;
+    pointer-events: none;
+  }
+
+  .search-box input {
+    width: 100%;
+    padding-left: 32px;
+  }
+
+  .search select {
+    max-width: 15rem;
   }
 
   .crumbs ol {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem;
+    align-items: center;
+    gap: var(--space-1);
     list-style: none;
     padding: 0;
-    margin: 0.5rem 0;
+    margin: 0;
+    font-size: var(--text-sm);
+  }
+
+  .crumb-icon {
+    display: inline-flex;
+    color: var(--text-subtle);
+  }
+
+  .crumbs li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
   }
 
   .crumbs li + li::before {
     content: "/";
-    margin-right: 0.25rem;
-    color: #6b6b73;
+    color: var(--text-subtle);
+    margin-right: var(--space-1);
   }
 
   .crumbs span,
@@ -1625,215 +1796,169 @@
     overflow-wrap: anywhere;
   }
 
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin: 0.5rem 0;
+  .crumbs [aria-current="location"] {
+    font-weight: var(--weight-medium);
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 0.5rem;
-    font-size: 0.95em;
+  .crumbs button.link {
+    color: var(--text-muted);
   }
 
-  th,
-  td {
-    text-align: left;
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgb(0 0 0 / 10%);
-    vertical-align: top;
+  .crumbs button.link:hover {
+    color: var(--text);
   }
 
-  th {
-    font-weight: 600;
+  .toolbar {
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    gap: var(--space-1);
   }
 
-  td.name,
-  .name {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  .toolbar .ghost {
+    color: var(--text-muted);
   }
 
-  .num {
-    text-align: right;
-    white-space: nowrap;
+  .toolbar .ghost:hover:not(:disabled) {
+    color: var(--text);
   }
 
-  .row-actions {
-    text-align: right;
-    white-space: nowrap;
+  .toolbar .ghost[aria-pressed="true"] {
+    color: var(--accent-text);
+    background: var(--accent-soft);
   }
 
-  .row-actions button {
-    padding: 0.15rem 0.6rem;
-    font-size: 0.9em;
-  }
-
-  .visually-hidden {
-    position: absolute;
+  .divider {
     width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+    height: 20px;
+    margin: 0 var(--space-1);
+    background: var(--border-strong);
   }
 
-  .download {
-    margin: 0.75rem 0;
-    padding: 0.5rem 1rem;
-    border-left: 3px solid #1565c0;
-    background: rgb(0 0 0 / 4%);
-  }
-
-  .download.failed {
-    border-left-color: #c62828;
-  }
-
-  .download p {
-    margin: 0.25rem 0;
-    overflow-wrap: anywhere;
-  }
-
-  .download-name {
-    white-space: pre-wrap;
-  }
-
-  .download progress {
-    width: 100%;
-    max-width: 28rem;
-  }
-
-  .count,
-  .loading {
-    color: #6b6b73;
-    font-size: 0.9em;
-  }
-
-  .empty,
-  .problem {
-    margin: 1rem 0;
-    padding: 0.75rem 1rem;
-    border-left: 3px solid #8a8a93;
-    background: rgb(0 0 0 / 4%);
-  }
-
-  .problem {
-    border-left-color: #c62828;
-  }
-
-  .empty p,
-  .problem p {
-    margin: 0.25rem 0;
-    overflow-wrap: anywhere;
-  }
-
-  .toolbar,
-  .listbar,
-  .selectionbar,
-  .search {
+  .listbar {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
     align-items: center;
-    margin: 0.5rem 0;
+    gap: var(--space-2);
+    margin: var(--space-2) 0;
+    font-size: var(--text-sm);
   }
 
-  .search input[type="search"] {
-    flex: 1;
-    min-width: 12rem;
-    font: inherit;
-    padding: 0.35rem 0.5rem;
+  .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
   }
 
-  select,
-  input[type="text"],
-  input[type="date"] {
-    font: inherit;
-    padding: 0.3rem 0.4rem;
+  .sort select {
+    min-height: var(--control-h-sm);
+    color: var(--text);
   }
 
-  .listbar .hint,
   .hint,
   .where,
-  .search-status {
-    color: #6b6b73;
-    font-size: 0.88em;
+  .search-status,
+  .count,
+  .loading {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .listbar .hint {
+    margin: 0 0 0 auto;
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
   }
 
   .where {
     display: block;
+    font-size: var(--text-xs);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
 
-  .selectionbar {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    padding: 0.4rem 0.6rem;
-    background: #e3f2fd;
-    border-radius: 4px;
-  }
-
-  .selectionbar span {
-    font-weight: 600;
-    margin-right: 0.5rem;
-  }
-
-  button.danger {
-    color: #b71c1c;
-  }
-
-  button.small {
-    padding: 0 0.4rem;
-    font-size: 0.85em;
+  .loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6) 0;
   }
 
   .filters {
-    border: 1px solid rgb(0 0 0 / 15%);
-    border-radius: 4px;
-    margin: 0.5rem 0;
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 1rem;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 var(--space-3);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
 
+  .filters legend {
+    float: left;
+    width: 100%;
+    margin-bottom: var(--space-1);
+  }
+
+  .shows,
   .filters .cats,
   .filters .ranges {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem 0.8rem;
-    width: 100%;
+    gap: var(--space-2) var(--space-4);
     align-items: end;
   }
 
   .filters .ranges label {
     display: flex;
     flex-direction: column;
-    font-size: 0.9em;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .filters .ranges input {
+    width: 9rem;
   }
 
   .places {
-    margin: 0.5rem 0;
+    margin: var(--space-2) 0;
+    font-size: var(--text-sm);
   }
 
   .places summary {
-    cursor: pointer;
-    color: #1565c0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    margin-left: calc(-1 * var(--space-2));
+    color: var(--text-muted);
+  }
+
+  .places summary:hover {
+    color: var(--text);
+    background: var(--surface-2);
   }
 
   .place-lists {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    gap: 0.5rem 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: var(--space-2) var(--space-6);
+    margin-top: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
 
   .place-lists h4 {
-    margin: 0.5rem 0 0.25rem;
-    font-size: 0.95em;
+    margin: 0 0 var(--space-2);
+    color: var(--text-muted);
+    font-weight: var(--weight-medium);
+    font-size: var(--text-xs);
   }
 
   .place-lists ul {
@@ -1845,152 +1970,305 @@
   .place-lists li {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.4rem;
-    align-items: baseline;
-    padding: 0.15rem 0;
+    gap: var(--space-2);
+    align-items: center;
+    padding: 2px 0;
+  }
+
+  .place-lists .where {
+    display: inline;
+  }
+
+  .place-icon {
+    display: inline-flex;
+    color: var(--text-subtle);
   }
 
   .place-lists .none {
-    color: #6b6b73;
-    font-size: 0.9em;
+    color: var(--text-subtle);
+  }
+
+  /* Progress and result panels of transfers (download here; the upload,
+     operation and several-item download panels style themselves alike). */
+  .panel {
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .download.failed {
+    border-color: var(--danger-border);
+  }
+
+  .download p {
+    margin: var(--space-1) 0;
+    overflow-wrap: anywhere;
+  }
+
+  .download-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: pre-wrap;
+  }
+
+  .panel-icon {
+    display: inline-flex;
+    color: var(--accent-text);
+  }
+
+  .download progress {
+    margin: var(--space-2) 0;
+  }
+
+  .download-progress,
+  .download-result {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .download .actions {
+    margin-top: var(--space-2);
+  }
+
+  .drop.panel {
+    border-color: var(--info-border);
+    background: var(--info-soft);
+  }
+
+  /* A message about the last action, pinned to the bottom of the window. */
+  .toast {
+    position: fixed;
+    z-index: var(--z-toast);
+    left: 50%;
+    bottom: var(--space-6);
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: min(36rem, calc(100vw - 2rem));
+    margin: 0;
+    padding: var(--space-3) calc(var(--control-h-sm) + var(--space-4)) var(--space-3) var(--space-4);
+    color: var(--text);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    animation: toast-in var(--dur) var(--ease);
+  }
+
+  .toast.error {
+    border-color: var(--danger-border);
+  }
+
+  .toast .dismiss {
+    position: absolute;
+    top: 50%;
+    right: var(--space-2);
+    transform: translateY(-50%);
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+  }
+
+  .selectionbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    margin: var(--space-2) 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-raised);
+    border: 1px solid var(--accent-soft-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+
+  .selected-count {
+    margin: 0 var(--space-2) 0 0;
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-sm);
+  }
+
+  table {
+    margin-top: var(--space-2);
+  }
+
+  td.name,
+  .name {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  td .where {
+    padding-left: 24px;
+  }
+
+  /* Inline, not a flex box: a block inside a cell becomes a second
+     accessible object holding the name (WebKitGTK), and the desktop
+     drivers read each cell's text. */
+  .row-icon {
+    display: inline-block;
+    margin-right: var(--space-2);
+    vertical-align: middle;
+    position: relative;
+    top: -1px;
+    line-height: 0;
+    color: var(--text-subtle);
+  }
+
+  .folder-icon {
+    color: var(--accent-text);
+  }
+
+  button.link.name {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  td {
+    color: var(--text);
+  }
+
+  td:nth-child(3),
+  td:nth-child(4) {
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .row-actions {
+    text-align: right;
+    white-space: nowrap;
+    width: 1%;
+  }
+
+  .row-actions .download-action {
+    color: var(--text-muted);
   }
 
   tbody tr {
     cursor: default;
+    transition: background-color var(--dur-fast) var(--ease);
   }
 
   tbody tr:hover {
-    background: rgb(0 0 0 / 3%);
+    background: var(--surface-2);
   }
 
   tbody tr.selected {
-    background: #e3f2fd;
+    background: var(--accent-soft);
+  }
+
+  tbody tr.selected td {
+    border-bottom-color: var(--accent-soft-strong);
   }
 
   tbody tr.cut {
-    opacity: 0.55;
+    opacity: 0.5;
   }
 
   tbody tr:focus {
-    outline: 2px solid #1565c0;
+    outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
 
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  summary:focus-visible {
-    outline: 2px solid #1565c0;
-    outline-offset: 2px;
+  .count {
+    margin-top: var(--space-3);
   }
 
-  .menu-action {
-    margin-left: 0.25rem;
+  .load-more {
+    margin-top: var(--space-1);
+  }
+
+  .search-status {
+    margin: var(--space-2) 0;
+  }
+
+  .empty-icon {
+    display: inline-flex;
+    margin-bottom: var(--space-2);
+    color: var(--text-subtle);
   }
 
   .context-menu {
     position: fixed;
-    z-index: 15;
+    z-index: var(--z-menu);
     display: flex;
     flex-direction: column;
-    min-width: 13rem;
-    padding: 0.25rem 0;
-    background: #fff;
-    border: 1px solid rgb(0 0 0 / 15%);
-    border-radius: 4px;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+    min-width: 14rem;
+    padding: var(--space-1);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+
+  .context-menu:focus {
+    outline: none;
   }
 
   .context-menu button {
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: 30px;
+    padding: 0 var(--space-3) 0 var(--space-2);
+    font-weight: var(--weight-regular);
     text-align: left;
-    border: none;
     background: none;
-    padding: 0.35rem 0.9rem;
+    border: none;
+    border-radius: var(--radius-sm);
   }
 
   .context-menu button:hover:not(:disabled),
   .context-menu button:focus-visible {
-    background: #e3f2fd;
+    outline: none;
+    background: var(--accent-soft);
   }
 
-  .notice {
-    margin: 0.5rem 0;
-    padding: 0.35rem 0.75rem;
-    border-left: 3px solid #1565c0;
-    background: rgb(0 0 0 / 4%);
-    overflow-wrap: anywhere;
+  .context-menu :global(.icon) {
+    color: var(--text-muted);
   }
 
-  .notice.error {
-    border-left-color: #c62828;
+  .context-menu .danger :global(.icon) {
+    color: var(--danger);
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+  .menu-gap {
+    display: inline-block;
+    width: 15px;
   }
 
-  @media (prefers-color-scheme: dark) {
-    button.link {
-      color: #90caf9;
+  .menu-sep {
+    height: 1px;
+    margin: var(--space-1) var(--space-2);
+    background: var(--border);
+  }
+
+  @media (max-width: 720px) {
+    .browser {
+      padding: var(--space-3) var(--space-4) var(--space-10);
     }
 
-    .selectionbar,
-    tbody tr.selected,
-    .context-menu button:hover:not(:disabled),
-    .context-menu button:focus-visible {
-      background: rgb(144 202 249 / 18%);
+    .search-box input {
+      width: 100%;
     }
 
-    tbody tr:hover {
-      background: rgb(255 255 255 / 4%);
-    }
-
-    .context-menu {
-      background: #2a2a30;
-      border-color: rgb(255 255 255 / 15%);
-    }
-
-    .places summary {
-      color: #90caf9;
-    }
-
-    button.danger {
-      color: #ef9a9a;
-    }
-
-    .hint,
-    .where,
-    .search-status,
-    .place-lists .none {
-      color: #a0a0a8;
-    }
-
-    .notice {
-      background: rgb(255 255 255 / 6%);
-    }
-
-    .meta,
-    .count,
-    .loading,
-    .crumbs li + li::before {
-      color: #a0a0a8;
-    }
-
-    th,
-    td {
-      border-bottom-color: rgb(255 255 255 / 12%);
-    }
-
-    .empty,
-    .problem,
-    .download {
-      background: rgb(255 255 255 / 6%);
-    }
-
-    .download {
-      border-left-color: #90caf9;
+    .search {
+      width: 100%;
     }
   }
 </style>

@@ -202,6 +202,17 @@ function ancestorCommandLines() {
       });
       if (r.status !== 0) return null;
       lines.push(...r.stdout.split(/\r?\n/).filter(Boolean));
+    } else if (process.platform === "darwin") {
+      // No /proc: ps gives each ancestor's parent and full command line.
+      let pid = process.ppid;
+      for (let i = 0; i < 16 && pid > 1; i++) {
+        const r = spawnSync("ps", ["-o", "ppid=", "-o", "command=", "-p", String(pid)], { encoding: "utf8" });
+        if (r.status !== 0) return null;
+        const m = r.stdout.trim().match(/^(\d+)\s+([\s\S]*)$/);
+        if (!m) return null;
+        lines.push(m[2]);
+        pid = Number(m[1]);
+      }
     } else {
       return null;
     }

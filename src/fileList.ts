@@ -296,6 +296,7 @@ export const SHORTCUT_ACTIONS = [
   "down",
   "extend-up",
   "extend-down",
+  "find",
 ] as const;
 export type ShortcutAction = (typeof SHORTCUT_ACTIONS)[number];
 
@@ -352,6 +353,11 @@ export function shortcutOf(e: KeyLike): ShortcutAction | null {
         return "paste";
       case "r":
         return "refresh";
+      case "f":
+        return "find";
+      // macOS: ⌘⌫ is how Finder deletes; Mac keyboards' delete key is Backspace.
+      case "Backspace":
+        return "delete";
     }
     return null;
   }

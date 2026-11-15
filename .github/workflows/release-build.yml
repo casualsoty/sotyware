@@ -13,13 +13,10 @@
 # the MSI's ProductIcon and shortcut icons, the NSIS setup program's and
 # uninstaller's icon groups, and the icon of every sotyware.exe.
 #
-# Updates (ADR-033, docs/development/release.md#updates): only when the
-# repository has the secret TAURI_SIGNING_PRIVATE_KEY (and its password) and
-# the variable SOTYWARE_UPDATE_PUBKEY, and the run is given an update base
-# URL, the installers and an update manifest are signed with the official
-# `tauri signer sign --app-version` and checked by
-# scripts/update-manifest.mjs. Without them these steps are skipped. The
-# signed files are still not uploaded or published by this workflow.
+# Update signatures (ADR-036) are not made here: release.yml calls this
+# workflow with `upload: true`, takes the two checked installers as the
+# `windows-installers` artifact and signs them in its own publish job, the
+# only job that ever sees the update signing key.
 #
 # Windows runner time is billed at a higher rate and an LTO build takes a
 # while, so it never runs on pushes or pull requests. Start it before a
@@ -29,24 +26,22 @@ name: release-build
 
 on:
   workflow_dispatch:
+  workflow_call:
     inputs:
-      update_base_url:
-        description: "HTTPS folder the installers will be served from (ending in /); empty: no update files"
-        required: false
-        default: ""
+      upload:
+        description: "Upload the checked installers as the windows-installers artifact"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-build-${{ github.ref }}
+  group: release-build-${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  # Whether update files can be signed; the secret itself is only handed to
-  # the signing step.
-  HAS_UPDATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && vars.SOTYWARE_UPDATE_PUBKEY != '' }}
 
 jobs:
   windows-installers:
@@ -142,36 +137,20 @@ jobs:
           node scripts/check-installer-icons.mjs --msi $msi[0].FullName --msi-image $image --nsis $nsis[0].FullName --exe 'src-tauri\target\release\sotyware.exe'
           if ($LASTEXITCODE -ne 0) { throw "installer icon check failed (exit $LASTEXITCODE)" }
 
-      # Signs both installers and the manifest with the release key from the
-      # repository secret (never printed; the CLI reads it from the
-      # environment), then verifies everything with the public key alone.
-      - name: Sign the installers and write the update manifest
-        if: ${{ env.HAS_UPDATE_KEY == 'true' && inputs.update_base_url != '' }}
+      - name: Collect the installers for the release
+        if: ${{ inputs.upload }}
         shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          UPDATE_PUBKEY: ${{ vars.SOTYWARE_UPDATE_PUBKEY }}
-          UPDATE_BASE_URL: ${{ inputs.update_base_url }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $msi = @(Get-ChildItem 'src-tauri\target\release\bundle\msi\*.msi')[0].FullName
-          $nsis = @(Get-ChildItem 'src-tauri\target\release\bundle\nsis\*-setup.exe')[0].FullName
-          foreach ($f in $msi, $nsis) {
-            npx tauri signer sign --app-version $version $f | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "signing $f failed" }
-          }
-          $out = 'src-tauri\target\release\bundle\sotyware-update.json'
-          node scripts/update-manifest.mjs create --version $version --base-url $env:UPDATE_BASE_URL --pubkey $env:UPDATE_PUBKEY --nsis $nsis --msi $msi --out $out
-          if ($LASTEXITCODE -ne 0) { throw "update-manifest create failed" }
-          npx tauri signer sign --app-version $version $out | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "signing the manifest failed" }
-          $dir = Join-Path $env:RUNNER_TEMP 'update'
-          New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item $msi, "$msi.sig", $nsis, "$nsis.sig" $dir
-          node scripts/update-manifest.mjs verify --manifest $out --pubkey $env:UPDATE_PUBKEY --artifacts $dir
-          if ($LASTEXITCODE -ne 0) { throw "update-manifest verify failed" }
-      - name: Note that no update files were made
-        if: ${{ env.HAS_UPDATE_KEY != 'true' || inputs.update_base_url == '' }}
-        run: echo "No update signing key or update base URL configured; update files were not made (ADR-033)."
+          $out = Join-Path $env:RUNNER_TEMP 'windows-installers'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item 'src-tauri\target\release\bundle\msi\*.msi', 'src-tauri\target\release\bundle\nsis\*-setup.exe' $out
+          Get-ChildItem $out | ForEach-Object { "$($_.Name) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ inputs.upload }}
+        with:
+          name: windows-installers
+          path: ${{ runner.temp }}/windows-installers
+          if-no-files-found: error
+          retention-days: 7

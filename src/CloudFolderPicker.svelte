@@ -4,6 +4,7 @@
   import { createFolder } from "./cloudFiles";
   import { describeError, describeOperationError } from "./cloudMessages";
   import { shownName } from "./format";
+  import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
   // Chooses a destination folder for a copy or a move (ADR-026): browses
@@ -118,9 +119,10 @@
       <ul class="folders" aria-label="Folders">
         {#each folders as folder (folder.prefix)}
           <li>
-            <button type="button" class="link" onclick={() => void open(folder.prefix, [...crumbs, { name: folder.name, prefix: folder.prefix }])}>
-              <span aria-hidden="true">📁</span> {shownName(folder.name)}
-            </button>
+            <span class="folder-icon" aria-hidden="true"><Icon name="folder" size={15} /></span>
+            <button type="button" class="link" onclick={() => void open(folder.prefix, [...crumbs, { name: folder.name, prefix: folder.prefix }])}
+              >{shownName(folder.name)}</button
+            >
           </li>
         {:else}
           <li class="none">No folders here.</li>
@@ -165,83 +167,83 @@
   .crumbs ol {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem;
+    gap: var(--space-1);
     list-style: none;
     padding: 0;
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
   }
 
   .crumbs li + li::before {
     content: "/";
-    margin-right: 0.25rem;
-    color: #6b6b73;
+    margin-right: var(--space-1);
+    color: var(--text-subtle);
   }
 
   .folders {
     list-style: none;
-    padding: 0;
+    padding: var(--space-1);
     margin: 0;
     max-height: 18rem;
     overflow: auto;
-    border: 1px solid rgb(0 0 0 / 12%);
-    border-radius: 4px;
+    font-size: var(--text-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   .folders li {
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgb(0 0 0 / 6%);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+  }
+
+  .folder-icon {
+    display: inline-flex;
+    color: var(--accent-text);
+  }
+
+  .folders li:hover {
+    background: var(--surface-2);
   }
 
   .folders .none {
-    color: #6b6b73;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
+    color: var(--text-muted);
   }
 
   button.link {
-    padding: 0;
-    border: none;
-    background: none;
-    color: #1565c0;
-    text-decoration: underline;
-    text-align: left;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
 
-  button.primary {
-    font-weight: 600;
+  .folders button.link {
+    color: var(--text);
   }
 
   .create {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: var(--space-2);
     align-items: end;
-    margin-top: 0.5rem;
+    margin-top: var(--space-3);
   }
 
   .create label {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
   }
 
   .warning {
-    color: #b71c1c;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    button.link {
-      color: #90caf9;
-    }
-
-    .warning {
-      color: #ef9a9a;
-    }
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-sm);
+    background: var(--warning-soft);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-md);
   }
 </style>

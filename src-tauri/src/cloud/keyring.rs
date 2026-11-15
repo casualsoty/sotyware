@@ -1,7 +1,8 @@
 //! The operating system's credential service as a [`CredentialStore`]:
 //! Windows Credential Manager on Windows, the Secret Service (GNOME Keyring,
-//! KWallet, KeePassXC, …) over D-Bus on Linux. Built on `keyring-core` with
-//! one platform store crate per OS (ADR-017).
+//! KWallet, KeePassXC, …) over D-Bus on Linux, the user's login keychain on
+//! macOS. Built on `keyring-core` with one platform store crate per OS
+//! (ADR-017, ADR-037).
 //!
 //! Naming (the same on both platforms, derived from the account id only,
 //! never from the provider):
@@ -12,7 +13,10 @@
 //!   prefix instead: [`CredentialNamespace`]),
 //!   a generic credential persisted for the local machine (it does not roam),
 //! - Secret Service attributes `service` and `username` as above, label
-//!   `sotyware cloud account <account id>`, in the default collection.
+//!   `sotyware cloud account <account id>`, in the default collection,
+//! - macOS: a generic password item in the login keychain with service and
+//!   account as above (the legacy keychain: no entitlement or provisioning
+//!   profile is needed, signed or not).
 //!
 //! Each account is one entry holding the key id and the secret together
 //! ([`Credentials::encode`]), so an update is one replace and never a delete
@@ -104,7 +108,9 @@ pub fn secret_service_label(account_id: &str) -> String {
 pub const BACKEND: &str = "Windows Credential Manager";
 #[cfg(target_os = "linux")]
 pub const BACKEND: &str = "the Secret Service (desktop keyring)";
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub const BACKEND: &str = "the macOS Keychain";
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub const BACKEND: &str = "the OS credential store";
 
 /// The OS credential store. Cheap to create: the platform store is opened on
@@ -325,10 +331,16 @@ fn open_platform_store() -> Result<Arc<KeyringStore>, KeyringError> {
     Ok(zbus_secret_service_keyring_store::Store::new()?)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// The user's login keychain (`MacKeychainDomain::User`).
+#[cfg(target_os = "macos")]
+fn open_platform_store() -> Result<Arc<KeyringStore>, KeyringError> {
+    Ok(apple_native_keyring_store::keychain::Store::new()?)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn open_platform_store() -> Result<Arc<KeyringStore>, KeyringError> {
     Err(KeyringError::NotSupportedByStore(
-        "sotyware supports the credential stores of Windows and Linux only".into(),
+        "sotyware supports the credential stores of Windows, macOS and Linux only".into(),
     ))
 }
 
@@ -432,9 +444,9 @@ fn classify(error: KeyringError, account_id: &str) -> CredentialError {
 
 enum PlatformKind {
     Unavailable,
-    // Only the Secret Service reports a refusal the code can recognise; see
-    // the Windows `platform_kind` below.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    // Only the Secret Service and the macOS Keychain report a refusal the
+    // code can recognise; see the Windows `platform_kind` below.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     AccessDenied,
     Other,
 }
@@ -505,13 +517,53 @@ fn platform_kind(error: &PlatformError, no_storage_access: bool) -> PlatformKind
     })
 }
 
+/// macOS: the store boxes the Security framework's `OSStatus` error; the
+/// code (from `SecBase.h`, part of the API, not a message) says whether the
+/// user dismissed the access prompt or the keychain is locked without a way
+/// to ask (refused: unlock and try again), or there is no usable keychain
+/// (unavailable). Other codes are backend failures; their message is the
+/// system's description of the code, never a stored value.
+#[cfg(target_os = "macos")]
+fn platform_kind(error: &PlatformError, no_storage_access: bool) -> PlatformKind {
+    match error
+        .downcast_ref::<security_framework::base::Error>()
+        .map(|e| e.code())
+    {
+        Some(code) => macos_kind(code, no_storage_access),
+        None if no_storage_access => PlatformKind::AccessDenied,
+        None => PlatformKind::Other,
+    }
+}
+
+/// The decision of the macOS `platform_kind`, by `OSStatus` code, as a
+/// plain function so every platform's unit tests check it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_kind(code: i32, no_storage_access: bool) -> PlatformKind {
+    /// errSecUserCanceled: the "allow access" or unlock prompt was dismissed.
+    const USER_CANCELED: i32 = -128;
+    /// errSecAuthFailed: a wrong keychain password was typed.
+    const AUTH_FAILED: i32 = -25293;
+    /// errSecInteractionNotAllowed: locked, and no prompt may be shown.
+    const INTERACTION_NOT_ALLOWED: i32 = -25308;
+    /// errSecNotAvailable, errSecNoSuchKeychain, errSecInvalidKeychain.
+    const NOT_AVAILABLE: i32 = -25291;
+    const NO_SUCH_KEYCHAIN: i32 = -25294;
+    const INVALID_KEYCHAIN: i32 = -25295;
+    match code {
+        USER_CANCELED | AUTH_FAILED | INTERACTION_NOT_ALLOWED => PlatformKind::AccessDenied,
+        NOT_AVAILABLE | NO_SUCH_KEYCHAIN | INVALID_KEYCHAIN => PlatformKind::Unavailable,
+        _ if no_storage_access => PlatformKind::AccessDenied,
+        _ => PlatformKind::Other,
+    }
+}
+
 /// Windows: the store crate's only `NoStorageAccess` is
 /// `ERROR_NO_SUCH_LOGON_SESSION` (no credential vault for this logon, as for
 /// some service or network logons), so it means unavailable. Every other
 /// Win32 code arrives as `PlatformFailure` in a private error type, so no
 /// code (not even `ERROR_ACCESS_DENIED`) is told apart: they are backend
 /// failures whose message is the Windows error code.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn platform_kind(_error: &PlatformError, no_storage_access: bool) -> PlatformKind {
     if no_storage_access {
         PlatformKind::Unavailable
@@ -659,6 +711,64 @@ mod tests {
         assert!(matches!(e, CredentialError::Backend { .. }));
         let e = classify(KeyringError::NotSupportedByStore("x".into()), "x");
         assert!(matches!(e, CredentialError::Unavailable { .. }));
+    }
+
+    /// The macOS rule by code, checked on every platform; the downcast of
+    /// the real error type below runs on macOS only.
+    #[test]
+    fn keychain_codes_are_sorted_by_osstatus() {
+        for code in [-128, -25293, -25308] {
+            assert!(
+                matches!(macos_kind(code, false), PlatformKind::AccessDenied),
+                "{code}"
+            );
+        }
+        for code in [-25291, -25294, -25295] {
+            assert!(
+                matches!(macos_kind(code, false), PlatformKind::Unavailable),
+                "{code}"
+            );
+            assert!(
+                matches!(macos_kind(code, true), PlatformKind::Unavailable),
+                "{code}"
+            );
+        }
+        // errSecDuplicateItem, errSecDecode: failures, not refusals…
+        assert!(matches!(macos_kind(-25299, false), PlatformKind::Other));
+        assert!(matches!(macos_kind(-26275, false), PlatformKind::Other));
+        // …unless the store already called it "no storage access" (write
+        // permission, read-only keychain).
+        assert!(matches!(macos_kind(-61, true), PlatformKind::AccessDenied));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keychain_errors_are_sorted_by_type() {
+        use security_framework::base::Error as Sf;
+        let dismissed = classify(
+            KeyringError::PlatformFailure(Box::new(Sf::from_code(-128))),
+            "photos",
+        );
+        assert!(
+            matches!(dismissed, CredentialError::AccessDenied { .. }),
+            "{dismissed:?}"
+        );
+        let gone = classify(
+            KeyringError::NoStorageAccess(Box::new(Sf::from_code(-25294))),
+            "photos",
+        );
+        assert!(
+            matches!(gone, CredentialError::Unavailable { .. }),
+            "{gone:?}"
+        );
+        let other = classify(
+            KeyringError::PlatformFailure(Box::new(Sf::from_code(-25299))),
+            "photos",
+        );
+        assert!(
+            matches!(other, CredentialError::Backend { .. }),
+            "{other:?}"
+        );
     }
 
     #[cfg(target_os = "linux")]

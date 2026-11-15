@@ -12,8 +12,9 @@ it with a date.
 | --- | --- | --- |
 | Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**, once the installers have passed the [installation test](#installation-test-plan-disposable-windows-11) |
 | Windows 10 | the same binary; never run | **not validated, not claimed.** Do not list it as supported |
-| Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop, not a release target.** No Linux package is published as stable |
-| macOS, mobile | not targets | none |
+| Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop.** Releases carry the AppImage, deb and rpm for testing, labelled as such in the release notes |
+| macOS (Apple Silicon, Intel) | builds and tests only on GitHub's hosted macOS runners ([macos.md](macos.md)); never run on a Mac a person used | **not validated.** Releases carry Mac packages only when they are signed and notarized; none can be until a Developer ID certificate exists |
+| mobile | not a target | none |
 
 Linux code and the Linux build stay: every change must keep both platforms
 working ([cross-platform.md](cross-platform.md)). The scope is about what a
@@ -57,9 +58,12 @@ Cargo config file is overridden by the environment variable (the wrapper keeps
 dependency that stores `env!("CARGO_MANIFEST_DIR")` as a string would not be
 remapped (none was found: the check after the build would fail).
 
-Outputs under `src-tauri/target/release/`: `sotyware.exe`,
+Outputs under `src-tauri/target/release/`: on Windows `sotyware.exe`,
 `bundle/msi/sotyware_<version>_x64_en-US.msi`,
-`bundle/nsis/sotyware_<version>_x64-setup.exe`. Building the MSI makes WiX
+`bundle/nsis/sotyware_<version>_x64-setup.exe`; on Linux `sotyware`,
+`bundle/appimage/…AppImage`, `bundle/deb/…deb`, `bundle/rpm/…rpm`; on macOS
+`bundle/macos/sotyware.app` and `bundle/dmg/sotyware_<version>_<arch>.dmg`
+([macos.md](macos.md)). `release.yml` builds each on its own runner. Building the MSI makes WiX
 validate it through Windows Installer, which writes "Windows Installer
 installed the product" events (MsiInstaller 1033/11707) to the Application
 log **without installing anything**; do not mistake those for an
@@ -134,53 +138,146 @@ unsigned one.
   checked before signing changed it (signing changes the hash: record the
   hash after signing).
 
-## Updates
+## GitHub Releases
 
-The update mechanism (ADR-033, [updates.md](../architecture/updates.md)) is
-built and tested against local servers with test keys, but **switched off in
-release builds**: `updates::PRODUCTION` in `src-tauri/src/updates.rs` is
-`None`. Turning it on needs, in this order, and each step needs the
-maintainer's explicit decision (none may be faked or replaced by a test
-key):
+Releases are published on GitHub Releases of `casualsoty/sotyware`, which is
+also where installations look for updates
+([ADR-036](../architecture/decisions.md#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033),
+[updates.md](../architecture/updates.md)). Three things must be true before
+the first release; none of them is yet:
 
-1. **Release key.** On a trusted offline machine: `npx tauri signer generate
-   -w sotyware-update.key` with a strong password. Keep the private key and
-   its password outside the repository (a password manager or hardware
-   backup; losing it means no installation can be updated again, leaking it
-   means anyone can ship an update). The public key is the `.pub` file's
-   content (base64).
-2. **Update server.** An HTTPS host that serves the manifest and its `.sig`
-   directly (no redirect) at a stable URL, e.g.
-   `https://updates.<domain>/stable/sotyware-update.json`, and the
-   installers under a versioned folder. A domain, hosting and TLS
-   certificate are paid, external gates.
-3. **Compile them in.** Set `PRODUCTION` to `Some((manifest URL, public
-   key))`; commit, review, release that build by hand once (it is the first
-   one that can receive updates).
-4. **CI.** Store the private key and password as the secrets
-   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` of a
-   protected environment, and the public key as the variable
-   `SOTYWARE_UPDATE_PUBKEY` (it must equal the compiled-in one). Then
-   `release-build.yml`, started with `update_base_url`, signs both
-   installers and a manifest with `tauri signer sign --app-version` and
-   verifies them with `scripts/update-manifest.mjs`. It does not upload
-   anything yet.
-5. **Order with Authenticode.** Code signing (above) changes the installer
-   bytes, so the update signatures and SHA-256 must be made **after** it.
-6. **Publish** the installers and their `.sig` files first, then the
-   manifest and its `.sig` (a manifest must never name a file that is not
-   there yet). Check them from outside with
-   `node scripts/update-manifest.mjs verify --manifest <downloaded manifest>
-   --pubkey <public key> --artifacts <downloaded installers>`.
-7. **Before the first real update:** install release N on a disposable
-   Windows 11 machine, publish N+1 to a staging URL with a separate test
-   key and a build that trusts it, update through the dashboard, and record
-   that the data folder, credential entries and settings survived (not done
-   yet).
+1. **The releases are public.** GitHub serves the assets of a private
+   repository only to signed-in clients; installations are anonymous. The
+   repository is private today, so `release.yml` refuses to publish (a dry
+   run works). Either make the repository public, or publish releases to a
+   separate public repository: then change `RELEASE_REPOSITORY` and
+   `MANIFEST_URL` in `src-tauri/src/updates.rs` and the `gh release`
+   commands in `release.yml` (with a token for that repository) in one
+   reviewed change.
+2. **A release key exists** and its public half is in
+   `src-tauri/update-key.pub` ([below](#update-signing-key)).
+3. **The secrets are set** in the GitHub environment `release`
+   ([below](#secrets)). Protect that environment: required reviewer,
+   deployment only from tags `v*`.
 
-Never re-publish an older version under the same channel: installations
-remember the highest version they were offered and refuse anything lower
-as a replay.
+### Publishing a release
+
+1. Raise the version in `package.json`, `package-lock.json` (`npm version
+   --no-git-tag-version X.Y.Z` does both), `src-tauri/Cargo.toml`,
+   `src-tauri/Cargo.lock` (`cargo update -p sotyware`) and
+   `src-tauri/tauri.conf.json`; commit; let `ci.yml` pass on `main`.
+2. Optional rehearsal: push the tag to a branch-protected fork, or run
+   `gh workflow run release.yml --ref vX.Y.Z` (on the tag) with `dry_run`
+   (the default for a manual run): everything is built, signed and
+   verified, the files are kept as the `release-dry-run` artifact, no
+   release is made.
+3. Tag and push: `git tag -s vX.Y.Z -m "sotyware X.Y.Z" -m "<release
+   notes>"`, `git push origin vX.Y.Z`. The tag's message becomes the
+   release notes shown in the app.
+4. `release.yml` runs: prepare (tag = every version; the secret matches the
+   committed key; the repository is public), `ci.yml` on the tag, the
+   Windows installers (`release-build.yml`, unpacked and checked), Linux
+   (Ubuntu 22.04: AppImage, deb, rpm), macOS (`macos.yml` on both
+   architectures), then publish: sign every updater package and
+   `latest.json`, verify them with the public key alone, upload to a
+   **draft**, compare the uploaded names and sizes, publish as a
+   **pre-release**, download every file through its public URL and verify
+   again (signatures, signed versions, SHA256SUMS), then mark it **latest**
+   and check that `releases/latest/download/latest.json` serves it.
+5. If any step fails, the previous release stays the latest: installations
+   see nothing. Fix the cause and release a new patch version; never
+   re-publish an older version or move a tag (installations refuse a lower
+   version than they were offered, and a moved tag breaks the URLs in the
+   signed manifest).
+
+Assets of a release (version 0.2.0 shown):
+
+| File | Platform | In `latest.json` as |
+| --- | --- | --- |
+| `sotyware_0.2.0_x64-setup.exe` (+ `.sig`) | Windows, NSIS | `windows-x86_64-nsis` |
+| `sotyware_0.2.0_x64_en-US.msi` (+ `.sig`) | Windows, MSI | `windows-x86_64-msi` |
+| `sotyware_0.2.0_amd64.AppImage` (+ `.sig`) | Linux | `linux-x86_64-appimage` |
+| `sotyware_0.2.0_amd64.deb` (+ `.sig`) | Linux, Debian/Ubuntu | `linux-x86_64-deb` |
+| `sotyware-0.2.0-1.x86_64.rpm` (+ `.sig`) | Linux, Fedora/openSUSE | `linux-x86_64-rpm` |
+| `sotyware_0.2.0_aarch64.dmg`, `sotyware_0.2.0_aarch64.app.tar.gz` (+ `.sig`) | macOS, Apple Silicon (signed and notarized only) | `darwin-aarch64-app` |
+| `sotyware_0.2.0_x64.dmg`, `sotyware_0.2.0_x64.app.tar.gz` (+ `.sig`) | macOS, Intel (signed and notarized only) | `darwin-x86_64-app` |
+| `latest.json`, `latest.json.sig`, `SHA256SUMS` | all | |
+
+Authenticode signing of the Windows installers ([above](#signing-not-set-up))
+is not part of the workflow yet; when it is added it must happen in the
+Windows build job, before the update signatures (signing changes the bytes).
+
+### Secrets
+
+| Secret (environment `release`) | Used by | Required |
+| --- | --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | `release.yml` prepare (key check) and publish (signing) only | yes |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the same | yes, if the key has a password (it should) |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` | `macos.yml` signing | for Mac packages ([macos.md](macos.md#signing-and-notarization)) |
+| `APPLE_API_ISSUER`, `APPLE_API_KEY_ID`, `APPLE_API_KEY` | `macos.yml` notarization | for Mac packages |
+
+`GITHUB_TOKEN` (with `contents: write` in the publish job only) creates and
+edits the release. No secret is ever echoed; the Tauri CLI reads the
+signing key from the environment.
+
+### Update signing key
+
+The key that signs every update is the trust root of every installation.
+
+- **Generate** once, on a trusted machine (not CI):
+  `npx tauri signer generate -w sotyware-update.key` with a strong
+  password. It writes the private key (`sotyware-update.key`, encrypted
+  with the password) and the public key (`.pub`, one base64 line).
+- **Commit the public key**: put the `.pub` line into
+  `src-tauri/update-key.pub` below its comments, in a reviewed commit. Only
+  builds made from then on can be updated.
+- **Store the private key**: as the `release` environment's secrets
+  `TAURI_SIGNING_PRIVATE_KEY` (the key file's content) and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and an offline backup of both
+  (password manager plus hardware or paper), never in the repository, a
+  chat or a CI log. `release.yml` signs a probe with the secret and
+  verifies it with the committed key before anything is built, so a
+  mismatch stops the release at once.
+- **Rotation** (planned, e.g. a person with access leaves): installations
+  trust only the key compiled into them. Release one version signed with
+  the **old** key whose `update-key.pub` holds the **new** key; once users
+  have it, sign later releases with the new key. Installations that skip
+  that release can no longer update and need a manual install.
+- **Compromise** (the private key leaked): an attacker can sign updates for
+  every installation that has the key. Remove the secrets, release at once
+  (signed with the leaked key, since nothing else is trusted) a version
+  holding a new key, announce it, and treat every later release signed with
+  the old key as hostile. The version floor stops replays of old releases
+  but not new versions signed with a stolen key.
+- **Loss** (no backup of the private key): no installation can be updated
+  again; users must install the next version by hand. Keep the backup.
+
+### Testing updates locally
+
+Never install an unsigned update or one signed with a real key outside a
+release. The mechanism is tested without either:
+
+- `cargo test` (`src-tauri/src/updates/tests.rs`): keys generated in the
+  test; a local server that behaves like GitHub's redirects
+  (`releases/latest/download/` → tag → asset store), the publish race,
+  redirect limits, missing releases, replays, wrong keys, changed bytes,
+  oversized manifests; the updater plugin on Tauri's mock runtime
+  downloading and checking a package without installing it; and the
+  real-CLI fixture `scripts/fixtures/update-github/` for all seven
+  platforms.
+- `npm run test:update-manifest`: the release tool with keys generated in
+  the test and the same fixtures.
+- A debug or test-profile build against a local server: generate a
+  throwaway key (`npx tauri signer generate -w /tmp/k --ci -p x`), sign two
+  test packages and a manifest the way `release.yml` does, serve the folder
+  over loopback HTTP, and start the app with
+  `SOTYWARE_UPDATE_ENDPOINT=http://127.0.0.1:<port>/latest.json` and
+  `SOTYWARE_UPDATE_PUBKEY=<the .pub line>`. Release builds ignore both
+  variables. Delete the throwaway key afterwards.
+- **Before the first real update:** install release N on a disposable
+  machine per platform, publish N+1, update through the notification, and
+  record that the data folder, credentials and settings survived (not done
+  yet).
 
 ## Installation test plan (disposable Windows 11)
 

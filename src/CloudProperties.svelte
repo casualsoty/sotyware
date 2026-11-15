@@ -127,7 +127,7 @@
   });
 </script>
 
-<Modal title={`Properties of “${shownName(fileKey.split("/").at(-1) ?? fileKey)}”`} {onclose} wide>
+<Modal title={`Properties of “${shownName(fileKey.split("/").at(-1) ?? fileKey)}”`} {onclose} side>
   <div class="properties">
     {#if propsError !== null}
       <p role="alert">{describeOperationError(propsError)}</p>
@@ -245,14 +245,14 @@
 <style>
   dl {
     display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.2rem 0.75rem;
-    margin: 0 0 0.75rem;
-    font-size: 0.93em;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-4);
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-sm);
   }
 
   dt {
-    color: #6b6b73;
+    color: var(--text-muted);
   }
 
   dd {
@@ -264,19 +264,29 @@
     overflow-wrap: anywhere;
   }
 
+  .properties :global(section) {
+    padding-top: var(--space-4);
+    margin-top: var(--space-4);
+    border-top: 1px solid var(--border);
+  }
+
   h5 {
-    margin: 0.75rem 0 0.25rem;
-    font-size: 0.95em;
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
   }
 
   pre.text {
     max-height: 18rem;
     overflow: auto;
-    background: rgb(0 0 0 / 5%);
-    padding: 0.5rem;
+    margin: 0;
+    padding: var(--space-3);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    font-size: 0.85em;
+    font-size: var(--text-xs);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   img {
@@ -284,44 +294,28 @@
     max-height: 22rem;
     object-fit: contain;
     display: block;
-    background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: repeating-conic-gradient(#d8d6d1 0% 25%, #fff 0% 50%) 50% / 16px 16px;
   }
 
   .note {
-    color: #4a4a52;
-    font-size: 0.9em;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
   .row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: var(--space-2);
     align-items: center;
-    margin: 0.4rem 0;
+    margin: var(--space-2) 0;
   }
 
   .url {
     flex: 1;
     min-width: 12rem;
-    font: inherit;
-    font-size: 0.85em;
-  }
-
-  button,
-  select {
-    font: inherit;
-    padding: 0.35rem 0.8rem;
-    cursor: pointer;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    dt,
-    .note {
-      color: #b8b8c0;
-    }
-
-    pre.text {
-      background: rgb(255 255 255 / 6%);
-    }
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
 </style>

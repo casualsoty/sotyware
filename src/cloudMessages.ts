@@ -200,3 +200,22 @@ export function describeOperationError(e: unknown): string {
 export function describeOperationFailure(error: TransferError): string {
   return `${OPERATION_ERROR_SUMMARIES[error.kind]} ${error.message}`;
 }
+
+/** The colour meaning of a check result: green when connected, amber when
+ * the user must act locally (unlock, re-enter a key), red when the provider
+ * refused, grey when never checked. */
+export function checkTone(status: CheckStatus | null): "success" | "warning" | "danger" | "neutral" {
+  switch (status) {
+    case null:
+      return "neutral";
+    case "connected":
+      return "success";
+    case "credential-store-locked":
+    case "credentials-missing":
+    case "credential-store-unavailable":
+    case "network":
+      return "warning";
+    default:
+      return "danger";
+  }
+}

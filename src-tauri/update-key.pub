@@ -1,0 +1,10 @@
+# sotyware's update signing key: the PUBLIC half only (ADR-036).
+#
+# Put the base64 line that `npx tauri signer generate` writes to the .pub
+# file below this comment, on one line, and nothing else. Release builds
+# compile it in (src-tauri/src/updates.rs) and accept only updates whose
+# manifest and package carry a valid signature from the matching private
+# key. While no key line is here, release builds report updates as not set
+# up. The private key and its password never enter this repository: they
+# live in the GitHub secrets TAURI_SIGNING_PRIVATE_KEY and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (docs/development/release.md).

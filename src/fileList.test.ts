@@ -163,3 +163,19 @@ describe("shortcuts", () => {
     expect(shortcutOf(key("a", { ctrlKey: true }, box))).toBe("select-all");
   });
 });
+
+describe("platform shortcuts", () => {
+  const base = { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, target: null };
+
+  it("focuses the search with Ctrl+F or ⌘F", () => {
+    expect(shortcutOf({ ...base, key: "f", ctrlKey: true })).toBe("find");
+    expect(shortcutOf({ ...base, key: "F", metaKey: true })).toBe("find");
+    expect(shortcutOf({ ...base, key: "f" })).toBeNull();
+  });
+
+  it("deletes with ⌘⌫ as Finder does, never with Backspace alone", () => {
+    expect(shortcutOf({ ...base, key: "Backspace", metaKey: true })).toBe("delete");
+    expect(shortcutOf({ ...base, key: "Backspace" })).toBeNull();
+    expect(shortcutOf({ ...base, key: "Backspace", metaKey: true, shiftKey: true })).toBeNull();
+  });
+});

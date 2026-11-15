@@ -209,9 +209,27 @@ $ExampleDescription = "Demonstrates the built-in feature lifecycle. It does noth
 $Toggle = [System.Windows.Automation.TogglePattern]::Pattern
 $Walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 function PCT($type) { [System.Windows.Automation.PropertyCondition]::new($A::ControlTypeProperty, $type) }
-function FeatureBox {
+function FindFeatureBox {
   $d = Dash; if (-not $d) { return $null }
   $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::CheckBox)), (PC $A::NameProperty $ExampleFeature)))
+}
+# Since the redesign the features are under Settings > Features: the Settings
+# link in the sidebar, then the Features tab (UIA Invoke, or SelectionItem
+# where WebView2 offers only that for a tab).
+function OpenFeatures {
+  $d = Dash; if (-not $d) { return $false }
+  $link = $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::Hyperlink)), (PC $A::NameProperty "Settings")))
+  if (-not $link) { return $false }
+  try { $link.GetCurrentPattern($Invoke).Invoke() } catch { return $false }
+  $script:featuresTab = $null
+  if (-not (WaitFor { $script:featuresTab = (Dash).FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::TabItem)), (PC $A::NameProperty "Features"))); $script:featuresTab -ne $null } 5)) { return $false }
+  try { $script:featuresTab.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
+  try { $script:featuresTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); return $true } catch { return $false }
+}
+function FeatureBox {
+  $b = FindFeatureBox
+  if (-not $b -and (OpenFeatures)) { Start-Sleep -Milliseconds 300; $b = FindFeatureBox }
+  $b
 }
 # The example feature as shown: checkbox checked and enabled (not busy), and its
 # list item's text. $null until the list has loaded.
@@ -334,8 +352,9 @@ Check "tray: menu dismissed, process alive, still one process" ((Procs).Count -e
 # lists the example feature (enabled by default) and switching it round-trips to
 # Rust, whose answer updates the checkbox and the state label.
 $heading = $null
+$null = OpenFeatures
 WaitFor { $script:heading = (Dash).FindFirst($S::Descendants, (PC $A::AutomationIdProperty "features-heading")); $script:heading -ne $null } 10 | Out-Null
-Check "features: Features section present in WebView2 content" (($null -ne $heading) -and $heading.Current.Name -eq "Features")
+Check "features: Settings > Features present in WebView2 content" (($null -ne $heading) -and $heading.Current.Name -eq "Features")
 $listed = WaitFor { $v = FeatureView; ($null -ne $v) -and $v.Item -ne "" } 10
 $v = FeatureView
 Check "features: example feature listed with name, version and description" ($listed -and $v.Item.Contains($ExampleVersion) -and $v.Item.Contains($ExampleDescription)) (FeatureDetail)
@@ -374,7 +393,7 @@ Check "cloud storage: heading, empty state and Add account shown, no error" ($sh
 Check "cloud storage: account database created in the test profile" (Test-Path $CloudDb) $CloudDb
 $overview = Named "Overview" $HyperlinkType
 if ($overview) { $overview.GetCurrentPattern($Invoke).Invoke() }
-Check "cloud storage: Overview link brings back the Hide button and the features" ((WaitFor { ($null -ne (Named "Hide dashboard" $ButtonType)) -and ($null -ne (FeatureView)) } 10)) (PageNames)
+Check "cloud storage: Overview link brings back the Hide button and the summaries" ((WaitFor { ($null -ne (Named "Hide dashboard" $ButtonType)) -and ($null -ne (Dash).FindFirst($S::Descendants, (PC $A::AutomationIdProperty "overview-storage"))) } 10)) (PageNames)
 
 # --- Hide dashboard button (WebView2 content, UIA invoke = click) ---------
 $btn = $null

@@ -38,8 +38,10 @@ and the [journal](../status/journal.md), not here.
 3. **sotyware ↔ account service.** HTTPS only in release builds; the service
    is **not trusted with plaintext**: it stores ciphertext and wrapped keys
    only and cannot decrypt them.
-4. **sotyware ↔ update server.** Not trusted: everything it serves is checked
-   against signatures made with a key the update server does not hold.
+4. **sotyware ↔ update server (GitHub Releases, ADR-036).** Not trusted:
+   everything it serves is checked against signatures made with a key that
+   neither GitHub nor the build jobs hold. A compromised GitHub account or
+   token can publish a release, but not a validly signed one.
 5. **Process ↔ other local processes.** Same-user processes are outside
    sotyware's control (see "malicious local process").
 
@@ -106,7 +108,7 @@ and the [journal](../status/journal.md), not here.
   Lock) can destroy backups. Governance-mode retention can be bypassed by a
   key with the bypass permission.
 
-### Malicious update server / compromised update artifact
+### Malicious update server, compromised GitHub account or update artifact
 
 - *Controls (implemented 2026-11-15, [updates.md](updates.md)):* sotyware
   verifies a separately signed manifest with the compiled-in public key
@@ -115,7 +117,12 @@ and the [journal](../status/journal.md), not here.
   offered this installation (replay/rollback); hands exactly that manifest
   to `tauri-plugin-updater` (no second, unsigned fetch), whose package
   signature must name the same version; checks the package's SHA-256
-  against the signed manifest; HTTPS only, no redirect for the manifest.
+  against the signed manifest; HTTPS only, and at most five redirects,
+  each to HTTPS (GitHub's `releases/latest/download/` redirects twice). The
+  signing key is used in one job of `release.yml` (bound to the protected
+  `release` environment), never in a build job whose dependencies' build
+  scripts could read it; the job checks the secret against the committed
+  public key first.
   The plugin's own commands are unreachable from the page (no `updater:`
   permission). Nothing installs without the user's click, and not while a
   transfer, file operation or backup runs. Tested with test keys and a
@@ -123,8 +130,8 @@ and the [journal](../status/journal.md), not here.
   `scripts/update-manifest.test.mjs`).
 - *Residual:* whoever holds the update signing key can ship arbitrary code.
   The key must live outside the repository (CI secret or offline). A
-  production key does **not** exist yet; release builds have updates
-  switched off (`updates::PRODUCTION` is `None`). A fresh installation has
+  production key does **not** exist yet (`src-tauri/update-key.pub` is
+  empty); release builds have updates switched off. A fresh installation has
   no version floor yet, so the first manifest it sees can be any validly
   signed one, newer than the installed version. A withheld update (the
   server answering an old manifest, or nothing) is not detected beyond the
@@ -211,7 +218,8 @@ and the [journal](../status/journal.md), not here.
   command prints development mail, verification codes included, by design;
   production must use a mail provider instead.
 - An update check sends a plain GET with `User-Agent: sotyware/<version>`;
-  the update server learns the IP address, the time and the version.
+  GitHub (and its asset store) learns the IP address, the time and the
+  version.
 - The account service learns: email, password hash, device names/platforms,
   IP addresses in its rate limiter (memory only), sync timestamps and vault
   sizes. Its audit log records event types, account and device ids and times,

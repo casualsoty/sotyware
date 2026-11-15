@@ -15,9 +15,11 @@
       {
         "label": "main",
         "title": "sotyware",
-        "width": 800,
-        "height": 600,
-        "visible": true
+        "width": 1120,
+        "height": 760,
+        "visible": true,
+        "minWidth": 640,
+        "minHeight": 480
       }
     ],
     "security": {
@@ -47,6 +49,26 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico"
+      }
+    },
+    "category": "Utility",
+    "shortDescription": "Cloud storage, backups and sync for your desktop",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "hardenedRuntime": true,
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
       }
     }
   }

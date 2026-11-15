@@ -313,15 +313,15 @@ describe("opening a bucket", () => {
     const b = await openBucket(root);
     expect(folderCalls).toEqual([{ id: "photos", prefix: "", page: null }]);
     expect(root.querySelector("li[data-account]")).toBeNull();
-    expect(root.querySelector("button.primary")).toBeNull(); // no Add account while browsing
-    expect(text(b.querySelector("h3"))).toBe("Photos");
+    expect(buttons(root).some((x) => text(x) === "Add account")).toBe(false); // no Add account while browsing
+    expect(text(b.querySelector("h1"))).toBe("Photos");
     expect(text(b.querySelector(".bucket"))).toBe("soty-photos");
     expect(text(b.querySelector(".path"))).toBe("Root of the bucket");
     expect(crumbs(b)).toEqual(["soty-photos"]);
     expect(current(b)).toBe("soty-photos");
     expect(button(b, "Up one folder").disabled).toBe(true);
     const shown = rows(b);
-    expect(shown.slice(0, 3)).toEqual(["📁 2024 | Folder | —", "📁 a/ | Folder | —", "📁 Ferien 2024 ü | Folder | —"]);
+    expect(shown.slice(0, 3)).toEqual(["2024 | Folder | —", "a/ | Folder | —", "Ferien 2024 ü | Folder | —"]);
     expect(shown[3]).toMatch(/^readme\.txt \| 12 B \| .*2026/);
     expect(shown[4]).toMatch(/^big\.bin \| 3\.0 MiB \| /);
     expect(b.querySelector('tr[data-key="big.bin"] td.num')?.getAttribute("title")).toBe(
@@ -364,7 +364,7 @@ describe("navigation", () => {
     await openFolder(b, "2024/");
     expect(folderCalls.at(-1)).toEqual({ id: "photos", prefix: "2024/", page: null });
     expect(text(b.querySelector(".path"))).toBe("2024/");
-    expect(rows(b)[0]).toBe("📁 beach | Folder | —");
+    expect(rows(b)[0]).toBe("beach | Folder | —");
     expect(rows(b)[1]).toMatch(/^cat\.jpg \| 2\.0 KiB/);
     await openFolder(b, "2024/beach/");
     expect(crumbs(b)).toEqual(["soty-photos", "2024", "beach"]);
@@ -392,7 +392,7 @@ describe("navigation", () => {
     const b = await openBucket(root);
     await openFolder(b, "a//");
     expect(folderCalls.at(-1)?.prefix).toBe("a//");
-    expect(rows(b)).toEqual(["📁 (no name) | Folder | —"]);
+    expect(rows(b)).toEqual(["(no name) | Folder | —"]);
     await openFolder(b, "a///");
     expect(folderCalls.at(-1)?.prefix).toBe("a///");
     expect(crumbs(b)).toEqual(["soty-photos", "a", "(no name)", "(no name)"]);
@@ -411,7 +411,7 @@ describe("navigation", () => {
     const root = await render();
     const b = await openBucket(root);
     const calls = folderCalls.length;
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(root.querySelector("section.browser")).toBeNull();
     expect(root.querySelector('li[data-account="photos"]')).not.toBeNull();
     expect(folderCalls).toHaveLength(calls);
@@ -454,7 +454,7 @@ describe("pages", () => {
     expect(text(b.querySelector(".count"))).toBe("3 items shown; more are available.");
     await click(b, "Load more");
     expect(folderCalls.at(-1)).toEqual({ id: "photos", prefix: "", page: "photos::1" });
-    expect(rows(b).map((r) => r.split(" | ")[0])).toEqual(["📁 d1", "📁 d2", "f1", "f2", "f3"]);
+    expect(rows(b).map((r) => r.split(" | ")[0])).toEqual(["d1", "d2", "f1", "f2", "f3"]);
     await click(b, "Load more");
     expect(folderCalls.at(-1)).toEqual({ id: "photos", prefix: "", page: "photos::2" });
     expect(rows(b)).toHaveLength(6);
@@ -590,10 +590,10 @@ describe("accounts", () => {
     const slow = deferred<unknown>();
     queued.push(() => slow.promise);
     let b = await openBucket(root, "photos");
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     b = await openBucket(root, "work");
     expect(folderCalls.at(-1)).toEqual({ id: "work", prefix: "", page: null });
-    expect(text(b.querySelector("h3"))).toBe("Work");
+    expect(text(b.querySelector("h1"))).toBe("Work");
     expect(text(b.querySelector(".bucket"))).toBe("soty-work");
     expect(rows(b).map((r) => r.split(" | ")[0])).toEqual(["work-only.pdf"]);
     slow.resolve(serve({ id: "photos", prefix: "", page: null }));
@@ -602,7 +602,7 @@ describe("accounts", () => {
     expect(text(root)).not.toContain("photo-only.jpg");
 
     // And back to Photos: its own listing, from the root.
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     b = await openBucket(root, "photos");
     expect(folderCalls.at(-1)).toEqual({ id: "photos", prefix: "", page: null });
     expect(rows(b).map((r) => r.split(" | ")[0])).toEqual(["photo-only.jpg"]);
@@ -864,7 +864,7 @@ describe("downloading a file", () => {
     const b = await openBucket(root);
     await clickDownload(b, "big.bin");
     await send(downloadCalls[0]!.channel, event("download-1", "active", 5));
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(root.querySelector("section.browser")).toBeNull();
     expect(cancelCalls).toEqual(["download-1"]);
   });

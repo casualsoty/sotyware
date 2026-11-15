@@ -18,31 +18,59 @@ const MODE_CMD = "operating_mode"; // #[tauri::command] in src-tauri/src/lib.rs
 const LIST_CMD = "list_features"; // #[tauri::command] in src-tauri/src/features/mod.rs; tested in Features.test.ts
 const HIDE_CMD = "plugin:window|hide";
 const UPDATE_CMD = "update_status"; // #[tauri::command] in src-tauri/src/updates.rs; tested in Updates.test.ts
+const ACCOUNTS_CMD = "list_cloud_accounts"; // the sidebar's storage accounts; tested in CloudStorage.test.ts
+const BACKUPS_CMD = "list_backups"; // the Overview's backup summary; tested in Backup.test.ts
 
 let calls: IpcCall[];
 let mode: unknown;
 let respond: (cmd: string) => unknown;
 let app: ReturnType<typeof mount> | undefined;
 
+/** The update status `update_status` answers (Updates.test.ts covers the rest). */
+let update: Record<string, unknown>;
+
+function updateStatus(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    configured: false,
+    current: "0.1.0",
+    channel: "stable",
+    lastCheckMs: null,
+    available: null,
+    postponed: false,
+    error: null,
+    errorKind: null,
+    blockedBy: [],
+    installed: null,
+    usesInstaller: true,
+    ...over,
+  };
+}
+
+/** The storage accounts the sidebar lists. */
+let accountList: Record<string, unknown>[];
+
 /** The Rust side: answers the mode command with `mode`, the feature list with no
- * features (Features.test.ts covers them), everything else with null. */
+ * features (Features.test.ts covers them), the accounts, backups and update
+ * status the shell reads, everything else with null. */
 function backend(cmd: string): unknown {
-  if (cmd === LIST_CMD) {
-    return { features: [], storageError: null };
+  switch (cmd) {
+    case LIST_CMD:
+      return { features: [], storageError: null };
+    case UPDATE_CMD:
+      return update;
+    case ACCOUNTS_CMD:
+      return { accounts: accountList, storageError: null };
+    case BACKUPS_CMD:
+      return { storageError: null, jobs: [], active: null };
+    case "list_cloud_providers":
+      return [];
+    case "list_cloud_recovery":
+      return { entries: [], storageError: null };
+    case MODE_CMD:
+      return mode;
+    default:
+      return null;
   }
-  if (cmd === UPDATE_CMD) {
-    return {
-      configured: false,
-      current: "0.1.0",
-      channel: "stable",
-      lastCheckMs: null,
-      available: null,
-      postponed: false,
-      error: null,
-      blockedBy: [],
-    };
-  }
-  return cmd === MODE_CMD ? mode : null;
 }
 
 /** The commands sent so far, in a stable order (the page and its Features
@@ -53,6 +81,8 @@ function sentCommands(): string[] {
 
 beforeEach(() => {
   calls = [];
+  update = updateStatus();
+  accountList = [];
   mode = "tray";
   respond = backend;
   mockWindows(DASHBOARD_LABEL);
@@ -104,14 +134,14 @@ function hideCalls(): IpcCall[] {
 }
 
 describe("dashboard in tray mode", () => {
-  it("asks Rust for the mode and the feature list once each, and nothing else, when it renders", async () => {
+  it("asks Rust for the mode, the accounts, the backups and the update status once each, and nothing else", async () => {
     await render();
-    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, UPDATE_CMD]);
   });
 
   it("renders the heading, the tray hint and a plain button, no error", async () => {
     const root = await render();
-    expect(root.querySelector("h1")?.textContent).toBe("sotyware");
+    expect(root.querySelector("main h1")?.textContent).toBe("Overview");
     expect(root.textContent).toContain("reopen it any time from the system tray");
     // type="button" so it never submits a form if the page grows one.
     expect(hideButton(root).type).toBe("button");
@@ -204,9 +234,11 @@ describe("dashboard in dashboard-only mode", () => {
   it("offers no Hide action and never asks Tauri to hide", async () => {
     const root = await render();
     expect(findHideButton(root)).toBeUndefined();
-    expect(root.querySelectorAll("button")).toHaveLength(0);
+    // The page header holds the Hide button in tray mode, and nothing here.
+    expect(root.querySelectorAll("main .page-header button")).toHaveLength(0);
     expect(root.textContent).not.toContain("from the system tray");
-    expect(sentCommands()).toEqual([LIST_CMD, MODE_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, UPDATE_CMD]);
+    expect(hideCalls()).toHaveLength(0);
   });
 });
 
@@ -231,6 +263,178 @@ describe("dashboard when the mode cannot be read", () => {
   });
 });
 
+describe("update notification", () => {
+  const AVAILABLE = { version: "0.2.0", notes: "Faster uploads.", pubDate: "2026-12-01T12:00:00Z" };
+
+  function banner(root: HTMLElement): HTMLElement | null {
+    return root.querySelector<HTMLElement>('[role="region"][aria-label="Update notification"]');
+  }
+
+  function bannerButton(root: HTMLElement, name: string): HTMLButtonElement {
+    const b = [...(banner(root)?.querySelectorAll("button") ?? [])].find(
+      (x) => x.textContent?.trim() === name || x.getAttribute("aria-label") === name,
+    );
+    if (!b) {
+      throw new Error(`no "${name}" in the notification: ${banner(root)?.innerHTML ?? "(none)"}`);
+    }
+    return b;
+  }
+
+  it("is not shown when sotyware is up to date or updates are not set up", async () => {
+    const root = await render();
+    expect(banner(root)).toBeNull();
+    unmount(app!);
+    app = undefined;
+    update = updateStatus({ configured: true, lastCheckMs: 5 });
+    const again = await render();
+    expect(banner(again)).toBeNull();
+  });
+
+  it("shows an available version once, and installs only on its Update button", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE });
+    const root = await render();
+    expect(banner(root)?.textContent).toContain("sotyware 0.2.0 is available.");
+    expect(root.querySelectorAll('[aria-label="Update notification"]')).toHaveLength(1);
+    expect(calls.map((c) => c.cmd)).not.toContain("install_update");
+    bannerButton(root, "Update").click();
+    await settle();
+    expect(calls.map((c) => c.cmd)).toContain("install_update");
+  });
+
+  it("does not offer Update while a transfer runs", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE, blockedBy: ["an upload"] });
+    const root = await render();
+    expect(bannerButton(root, "Update").disabled).toBe(true);
+    expect(banner(root)?.textContent).toContain("Update when an upload has finished.");
+  });
+
+  it("goes away for that version with Later, and for this session when closed", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE });
+    respond = (cmd): unknown => {
+      if (cmd === "postpone_update") {
+        update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE, postponed: true });
+        return null;
+      }
+      return backend(cmd);
+    };
+    const root = await render();
+    bannerButton(root, "Later").click();
+    await settle();
+    expect(calls.map((c) => c.cmd)).toContain("postpone_update");
+    expect(banner(root)).toBeNull();
+
+    unmount(app!);
+    app = undefined;
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE });
+    respond = backend;
+    const again = await render();
+    bannerButton(again, "Close the update notification").click();
+    await settle();
+    expect(banner(again)).toBeNull();
+    expect(calls.filter((c) => c.cmd === "postpone_update")).toHaveLength(1);
+  });
+
+  it("appears when the window is shown after an automatic check found a version", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: null });
+    const root = await render();
+    expect(banner(root)).toBeNull();
+    // The update-check feature found 0.2.0 in Rust; no event is sent.
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE });
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    expect(banner(root)?.textContent).toContain("sotyware 0.2.0 is available.");
+    expect(calls.filter((c) => c.cmd === UPDATE_CMD)).toHaveLength(2);
+  });
+
+  it("offers a restart once an update is installed", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE, installed: "0.2.0", usesInstaller: false });
+    const root = await render();
+    expect(banner(root)?.textContent).toContain("sotyware 0.2.0 is installed.");
+    bannerButton(root, "Restart now").click();
+    await settle();
+    expect(calls.map((c) => c.cmd)).toContain("restart_after_update");
+  });
+
+  it("leads to Settings › About & updates with Details", async () => {
+    update = updateStatus({ configured: true, lastCheckMs: 5, available: AVAILABLE });
+    const root = await render();
+    bannerButton(root, "Details").click();
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Settings");
+    const tab = root.querySelector('[role="tab"][aria-selected="true"]');
+    expect(tab?.textContent?.trim()).toBe("About & updates");
+    expect(root.querySelector("#updates-heading")).not.toBeNull();
+    // The panel shows the same offer; the banner is not repeated above it.
+    expect(banner(root)).toBeNull();
+  });
+});
+
+describe("shell navigation", () => {
+  function key(init: KeyboardEventInit): void {
+    window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  }
+
+  it("switches sections with Ctrl or Cmd and a number, and opens Settings with comma", async () => {
+    const root = await render();
+    key({ key: "3", ctrlKey: true });
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Backups");
+    key({ key: ",", metaKey: true });
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Settings");
+    key({ key: "2", ctrlKey: true });
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Cloud Storage");
+    // Unmodified keys belong to the page.
+    key({ key: "1" });
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Cloud Storage");
+  });
+
+  it("moves focus to the new page's title", async () => {
+    const root = await render();
+    [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Backups")!.click();
+    await settle();
+    await settle();
+    expect(document.activeElement).toBe(root.querySelector("main h1"));
+  });
+
+  it("applies and remembers the theme chosen in Settings", async () => {
+    const root = await render();
+    [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Settings")!.click();
+    await settle();
+    const dark = root.querySelector<HTMLInputElement>('input[name="theme"][value="dark"]')!;
+    dark.checked = true;
+    dark.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(document.documentElement.dataset["theme"]).toBe("dark");
+    expect(localStorage.getItem("sotyware.theme.v1")).toBe("dark");
+    expect(calls.some((c) => c.cmd === "plugin:window|set_theme")).toBe(true);
+    const system = root.querySelector<HTMLInputElement>('input[name="theme"][value="system"]')!;
+    system.checked = true;
+    system.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(document.documentElement.dataset["theme"]).toBeUndefined();
+    expect(localStorage.getItem("sotyware.theme.v1")).toBeNull();
+  });
+
+  it("walks the Settings tabs with the arrow keys", async () => {
+    const root = await render();
+    [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Settings")!.click();
+    await settle();
+    const list = root.querySelector<HTMLElement>('[role="tablist"]')!;
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    await settle();
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe("Features");
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    await settle();
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe("About & updates");
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    await settle();
+    expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe("General");
+  });
+});
+
 describe("main.ts", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -250,7 +454,7 @@ describe("main.ts", () => {
     const { default: mounted } = await import("./main");
     try {
       svelte.flushSync();
-      expect(target.querySelector("h1")?.textContent).toBe("sotyware");
+      expect(target.querySelector("main h1")?.textContent).toBe("Overview");
     } finally {
       svelte.unmount(mounted);
     }

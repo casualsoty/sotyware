@@ -1,0 +1,45 @@
+{
+  "format": "sotyware-update",
+  "formatVersion": 1,
+  "channel": "stable",
+  "version": "0.2.0",
+  "notes": "Not a real release: a fixture signed once by the Tauri CLI with a throwaway key.",
+  "pub_date": "2026-11-15T12:00:00Z",
+  "platforms": {
+    "windows-x86_64-nsis": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bFUxSVlSWU9pdDFaSExuVGdnSlA4VitXTzU5Mi9ObW4xUXpQeTk2cjVIUzkwcjh3Qlp0WTJRd3h0NFV2SnhrdWR6MWNySGpZdXNXMEFTckJweXdYWncwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMwCWZpbGU6c290eXdhcmVfMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCmM2dVZGUllSWUNkRVRKL2FGcVFlTXRuZDdzU05VL096UmhuZ1duUVNnci9WZ05YY0lwMWliNGJyV3pVeGhBYXZuVjhhdlVUL2ROa0N0UGZPR3IvS0NBPT0K",
+      "sha256": "abcb65c109b93f9073afa85f75bc97b67e9088c80fea46ef28618aa90aafa6bd"
+    },
+    "windows-x86_64-msi": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_x64_en-US.msi",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bFpkYjd0NnhtSTJmSFBDZ0lvVUt3T1Bjd2dERytORDdJSmxxWEQ4NTIveWhBOUhaemRpM0RvNE1kOXlRdjYzejB4SzltcTJQNmE1Ny9ySGQ1TWtLa1FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMwCWZpbGU6c290eXdhcmVfMC4yLjBfeDY0X2VuLVVTLm1zaQl2ZXJzaW9uOjAuMi4wCmNVc2FUbGpkcjd2T2ZIZmxqTlY2MGFQbllzQjBQalMvZGcweEh6WVUvVFdBRW8rem10RlV4Q3hDN0h0Mlh3aytnQURsYkFhaVU2VEdxdW1lV3Y4bURBPT0K",
+      "sha256": "f73b39651fa17a3f54f35595a7be9900cb83aa6cadb06ad38e513c82bc8126b1"
+    },
+    "darwin-aarch64-app": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bGVwY2tjdHZrZ29iM0hKYVplR1BVbW92TktGekdKWnBReVhsK3dTcVQ4UFZzb0RmN0wzdHhUYlJjZllxMDdKZUR1L2lvWDJaRHl3N2orMEtRUm1vQUFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMyCWZpbGU6c290eXdhcmVfMC4yLjBfYWFyY2g2NC5hcHAudGFyLmd6CXZlcnNpb246MC4yLjAKM2JrK3NMWEFNMG5BZlVvZk1vdG1sNWhUU0JMUXVCMHNPSWFTTU9XRFY3ZUxGeHNKWktJT3c0YmJ1d1FBNWhEeHdQdW42MmE0dTBSVTI1aENqVjNZQ1E9PQo=",
+      "sha256": "0c737a2cb0db9264856ce8e98287ad73482a5efa16eb4ab3cce73742a1bc0e48"
+    },
+    "darwin-x86_64-app": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bGNRTnpNbnhCb1hCeFgzU0ZJK01aWDk0dkVjc3RWS2JxdTZWUzR2YUJZbnVVMVFIelZJOGYzT3BJYXZ6WXVUVlZEd2lBOWsrYVBxTlhVWHU3cy9XdlFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMyCWZpbGU6c290eXdhcmVfMC4yLjBfeDY0LmFwcC50YXIuZ3oJdmVyc2lvbjowLjIuMApxbWtxMTF1eFZOWnZmL0thM0k4eGh0L3JlWXV4ZnZXK2ZYMm96NmRmTE16b21hVDF6a1dwVUxwcG4vbWJQMWE1Z2c2QmJlSktFK2w5QVpVWGl5VFpEQT09Cg==",
+      "sha256": "4ba8d544a1f8796262166c6e0f934e715b228ae3024f38e809e0f709cda6e517"
+    },
+    "linux-x86_64-appimage": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bFpqSUFtMzNpU2Jtc2xhWWVCd0NDR2RtYkhyQU5oM0JDc2dKeG55VFpRMDh0K1E0MG9ad2xYZUdKa3RTWnlmUU93Vlo2dFgwdFByQ1BnNnZJdEV1TVFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMxCWZpbGU6c290eXdhcmVfMC4yLjBfYW1kNjQuQXBwSW1hZ2UJdmVyc2lvbjowLjIuMApEQTlGTytDdkFLYU1ndnZFZml5UVp1NUs5dmZwWGhwdlV1b2dIWFlvN043UHlBU2s4TFF4MzBCMUNJNUJ3VU9DUE5zcTFqakI5YzVYUW9uYjVqSGNDZz09Cg==",
+      "sha256": "ef5a2facf1d7b222f1b882c3e2bf55e9ca2d8ae25b9903f84adf655df7b92358"
+    },
+    "linux-x86_64-deb": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_0.2.0_amd64.deb",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bFpZR0RVUVdnOEpINXNPbkppekw3OUlLejRYZzN1MVhzd0dUSlhjd29ITlU5RlpzT1JMVCt1bmRyYnNqdVVhalo0cUtSYVcrUWJDWlhkM2M1dzNXN3d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMxCWZpbGU6c290eXdhcmVfMC4yLjBfYW1kNjQuZGViCXZlcnNpb246MC4yLjAKVjI1MlovWTRCWGhBKzV1S2JDTmd5Rzg1VDlabW1DMStRUkE4R3NVZUhDQUwxOWsxVWU5blZ6dExvYVhWMVBoUmtLK295U3FxNVM4blZNS2s5R1I5RHc9PQo=",
+      "sha256": "9d09746304dfe5a0eaad82d13f3e37662a43e01cca5e5ed2e5c5a1951829e574"
+    },
+    "linux-x86_64-rpm": {
+      "url": "https://github.com/owner/repo/releases/download/v0.2.0/sotyware-0.2.0-1.x86_64.rpm",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSbFVzNzUyQUo1bFFiZHp0VFFSZkFpeURzOXRpcjZHeXRsejU0dlUxOExMb2tPUi92ZlRmZEZTdUJELyt6UUZrb2Zuc3l6ekIyTU51aGEzWHMzS3RTdnZlZmpMYzNQQmdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzM3MzMxCWZpbGU6c290eXdhcmUtMC4yLjAtMS54ODZfNjQucnBtCXZlcnNpb246MC4yLjAKWXRNaU42NkwzUm9aR0wyVVI5bU9aMytQQXdaSnR5dmk2akxwUGZWUkVqcUZkYnpDYkVvcDZWaitWK3k4RHhDaVVRc0ZTZ0pKZ0ZHMGE0SXA2SVQwREE9PQo=",
+      "sha256": "60718bb2f6932f513ffe204a8ef8e4527097bb65f3b59d53630562c516b36716"
+    }
+  }
+}

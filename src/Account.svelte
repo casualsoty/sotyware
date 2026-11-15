@@ -223,14 +223,19 @@
   });
 </script>
 
+<div class="page">
 <section aria-labelledby="account-heading">
-  <h2 id="account-heading">Account</h2>
-  <p>
-    A sotyware account is optional. With one, the storage accounts and backup jobs you set up here appear on your other
-    computers. Their keys are encrypted on this computer before anything is sent: the sotyware service stores only
-    ciphertext it cannot read. Your password signs you in; it never unlocks your keys. A new computer needs your
-    <strong>recovery key</strong> or an approval from a computer that is already set up.
-  </p>
+  <header class="page-header">
+    <div class="titles">
+      <h1 id="account-heading">Account</h1>
+      <p class="lede">
+        A sotyware account is optional. With one, the storage accounts and backup jobs you set up here appear on your other
+        computers. Their keys are encrypted on this computer before anything is sent: the sotyware service stores only
+        ciphertext it cannot read. Your password signs you in; it never unlocks your keys. A new computer needs your
+        <strong>recovery key</strong> or an approval from a computer that is already set up.
+      </p>
+    </div>
+  </header>
 
   {#if loadError}<p class="error" role="alert">{loadError}</p>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -252,11 +257,12 @@
   {/if}
 
   {#if status && !status.configured}
-    <p class="hint" data-account="not-configured">
+    <p class="callout neutral" data-account="not-configured">
       Accounts are not available in this build: no sotyware account service is configured. Everything else works
       without one.{#if status.storageError} ({status.storageError}){/if}
     </p>
   {:else if status && !status.signedIn}
+    <div class="auth card">
     <nav class="modes" aria-label="Account actions">
       <button type="button" aria-pressed={mode === "sign-in"} onclick={() => (mode = "sign-in")}>Sign in</button>
       <button type="button" aria-pressed={mode === "register" || mode === "verify"} onclick={() => (mode = "register")}>Create account</button>
@@ -293,6 +299,7 @@
         </button>
       </fieldset>
     </form>
+    </div>
   {:else if status}
     <div class="signed-in" data-vault={status.vaultAccess}>
       <p>Signed in as <strong>{status.email}</strong>.</p>
@@ -413,95 +420,95 @@
     </div>
   {/if}
 </section>
+</div>
 
 <style>
   label {
     display: block;
-    font-size: 0.9em;
-    margin-top: 0.5rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    margin-top: var(--space-3);
+    margin-bottom: var(--space-1);
   }
 
   input {
     display: block;
-    box-sizing: border-box;
     width: 100%;
-    padding: 0.3rem 0.5rem;
-    font: inherit;
-  }
-
-  fieldset {
-    border: none;
-    padding: 0;
   }
 
   button {
-    font: inherit;
-    padding: 0.25rem 0.7rem;
-    margin-top: 0.5rem;
-    cursor: pointer;
+    margin-top: var(--space-3);
   }
 
-  .primary {
-    font-weight: 600;
+  .auth {
+    max-width: 28rem;
   }
 
   .modes {
     display: flex;
-    gap: 0.4rem;
+    gap: var(--space-1);
+    padding: 3px;
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+  }
+
+  .modes button {
+    flex: 1;
+    margin: 0;
+    min-height: 28px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
   }
 
   .modes button[aria-pressed="true"] {
-    font-weight: 600;
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
   }
 
   .recovery-key {
-    border: 2px solid #e0a000;
-    border-radius: 6px;
-    padding: 0.6rem 0.9rem;
-    margin: 0.8rem 0;
+    margin: var(--space-4) 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--warning-soft);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-lg);
+  }
+
+  .recovery-key h3 {
+    margin-bottom: var(--space-2);
   }
 
   .key {
-    font-family: ui-monospace, monospace;
-    font-size: 1.1em;
+    font-family: var(--font-mono);
+    font-size: var(--text-lg);
     word-break: break-all;
     user-select: all;
+    padding: var(--space-3);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .signed-in :global(h3) {
+    margin: var(--space-6) 0 var(--space-2);
   }
 
   .hint {
-    font-size: 0.85em;
-    color: #6b6b73;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
   }
 
   .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    align-items: center;
-    margin-top: 1rem;
+    margin-top: var(--space-4);
   }
 
-  .error,
-  .danger {
-    color: #c62828;
+  .actions button {
+    margin-top: 0;
   }
 
-  .notice {
-    color: #2e7d32;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .hint {
-      color: #a0a0a8;
-    }
-
-    .error,
-    .danger {
-      color: #ef7070;
-    }
-
-    .notice {
-      color: #7bc67e;
-    }
+  .danger:not(button) {
+    color: var(--danger);
   }
 </style>

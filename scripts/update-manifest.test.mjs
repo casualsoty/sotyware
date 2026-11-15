@@ -159,3 +159,138 @@ describe("verify", () => {
     assert.throws(() => verifyManifest({ bytes, signature: text, publicKey: pub }), /trusted comment/);
   });
 });
+
+describe("every platform from a GitHub release (ADR-036)", () => {
+  const BASE = "https://github.com/owner/repo/releases/download/v1.4.0/";
+  const NAMES = {
+    nsis: "sotyware_1.4.0_x64-setup.exe",
+    msi: "sotyware_1.4.0_x64_en-US.msi",
+    "app-aarch64": "sotyware_1.4.0_aarch64.app.tar.gz",
+    "app-x64": "sotyware_1.4.0_x64.app.tar.gz",
+    appimage: "sotyware_1.4.0_amd64.AppImage",
+    deb: "sotyware_1.4.0_amd64.deb",
+    rpm: "sotyware-1.4.0-1.x86_64.rpm",
+  };
+
+  function allSigned(key) {
+    const dir = mkdtempSync(join(work, "gh-"));
+    const artifacts = {};
+    for (const [kind, name] of Object.entries(NAMES)) {
+      const p = join(dir, name);
+      writeFileSync(p, `contents of ${name}`);
+      writeFileSync(`${p}.sig`, key.sign(readFileSync(p), `timestamp:1\tfile:${name}\tversion:1.4.0`));
+      artifacts[kind] = p;
+    }
+    return { dir, artifacts };
+  }
+
+  test("names each platform as the updater plugin does, under the tag's download folder", () => {
+    const key = testKey();
+    const pub = readPublicKey(key.pubkey);
+    const { dir, artifacts } = allSigned(key);
+    const m = createManifest({ version: "1.4.0", baseUrl: BASE, publicKey: pub, artifacts });
+    assert.deepEqual(Object.keys(m.platforms).sort(), [
+      "darwin-aarch64-app",
+      "darwin-x86_64-app",
+      "linux-x86_64-appimage",
+      "linux-x86_64-deb",
+      "linux-x86_64-rpm",
+      "windows-x86_64-msi",
+      "windows-x86_64-nsis",
+    ]);
+    assert.equal(m.platforms["darwin-aarch64-app"].url, `${BASE}sotyware_1.4.0_aarch64.app.tar.gz`);
+    const bytes = Buffer.from(JSON.stringify(m));
+    const signature = key.sign(bytes, "timestamp:1\tfile:latest.json\tversion:1.4.0");
+    const all = Object.keys(NAMES);
+    assert.equal(verifyManifest({ bytes, signature, publicKey: pub, artifactsDir: dir, baseUrl: BASE, require: all }).version, "1.4.0");
+    // Exactly the required platforms: one missing or one extra fails.
+    assert.throws(() => verifyManifest({ bytes, signature, publicKey: pub, require: all.filter((k) => k !== "rpm") }), /expected exactly/);
+    const fewer = createManifest({ version: "1.4.0", baseUrl: BASE, publicKey: pub, artifacts: { nsis: artifacts.nsis } });
+    assert.throws(() => verifyManifest({ bytes: Buffer.from(JSON.stringify(fewer)), signature: null, publicKey: pub, require: ["nsis", "msi"] }), /expected exactly/);
+    // A URL outside the release's own folder (another tag, another host).
+    assert.throws(() => verifyManifest({ bytes, signature, publicKey: pub, baseUrl: "https://github.com/owner/repo/releases/download/v1.3.0/" }), /is not under/);
+  });
+
+  test("refuses a file of another kind and a name GitHub would change", () => {
+    const key = testKey();
+    const pub = readPublicKey(key.pubkey);
+    const { artifacts } = allSigned(key);
+    assert.throws(() => createManifest({ version: "1.4.0", baseUrl: BASE, publicKey: pub, artifacts: { "app-x64": artifacts["app-aarch64"] } }), /is not a app-x64 artifact/);
+    const dir = mkdtempSync(join(work, "sp-"));
+    const spaced = join(dir, "sotyware 1.4.0_x64-setup.exe");
+    writeFileSync(spaced, "x");
+    writeFileSync(`${spaced}.sig`, key.sign(readFileSync(spaced), "version:1.4.0"));
+    assert.throws(() => createManifest({ version: "1.4.0", baseUrl: BASE, publicKey: pub, artifacts: { nsis: spaced } }), /GitHub would rename/);
+    assert.throws(() => verifyManifest({ bytes: Buffer.from("{}"), signature: null, publicKey: pub, require: ["zip"] }), /not a sotyware-update|unknown artifact kind/);
+  });
+
+  test("takes every kind from the command line", () => {
+    const key = testKey();
+    const { dir, artifacts } = allSigned(key);
+    const pubFile = join(dir, "key.pub");
+    writeFileSync(pubFile, key.pubkey);
+    const out = join(dir, "latest.json");
+    const log = console.log;
+    console.log = () => {};
+    try {
+      const args = ["create", "--version", "1.4.0", "--base-url", BASE, "--pubkey", pubFile, "--out", out, "--pub-date", "2026-12-01T00:00:00Z"];
+      for (const [kind, p] of Object.entries(artifacts)) args.push(`--${kind}`, p);
+      assert.equal(main(args), 0);
+      writeFileSync(`${out}.sig`, key.sign(readFileSync(out), "timestamp:1\tfile:latest.json\tversion:1.4.0"));
+      assert.equal(main(["verify", "--manifest", out, "--pubkey", pubFile, "--artifacts", dir, "--base-url", BASE, "--require", Object.keys(NAMES).join(",")]), 0);
+    } finally {
+      console.log = log;
+    }
+    assert.equal(Object.keys(JSON.parse(readFileSync(out, "utf8")).platforms).length, 7);
+  });
+});
+
+describe("check-signature", () => {
+  test("accepts a file signed for the version by this key, and nothing else", () => {
+    const key = testKey();
+    const dir = mkdtempSync(join(work, "cs-"));
+    const pubFile = join(dir, "key.pub");
+    writeFileSync(pubFile, key.pubkey);
+    const probe = join(dir, "probe.txt");
+    writeFileSync(probe, "probe");
+    writeFileSync(`${probe}.sig`, key.sign(readFileSync(probe), "timestamp:1\tfile:probe.txt\tversion:1.4.0"));
+    const log = console.log;
+    console.log = () => {};
+    try {
+      assert.equal(main(["check-signature", "--pubkey", pubFile, "--file", probe, "--version", "1.4.0"]), 0);
+      assert.throws(() => main(["check-signature", "--pubkey", pubFile, "--file", probe, "--version", "1.5.0"]), /signed for version 1\.4\.0/);
+      writeFileSync(pubFile, testKey().pubkey);
+      assert.throws(() => main(["check-signature", "--pubkey", pubFile, "--file", probe, "--version", "1.4.0"]), /another key/);
+    } finally {
+      console.log = log;
+    }
+  });
+});
+
+describe("the GitHub release fixture (every platform, real Tauri CLI)", () => {
+  // scripts/fixtures/update-github/ was produced once by the release
+  // workflow's own commands (tauri signer sign --app-version, then
+  // update-manifest create and sign) with a throwaway key whose private half
+  // was deleted. src-tauri/src/updates/tests.rs reads the same files.
+  const dir = join(here, "fixtures", "update-github");
+  const pub = readPublicKey(join(dir, "test-key.pub"));
+  const BASE = "https://github.com/owner/repo/releases/download/v0.2.0/";
+  const ALL = ["nsis", "msi", "app-aarch64", "app-x64", "appimage", "deb", "rpm"];
+
+  test("verifies with every artifact, under the tag's folder, exactly the seven platforms", () => {
+    const m = verifyManifest({
+      bytes: readFileSync(join(dir, "latest.json")),
+      signature: readFileSync(join(dir, "latest.json.sig"), "utf8"),
+      publicKey: pub,
+      artifactsDir: dir,
+      current: "0.1.0",
+      baseUrl: BASE,
+      require: ALL,
+    });
+    assert.equal(Object.keys(m.platforms).length, 7);
+    assert.equal(m.pub_date, "2026-11-15T12:00:00Z");
+    for (const e of Object.values(m.platforms)) {
+      assert.equal(signedVersion(verifySignature(readFileSync(join(dir, e.url.slice(BASE.length))), e.signature, pub)), "0.2.0");
+    }
+  });
+});

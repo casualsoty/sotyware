@@ -29,6 +29,15 @@ state. It never changes while the process runs:
 | **Quit** (tray menu) | Process exits cleanly with code 0 | No tray. Close quits |
 | **Open Dashboard** (tray menu, or left click on the icon; on Linux if the tray host sends it) | Existing window un-minimized, shown, focused | No tray |
 | **Launch sotyware again** while it runs | No new process, tray icon or window; the existing dashboard is shown, un-minimized, focused | The same, as long as a session bus exists (without one the single-instance guard is off) |
+| **Restart now** (after an update installed in place, macOS and Linux; ADR-036) | `request_restart`: the normal exit (`RunEvent::Exit`, `release_resources`, single-instance lock released), then the new version starts | The same |
+
+**macOS** (ADR-037) is always tray mode. In addition: **Quit sotyware** in
+the menu bar (⌘Q) is the tray's Quit (`AppControl::quit`, exit 0); **Close
+Window** (⌘W) is a close, so it hides; a **click on the Dock icon**
+(`RunEvent::Reopen`) shows the dashboard like Open Dashboard; the Dock's
+Quit and a logout terminate the app from outside, which arrives as
+`RunEvent::Exit` without an exit request, so cleanup runs and nothing
+delays the logout.
 
 ## Startup sequence
 

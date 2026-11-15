@@ -1897,7 +1897,11 @@ Status: Accepted (2026-11-15). Code: `server/` (account service),
 
 ## ADR-033: Updates use tauri-plugin-updater behind a separately signed manifest, installed only on the user's click
 
-Status: Accepted (2026-11-15), implemented the same day. Code:
+Status: Accepted (2026-11-15), implemented the same day. Its update source
+(a hosted `sotyware-update.json` served without redirects, `PRODUCTION`)
+and the "no restart from inside" rule are superseded by
+[ADR-036](#adr-036-updates-come-from-the-latest-github-release-latestjson-signed-and-verified-as-in-adr-033);
+everything else stands. Code:
 `src-tauri/src/updates.rs`, feature `src-tauri/src/features/updates.rs`,
 page `src/Updates.svelte`, release tooling `scripts/update-manifest.mjs`;
 design: [updates.md](updates.md).
@@ -1974,4 +1978,165 @@ Status: Accepted (2026-11-15). Code: `src-tauri/build.rs`
   manifest, resource ID 1, checked on a native Windows debug build; icons
   and version resource as before). A change of `tauri-build`'s default
   manifest must be copied by hand.
+
+## ADR-035: The dashboard is a desktop shell with a sidebar on one token-based design system
+
+Status: Accepted (2026-11-15). Code: `src/App.svelte`, `src/Sidebar.svelte`,
+`src/Overview.svelte`, `src/Settings.svelte`, `src/styles/tokens.css`,
+`src/styles/base.css`, `src/theme.ts`, `src/Icon.svelte`,
+`src/updatesModel.svelte.ts`; design: [frontend.md](frontend.md).
+
+- **Context:** the dashboard grew from one section to five (Overview, Cloud
+  Storage, Backups, Account, update settings) inside a 36rem centred column
+  with tab-like links. Every component styled itself with its own
+  hard-coded colours and its own `prefers-color-scheme` block, so the same
+  meaning (an error, a notice, a primary action) looked different on each
+  page, and a theme chosen by the user could not override the system's.
+  The file browser, the densest page, had the same narrow column.
+- **Decision:** one shell: a sidebar (sections, the storage accounts as
+  direct links to their buckets, Account and Settings at the bottom) and a
+  main area whose pages share a header pattern; list and form pages keep a
+  56rem reading width, the bucket browser uses the full width. A narrow
+  window turns the sidebar into an overlay. All colours, sizes, radii,
+  shadows and durations are CSS custom properties in `tokens.css`, with a
+  light and a dark palette; `base.css` styles the elements and a small
+  shared vocabulary (`.callout`, `.badge`, `.card`, `.empty`, button
+  variants, …). Components keep layout-only styles and never a colour
+  literal. The theme is System, Light or Dark, chosen in Settings ›
+  Appearance: stored in the webview's `localStorage` (a per-device display
+  preference, read synchronously before the first paint), applied as
+  `data-theme` on `<html>`, and mirrored to the native window with
+  `setTheme` (title bar), which needs the one new permission
+  `core:window:allow-set-theme`. Features and About & updates move into
+  Settings; one update notification appears in the shell. Icons are an
+  in-repo set of line drawings (`Icon.svelte`), no icon font or package.
+  The update state is one `UpdatesModel` per window (`.svelte.ts` runes),
+  shared by the notification and the settings panel. Keyboard: Ctrl/⌘+1–3
+  switch sections, Ctrl/⌘+, opens Settings, Ctrl/⌘+F searches a bucket,
+  ⌘⌫ deletes on a Mac; page titles take focus on navigation.
+- **Rejected:** a component library or CSS framework (a dependency and a
+  second design language for a small app); a router (navigation stays
+  local state, ADR-001); storing the theme in SQLite through a new command
+  (an asynchronous read flashes the wrong theme at startup, and the choice
+  is a per-device convenience with no security meaning); a custom title
+  bar (native decorations keep each platform's own window controls).
+- **Consequences:** every visual change is a token or a vocabulary class.
+  Accessible names the desktop drivers use stayed (Open bucket, Check
+  connection, Upload files…), with deliberate exceptions recorded in
+  [frontend.md](frontend.md#names-the-tests-rely-on): "← Back to accounts"
+  became "Back to accounts", folder rows lost their 📁 emoji (an icon now),
+  and the features moved to Settings › Features. A theme saved in
+  `localStorage` lives in the webview data folder (the test profile's, in
+  test builds) and is lost with it; then the system theme is used.
+
+## ADR-036: Updates come from the latest GitHub release (`latest.json`), signed and verified as in ADR-033
+
+Status: Accepted (2026-11-15). Supersedes ADR-033's update source. Code:
+`src-tauri/src/updates.rs`, `src-tauri/update-key.pub`,
+`scripts/update-manifest.mjs`, `.github/workflows/release.yml`; design:
+[updates.md](updates.md), procedure:
+[release.md](../development/release.md#publishing-a-release).
+
+- **Context:** ADR-033 needed a hosted update server (a domain, hosting,
+  TLS) that does not exist. GitHub Releases already stores the installers;
+  its `releases/latest/download/<asset>` URL always redirects to the asset
+  of the release marked latest (never a draft or a pre-release).
+- **Decision:** every release carries `latest.json`, the manifest of
+  ADR-033 (the updater plugin's static format plus `format`, `channel`
+  and per-platform `sha256`), and `latest.json.sig`, its minisign signature
+  by the release key. sotyware fetches both from
+  `https://github.com/casualsoty/sotyware/releases/latest/download/`
+  (`MANIFEST_URL`), following at most five redirects and each only to
+  HTTPS (loopback HTTP only in test builds); a signature that does not
+  match is fetched once more (a release published between the two
+  requests). All of ADR-033's checks stay: signature first, channel,
+  version floor against replays, an HTTPS URL, a signature and a SHA-256
+  per package, the plugin handed exactly the verified JSON, the package's
+  signature and signed version, the SHA-256 before installing, installation
+  only on the user's click and only while nothing runs. Platform entries
+  now cover `windows-x86_64-{nsis,msi}`, `darwin-{aarch64,x86_64}-app` and
+  `linux-x86_64-{appimage,deb,rpm}`. The public key is a file in the
+  repository, `src-tauri/update-key.pub`, compiled in; while it holds no
+  key, release builds report updates as not set up. On macOS and Linux the
+  plugin replaces the app in place; sotyware then offers **Restart now**,
+  which uses `AppHandle::request_restart` (the normal exit, so
+  `release_resources` runs and the single-instance lock is released before
+  the new process starts); Windows' installer still restarts sotyware
+  itself. New command `restart_after_update` (refused unless this process
+  installed an update and nothing runs). Status and failures carry a kind
+  (`network`, `signature`, `integrity`, `replay`, `platform`, `malformed`,
+  `installer`, `busy`) so the page words them without parsing text.
+  Releases are made only by `release.yml`: version and tag checked, the
+  signing secret checked against the committed public key, CI on the
+  tagged commit, Windows, Linux and both macOS builds, then one job, the
+  only one with the signing key, signs every updater artifact and
+  `latest.json` with `tauri signer sign --app-version`, verifies all of it
+  with the public key alone, uploads to a draft, publishes it as a
+  pre-release, downloads every file through its public URL and verifies it
+  again, and only then marks it latest. A manifest names exactly the
+  platforms built in that run (macOS only when signed and notarized).
+- **Rejected:** trusting GitHub as the authority (a compromised account or
+  token could publish anything; the release key is the authority, kept out
+  of every build job); the plugin's own endpoint fetch with an unsigned
+  `latest.json` (ADR-033's reasons stand); a pinned host allow-list for the
+  redirects (GitHub has changed its asset host before; the signature, not
+  the host, decides); universal macOS binaries (ADR-037).
+- **Consequences:** **the repository's releases must be public**: GitHub
+  serves release assets of a private repository only to signed-in clients,
+  so with the repository private today no installation could download
+  `latest.json`, and `release.yml` refuses to publish (a dry run still
+  works). No installation exists yet (0.1.0 was never released and had
+  updates switched off), so nothing migrates; the first release with a key
+  in `update-key.pub` is the first that can be updated, and every later
+  key change needs the rotation procedure in
+  [release.md](../development/release.md#update-signing-key). Losing the
+  private key strands every installation on its version.
+
+## ADR-037: macOS is a supported build target: Keychain, a menu bar, separate Apple Silicon and Intel builds
+
+Status: Accepted (2026-11-15). Code: `src-tauri/Cargo.toml`
+(`apple-native-keyring-store`, `security-framework`),
+`src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`,
+`src-tauri/src/lib.rs` (`RunEvent::Reopen`), `src-tauri/tauri.conf.json`
+(`bundle.macOS`), `.github/workflows/macos.yml`; guide:
+[macos.md](../development/macos.md).
+
+- **Context:** sotyware should run on Macs too. Its code already avoided
+  OS-specific paths except the credential store (Windows and Linux only),
+  and a Mac app without a menu bar gets no ⌘C/⌘V in its webview and no
+  standard Quit.
+- **Decision:** credentials go to the user's login keychain through
+  `apple-native-keyring-store` (feature `keychain`: the legacy keychain,
+  which needs neither a provisioning profile nor an entitlement), with the
+  same service and account names as on the other systems; the Security
+  framework's `OSStatus` codes sort errors (a dismissed prompt or a locked
+  keychain is "refused", no keychain is "unavailable"), as the Secret
+  Service's are sorted on Linux. A menu bar (`app_menu.rs`): the
+  application menu (About, Services, Hide, Hide Others, Show All, **Quit
+  sotyware** ⌘Q through `AppControl::quit`, the same path as the tray's
+  Quit), Edit (undo, redo, cut, copy, paste, select all) and Window
+  (minimize, zoom, close ⌘W, which hides as every close does). A click on
+  the Dock icon shows the dashboard (`RunEvent::Reopen`). macOS is always
+  tray mode (a menu bar icon); terminations from outside (Dock Quit,
+  logout) go straight to `RunEvent::Exit`, so cleanup runs and nothing
+  blocks the logout. Builds: one per architecture, each on its own hosted
+  runner (`macos-15` for Apple Silicon, `macos-15-intel` for Intel), so
+  each is tested natively; minimum macOS 10.15. Signing (Developer ID,
+  hardened runtime) and notarization happen in CI only when the Apple
+  secrets exist; without them the build is an unsigned development build
+  and is left out of releases.
+- **Rejected:** a universal binary (twice the download for every user and
+  only the native half tested on a runner); the data-protection keychain
+  (needs an entitlement and a provisioning profile); Tauri's default macOS
+  menu (its Quit would bypass `AppControl::quit`); hiding the Dock icon
+  (an `Accessory` app has no menu bar while its window is open).
+- **Consequences:** macOS code is compiled and tested only on GitHub's
+  macOS runners: the development machine has no Mac, so no build has run
+  on real Mac hardware or been seen on screen; signing and notarization
+  are untested until a Developer ID certificate exists. An unsigned build's
+  keychain items ask for permission again after every rebuild (the
+  keychain ties access to the binary's signature). The menu bar icon is the
+  coloured app icon, not a monochrome template image. New dependencies:
+  `apple-native-keyring-store` 1.0.2 (macOS only); `security-framework`
+  3.7.0 was already in the tree.
 

@@ -345,14 +345,104 @@ fn urls_hashes_and_the_plugins_view_are_compared_exactly() {
 }
 
 #[test]
-fn release_builds_have_no_update_source() {
-    // The production key and endpoint are external gates (ADR-033).
-    assert!(PRODUCTION.is_none());
+fn a_build_without_a_release_key_has_no_update_source() {
     let u = Updates::new(None, Ok(Box::new(Memory::default())));
     let s = u.status(&v("0.1.0"), Vec::new());
     assert!(!s.configured);
     assert_eq!(s.current, "0.1.0");
     assert!(s.available.is_none());
+    assert_eq!(s.installed, None);
+    assert_eq!(s.uses_installer, cfg!(windows));
+}
+
+#[test]
+fn the_production_source_is_github_and_the_committed_key() {
+    // The manifest of the release GitHub marks as latest (ADR-036).
+    assert_eq!(
+        MANIFEST_URL,
+        format!("https://github.com/{RELEASE_REPOSITORY}/releases/latest/download/latest.json")
+    );
+    // Either no key yet (updates off) or one that decodes as minisign.
+    match production_pubkey() {
+        None => assert!(production().is_none()),
+        Some(pk) => {
+            let text = text_of(pk).expect("update-key.pub holds base64 of a minisign key");
+            minisign_verify::PublicKey::decode(&text)
+                .expect("update-key.pub holds a minisign public key");
+            let src = production().unwrap();
+            assert_eq!(src.manifest_url, MANIFEST_URL);
+            assert_eq!(src.channel, "stable");
+        }
+    }
+}
+
+#[test]
+fn the_key_file_skips_comments_and_blank_lines() {
+    assert_eq!(pubkey_in(""), None);
+    assert_eq!(pubkey_in("# only\n#comments\n\n"), None);
+    assert_eq!(
+        pubkey_in("# key\n\n  dW50cnVzdGVk  \n# after\n"),
+        Some("dW50cnVzdGVk")
+    );
+}
+
+#[test]
+fn every_failure_has_a_kind_the_page_knows() {
+    let kinds = [
+        UpdateError::Network("x".into()).kind(),
+        UpdateError::Signature.kind(),
+        UpdateError::Malformed("x".into()).kind(),
+        UpdateError::WrongChannel {
+            got: "beta".into(),
+            want: "stable".into(),
+        }
+        .kind(),
+        UpdateError::Downgrade {
+            offered: "0.1.0".into(),
+            floor: "0.2.0".into(),
+        }
+        .kind(),
+        UpdateError::Platform("x".into()).kind(),
+        UpdateError::Integrity("x".into()).kind(),
+        UpdateError::Updater("x".into()).kind(),
+    ];
+    assert_eq!(
+        kinds,
+        [
+            "network",
+            "signature",
+            "malformed",
+            "malformed",
+            "replay",
+            "platform",
+            "integrity",
+            "installer"
+        ]
+    );
+    // UPDATE_ERROR_KINDS in src/updates.ts holds these and "busy".
+    let ts = std::fs::read_to_string(format!("{}/../src/updates.ts", env!("CARGO_MANIFEST_DIR")))
+        .unwrap();
+    for k in kinds.iter().chain(&["busy"]) {
+        assert!(
+            ts.contains(&format!("\"{k}\"")),
+            "{k} missing from src/updates.ts"
+        );
+    }
+}
+
+#[test]
+fn a_restart_needs_an_installed_update_and_nothing_running() {
+    assert!(restart_allowed(None, &[]).is_err());
+    let busy = restart_allowed(Some("0.2.0"), &["an upload".to_owned()]).unwrap_err();
+    assert_eq!(busy.kind, ErrorKind::Busy);
+    assert!(busy.message.contains("an upload"), "{busy:?}");
+    assert!(restart_allowed(Some("0.2.0"), &[]).is_ok());
+    let u = Updates::new(None, Ok(Box::new(Memory::default())));
+    u.set_installed("0.2.0".into());
+    assert_eq!(
+        u.status(&v("0.1.0"), Vec::new()).installed.as_deref(),
+        Some("0.2.0")
+    );
 }
 
 // ---------------------------------------------------------------- service
@@ -537,6 +627,7 @@ async fn a_check_verifies_the_manifest_and_raises_the_floor() {
     assert_eq!(mem.saved().floor.as_deref(), Some("0.3.0"));
     let s = u.status(&v("0.1.0"), Vec::new());
     assert!(s.error.as_deref().unwrap().contains("replay"));
+    assert_eq!(s.error_kind, Some("replay"));
 
     // A restart keeps the floor (it is stored).
     let again = Updates::new(Some(srv.source(&k)), Ok(Box::new(mem.clone())));
@@ -831,4 +922,280 @@ fn a_manifest_signed_by_the_tauri_cli_verifies() {
         m.notes.as_deref(),
         Some("Test fixture: not a real release.")
     );
+}
+
+// ---------------------------------------------------------------- GitHub
+
+/// What GitHub does for `releases/latest/download/<asset>` (ADR-036): a
+/// redirect to the tag's download URL, then one to the asset store, where
+/// the bytes are. `published` is what the latest release holds; `before`
+/// is served once as the signature to imitate a release published between
+/// the manifest and the signature request.
+#[derive(Default)]
+struct Releases {
+    manifest: Vec<u8>,
+    sig: String,
+    before: Option<String>,
+    manifest_fetches: usize,
+}
+
+#[derive(Clone)]
+struct Gh(Arc<Mutex<Releases>>, String);
+
+fn found(to: String) -> axum::response::Response {
+    (StatusCode::FOUND, [(axum::http::header::LOCATION, to)]).into_response()
+}
+
+async fn gh_latest(
+    AxState(g): AxState<Gh>,
+    axum::extract::Path(asset): axum::extract::Path<String>,
+) -> axum::response::Response {
+    found(format!(
+        "{}/owner/repo/releases/download/v0.2.0/{asset}",
+        g.1
+    ))
+}
+
+async fn gh_tag(
+    AxState(g): AxState<Gh>,
+    axum::extract::Path((_tag, asset)): axum::extract::Path<(String, String)>,
+) -> axum::response::Response {
+    // The asset store: another path (another host at GitHub), signed query.
+    found(format!("{}/release-assets/{asset}?sig=x", g.1))
+}
+
+async fn gh_asset(
+    AxState(g): AxState<Gh>,
+    axum::extract::Path(asset): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let mut r = g.0.lock().unwrap();
+    match asset.as_str() {
+        "latest.json" => {
+            r.manifest_fetches += 1;
+            r.manifest.clone().into_response()
+        }
+        "latest.json.sig" => r
+            .before
+            .take()
+            .unwrap_or_else(|| r.sig.clone())
+            .into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn gh_loop(AxState(g): AxState<Gh>) -> axum::response::Response {
+    found(format!("{}/loop/latest.json", g.1))
+}
+
+async fn gh_away() -> axum::response::Response {
+    found("http://example.invalid/latest.json".into())
+}
+
+async fn github() -> (String, Arc<Mutex<Releases>>) {
+    let releases = Arc::new(Mutex::new(Releases::default()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route(
+            "/owner/repo/releases/latest/download/{asset}",
+            get(gh_latest),
+        )
+        .route("/owner/repo/releases/download/{tag}/{asset}", get(gh_tag))
+        .route("/release-assets/{asset}", get(gh_asset))
+        .route("/loop/latest.json", get(gh_loop))
+        .route("/loop/latest.json.sig", get(gh_loop))
+        .route("/away/latest.json", get(gh_away))
+        .with_state(Gh(Arc::clone(&releases), url.clone()));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (url, releases)
+}
+
+fn gh_source(url: &str, path: &str, k: &Keys) -> Source {
+    Source {
+        manifest_url: format!("{url}{path}"),
+        pubkey: k.pubkey(),
+        channel: "stable".into(),
+    }
+}
+
+fn publish_on(releases: &Mutex<Releases>, k: &Keys, version: &str) {
+    let target = targets()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| TARGET.into());
+    let m = manifest(
+        version,
+        json!({ target: entry(k, "https://github.com/owner/repo/releases/download/v0.2.0/sotyware_setup.exe", version) }),
+    );
+    let mut r = releases.lock().unwrap();
+    r.sig = k.sign(&m, "latest.json");
+    r.manifest = m;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_latest_release_is_found_through_githubs_redirects() {
+    let (url, releases) = github().await;
+    let k = keys();
+    publish_on(&releases, &k, "0.2.0");
+    let u = Updates::new(
+        Some(gh_source(
+            &url,
+            "/owner/repo/releases/latest/download/latest.json",
+            &k,
+        )),
+        Ok(Box::new(Memory::default())),
+    );
+    let offer = u.check(&v("0.1.0")).await.unwrap().unwrap();
+    assert_eq!(offer.manifest.version, "0.2.0");
+    assert_eq!(releases.lock().unwrap().manifest_fetches, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_published_between_the_two_requests_is_fetched_again_once() {
+    let (url, releases) = github().await;
+    let k = keys();
+    publish_on(&releases, &k, "0.2.0");
+    // The signature request lands on the previous release: once.
+    releases.lock().unwrap().before = Some(k.sign(b"the previous manifest", "latest.json"));
+    let u = Updates::new(
+        Some(gh_source(
+            &url,
+            "/owner/repo/releases/latest/download/latest.json",
+            &k,
+        )),
+        Ok(Box::new(Memory::default())),
+    );
+    assert!(u.check(&v("0.1.0")).await.unwrap().is_some());
+    assert_eq!(releases.lock().unwrap().manifest_fetches, 2);
+    // A signature that never matches is still refused, after one retry.
+    releases.lock().unwrap().sig = keys().sign(b"x", "latest.json");
+    releases.lock().unwrap().manifest_fetches = 0;
+    assert_eq!(u.check(&v("0.1.0")).await, Err(UpdateError::Signature));
+    assert_eq!(releases.lock().unwrap().manifest_fetches, 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn redirects_are_bounded_and_never_leave_https() {
+    let (url, _releases) = github().await;
+    let k = keys();
+    let looping = Updates::new(
+        Some(gh_source(&url, "/loop/latest.json", &k)),
+        Ok(Box::new(Memory::default())),
+    );
+    let e = looping.check(&v("0.1.0")).await.unwrap_err();
+    assert!(matches!(&e, UpdateError::Network(_)), "{e:?}");
+    // Loopback HTTP is allowed only because this is a test build; a
+    // redirect to any other plain-HTTP address is refused even here.
+    let away = Updates::new(
+        Some(gh_source(&url, "/away/latest.json", &k)),
+        Ok(Box::new(Memory::default())),
+    );
+    let e = away.check(&v("0.1.0")).await.unwrap_err();
+    assert!(matches!(&e, UpdateError::Network(_)), "{e:?}");
+    assert_eq!(e.kind(), "network");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_published_release_is_reported_as_such() {
+    let (url, _releases) = github().await;
+    let k = keys();
+    // No asset at all (no release yet, or releases not public).
+    let u = Updates::new(
+        Some(gh_source(
+            &url,
+            "/owner/repo/releases/download/v0.2.0/missing.json",
+            &k,
+        )),
+        Ok(Box::new(Memory::default())),
+    );
+    let e = u.check(&v("0.1.0")).await.unwrap_err();
+    assert!(e.to_string().contains("HTTP 404"), "{e}");
+    assert_eq!(
+        u.status(&v("0.1.0"), Vec::new()).error_kind,
+        Some("network")
+    );
+}
+
+/// scripts/fixtures/update-github/ holds a GitHub release's `latest.json`
+/// for all seven platforms, made by the release workflow's own commands with
+/// the real Tauri CLI and a throwaway key (its private half deleted). Every
+/// installation kind finds its own entry, which verifies, and the package's
+/// SHA-256 and minisign signature (with its signed version) match.
+#[test]
+fn every_platform_of_a_github_release_manifest_verifies() {
+    macro_rules! fixture {
+        ($name:literal) => {
+            include_bytes!(concat!("../../../scripts/fixtures/update-github/", $name)).as_slice()
+        };
+    }
+    let pubkey = std::str::from_utf8(fixture!("test-key.pub"))
+        .unwrap()
+        .trim();
+    let manifest = fixture!("latest.json");
+    let sig = std::str::from_utf8(fixture!("latest.json.sig")).unwrap();
+    let packages: [(&str, &[u8]); 7] = [
+        (
+            "windows-x86_64-nsis",
+            fixture!("sotyware_0.2.0_x64-setup.exe"),
+        ),
+        (
+            "windows-x86_64-msi",
+            fixture!("sotyware_0.2.0_x64_en-US.msi"),
+        ),
+        (
+            "darwin-aarch64-app",
+            fixture!("sotyware_0.2.0_aarch64.app.tar.gz"),
+        ),
+        (
+            "darwin-x86_64-app",
+            fixture!("sotyware_0.2.0_x64.app.tar.gz"),
+        ),
+        (
+            "linux-x86_64-appimage",
+            fixture!("sotyware_0.2.0_amd64.AppImage"),
+        ),
+        ("linux-x86_64-deb", fixture!("sotyware_0.2.0_amd64.deb")),
+        ("linux-x86_64-rpm", fixture!("sotyware-0.2.0-1.x86_64.rpm")),
+    ];
+    for (target, bytes) in packages {
+        let offer = verify_manifest(
+            manifest,
+            sig,
+            pubkey,
+            "stable",
+            &v("0.1.0"),
+            None,
+            &[target.to_owned()],
+            false,
+        )
+        .unwrap()
+        .unwrap_or_else(|| panic!("{target}: no offer"));
+        assert_eq!(offer.target, target);
+        assert!(
+            offer
+                .artifact
+                .url
+                .starts_with("https://github.com/owner/repo/releases/download/v0.2.0/"),
+            "{}",
+            offer.artifact.url
+        );
+        check_sha256(bytes, &offer.artifact.sha256).unwrap();
+        verify_signature(bytes, &offer.artifact.signature, pubkey).unwrap();
+    }
+    // An installation kind the release does not carry gets nothing.
+    assert!(matches!(
+        verify_manifest(
+            manifest,
+            sig,
+            pubkey,
+            "stable",
+            &v("0.1.0"),
+            None,
+            &["linux-aarch64-appimage".to_owned()],
+            false
+        ),
+        Err(UpdateError::Platform(_))
+    ));
 }

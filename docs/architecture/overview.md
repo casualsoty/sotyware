@@ -67,16 +67,17 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the example feature. Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | Cloud storage | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id in the OS credential store (`OsCredentialStore`, ADR-017), and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. `dashboard.rs`: `CloudAccounts` (managed state) and the six account commands; `browser.rs`: `list_cloud_folder`; `download.rs`: `CloudDownloads` (managed state, one download at a time) and the three download commands, with the native save dialog opened from Rust (`tauri-plugin-dialog`); `upload.rs`: `CloudUploads` (managed state, one upload batch at a time in its own slot) and the three upload commands, with the native multi-file dialog opened from Rust; the browser's upload panel (`src/CloudUpload.svelte`) calls them. No other changes to objects are reachable ([ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust), [cloud-storage.md](cloud-storage.md#dashboard), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)). |
+| macOS menu bar | `src-tauri/src/app_menu.rs` | macOS only: the application, Edit and Window menus; its Quit calls `AppControl::quit` like the tray's, and the Edit menu is what gives the webview ⌘C/⌘V ([ADR-037](decisions.md#adr-037-macos-is-a-supported-build-target-keychain-a-menu-bar-separate-apple-silicon-and-intel-builds)). A Dock click (`RunEvent::Reopen`) shows the dashboard. |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`, the six cloud account commands, `list_cloud_folder`, the three download and the three upload commands), so each needs a permission. |
-| Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (800×600, visible at start), CSP, bundle settings, `identifier`. |
-| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled` and `allow-list-cloud-providers`, `allow-list-cloud-accounts`, `allow-add-cloud-account`, `allow-update-cloud-account`, `allow-remove-cloud-account`, `allow-check-cloud-account`, `allow-list-cloud-folder`, `allow-download-cloud-file`, `allow-cancel-cloud-download`, `allow-retry-cloud-download`, `allow-upload-cloud-files`, `allow-cancel-cloud-upload`, `allow-retry-cloud-upload`. No `dialog:` or `fs:` permission. `core:window:allow-hide` is added at runtime, in tray mode only. |
-| Frontend | `index.html`, `src/main.ts`, `src/App.svelte`, `src/Features.svelte`, `src/features.ts`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/CloudBrowser.svelte`, `src/cloud.ts`, `src/cloudMessages.ts` | Dashboard with two sections, chosen by navigation links (local state, no router). **Overview:** tray mode a "Hide dashboard" button, dashboard-only mode a note instead; both a minimal Features section (one checkbox per feature, with its state) through the typed wrappers in `features.ts`. **Cloud Storage:** the account list, add/edit form, connection check and removal, and a browser of each account's bucket (folders, files, sizes, dates; one page at a time) with a Download action per file (progress, cancel, retry), through the typed wrappers in `cloud.ts`. |
+| Window definition | `src-tauri/tauri.conf.json` | Declares window `main` (1120×760, at least 640×480, visible at start), CSP, bundle settings (including `bundle.macOS`: minimum 10.15, hardened runtime, the .dmg layout), `identifier`. |
+| Frontend permissions | `src-tauri/capabilities/default.json` | Grants window `main` exactly `allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled` and `allow-list-cloud-providers`, `allow-list-cloud-accounts`, `allow-add-cloud-account`, `allow-update-cloud-account`, `allow-remove-cloud-account`, `allow-check-cloud-account`, `allow-list-cloud-folder`, `allow-download-cloud-file`, `allow-cancel-cloud-download`, `allow-retry-cloud-download`, `allow-upload-cloud-files`, `allow-cancel-cloud-upload`, `allow-retry-cloud-upload`. (…and one `allow-<command>` per command listed below), plus `core:window:allow-set-theme` (the theme picker, ADR-035). No `dialog:`, `fs:` or `updater:` permission. `core:window:allow-hide` is added at runtime, in tray mode only. |
+| Frontend | `index.html`, `src/main.ts`, `src/App.svelte` (shell), `src/Sidebar.svelte`, `src/Overview.svelte`, `src/Settings.svelte`, the section pages and panels (`src/Cloud*.svelte`, `src/Backup.svelte`, `src/Account.svelte`, `src/Features.svelte`, `src/Updates.svelte`, `src/Modal.svelte`), the design system (`src/styles/tokens.css`, `src/styles/base.css`, `src/Icon.svelte`, `src/theme.ts`) and the typed command wrappers (`src/*.ts`) | A desktop shell: a sidebar with the sections, the storage accounts and Settings, and the main area with the page shown and one update notification. Navigation is local state (no router). Details: [frontend.md](frontend.md) (ADR-035). |
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 77 custom commands
-  and one built-in call. The commands are `operating_mode` (read-only, returns
+- **Frontend ↔ Rust.** The frontend reaches Rust through 78 custom commands
+  and two built-in calls. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
   rules) and the cloud account commands `list_cloud_providers`,
@@ -117,14 +118,19 @@ Boundaries that hold today:
   commands of ADR-032: `account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`
   ([accounts.md](accounts.md)), and the five update commands of ADR-033:
   `update_status`, `check_for_update`, `install_update`, `cancel_update`,
-  `postpone_update` ([updates.md](updates.md)); none returns a
+  `postpone_update`, and `restart_after_update` (ADR-036;
+  [updates.md](updates.md)); none returns a
   stored credential or a local path (a share link carries the access key
-  id, never the secret). The built-in call is Tauri's window API (`getCurrentWindow().hide()`,
-  tray mode only). There is no other custom command, and there are **no custom
+  id, never the secret). The built-in calls are Tauri's window API:
+  `getCurrentWindow().hide()` (tray mode only) and `setTheme()` (the theme
+  chosen in Settings, ADR-035). There is no other custom command, and there are **no custom
   events** (`emit`/`listen`). Adding either is an architectural change: record
   it in [decisions.md](decisions.md).
 - **Platform detection lives in Rust.** Only `tray::unavailable_reason()` looks
-  at the tray error. The frontend never inspects the OS or D-Bus.
+  at the tray error. The frontend never decides behaviour by the OS; it reads
+  `navigator.userAgent` only to word labels (⌘ instead of Ctrl, "menu bar",
+  the credential store's name). What differs in behaviour (`usesInstaller`
+  for updates, the operating mode) comes from Rust.
 - **Lifecycle lives in `lib.rs`.** Window, exit and single-instance handling are
   registered once on the builder. `tray.rs` does not decide lifecycle policy; it
   calls `show_dashboard()` or `AppHandle::exit(0)`.

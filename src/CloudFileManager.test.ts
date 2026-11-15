@@ -381,6 +381,22 @@ describe("selection", () => {
     expect(text(root)).toContain("marked to move");
   });
 
+  it("keeps the message and file names where WebKitGTK exposes them to assistive technology", async () => {
+    // Found 2026-11-15 with the Linux desktop driver: WebKitGTK leaves the
+    // text of a span that is a flex item out of the accessibility tree, and
+    // a block inside a table cell becomes a second object holding the name.
+    const root = await opened();
+    await clickRow(root, "b.txt");
+    await key("c", { ctrlKey: true });
+    const toast = root.querySelector<HTMLElement>('p.toast[role="status"]')!;
+    const own = [...toast.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("");
+    expect(own).toContain("1 item copied; open a folder and paste");
+    expect(toast.querySelector("span")).toBeNull();
+    const cell = row(root, "b.txt").querySelector("td")!;
+    expect([...cell.children].map((c) => c.className.split(" ")[0])).toEqual(["row-icon"]);
+    expect(cell.textContent?.trim()).toBe("b.txt");
+  });
+
   it("does not take shortcuts while typing in the search field", async () => {
     const root = await opened();
     const input = root.querySelector<HTMLInputElement>('input[aria-label="Search"]')!;
@@ -522,7 +538,7 @@ describe("copy, move and rename", () => {
     await click(root.querySelector('[aria-label="Selected items"]')!, "Copy to…");
     const picker = dialog(root);
     expect(text(picker.querySelector("h4"))).toBe("Copy 1 item to…");
-    await click(picker, "📁 docs");
+    await click(picker, "docs");
     expect(text(dialog(root).querySelector('[aria-current="location"]'))).toBe("docs");
     await click(dialog(root), "Copy to “docs”");
     expect(argsOf("plan_cloud_operation")[0]!["request"]).toEqual({ kind: "copy", items: [{ type: "file", key: "b.txt" }], destination: "docs/" });
@@ -874,7 +890,7 @@ describe("folder uploads and drag and drop", () => {
     expect(argsOf("upload_cloud_drop")[0]).toMatchObject({ id: "photos", bucket: "soty-photos", prefix: "", drop: 7 });
     expect(root.querySelector('[aria-label="Dropped files"]')).toBeNull();
     // Leaving the browser stops listening.
-    await click(root, "← Back to accounts");
+    await click(root, "Back to accounts");
     expect(argsOf("unwatch_cloud_drops")).toHaveLength(1);
   });
 });

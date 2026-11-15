@@ -1428,7 +1428,7 @@ try {
     Check "Load more: all 1,010 entries, every row as listed, no Load more after" ($ok -and ((PageText) -like "*1010 items shown.*") -and $null -eq (Named "Load more" $CT::Button)) $script:why
     $ok = (Press "Refresh") -and (Shows "many/" $true)
     Check "Refresh starts again at the first page" ($ok -and ((PageText) -like "*1000 items shown; more*")) $script:why
-    $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
+    $ok = (Press "Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
     $ok = $ok -and (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Root of the bucket*") -and ($t -notlike "*Loading*") } 60)
     Check "Back to accounts, then Open bucket again starts at the bucket's root" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
   } elseif ($Mode -eq "files") {
@@ -1725,7 +1725,7 @@ try {
     Recover
     # The unversioned bucket: a delete warns that it is final.
     $ok = Chain "plain account" @(
-      { Press "$([char]0x2190) Back to accounts" },
+      { Press "Back to accounts" },
       { WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 20 },
       { Press "Add account" },
       { WaitFor { (Fields) -contains "Secret access key" } 10 },
@@ -1744,7 +1744,7 @@ try {
     $kp = FState "files-plain"
     Check "plain: a delete on a bucket without versions warns it is final; the object is gone" ($rv -and $rv.Contains("gone for good") -and -not $kp.ContainsKey("files/one.txt")) "$rv"
     Recover
-    $null = Press "$([char]0x2190) Back to accounts"
+    $null = Press "Back to accounts"
     # Remove the second account again (its entry is in this profile's
     # namespace), so the common steps below see only the first one.
     $null = WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 20
@@ -2035,7 +2035,7 @@ try {
     $null = UpFile "batch8" "b-away.txt" (Utf8 "away")
     $ok = (UpGo "inbox" "existing.txt") -and (Pick (UpFolder "batch8") @("a-away.bin", "b-away.txt") "names")
     $running = $ok -and (Until { param($x) SendingIn $x "a-away.bin" 10 } 60)
-    $left = $running -and (Press "$([char]0x2190) Back to accounts") -and (WaitFor { Btn "Open bucket" } 10)
+    $left = $running -and (Press "Back to accounts") -and (WaitFor { Btn "Open bucket" } 10)
     Start-Sleep 10  # longer than the rest of a-away.bin would take
     $st = State
     foreach ($n in "a-away.bin", "b-away.txt") { [void]$script:created.Add("inbox/$n") }
@@ -2253,7 +2253,7 @@ try {
       "leave" {
         $running = $picked -and (Until { param($x) (SendingIn $x $big 10) -or (Finished $x) } 1800) -and (SendingIn $script:untilText $big 10)
         $at = [regex]::Match("$script:untilText", 'Sending \u00b7 (\d+)%').Groups[1].Value
-        $left = $running -and (Press "$([char]0x2190) Back to accounts") -and (WaitFor { Btn "Open bucket" } 15)
+        $left = $running -and (Press "Back to accounts") -and (WaitFor { Btn "Open bucket" } 15)
         "  Back to accounts pressed at $at%"
         Check "Back to accounts during the one-PUT upload of $big (at 10% or more): the account list is shown" $left (PageText)
         # Longer than the rest of the PUT would take at the rehearsal's rate;
@@ -2397,7 +2397,7 @@ try {
     $ok = (Press "Refresh") -and (WaitFor { (PageText) -like "*1000 items shown; more are available*" } 120)
     Check "Refresh starts again from the first page" $ok ""
   }
-  $ok = (Press "$([char]0x2190) Back to accounts") -and (WaitFor { $null -ne (Named "Check connection" $CT::Button) } 15)
+  $ok = (Press "Back to accounts") -and (WaitFor { $null -ne (Named "Check connection" $CT::Button) } 15)
   Check "Back to accounts shows the account list again" $ok (PageText)
 
   $ok = (Press "Edit") -and (WaitFor { $null -ne (Named "Save changes" $CT::Button) } 10) -and (Fill "Name" $renamed) -and (Press "Save changes")

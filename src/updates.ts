@@ -1,7 +1,8 @@
-// Typed access to the update commands (ADR-033; src-tauri/src/updates.rs).
-// The page never sees a key, a URL or a file: Rust fetches and verifies the
-// signed manifest, downloads, checks and installs; the page shows the state
-// and sends the user's clicks.
+// Typed access to the update commands (ADR-033, ADR-036;
+// src-tauri/src/updates.rs). The page never sees a key, a URL or a file:
+// Rust fetches the signed manifest from the GitHub release, verifies it,
+// downloads, checks and installs; the page shows the state and sends the
+// user's clicks.
 import { Channel } from "@tauri-apps/api/core";
 import { call } from "./cloud";
 
@@ -10,6 +11,22 @@ export const CHECK_FOR_UPDATE = "check_for_update";
 export const INSTALL_UPDATE = "install_update";
 export const CANCEL_UPDATE = "cancel_update";
 export const POSTPONE_UPDATE = "postpone_update";
+export const RESTART_AFTER_UPDATE = "restart_after_update";
+
+/** Why a check or an installation failed, as Rust classifies it
+ * (`UpdateError` in updates.rs); the page words its message by this, never
+ * by parsing text. */
+export const UPDATE_ERROR_KINDS = [
+  "network",
+  "signature",
+  "integrity",
+  "replay",
+  "platform",
+  "malformed",
+  "installer",
+  "busy",
+] as const;
+export type UpdateErrorKind = (typeof UPDATE_ERROR_KINDS)[number];
 
 export interface AvailableUpdate {
   version: string;
@@ -28,8 +45,17 @@ export interface UpdateStatus {
   postponed: boolean;
   /** The last check's failure, if it failed. */
   error: string | null;
+  /** What kind of failure `error` is. */
+  errorKind: UpdateErrorKind | null;
   /** What installing now would interrupt (an upload, a backup task…). */
   blockedBy: string[];
+  /** A version installed by this process that runs after a restart (macOS
+   * and Linux; on Windows the installer restarts sotyware itself). */
+  installed: string | null;
+  /** Windows: a separate installer finishes the update, ends sotyware and
+   * starts the new version. Elsewhere sotyware replaces itself and asks for
+   * a restart. */
+  usesInstaller: boolean;
 }
 
 export type InstallEvent =
@@ -37,7 +63,7 @@ export type InstallEvent =
   | { type: "verified" }
   | { type: "installing" }
   | { type: "installed" }
-  | { type: "failed"; message: string }
+  | { type: "failed"; kind: UpdateErrorKind; message: string }
   | { type: "cancelled" };
 
 type Rec = Record<string, unknown>;
@@ -57,6 +83,10 @@ function optString(v: unknown): v is string | null {
   return v === null || typeof v === "string";
 }
 
+function isErrorKind(v: unknown): v is UpdateErrorKind {
+  return typeof v === "string" && (UPDATE_ERROR_KINDS as readonly string[]).includes(v);
+}
+
 export function parseUpdateStatus(value: unknown): UpdateStatus {
   const w = "update status";
   const v = rec(w, value);
@@ -64,13 +94,18 @@ export function parseUpdateStatus(value: unknown): UpdateStatus {
   const blockedBy = v["blockedBy"];
   const lastCheckMs = v["lastCheckMs"];
   const error = v["error"];
+  const errorKind = v["errorKind"];
+  const installed = v["installed"];
   if (
     typeof v["configured"] !== "boolean" ||
     typeof v["current"] !== "string" ||
     typeof v["channel"] !== "string" ||
     typeof v["postponed"] !== "boolean" ||
+    typeof v["usesInstaller"] !== "boolean" ||
     !(lastCheckMs === null || typeof lastCheckMs === "number") ||
     !optString(error) ||
+    !(errorKind === null || isErrorKind(errorKind)) ||
+    !optString(installed) ||
     !Array.isArray(blockedBy) ||
     !blockedBy.every((b) => typeof b === "string")
   ) {
@@ -94,7 +129,10 @@ export function parseUpdateStatus(value: unknown): UpdateStatus {
     available: parsed,
     postponed: v["postponed"],
     error,
+    errorKind,
     blockedBy: blockedBy as string[],
+    installed,
+    usesInstaller: v["usesInstaller"],
   };
 }
 
@@ -114,11 +152,13 @@ export function parseInstallEvent(value: unknown): InstallEvent {
     case "installed":
     case "cancelled":
       return { type: v["type"] };
-    case "failed":
-      if (typeof v["message"] !== "string") {
+    case "failed": {
+      const kind = v["kind"];
+      if (typeof v["message"] !== "string" || !isErrorKind(kind)) {
         throw invalid(w, value);
       }
-      return { type: "failed", message: v["message"] };
+      return { type: "failed", kind, message: v["message"] };
+    }
     default:
       throw invalid(w, value);
   }
@@ -148,4 +188,10 @@ export async function cancelUpdate(): Promise<boolean> {
 
 export async function postponeUpdate(): Promise<void> {
   await call(POSTPONE_UPDATE);
+}
+
+/** Restarts sotyware into the version this process installed (macOS,
+ * Linux). Refused by Rust unless an update was installed and nothing runs. */
+export async function restartAfterUpdate(): Promise<void> {
+  await call(RESTART_AFTER_UPDATE);
 }

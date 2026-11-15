@@ -23,6 +23,7 @@
   import { listAccounts, type AccountInfo } from "./cloud";
   import { describeOperationError } from "./cloudMessages";
   import { formatSize } from "./format";
+  import Icon from "./Icon.svelte";
 
   // Backups (ADR-031): jobs that keep an independent, verified copy of an
   // account's bucket in a second destination. Everything remote happens in
@@ -39,6 +40,28 @@
     "out-of-date": "Out of date: no verified backup within twice the schedule interval.",
     "large-change":
       "Large change detected: many files changed or disappeared since the previous snapshot. Older snapshots are kept until you review it and run the next backup.",
+  };
+
+  const HEALTH_SHORT: Record<Health, string> = {
+    healthy: "Healthy",
+    "never-run": "Never run",
+    "not-verified": "Not verified",
+    "verification-failed": "Verification failed",
+    partial: "Partial",
+    failed: "Failed",
+    "out-of-date": "Out of date",
+    "large-change": "Large change",
+  };
+
+  const HEALTH_TONES: Record<Health, string> = {
+    healthy: "success",
+    "never-run": "",
+    "not-verified": "warning",
+    "verification-failed": "danger",
+    partial: "warning",
+    failed: "danger",
+    "out-of-date": "warning",
+    "large-change": "warning",
   };
 
   const INTERVALS: { hours: number; label: string }[] = [
@@ -306,13 +329,21 @@
   });
 </script>
 
+<div class="page">
 <section aria-labelledby="backup-heading">
-  <h2 id="backup-heading">Backups</h2>
-  <p>
-    A backup keeps an independent copy of a bucket (or a folder of it) in a second place, ideally another account at another
-    provider. Every run writes a snapshot you can restore from, also without sotyware: the snapshots are plain JSON files
-    next to the backed-up content.
-  </p>
+  <header class="page-header">
+    <div class="titles">
+      <h1 id="backup-heading">Backups</h1>
+      <p class="lede">
+        A backup keeps an independent copy of a bucket (or a folder of it) in a second place, ideally another account at
+        another provider. Every run writes a snapshot you can restore from, also without sotyware: the snapshots are plain
+        JSON files next to the backed-up content.
+      </p>
+    </div>
+    {#if !form && accounts.length > 0}
+      <button type="button" class="primary" onclick={newJob}><Icon name="plus" size={15} />New backup job</button>
+    {/if}
+  </header>
 
   {#if loadError}
     <p class="error" role="alert">{loadError}</p>
@@ -332,7 +363,7 @@
   {/if}
 
   {#if active}
-    <div class="task" data-task={active.task}>
+    <div class="task panel" data-task={active.task}>
       <p role="status">{phaseText(active.progress)}</p>
       {#if active.progress && active.progress.total > 0}
         <progress max={active.progress.total} value={active.progress.done}></progress>
@@ -342,7 +373,7 @@
   {/if}
 
   {#if result}
-    <div class="result" data-state={result.state} data-kind={result.kind}>
+    <div class="result panel" data-state={result.state} data-kind={result.kind}>
       <p>{resultText(result)}</p>
       {#if result.objectErrors.length > 0}
         <details>
@@ -359,7 +390,7 @@
   {/if}
 
   {#if form}
-    <form class="job-form" onsubmit={save} aria-label={form.id ? "Edit backup job" : "New backup job"}>
+    <form class="job-form card" onsubmit={save} aria-label={form.id ? "Edit backup job" : "New backup job"}>
       <h3>{form.id ? "Edit backup job" : "New backup job"}</h3>
       <fieldset disabled={saving}>
         <label for="bk-name">Name</label>
@@ -377,7 +408,7 @@
         <label for="bk-dest-prefix">Folder for the backup</label>
         <input id="bk-dest-prefix" type="text" bind:value={form.destinationPrefix} spellcheck="false" />
         {#if form.sourceAccount === form.destinationAccount}
-          <p class="warning" role="note">
+          <p class="warning callout" role="note">
             Source and destination are the same account: this protects against deleting files by mistake, but not against
             a compromised key, a closed account or a provider outage. Prefer an account at another provider.
           </p>
@@ -403,20 +434,25 @@
         </div>
       </fieldset>
     </form>
-  {:else if accounts.length > 0}
-    <button type="button" class="primary" onclick={newJob}>New backup job</button>
-  {:else}
+  {:else if accounts.length === 0}
     <p class="hint">Add a storage account in Cloud Storage first; a backup needs a source and a destination account.</p>
   {/if}
 
   {#if jobs.length === 0 && !form}
-    <p class="hint">No backup job yet.</p>
+    <div class="empty">
+      <span class="empty-icon" aria-hidden="true"><Icon name="backup" size={28} /></span>
+      <p><strong>No backup job yet.</strong></p>
+      <p>A job copies a bucket into a second, independent destination on a schedule and verifies every snapshot.</p>
+    </div>
   {/if}
 
   <ul class="jobs">
     {#each jobs as j (j.config.id)}
       <li data-job={j.config.id} data-health={j.health}>
-        <h3>{j.config.name}</h3>
+        <div class="job-head">
+          <h3>{j.config.name}</h3>
+          <span class="badge {HEALTH_TONES[j.health]}">{HEALTH_SHORT[j.health]}</span>
+        </div>
         <p class="route">
           {label(j.config.source.account)} / {j.config.source.bucket}/{j.config.source.prefix} → {label(j.config.destination.account)} /
           {j.config.destination.bucket}/{j.config.destination.prefix}
@@ -487,49 +523,72 @@
     {/each}
   </ul>
 </section>
+</div>
 
 <style>
   .jobs {
     list-style: none;
     padding: 0;
+    margin: var(--space-4) 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
   }
 
   .jobs > li {
-    border: 1px solid rgb(0 0 0 / 12%);
-    border-radius: 6px;
-    padding: 0.6rem 0.9rem;
-    margin: 0.8rem 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
+  }
+
+  .job-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-1);
   }
 
   .jobs h3 {
-    margin: 0 0 0.2rem;
+    margin: 0;
+    font-size: var(--text-md);
   }
 
   .route,
   .hint {
-    font-size: 0.85em;
-    color: #6b6b73;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     word-break: break-all;
   }
 
+  .health {
+    margin: var(--space-2) 0;
+  }
+
   .health[data-health="healthy"] {
-    color: #2e7d32;
+    color: var(--success);
   }
 
   .health:not([data-health="healthy"]) {
-    color: #8a5a00;
+    color: var(--warning);
   }
 
   .health[data-health="failed"],
   .health[data-health="verification-failed"] {
-    color: #c62828;
+    color: var(--danger);
   }
 
   dl {
     display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.1rem 0.8rem;
-    font-size: 0.9em;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-1) var(--space-4);
+    font-size: var(--text-sm);
+  }
+
+  dt {
+    color: var(--text-muted);
   }
 
   dd {
@@ -537,18 +596,25 @@
   }
 
   .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    align-items: center;
-    margin-top: 0.4rem;
+    margin-top: var(--space-3);
+  }
+
+  .job-form {
+    margin: var(--space-4) 0;
+  }
+
+  .job-form h3 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-lg);
   }
 
   .job-form label,
   .snapshots label {
     display: block;
-    font-size: 0.9em;
-    margin-top: 0.5rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    margin-top: var(--space-3);
+    margin-bottom: var(--space-1);
   }
 
   .job-form input,
@@ -556,96 +622,61 @@
   .snapshots input,
   .snapshots select {
     display: block;
-    box-sizing: border-box;
     width: 100%;
-    padding: 0.3rem 0.5rem;
-    font: inherit;
-  }
-
-  .job-form fieldset {
-    border: none;
-    padding: 0;
   }
 
   .job-form .retention {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 0 0.5rem;
+    gap: 0 var(--space-3);
   }
 
   .job-form .retention legend {
-    font-size: 0.9em;
-    margin-top: 0.5rem;
+    margin-top: var(--space-3);
+    font-weight: var(--weight-medium);
   }
 
-  .task,
-  .result {
-    border-left: 3px solid #3b6fd8;
-    padding: 0.3rem 0.8rem;
-    margin: 0.8rem 0;
+  .snapshots {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+
+  .panel {
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .panel progress {
+    margin: var(--space-2) 0;
   }
 
   .result[data-state="failed"],
   .result[data-state="partial"] {
-    border-left-color: #c62828;
+    border-color: var(--danger-border);
   }
 
-  progress {
-    width: 100%;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.25rem 0.7rem;
-    cursor: pointer;
-  }
-
-  .primary {
-    font-weight: 600;
-  }
-
-  .danger,
-  .error {
-    color: #c62828;
-  }
-
-  .warning {
-    color: #8a5a00;
-  }
-
-  .notice {
-    color: #2e7d32;
+  .warning:not(.callout) {
+    color: var(--warning);
   }
 
   .key {
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .jobs > li {
-      border-color: rgb(255 255 255 / 15%);
-    }
+  .empty-icon {
+    display: inline-flex;
+    margin-bottom: var(--space-2);
+    color: var(--text-subtle);
+  }
 
-    .route,
-    .hint {
-      color: #a0a0a8;
-    }
-
-    .health[data-health="healthy"],
-    .notice {
-      color: #7bc67e;
-    }
-
-    .health:not([data-health="healthy"]),
-    .warning {
-      color: #f0c060;
-    }
-
-    .health[data-health="failed"],
-    .health[data-health="verification-failed"],
-    .danger,
-    .error {
-      color: #ef7070;
-    }
+  .protection {
+    color: var(--text-muted);
   }
 </style>

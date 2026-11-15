@@ -11,12 +11,18 @@ validated** and is not claimed as supported. The code also builds and runs on
 **Linux**, but it has been exercised only in simulated environments (WSL2,
 virtual displays), never on a real Linux desktop, so Linux is not a supported
 release target yet. On Linux without a tray host sotyware runs as a plain
-window instead (dashboard-only mode: no hiding, closing quits).
+window instead (dashboard-only mode: no hiding, closing quits). **macOS**
+(Apple Silicon and Intel) is a build target with a menu bar and the
+Keychain, built and tested only on GitHub's macOS runners, not yet on a Mac
+anyone used, and not signed ([docs/development/macos.md](docs/development/macos.md)).
 
 **What it does today:**
 
 - The desktop runtime: one dashboard window, a tray icon with "Open Dashboard"
   and "Quit", hide-on-close, single-instance handling.
+- A desktop dashboard: a sidebar with the sections and your storage
+  accounts, an Overview, Settings (light, dark or system theme; features;
+  about and updates), keyboard shortcuts.
 - Built-in features: native Rust modules that can be enabled and disabled from
   the dashboard (an example, scheduled backups, automatic update checks); each
   choice is saved locally (SQLite, in the app's data folder, private to the
@@ -51,9 +57,10 @@ window instead (dashboard-only mode: no hiding, closing quits).
   only ever stores ciphertext; a recovery key shown once, device approval,
   revocation and key rotation. **Not available to users yet:** the service
   (`server/`) is not deployed and release builds have none configured.
-- **Signed updates**, installed only when you click "Update now" and never
-  during a transfer or backup. **Switched off in release builds:** no
-  release signing key or update server exists yet.
+- **Signed updates from GitHub Releases**, installed only when you click
+  "Update" and never during a transfer or backup. **Not usable yet:** no
+  release signing key exists and the repository's releases are not public,
+  so no release has been published.
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger

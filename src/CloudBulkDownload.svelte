@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import Icon from "./Icon.svelte";
   import { type AccountInfo } from "./cloud";
   import {
     cancelItemsDownload,
@@ -252,7 +253,7 @@
       <ul class="items">
         {#each batch.items as item (item.index)}
           <li data-item-state={item.state}>
-            <span aria-hidden="true">{item.folder ? "📁" : "📄"}</span>
+            <span class="item-icon" aria-hidden="true"><Icon name={item.folder ? "folder" : "file"} size={14} /></span>
             <span class="key">{shownName(item.name)}</span>: {itemLine(item)}
             {#if item.error !== null}<span class="error"> {describeOperationFailure(item.error)}</span>{/if}
           </li>
@@ -284,38 +285,39 @@
 
 <style>
   .bulk {
-    margin: 0.75rem 0;
-    padding: 0.5rem 1rem;
-    border-left: 3px solid #1565c0;
-    background: rgb(0 0 0 / 4%);
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
   }
 
   .bulk.failed {
-    border-left-color: #c62828;
+    border-color: var(--danger-border);
   }
 
   .bulk p {
-    margin: 0.25rem 0;
+    margin: var(--space-1) 0;
     overflow-wrap: anywhere;
   }
 
-  progress {
-    width: 100%;
-    max-width: 28rem;
+  .bulk progress {
+    margin: var(--space-2) 0;
   }
 
   .items,
   .failures {
-    margin: 0.4rem 0;
-    padding-left: 1.1rem;
+    margin: var(--space-2) 0;
+    padding-left: var(--space-5);
     max-height: 12rem;
     overflow: auto;
   }
 
-  .failures,
-  .error {
-    color: #b71c1c;
-    font-size: 0.92em;
+  .failures {
+    color: var(--danger);
+    font-size: var(--text-xs);
   }
 
   .key {
@@ -323,28 +325,13 @@
     overflow-wrap: anywhere;
   }
 
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin: 0.5rem 0;
+  .bulk .actions {
+    margin-top: var(--space-2);
   }
 
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .bulk {
-      background: rgb(255 255 255 / 6%);
-      border-left-color: #90caf9;
-    }
-
-    .failures,
-    .error {
-      color: #ef9a9a;
-    }
+  .item-icon {
+    display: inline-flex;
+    vertical-align: -2px;
+    color: var(--text-subtle);
   }
 </style>

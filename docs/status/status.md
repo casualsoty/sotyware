@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -89,6 +89,9 @@ verified byte for byte; the object was deleted again by its version id
 | Account service (ADR-032), separate crate, tested locally only, not deployed: registration with email verification codes (development outbox), Argon2id passwords, rotating opaque tokens with reuse detection, progressive lockout and rate limits, devices, enrollment by recovery key or approval with a key proof, end-to-end encrypted vault storage with optimistic concurrency, password change and reset, account deletion, audit events, online backup and checked restore, health check (2026-11-15) | `server/` ([accounts.md](../architecture/accounts.md), [server.md](../development/server.md), [validation](#account-service-2026-11-15)) |
 | Updates (ADR-033): signed `sotyware-update.json` verified before `tauri-plugin-updater` gets exactly it; version floor against replays; package signature, signed version and SHA-256 checked; install only on Update now and not during transfers, file operations or backups; Overview panel; `update-check` feature; `updates.sqlite3`; `scripts/update-manifest.mjs` and gated signing steps in `release-build.yml`. Switched off in release builds: no production key or update server (2026-11-15) | `src-tauri/src/updates.rs`, `features/updates.rs`, `SqliteUpdateState` in `storage.rs`, `release_resources` in `lib.rs`; `src/Updates.svelte`, `src/updates.ts`; `scripts/update-manifest.mjs` ([updates.md](../architecture/updates.md), [validation](#updates-2026-11-15)) |
 | Desktop client of the sotyware account (ADR-032): Account page (create, verify, sign in, reset; set up sync with the recovery key shown once and retyped; unlock by recovery key or by approval with a fingerprint; sync, conflicts, devices, revoke, atomic key rotation, password change, sign out, delete); vault encrypted on the device; secrets in the OS credential store; release builds have no service configured (2026-11-15) | `src-tauri/src/account/`, `OsSecretStore` in `cloud/keyring.rs`, `SqliteAccountState` in `storage.rs`, `run()` in `lib.rs`; `src/Account.svelte`, `src/account.ts` ([accounts.md](../architecture/accounts.md), [validation](#accounts-and-encrypted-sync-on-the-desktop-2026-11-15)) |
+| Desktop shell and design system (ADR-035): sidebar (sections, storage accounts opening their bucket, Add storage account, Account, Settings), Overview with storage/backups/version summaries, Settings (Appearance System/Light/Dark saved per device and applied to the window, Features, About & updates), one update notification, keyboard shortcuts, focus to the page title on navigation; every page and panel restyled on design tokens and a shared vocabulary, narrow-window overlay sidebar | `src/App.svelte`, `src/Sidebar.svelte`, `src/Overview.svelte`, `src/Settings.svelte`, `src/styles/`, `src/theme.ts`, `src/Icon.svelte`, `src/updatesModel.svelte.ts` ([frontend.md](../architecture/frontend.md)) |
+| macOS support (ADR-037): login keychain credentials with OSStatus classification, menu bar (Quit ⌘Q through `AppControl::quit`, Edit, Window), Dock click shows the dashboard, `bundle.macOS` (10.15, hardened runtime, .dmg), `macos.yml` (Apple Silicon and Intel runners, tests, Keychain round trip in a throwaway keychain, signing and notarization when secrets exist); **never compiled or run here** | `src-tauri/src/cloud/keyring.rs`, `src-tauri/src/app_menu.rs`, `lib.rs`, `tauri.conf.json`, `.github/workflows/macos.yml` ([macos.md](../development/macos.md)) |
+| Updates from GitHub Releases (ADR-036): `latest.json` + `.sig` from `releases/latest/download/` with at most five HTTPS redirects and one refetch on a signature mismatch, public key compiled in from `src-tauri/update-key.pub` (empty: off), platform entries for Windows, macOS and Linux, error kinds, `restart_after_update` (`request_restart`) after in-place installs; `release.yml` (draft → pre-release → verified → latest), `update-manifest.mjs` for every platform; **no key, repository private, never released** | `src-tauri/src/updates.rs`, `scripts/update-manifest.mjs`, `.github/workflows/release.yml` ([updates.md](../architecture/updates.md)) |
 | System tray with "Open Dashboard" and "Quit" | `src-tauri/src/tray.rs` |
 | Application icons (cube on a blue-to-teal tile; hand-fitted 16 and 32 px variants, also used as the window and tray icon): `icon.ico` (16–256 px), PNGs and ICNS generated from three SVG sources by `npm run icons`, checked by `npm run check:icons` | `src-tauri/icons/`, `scripts/icons.mjs` ([icons.md](../development/icons.md), [validation](#application-icons-2026-11-14)) |
 | Linux tray backend: `tray-icon`'s `ksni` (pure Rust, no libayatana-appindicator) | Linux-only `tray-icon` dependency in `src-tauri/Cargo.toml` |
@@ -115,7 +118,7 @@ the backup jobs, the account state and the update state, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
 own, content search, transfer queue UI or download history, no
 sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 77 listed in
+plugins, and no custom command other than the 78 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -134,6 +137,80 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Desktop redesign, macOS and GitHub Releases updates (2026-11-15)
+
+Uncommitted on `afeb894` (the maintainer asked for no commit). ADR-035
+(shell and design system), ADR-036 (updates from GitHub Releases), ADR-037
+(macOS). What ran, where:
+
+- **Frontend, WSL2 (Node 24.22.0):** `npm run check` 0 errors 0 warnings;
+  Vitest **240 passed** (13 files; 27 new: shell, update notification
+  and its reload when the window is shown, shortcuts, focus, theme,
+  Settings tabs, sidebar navigation, error kinds, restart, platform
+  shortcuts, the accessible shapes of the toast and name cells).
+- **Rust, WSL2 (1.99.1):** `cargo test` **507 passed, 28 ignored** (13 new:
+  GitHub-style redirect chain, the publish race, redirect limits, a missing
+  release, error kinds, the restart rule, the key file, the production
+  source, the real-CLI fixture for all seven platforms, Keychain `OSStatus`
+  sorting, the macOS menu's actions, the Dock click); `cargo fmt --check`;
+  `cargo clippy --all-targets -D warnings` for the normal and the
+  test-profile build; the request-recorder build's tests **535 passed**;
+  the standalone recovery script test passed; `npm run test:headless`
+  passed end to end.
+- **Release tooling:** `npm run test:update-manifest` **13 passed** (5 new), the
+  release-binary guard's self-test 39 passed. The publish job's commands
+  (`tauri signer sign --app-version` for seven packages and `latest.json`,
+  `update-manifest create/verify --require … --base-url …`,
+  `check-signature`, `SHA256SUMS`) were rehearsed under bash with the real
+  Tauri CLI 2.12.4 and a throwaway key, whose private half was then deleted;
+  the result is the fixture `scripts/fixtures/update-github/`, which the
+  Rust verifier also accepts for every platform. All workflow files parse
+  as YAML. **`release.yml` and `macos.yml` never ran** (no push, no key,
+  private repository, no Apple secrets).
+- **Linux virtual display (WSL2, Xvfb + openbox, stub tray host), the
+  test-profile release binary of the final tree through AT-SPI:**
+  `npm run test:desktop:virtual` **139 passed, 0 failed, 0 skipped** (one
+  new check: a Dark theme chosen in Settings is still chosen after quit and
+  relaunch), including the sidebar's links, the Overview's summaries,
+  Settings › Features (switching, persistence across restarts, corrupt and
+  unopenable databases), Hide, dashboard-only mode; 138/0/0 on the build
+  before the accessibility fixes.
+- **Linux Cloud Storage end to end (same binary, local S3 servers, a real
+  GNOME Keyring on a private D-Bus session, native GTK dialogs):**
+  `cloud-ui.sh` on the final tree: files **99/99**, local **16/16**, hang
+  **8/8** (now through Settings › Features), browse **17/17**, download
+  **22/22**, upload **51/51** (the same counts, files aside, on the first
+  build).
+- **Found by the desktop driver, fixed:** the first `cloud-ui.sh files` run
+  on the redesign failed 15 of 99 checks. An AT-SPI dump of the page
+  (WebKitGTK 2.52.6, a preview with mocked commands on a private
+  accessibility bus) showed two causes: a `display: flex` wrapper in the
+  name cell made each file name appear twice (cell text plus a "section"),
+  so rows could not be found; and the text of a `<span>` that is a flex
+  item is left out of the accessibility tree, so the action toast ("Folder
+  “made” created.", "1 item copied; …"), "Last checked …", "Released …",
+  the list bar's hint, the update notification's second sentence and "N
+  selected" (already missing before the redesign; the driver worked around
+  it) were never exposed to screen readers. Fixed by keeping cell content
+  inline and putting such text directly in a `<p>`; an audit comparing
+  each page's `innerText` with its AT-SPI tree then found nothing else
+  missing (table rows, the sort button's label and the background behind a
+  modal dialog differ by design). A structural test pins the shapes
+  ([frontend.md](../architecture/frontend.md#design-system)). After the
+  fix: `files` **99/99**.
+- **Seen:** the pages rendered by WebKitGTK 2.52.6 from a preview harness
+  with mocked commands (screenshots of Overview, Cloud Storage, the bucket
+  browser, a dialog, the account form and Settings; light, dark and a
+  700 px window), which found and fixed: a sidebar stuck on "Loading…" when
+  the account list failed, a misaligned notification, the browser header's
+  crowding, select styling, the theme swatch.
+- **Not run:** anything on macOS (no Mac and no cross toolchain here; the
+  macOS-only lines were checked against the vendored Tauri 2.12.5 and
+  keyring sources, not compiled), the Windows headless suite and the
+  Windows drivers after the redesign (`windows.ps1`, `windows-cloud-ui.ps1`
+  updated, not run: C: had 14 GB free, less than a debug test build needs),
+  WebView2 and WKWebView rendering, a screen reader, installing any update.
 
 ### Upload tests on a single CPU (2026-11-15)
 

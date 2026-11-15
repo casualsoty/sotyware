@@ -284,21 +284,26 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 
 describe("navigation", () => {
   it("opens on the overview and switches to Cloud Storage and back through links", async () => {
+    accounts = [account()];
     const root = await render(App);
     expect(root.querySelector("#cloud-storage-heading")).toBeNull();
-    expect(sent(LIST_CLOUD_ACCOUNTS)).toHaveLength(0);
-    expect(buttons(root).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
-    const links = [...root.querySelectorAll<HTMLAnchorElement>("nav a")];
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups", "Account"]);
+    // The shell lists the accounts once for its sidebar; the page has not loaded.
+    expect(sent(LIST_CLOUD_ACCOUNTS)).toHaveLength(1);
+    expect(sent(LIST_CLOUD_PROVIDERS)).toHaveLength(0);
+    expect(buttons(root.querySelector("main .page-header")!).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
+    const links = [...root.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Sections"] a')];
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups"]);
     expect(links[0]?.getAttribute("aria-current")).toBe("page");
+    const sidebar = [...root.querySelectorAll<HTMLAnchorElement>("aside a")].map((a) => a.textContent?.trim());
+    expect(sidebar).toEqual(["Overview", "Cloud Storage", "Backups", "Photos, Backblaze B2", "Account", "Settings"]);
 
     links[1]?.click();
     flushSync();
     await settle();
     expect(root.querySelector("#cloud-storage-heading")?.textContent).toBe("Cloud Storage");
     expect(links[1]?.getAttribute("aria-current")).toBe("page");
-    expect(root.querySelector("#features-heading")).toBeNull();
-    expect(sent(LIST_CLOUD_ACCOUNTS)).toHaveLength(1);
+    expect(root.querySelector("#overview-storage")).toBeNull();
+    expect(sent(LIST_CLOUD_ACCOUNTS)).toHaveLength(2);
 
     links[2]?.click();
     flushSync();
@@ -309,8 +314,45 @@ describe("navigation", () => {
     links[0]?.click();
     flushSync();
     await settle();
-    expect(root.querySelector("#features-heading")).not.toBeNull();
-    expect(buttons(root).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
+    expect(root.querySelector("#overview-storage")).not.toBeNull();
+    expect(buttons(root.querySelector("main .page-header")!).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
+  });
+
+  it("opens an account's bucket from the sidebar and marks it current", async () => {
+    accounts = [account(), account({ id: "work", label: "Work", bucket: "soty-work" })];
+    const root = await render(App);
+    const work = root.querySelector<HTMLAnchorElement>('a[data-sidebar-account="work"]')!;
+    work.click();
+    flushSync();
+    await settle();
+    expect(root.querySelector("section.browser")?.getAttribute("data-browsing")).toBe("work");
+    expect(work.getAttribute("aria-current")).toBe("page");
+    // The Cloud Storage link is not current while a bucket is open.
+    const cloud = [...root.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Sections"] a')][1]!;
+    expect(cloud.getAttribute("aria-current")).toBeNull();
+    cloud.click();
+    flushSync();
+    await settle();
+    expect(root.querySelector("section.browser")).toBeNull();
+    expect(root.querySelector("#cloud-storage-heading")?.textContent).toBe("Cloud Storage");
+    expect(work.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("opens the add form from the sidebar and lists a new account there", async () => {
+    const root = await render(App);
+    expect(root.querySelector("aside")?.textContent).toContain("No accounts yet.");
+    await click(root.querySelector("aside")!, "Add storage account");
+    const form = root.querySelector<HTMLFormElement>('form[aria-label="Add account"]');
+    expect(form).not.toBeNull();
+    type(form!, "Name", "Archive");
+    type(form!, "Bucket", "soty-archive");
+    type(form!, "Access key ID", KEY_ID);
+    type(form!, "Secret access key", SECRET);
+    await submit(root);
+    expect(sent(ADD_CLOUD_ACCOUNT)).toHaveLength(1);
+    expect([...root.querySelectorAll("aside a[data-sidebar-account]")].map((a) => a.textContent?.trim())).toEqual([
+      "Archive, Backblaze B2",
+    ]);
   });
 });
 

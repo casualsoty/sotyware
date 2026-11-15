@@ -1,28 +1,35 @@
-//! Application updates (ADR-033), driven from Rust only.
+//! Application updates (ADR-033, ADR-036), driven from Rust only.
 //!
-//! A release publishes `sotyware-update.json` (the manifest) and
-//! `sotyware-update.json.sig` (its minisign signature, same key family as
-//! the artifacts). sotyware:
+//! Every GitHub release of sotyware carries `latest.json` (the manifest, in
+//! the updater plugin's static format plus sotyware's own fields) and
+//! `latest.json.sig` (its minisign signature, made with the same release key
+//! as the artifacts). sotyware:
 //!
-//! 1. fetches both (HTTPS only; loopback HTTP in test builds),
+//! 1. fetches both from the release GitHub marks as latest
+//!    ([`MANIFEST_URL`]; HTTPS only, at most [`MAX_REDIRECTS`] redirects,
+//!    each to HTTPS; loopback HTTP in test builds),
 //! 2. verifies the manifest's signature with the compiled-in public key,
 //! 3. checks its format, channel, and that its version is newer than the
 //!    running one and not lower than the highest version ever offered to
 //!    this installation (the version floor, stored locally),
 //! 4. picks this installation's platform entry (`windows-x86_64-nsis` /
-//!    `-msi`, the same names the updater plugin uses), which must carry an
-//!    HTTPS URL, a signature and a SHA-256,
+//!    `-msi`, `darwin-aarch64-app` / `darwin-x86_64-app`,
+//!    `linux-x86_64-appimage` / `-deb` / `-rpm`: the names the updater
+//!    plugin uses), which must carry an HTTPS URL, a signature and a SHA-256,
 //! 5. hands exactly that verified JSON to `tauri-plugin-updater`
 //!    (`restore_update`, no second fetch), which requires the artifact's
 //!    signature to name the same version,
 //! 6. downloads through the plugin (which verifies the artifact's minisign
 //!    signature), checks the SHA-256 from the signed manifest, and only then
-//!    installs, after the user clicked and while nothing else runs.
+//!    installs, after the user clicked and while nothing else runs. On
+//!    Windows the installer ends sotyware and starts the new version; on
+//!    macOS and Linux the plugin replaces the app in place and sotyware
+//!    restarts into it when the user clicks Restart now.
 //!
-//! No production key or endpoint exists yet ([`PRODUCTION`] is `None`):
-//! release builds report updates as not configured. Test-profile and
-//! debug builds read `SOTYWARE_UPDATE_ENDPOINT` and
-//! `SOTYWARE_UPDATE_PUBKEY`.
+//! The public key is compiled in from `src-tauri/update-key.pub`; while that
+//! file holds no key, a release build reports updates as not configured.
+//! Test-profile and debug builds read `SOTYWARE_UPDATE_ENDPOINT` and
+//! `SOTYWARE_UPDATE_PUBKEY` instead.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -51,9 +58,46 @@ pub struct Source {
     pub channel: String,
 }
 
-/// The production update source. None exists yet: the signing key and the
-/// release endpoint are external gates (docs/development/release.md).
-pub const PRODUCTION: Option<(&str, &str)> = None;
+/// The GitHub repository whose published releases carry the manifest
+/// (ADR-036). Its releases must be public: GitHub serves the assets of a
+/// private repository only to signed-in clients.
+pub const RELEASE_REPOSITORY: &str = "casualsoty/sotyware";
+
+/// The manifest of the release GitHub marks as latest (never a draft or a
+/// pre-release): GitHub answers with a redirect to that release's asset.
+pub const MANIFEST_URL: &str =
+    "https://github.com/casualsoty/sotyware/releases/latest/download/latest.json";
+
+/// How many redirects one fetch may follow (GitHub uses two: the tag's
+/// download URL, then its asset store).
+pub const MAX_REDIRECTS: usize = 5;
+
+/// `src-tauri/update-key.pub`: the release key's public half as `tauri
+/// signer generate` writes it (base64), after `#` comment lines. Holds no
+/// key until the maintainer generated the pair (docs/development/release.md).
+const PUBKEY_FILE: &str = include_str!("../update-key.pub");
+
+/// The compiled-in release public key, if `update-key.pub` holds one.
+pub fn production_pubkey() -> Option<&'static str> {
+    pubkey_in(PUBKEY_FILE)
+}
+
+/// The first line that is neither empty nor a `#` comment.
+fn pubkey_in(file: &str) -> Option<&str> {
+    file.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+}
+
+/// The update source of a release build: GitHub's latest release and the
+/// compiled-in key, or none without a key.
+pub fn production() -> Option<Source> {
+    production_pubkey().map(|pk| Source {
+        manifest_url: MANIFEST_URL.into(),
+        pubkey: pk.into(),
+        channel: "stable".into(),
+    })
+}
 
 /// How often a running sotyware checks.
 pub const CHECK_EVERY: Duration = Duration::from_secs(24 * 3600);
@@ -89,11 +133,7 @@ pub fn configured_source() -> Option<Source> {
             channel: "stable".into(),
         });
     }
-    PRODUCTION.map(|(url, pk)| Source {
-        manifest_url: url.into(),
-        pubkey: pk.into(),
-        channel: "stable".into(),
-    })
+    production()
 }
 
 /// Why an update was refused. Never contains a key.
@@ -119,6 +159,22 @@ pub enum UpdateError {
     Integrity(String),
     /// The plugin refused the update or its installation.
     Updater(String),
+}
+
+impl UpdateError {
+    /// The kind the page words its message by (`UpdateErrorKind` in
+    /// src/updates.ts).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Network(_) => "network",
+            Self::Signature => "signature",
+            Self::Malformed(_) | Self::WrongChannel { .. } => "malformed",
+            Self::Downgrade { .. } => "replay",
+            Self::Platform(_) => "platform",
+            Self::Integrity(_) => "integrity",
+            Self::Updater(_) => "installer",
+        }
+    }
 }
 
 impl std::fmt::Display for UpdateError {
@@ -285,12 +341,15 @@ pub fn targets() -> Vec<String> {
     let Some(base) = tauri_plugin_updater::target() else {
         return Vec::new();
     };
+    use tauri::utils::config::BundleType;
     let installer = match tauri::utils::platform::bundle_type() {
-        Some(tauri::utils::config::BundleType::Nsis) => Some("nsis"),
-        Some(tauri::utils::config::BundleType::Msi) => Some("msi"),
-        Some(tauri::utils::config::BundleType::AppImage) => Some("appimage"),
-        Some(tauri::utils::config::BundleType::Deb) => Some("deb"),
-        Some(tauri::utils::config::BundleType::Rpm) => Some("rpm"),
+        Some(BundleType::Nsis) => Some("nsis"),
+        Some(BundleType::Msi) => Some("msi"),
+        Some(BundleType::AppImage) => Some("appimage"),
+        Some(BundleType::Deb) => Some("deb"),
+        Some(BundleType::Rpm) => Some("rpm"),
+        // A .dmg installs the .app it holds; both update as an .app.
+        Some(BundleType::App | BundleType::Dmg) => Some("app"),
         _ => None,
     };
     match installer {
@@ -356,8 +415,16 @@ pub struct UpdateStatus {
     pub available: Option<Available>,
     pub postponed: bool,
     pub error: Option<String>,
+    /// [`UpdateError::kind`] of `error`.
+    pub error_kind: Option<&'static str>,
     /// Why "Update now" is not possible right now (transfers running…).
     pub blocked_by: Vec<String>,
+    /// A version this process installed that runs after a restart (macOS,
+    /// Linux; Windows' installer restarts sotyware itself).
+    pub installed: Option<String>,
+    /// Whether an installer program finishes the update and starts the new
+    /// version (Windows), so the page never offers a restart.
+    pub uses_installer: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -381,6 +448,8 @@ pub enum InstallEvent {
     /// when sotyware starts again.
     Installed,
     Failed {
+        /// [`UpdateError::kind`], or `busy`.
+        kind: &'static str,
         message: String,
     },
     Cancelled,
@@ -390,7 +459,9 @@ pub enum InstallEvent {
 pub struct Updates {
     source: Option<Source>,
     state: Mutex<Result<Box<dyn StateStore>, String>>,
-    last: Mutex<(Option<Offer>, Option<String>)>,
+    last: Mutex<(Option<Offer>, Option<UpdateError>)>,
+    /// The version installed by this process, awaiting a restart.
+    installed: Mutex<Option<String>>,
     /// The running download-and-install task and its channel.
     install: Mutex<Option<(tauri::async_runtime::JoinHandle<()>, Channel<InstallEvent>)>>,
     timer: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
@@ -406,6 +477,7 @@ impl Updates {
             source,
             state: Mutex::new(state.map_err(|e| e.to_string())),
             last: Mutex::new((None, None)),
+            installed: Mutex::new(None),
             install: Mutex::new(None),
             timer: Mutex::new(None),
             allow_loopback: cfg!(any(debug_assertions, feature = "test-profile", test)),
@@ -430,8 +502,20 @@ impl Updates {
         }
     }
 
-    fn last(&self) -> MutexGuard<'_, (Option<Offer>, Option<String>)> {
+    fn last(&self) -> MutexGuard<'_, (Option<Offer>, Option<UpdateError>)> {
         self.last.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The version this process installed, if any (it runs after a restart).
+    pub fn installed(&self) -> Option<String> {
+        self.installed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set_installed(&self, version: String) {
+        *self.installed.lock().unwrap_or_else(|e| e.into_inner()) = Some(version);
     }
 
     pub fn current(app_version: &str) -> Version {
@@ -457,8 +541,11 @@ impl Updates {
                 notes: o.manifest.notes,
                 pub_date: o.manifest.pub_date,
             }),
-            error,
+            error_kind: error.as_ref().map(UpdateError::kind),
+            error: error.map(|e| e.to_string()),
             blocked_by,
+            installed: self.installed(),
+            uses_installer: cfg!(windows),
         }
     }
 
@@ -472,14 +559,25 @@ impl Updates {
                 "the update server must be reached over HTTPS".into(),
             ));
         }
-        // The manifest is answered directly (no redirect), over HTTPS only
-        // outside test builds.
+        // GitHub answers with redirects (the tag's download URL, then its
+        // asset store): a few are followed, each to HTTPS only outside test
+        // builds. Where the bytes come from does not matter for trust: the
+        // signature does.
+        let allow_loopback = self.allow_loopback;
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(
                 crate::account::client::tls_config().map_err(UpdateError::Network)?,
             )
             .https_only(!self.allow_loopback)
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= MAX_REDIRECTS {
+                    attempt.error("too many redirects")
+                } else if url_ok(attempt.url().as_str(), allow_loopback) {
+                    attempt.follow()
+                } else {
+                    attempt.error("redirected to an address that is not HTTPS")
+                }
+            }))
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .user_agent(concat!("sotyware/", env!("CARGO_PKG_VERSION")))
@@ -493,6 +591,13 @@ impl Updates {
                     .send()
                     .await
                     .map_err(|e| UpdateError::Network(e.without_url().to_string()))?;
+                if r.status() == reqwest::StatusCode::NOT_FOUND {
+                    // No published release carries update information yet
+                    // (or the repository's releases are not public).
+                    return Err(UpdateError::Network(format!(
+                        "no published release of {RELEASE_REPOSITORY} has update information (HTTP 404)"
+                    )));
+                }
                 if !r.status().is_success() {
                     return Err(UpdateError::Network(format!(
                         "HTTP {}",
@@ -522,20 +627,31 @@ impl Updates {
             }
         };
         let result: Result<Option<Offer>, UpdateError> = async {
-            let manifest = fetch(src.manifest_url.clone()).await?;
-            let sig = fetch(format!("{}.sig", src.manifest_url)).await?;
             let mut saved = self.saved();
             let floor = saved.floor.as_deref().and_then(|f| Version::parse(f).ok());
-            let offer = verify_manifest(
-                &manifest,
-                std::str::from_utf8(&sig).map_err(|_| UpdateError::Signature)?,
-                &src.pubkey,
-                &src.channel,
-                current,
-                floor.as_ref(),
-                &targets(),
-                self.allow_loopback,
-            )?;
+            // The manifest and its signature are two requests: a release
+            // published between them pairs one release's manifest with
+            // another's signature. Once, both are fetched again.
+            let mut attempt = 0;
+            let (manifest, offer) = loop {
+                attempt += 1;
+                let manifest = fetch(src.manifest_url.clone()).await?;
+                let sig = fetch(format!("{}.sig", src.manifest_url)).await?;
+                let verified = verify_manifest(
+                    &manifest,
+                    std::str::from_utf8(&sig).map_err(|_| UpdateError::Signature)?,
+                    &src.pubkey,
+                    &src.channel,
+                    current,
+                    floor.as_ref(),
+                    &targets(),
+                    self.allow_loopback,
+                );
+                match verified {
+                    Err(UpdateError::Signature) if attempt < 2 => continue,
+                    other => break (manifest, other?),
+                }
+            };
             // The floor rises with every verified manifest, also one that
             // is not newer than the running version.
             let offered: Manifest = serde_json::from_slice(&manifest)
@@ -553,7 +669,7 @@ impl Updates {
         let mut last = self.last();
         match &result {
             Ok(o) => *last = (o.clone(), None),
-            Err(e) => last.1 = Some(e.to_string()),
+            Err(e) => last.1 = Some(e.clone()),
         }
         result
     }
@@ -683,6 +799,7 @@ impl Updates {
         let sink2 = sink.clone();
         let kept = sink.clone();
         let allow_loopback = self.allow_loopback;
+        let this = Arc::clone(self);
         let task = tauri::async_runtime::spawn(async move {
             let mut last = std::time::Instant::now();
             let result = Self::download_verified(&app, &pubkey, &offer, !allow_loopback, |d, t| {
@@ -700,28 +817,35 @@ impl Updates {
                     let _ = sink.send(InstallEvent::Verified);
                     // Last chance: nothing may have started meanwhile.
                     if !blocked_by(&app).is_empty() {
-                        let _ = sink.send(InstallEvent::Failed { message: "a transfer, file operation or backup started; the update was not installed".into() });
+                        let _ = sink.send(InstallEvent::Failed {
+                            kind: "busy",
+                            message: "a transfer, file operation or backup started; the update was not installed".into(),
+                        });
                         return;
                     }
                     let _ = sink.send(InstallEvent::Installing);
                     // Windows: the plugin starts the installer and ends the
                     // process (after `release_resources`); the installer
-                    // starts the new version. Elsewhere it returns, and the
-                    // new version runs from the next start: a restart from
-                    // here would meet this process's single-instance lock.
+                    // starts the new version. macOS and Linux: the plugin
+                    // replaces the app in place and returns; the new
+                    // version runs after `restart_after_update`.
                     match update.install(bytes) {
                         Ok(()) => {
+                            this.set_installed(offer.manifest.version.clone());
                             let _ = sink.send(InstallEvent::Installed);
                         }
                         Err(e) => {
+                            let e = UpdateError::Updater(e.to_string());
                             let _ = sink.send(InstallEvent::Failed {
-                                message: UpdateError::Updater(e.to_string()).to_string(),
+                                kind: e.kind(),
+                                message: e.to_string(),
                             });
                         }
                     }
                 }
                 Err(e) => {
                     let _ = sink.send(InstallEvent::Failed {
+                        kind: e.kind(),
                         message: e.to_string(),
                     });
                 }
@@ -850,6 +974,41 @@ pub fn cancel_update(updates: State<'_, Arc<Updates>>) -> bool {
 #[tauri::command]
 pub fn postpone_update(updates: State<'_, Arc<Updates>>) {
     updates.postpone();
+}
+
+/// Whether a restart into an installed update may happen now: something
+/// was installed by this process and nothing runs that a restart would cut.
+pub fn restart_allowed(installed: Option<&str>, blocked: &[String]) -> Result<(), CommandError> {
+    if installed.is_none() {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "no update was installed; nothing to restart into",
+        ));
+    }
+    if !blocked.is_empty() {
+        return Err(CommandError::new(
+            ErrorKind::Busy,
+            format!(
+                "wait until {} has finished, or cancel it, then restart",
+                blocked.join(", ")
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Restarts sotyware into the version this process installed (macOS,
+/// Linux). Goes through the normal exit (`RunEvent::Exit`,
+/// `release_resources`, the single-instance lock released) before the new
+/// process starts, so the new version never meets this one's lock.
+#[tauri::command]
+pub fn restart_after_update(
+    app: AppHandle,
+    updates: State<'_, Arc<Updates>>,
+) -> Result<(), CommandError> {
+    restart_allowed(updates.installed().as_deref(), &blocked_by(&app))?;
+    app.request_restart();
+    Ok(())
 }
 
 #[cfg(test)]

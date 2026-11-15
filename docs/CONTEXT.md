@@ -9,15 +9,39 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.0, not yet released. Code and builds target Windows
-and Linux; the **first release targets Windows 11 only**, subject to installer
-validation; Windows 10 is not validated and Linux has not run on a real
-desktop, so neither is claimed as supported
+TypeScript. Version 0.1.0, not yet released. Code and builds target
+Windows, Linux and macOS (Apple Silicon and Intel; macOS built and tested
+only on GitHub's runners, ADR-037); the **first release targets Windows 11
+only**, subject to installer validation; Windows 10 is not validated, Linux
+has not run on a real desktop and macOS not on a Mac a person used, so none
+is claimed as supported
 ([release.md](development/release.md#support-scope)). Release binaries are
 built with `npm run build:release`, which keeps the build machine's paths out
 (ADR-028).
 
 ## What works today
+
+**Redesign, macOS, GitHub Releases updates** (2026-11-15, uncommitted on
+`afeb894`; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
+the dashboard is a desktop shell (sidebar with sections and storage
+accounts, Overview with summaries, Settings with Appearance/Features/About
+& updates, one update notification) on one token-based design system with
+a persisted System/Light/Dark theme
+([frontend.md](architecture/frontend.md), ADR-035); macOS support (login
+keychain, menu bar with ⌘Q and the Edit menu, Dock click, separate Apple
+Silicon and Intel builds, signing and notarization in CI when secrets
+exist; [macos.md](development/macos.md), ADR-037); updates come from the
+latest GitHub release's signed `latest.json`, with bounded HTTPS redirects,
+platform entries for Windows, macOS and Linux, Restart now after in-place
+installs, and `release.yml` publishing draft → pre-release → verified →
+latest (ADR-036). **Not usable yet:** no release key in
+`src-tauri/update-key.pub`, and the repository is private (GitHub serves
+private release assets only to signed-in clients). Tested: Vitest 240,
+Rust 507 (recorder build 535), the virtual display 139/0/0 and every Linux
+Cloud Storage driver phase (files 99/99) against the real binary, after an
+AT-SPI audit that found and fixed text WebKitGTK hid from screen readers; the release commands rehearsed with the real
+Tauri CLI and a throwaway key. Not run: `macos.yml`, `release.yml`, any
+Mac, the Windows drivers after the redesign.
 
 The desktop runtime, the foundation for built-in features, cloud storage
 account management, bucket browsing, single-file downloads, upload batches
@@ -200,7 +224,8 @@ update server exist), all tested headless against in-process servers only.
   conflict copies; rollback refused; revoke + atomic key rotation. Release
   builds have no service configured (`PRODUCTION_SERVER = None`). Tested
   end to end with the service in process and several device profiles.
-- **Updates** (2026-11-15, ADR-033, [updates.md](architecture/updates.md)):
+- **Updates** (2026-11-15, ADR-033; source since ADR-036: the latest
+  GitHub release, see above; [updates.md](architecture/updates.md)):
   a minisign-signed `sotyware-update.json` is verified (signature, format,
   channel, version floor against replays, HTTPS package entry with
   signature and SHA-256) before `tauri-plugin-updater` receives exactly
@@ -249,11 +274,12 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
   commands of ADR-026, the five recovery commands of ADR-030, the nine
   backup commands of ADR-031, the 20 account commands of ADR-032 and the
-  five update commands of ADR-033 (77 in all; listed in
+  six update commands of ADR-033/ADR-036 (78 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
-  runtime). No other custom command, no custom events (download progress
+  runtime), and `setTheme()` for the theme chosen in Settings
+  (`core:window:allow-set-theme`). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored
   credential or a local path, or accepts a local path.
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line

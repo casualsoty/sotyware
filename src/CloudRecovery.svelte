@@ -161,7 +161,7 @@
   <p class="error" role="alert">{loadError}</p>
 {/if}
 {#if unavailable}
-  <p class="warning" role="alert" data-recovery="unavailable">
+  <p class="callout warning" role="alert" data-recovery="unavailable">
     The operation journal cannot be used ({unavailable}). Uploads, downloads and file operations still work, but if
     sotyware stops unexpectedly it cannot tell afterwards what they did.
   </p>
@@ -314,111 +314,82 @@
 
 <style>
   .recovery {
-    border: 1px solid #e0a000;
-    border-radius: 6px;
-    padding: 0.6rem 0.9rem;
-    margin: 0.8rem 0;
+    margin: var(--space-4) 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-lg);
   }
 
   .recovery h3 {
-    margin: 0 0 0.3rem;
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-md);
   }
 
   .recovery > ul {
     list-style: none;
     padding: 0;
-    margin: 0;
+    margin: var(--space-2) 0 0;
   }
 
   .recovery > ul > li {
-    border-top: 1px solid rgb(0 0 0 / 10%);
-    padding: 0.5rem 0;
+    border-top: 1px solid var(--border);
+    padding: var(--space-3) 0;
+    font-size: var(--text-sm);
+  }
+
+  .recovery > ul > li:last-child {
+    padding-bottom: 0;
   }
 
   .time,
   .hint {
-    font-size: 0.85em;
-    color: #6b6b73;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
   }
 
   .time {
-    margin-left: 0.5rem;
+    margin-left: var(--space-2);
   }
 
   .actions {
-    display: flex;
-    gap: 0.4rem;
-    flex-wrap: wrap;
-    align-items: center;
+    margin-top: var(--space-2);
   }
 
   .inspection {
-    margin-top: 0.4rem;
-    padding: 0.4rem 0.6rem;
-    border-left: 3px solid #8a8a93;
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   .inspection[data-verdict="complete"],
   .inspection[data-verdict="nothing-stored"] {
-    border-left-color: #2e7d32;
+    background: var(--success-soft);
+    border-color: var(--success-border);
   }
 
   .inspection[data-verdict="needs-attention"] {
-    border-left-color: #e0a000;
+    background: var(--warning-soft);
+    border-color: var(--warning-border);
   }
 
   .keys {
-    font-family: ui-monospace, monospace;
-    font-size: 0.85em;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
 
   .scan {
-    margin: 0.8rem 0;
+    margin: var(--space-3) 0;
+    font-size: var(--text-sm);
   }
 
-  button {
-    font: inherit;
-    padding: 0.25rem 0.7rem;
-    cursor: pointer;
+  .scan summary {
+    color: var(--text-muted);
   }
 
-  .danger {
-    color: #c62828;
-  }
-
-  .warning {
-    color: #8a5a00;
-  }
-
-  .error {
-    color: #c62828;
-  }
-
-  .notice {
-    color: #2e7d32;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .time,
-    .hint {
-      color: #a0a0a8;
-    }
-
-    .recovery > ul > li {
-      border-top-color: rgb(255 255 255 / 12%);
-    }
-
-    .warning {
-      color: #f0c060;
-    }
-
-    .error,
-    .danger {
-      color: #ef7070;
-    }
-
-    .notice {
-      color: #7bc67e;
-    }
+  .scan summary:hover {
+    color: var(--text);
   }
 </style>

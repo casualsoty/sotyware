@@ -225,7 +225,7 @@
     {/if}
 
     <div class="actions">
-      <button type="submit">{saving ? "Saving…" : editing ? "Save changes" : "Add account"}</button>
+      <button type="submit" class="primary">{saving ? "Saving…" : editing ? "Save changes" : "Add account"}</button>
       <button type="button" onclick={cancel}>Cancel</button>
     </div>
   </fieldset>
@@ -236,96 +236,77 @@
 
 <style>
   .account-form {
-    margin: 1rem 0;
-    padding: 1rem;
-    border: 1px solid rgb(0 0 0 / 15%);
-    border-radius: 6px;
+    margin: 0;
   }
 
   h3 {
-    margin: 0 0 0.75rem;
-    font-size: 1em;
+    margin: 0 0 var(--space-4);
+    font-size: var(--text-lg);
   }
 
   fieldset {
-    border: 0;
-    margin: 0;
-    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: var(--space-3) var(--space-4);
   }
 
   .field {
-    margin-bottom: 0.6rem;
-    font-size: 0.9em;
+    margin: 0;
   }
 
   .field label {
     display: block;
+    font-weight: var(--weight-medium);
+  }
+
+  .field input,
+  .field select {
+    display: block;
+    width: 100%;
+    margin-top: var(--space-1);
+  }
+
+  .capabilities,
+  label.inline,
+  .hint,
+  .actions {
+    grid-column: 1 / -1;
   }
 
   label.inline {
-    margin-bottom: 0.6rem;
-    font-size: 0.9em;
     display: flex;
-    gap: 0.4rem;
+    gap: var(--space-2);
     align-items: center;
-  }
-
-  input:not([type="checkbox"]),
-  select {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    margin-top: 0.2rem;
-    padding: 0.35rem 0.5rem;
-    font: inherit;
-  }
-
-  input[readonly] {
-    color: #6b6b73;
+    font-size: var(--text-sm);
   }
 
   .hint {
-    font-size: 0.85em;
-    color: #6b6b73;
+    margin: 0;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
   }
 
   .capabilities {
-    margin-bottom: 0.6rem;
-    font-size: 0.85em;
+    font-size: var(--text-sm);
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+  }
+
+  .capabilities summary {
+    color: var(--text-muted);
   }
 
   .capabilities ul {
-    margin: 0.3rem 0 0;
-    padding-left: 1.2rem;
+    margin: var(--space-2) 0 0;
+    padding-left: var(--space-5);
+  }
+
+  .evidence {
+    color: var(--text-muted);
   }
 
   .actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
-  }
-
-  .error {
-    color: #c62828;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .account-form {
-      border-color: rgb(255 255 255 / 18%);
-    }
-
-    input[readonly],
-    .hint {
-      color: #a0a0a8;
-    }
-
-    .error {
-      color: #ef7070;
-    }
+    margin-top: var(--space-1);
   }
 </style>

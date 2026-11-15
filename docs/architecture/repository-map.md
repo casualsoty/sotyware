@@ -8,24 +8,35 @@ Where things are. Generated and ignored paths are listed in
 ├── AGENTS.md                 Canonical instructions for coding agents
 ├── CLAUDE.md                 Claude Code entry point (imports AGENTS.md)
 ├── README.md                 Human-facing overview and quick start
-├── .gitattributes            Keeps the signed update fixtures byte-exact (no line-ending conversion)
+├── .gitattributes            Keeps the signed update fixtures (update/, update-github/) byte-exact (no line-ending conversion)
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, guard self-tests, fmt, clippy (default and test-profile build), test:headless
+│       ├── ci.yml            Automatic headless CI (Linux + Windows): check, build, rfd patch guard, guard self-tests, fmt, clippy (default and test-profile build), test:headless; also called by release.yml
+│       ├── macos.yml         Manual or called by release.yml: macOS Apple Silicon and Intel, each on its own runner: headless checks and tests, Keychain round trip in a throwaway keychain; with package: true the .app/.dmg, signing and notarization when the Apple secrets exist (ADR-037)
+│       ├── release.yml       Tag vX.Y.Z (or manual dry run): version and key checks, ci.yml, Windows/Linux/macOS builds, then the one job with the update key signs, writes latest.json, publishes draft → pre-release → verified → latest (ADR-036)
 │       ├── isolation-guard.yml  Automatic for changes to tests/desktop/** or the guard (which ci.yml skips): desktop isolation guard, its self-test, the Python profile helpers' tests
 │       ├── desktop-virtual.yml           Manual: Linux virtual-display test (Xvfb + openbox)
 │       ├── desktop-windows-isolated.yml  Manual, experimental: Windows private-desktop test
-│       └── release-build.yml  Manual: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); with a signing secret and an update base URL also the update signatures and manifest (ADR-033); nothing uploaded or published
+│       └── release-build.yml  Manual or called by release.yml: Windows release binary + MSI + NSIS via npm run build:release (ADR-028), installers unpacked (never installed) and their sotyware.exe compared with the checked binary, then their icons checked (check-installer-icons.mjs); with upload: true the installers as the windows-installers artifact (signed for updates by release.yml)
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
-│   ├── architecture/         How it works and why (this file, overview, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
-│   ├── development/          Setup, commands, testing, cross-platform rules, release builds and installer testing (release.md), application icons (icons.md)
+│   ├── architecture/         How it works and why (this file, overview, frontend, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
+│   ├── development/          Setup, commands, testing, cross-platform rules, release builds, GitHub Releases and installer testing (release.md), macOS (macos.md), application icons (icons.md)
 │   ├── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
 │   └── user/                 User guides: recovering files from a backup (recovery.md)
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
-│   ├── main.ts               Mounts App into #app
-│   ├── App.svelte            The dashboard UI: navigation (Overview, Cloud Storage) and the Overview section
+│   ├── main.ts               Loads the styles, applies the saved theme before the first paint, mounts App into #app
+│   ├── App.svelte            The shell (ADR-035, docs/architecture/frontend.md): sidebar + main area, navigation state, update notification, keyboard shortcuts
+│   ├── Sidebar.svelte        Sections, storage accounts (open their bucket), Account and Settings
+│   ├── Overview.svelte       Tray/dashboard-only note, Hide dashboard, summaries of storage, backups and updates
+│   ├── Settings.svelte       Tabs: General (theme, window, keyboard), Features, About & updates
+│   ├── navigation.ts         Section and tab types, the shell's shortcuts (+ navigation.test.ts)
+│   ├── theme.ts              Theme choice: localStorage, data-theme, window setTheme (+ theme.test.ts)
+│   ├── Icon.svelte           sotyware's line-drawing icon set
+│   ├── updatesModel.svelte.ts  The window's update state and actions, shared by the notification and Settings
+│   ├── styles/tokens.css     Design tokens: type, space, radii, sizes, layers, motion, light and dark colours
+│   ├── styles/base.css       Element defaults and the shared class vocabulary
 │   ├── App.test.ts           Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 │   ├── CloudStorage.svelte   Cloud Storage section: account list, empty state, check, remove with confirmation
 │   ├── CloudAccountForm.svelte  Add/edit form for one storage account (credential fields cleared after use)
@@ -83,9 +94,10 @@ Where things are. Generated and ignored paths are listed in
 │   ├── check-installer-icons.test.mjs  Its tests with in-memory fixtures (node --test, npm run test:installer-icons)
 │   ├── icons.mjs         The application icons from src-tauri/icons/source (npm run icons, through tauri icon; writes icon.ico itself) and their check (npm run check:icons, in test:headless)
 │   ├── icons.test.mjs    Its tests (node --test, npm run test:icons)
-│   ├── update-manifest.mjs  Creates sotyware-update.json from signed installers and verifies a signed manifest and its installers (ADR-033; signing itself is tauri signer sign --app-version)
+│   ├── update-manifest.mjs  Creates latest.json from signed updater packages of every platform, verifies a signed manifest, its platforms, URLs and packages, checks one signed file (ADR-033, ADR-036; signing itself is tauri signer sign --app-version)
 │   ├── update-manifest.test.mjs  Its tests (node --test, npm run test:update-manifest)
 │   ├── fixtures/update/  A manifest and two stand-in installers signed once by the real Tauri CLI with a throwaway key (public key only; private key deleted); verified by the script's tests and src-tauri/src/updates/tests.rs
+│   ├── fixtures/update-github/  A GitHub release's latest.json for all seven platforms and stand-in packages, made once with release.yml's own commands, the real Tauri CLI and a throwaway key (public key only); verified by the script's tests and src-tauri/src/updates/tests.rs
 │   └── recovery/
 │       └── sotyware-restore.py  Restores a backup snapshot without sotyware (Python standard library only, SigV4); tested against the in-process server by backup::tests (ignored by default, run in ci.yml) (ADR-031)
 ├── package-lock.json         Pinned JS dependency tree
@@ -97,7 +109,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Cargo.lock            Pinned Rust dependency tree
 │   ├── build.rs              tauri_build with an app manifest declaring the app's commands; on Windows the linker embeds windows-app-manifest.xml into every binary (ADR-034)
 │   ├── windows-app-manifest.xml  The Common Controls v6 manifest (a copy of tauri-build's default), embedded by the linker on Windows
-│   ├── tauri.conf.json       Product name, identifier, window `main`, CSP, bundles, dev/build hooks
+│   ├── tauri.conf.json       Product name, identifier, window `main` (size, minimum size), CSP, bundles (incl. bundle.macOS), dev/build hooks
+│   ├── update-key.pub        The update signing key's public half, compiled in (empty until generated; ADR-036)
 │   ├── capabilities/
 │   │   └── default.json      Frontend permissions for window `main` (hide is added at runtime, tray mode only)
 │   ├── icons/                Application, window and tray icons, generated by npm run icons ([icons.md](../development/icons.md)): icon.ico (16–256 px), 32x32.png, 128x128.png, 128x128@2x.png, icon.png, icon.icns
@@ -111,7 +124,8 @@ Where things are. Generated and ignored paths are listed in
 │       ├── lib.rs            App builder, OperatingMode and its selection, lifecycle (release_resources: what every exit and an update install release), operating_mode command, single instance, show_dashboard(), AppControl + unit tests; with the feature test-profile, the profile check, identifier, data and webview folders and acknowledgement (ADR-027)
 │       ├── test_profile.rs   Only with the feature test-profile (and in unit tests): SOTYWARE_TEST_PROFILE and its marker validated, overlap with the app's own folders refused, CredentialNamespace of the profile, the acknowledgement file + tests (ADR-027)
 │       ├── tray.rs           Tray icon, menu, TrayAction, unavailable_reason() (no Linux tray host) + unit tests
-│       ├── updates.rs        Updates (ADR-033): signed-manifest verification, version floor, platform choice, plugin cross-check, download with SHA-256 check, install gate, the five commands; updates/tests.rs (test keys, local server, the plugin on the mock runtime, the Tauri CLI fixture)
+│       ├── app_menu.rs       The macOS menu bar (About, Hide, Quit ⌘Q via AppControl, Edit, Window) + unit tests (ADR-037)
+│       ├── updates.rs        Updates (ADR-033, ADR-036): latest.json from the latest GitHub release (bounded HTTPS redirects, one refetch), signed-manifest verification, version floor, platform choice (Windows, macOS, Linux), plugin cross-check, download with SHA-256 check, install gate, restart after an in-place install, the six commands; updates/tests.rs (test keys, local servers incl. GitHub-style redirects, the plugin on the mock runtime, the Tauri CLI fixtures)
 │       ├── storage.rs        SqliteStore: preferences.sqlite3, schema, MIGRATIONS, PreferenceStore impl; SqliteAccountStore: cloud-accounts.sqlite3, ACCOUNT_MIGRATIONS; SqlitePlacesStore: cloud-places.sqlite3, PLACES_MIGRATIONS; SqliteJournal: operations-journal.sqlite3, JOURNAL_MIGRATIONS (ADR-030); SqliteBackupStore: backup.sqlite3, BACKUP_MIGRATIONS (ADR-031); SqliteAccountState: account.sqlite3 (ADR-032); SqliteUpdateState: updates.sqlite3 (ADR-033) + tests (incl. restarts with the built-in features)
 │       ├── journal.rs        The operation journal (ADR-030): Journal, JournalLink, JournalStore trait, startup cleanup of sotyware's own recorded temporary files + tests
 │       ├── account/          sotyware accounts and encrypted sync (ADR-032): mod.rs (AccountService, StateStore, the 20 commands), crypto.rs (envelopes, wraps, sealed boxes, recovery key, key proof, fingerprint), vault.rs (vault document, three-way merge), client.rs (HTTPS client, ring TLS), tests.rs (end to end with the service in process and several device profiles)

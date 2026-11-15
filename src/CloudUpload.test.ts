@@ -831,7 +831,7 @@ describe("navigation and lifecycle", () => {
   it("cancels a running batch when the browser is left", async () => {
     const { root, b, channel } = await started();
     await send(channel, fileEvent("upload-1", 1, 2, progressing(0, "a.jpg", "sending", 1)));
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(root.querySelector("section.browser")).toBeNull();
     expect(cancelCalls).toEqual(["upload-1"]);
   });
@@ -841,7 +841,7 @@ describe("navigation and lifecycle", () => {
     onUpload = () => reply.promise;
     const { b } = await opened();
     await click(b, "Upload files…");
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(cancelCalls).toEqual([]);
     reply.resolve(selection("upload-3", [uf(0, "a.jpg")]));
     await settle();
@@ -855,7 +855,7 @@ describe("navigation and lifecycle", () => {
     await settle();
     expect(cancelCalls).toEqual([]);
     await send(channel, finishedEvent("upload-1", 2, summary("completed", [done(0, "a.jpg")])));
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(cancelCalls).toEqual([]);
   });
 
@@ -874,7 +874,7 @@ describe("navigation and lifecycle", () => {
   it("starts fresh in another account's browser and drops the old batch's events", async () => {
     accounts = [account(), account({ id: "work", label: "Work", bucket: "work-bucket" })];
     const { root, b, channel } = await started([uf(0, "a.jpg")]);
-    await click(b, "← Back to accounts");
+    await click(b, "Back to accounts");
     expect(cancelCalls).toEqual(["upload-1"]);
     const work = root.querySelector<HTMLElement>('li[data-account="work"]')!;
     await click(work, "Open bucket");

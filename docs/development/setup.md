@@ -62,6 +62,13 @@ whenever the tray feature is on. `libayatana-appindicator3-dev` stays in the
 build list above; building without it has not been tried. The `.rpm` dependencies have not
 been inspected. The AppImage bundles the libraries.
 
+## macOS
+
+Xcode Command Line Tools, Rust and Node.js only; details, signing and
+notarization: [macos.md](macos.md#local-development-on-a-mac). No Mac is
+available on the development machine; macOS builds run on GitHub's hosted
+runners (`.github/workflows/macos.yml`).
+
 ## Windows 10 / 11
 
 Exercised on Windows 11 only (25H2, build 26200.9711, 2026-11-10); Windows 10 has

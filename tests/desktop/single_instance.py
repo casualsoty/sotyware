@@ -397,9 +397,11 @@ def _page_nodes(pid):
 
 
 def page_ready(pid):
-    """True once the dashboard has its operating mode (a Hide button or a status note)."""
-    roles = [r for r, *_ in _page_nodes(pid)]
-    return Atspi.Role.PUSH_BUTTON in roles or Atspi.Role.STATUS_BAR in roles
+    """True once the dashboard has its operating mode (the Overview's Hide button or
+    its no-tray status note). The sidebar's own buttons exist before that."""
+    nodes = _page_nodes(pid)
+    return any(r == Atspi.Role.PUSH_BUTTON and n == "Hide dashboard" for r, n, *_ in nodes) or any(
+        r == Atspi.Role.STATUS_BAR for r, *_ in nodes)
 
 
 def page_text(pid):
@@ -418,9 +420,38 @@ def checked(node):
     return node.get_state_set().contains(Atspi.StateType.CHECKED)
 
 
+def open_settings_tab(pid, name):
+    """Goes to Settings and one of its tabs (General, Features, About & updates),
+    the way a keyboard or screen-reader user would: the Settings link, then the tab."""
+    if not click_link(pid, "Settings"):
+        return False
+    for _ in range(20):
+        tab = next((node for r, n, _, node in _page_nodes(pid)
+                    if r == Atspi.Role.PAGE_TAB and n == name), None)
+        if tab is not None:
+            return Atspi.Action.do_action(tab, 0)
+        time.sleep(0.25)
+    return False
+
+
+def open_features(pid):
+    """Settings › Features, where the built-in features are switched since the redesign."""
+    return open_settings_tab(pid, "Features")
+
+
+def theme_radio(pid, name):
+    """The Appearance radio button `name` (System, Light, Dark) in Settings › General."""
+    return next((node for r, n, _, node in _page_nodes(pid)
+                 if r == Atspi.Role.RADIO_BUTTON and n == name), None)
+
+
 def example_feature(pid):
-    """The example feature's checkbox and the page text, once the list has loaded."""
+    """The example feature's checkbox and the page text, once the list has loaded.
+    Opens Settings › Features when the list is not shown."""
     box = page_checkboxes(pid).get(EXAMPLE_FEATURE)
+    if box is None and open_features(pid):
+        time.sleep(0.3)
+        box = page_checkboxes(pid).get(EXAMPLE_FEATURE)
     return box, page_text(pid)
 
 
@@ -765,7 +796,7 @@ page = wait_for(lambda: page_ready(tm.pid), 20)
 text = page_text(tm.pid) if page else ""
 check("12 tray mode: page shows the tray hint and a Hide button, no dashboard-only note",
       page and "reopen it any time from the system tray" in text and DASHBOARD_ONLY_TEXT not in text
-      and [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"],
+      and "Hide dashboard" in [n for n, _ in page_buttons(tm.pid)],
       f"text={text!r} buttons={[n for n, _ in page_buttons(tm.pid)]}")
 # Built-in features through the real capability and webview: list_features and
 # set_feature_enabled are allowed, and the example feature runs from startup.
@@ -796,20 +827,21 @@ check("12 tray mode: checking it again starts it", on,
 # Secret Service is needed. Then back to the overview, whose buttons are
 # unchanged.
 links = [n for n, _ in page_links(tm.pid)] if page else []
-check("12 tray mode: page has Overview and Cloud Storage navigation links",
-      links == ["Overview", "Cloud Storage"], f"links={links}")
+check("12 tray mode: the sidebar has the section links (no storage account yet)",
+      links == ["Overview", "Cloud Storage", "Backups", "Account", "Settings"], f"links={links}")
 to_cloud = page and click_link(tm.pid, "Cloud Storage") and wait_for(
     lambda: "No storage accounts yet" in page_text(tm.pid), 10)
 text = page_text(tm.pid) if page else ""
 check("12 tray mode: Cloud Storage shows its heading, empty state and Add account, no error",
       to_cloud and "Cloud Storage" in page_headings(tm.pid)
-      and [n for n, _ in page_buttons(tm.pid)] == ["Add account"]
+      and [n for n, _ in page_buttons(tm.pid)] == ["Add storage account", "Add account"]
       and "Could not" not in text and "could not be opened" not in text,
       f"headings={page_headings(tm.pid) if page else None} buttons={[n for n, _ in page_buttons(tm.pid)] if page else None} text={text!r}")
 back = to_cloud and click_link(tm.pid, "Overview") and wait_for(
-    lambda: [n for n, _ in page_buttons(tm.pid)] == ["Hide dashboard"], 10)
-check("12 tray mode: Overview link returns to the Hide button and features", back and example_feature(tm.pid)[0] is not None,
-      f"buttons={[n for n, _ in page_buttons(tm.pid)] if page else None}")
+    lambda: "Hide dashboard" in [n for n, _ in page_buttons(tm.pid)], 10)
+check("12 tray mode: Overview link returns to the Hide button and the summaries",
+      back and "Overview" in page_headings(tm.pid) and "Storage" in page_headings(tm.pid),
+      f"buttons={[n for n, _ in page_buttons(tm.pid)] if page else None} headings={page_headings(tm.pid) if page else None}")
 cloud_db = PROFILE.db("cloud-accounts.sqlite3")
 check("12 tray mode: the account database is created in the test profile, with no accounts",
       os.path.exists(cloud_db) and sqlite3.connect(f"file:{cloud_db}?mode=ro", uri=True)
@@ -853,14 +885,16 @@ text = page_text(do.pid) if page else ""
 check("13 dashboard-only: page shows the no-tray note, not the tray hint",
       page and DASHBOARD_ONLY_TEXT in text and "Closing it quits sotyware" in text
       and "from the system tray" not in text, f"text={text!r}")
+# On the Overview, before the feature checks leave it for Settings.
+buttons = [n for n, _ in page_buttons(do.pid)] if page else None
+no_hide = page and not click_button(do.pid, "Hide dashboard")
 listed = page and wait_for(lambda: example_feature(do.pid)[0] is not None, 10)
 box, text = example_feature(do.pid) if listed else (None, "")
 check("13 dashboard-only: features run too: example listed as running",
       listed and checked(box) and "Running" in text, f"text={text!r}")
-buttons = [n for n, _ in page_buttons(do.pid)] if page else None
 if can_click_hide:
     check("13 dashboard-only: page offers no Hide button, dashboard stays visible",
-          buttons == [] and not click_button(do.pid, "Hide dashboard") and viewable(do_win),
+          buttons is not None and "Hide dashboard" not in buttons and no_hide and viewable(do_win),
           f"buttons={buttons}")
 else:
     check("13 dashboard-only: page offers no Hide button, dashboard stays visible", None,
@@ -1007,6 +1041,11 @@ check("17 persistence: starts with the example feature running (saved as enabled
 off = page and switch_example(p.pid, False, "Disabled")
 check("17 persistence: unchecking disables it, no error shown", off,
       f"text={example_feature(p.pid)[1] if page else ''!r}")
+# The theme (ADR-035) is kept by the webview, not the database: choose Dark
+# in Settings › General now and look for it after the restart.
+dark_chosen = page and open_settings_tab(p.pid, "General") and wait_for(
+    lambda: theme_radio(p.pid, "Dark") is not None, 5) and Atspi.Action.do_action(
+    theme_radio(p.pid, "Dark"), 0) and wait_for(lambda: checked(theme_radio(p.pid, "Dark")), 5)
 quit_completely("17 persistence after disabling", p, log)
 check("17 persistence: the database stores the example feature as disabled",
       stored_example() is False, f"stored={stored_example()!r}")
@@ -1017,6 +1056,11 @@ check("17 persistence relaunch 1: a new process, example still disabled, checkbo
       f"text={example_feature(p.pid)[1] if page else ''!r}")
 check("17 persistence relaunch 1: no storage warning in the log",
       "feature preferences unavailable" not in read_log(log), read_log(log).strip())
+dark_kept = page and open_settings_tab(p.pid, "General") and wait_for(
+    lambda: theme_radio(p.pid, "Dark") is not None and checked(theme_radio(p.pid, "Dark")), 5)
+check("17 persistence relaunch 1: the theme chosen before quitting (Dark) is still chosen",
+      bool(dark_chosen) and bool(dark_kept) and not checked(theme_radio(p.pid, "System")),
+      f"chosen={bool(dark_chosen)} kept={bool(dark_kept)}")
 on = page and switch_example(p.pid, True, "Running")
 check("17 persistence relaunch 1: checking enables it, no error shown", on,
       f"text={example_feature(p.pid)[1] if page else ''!r}")

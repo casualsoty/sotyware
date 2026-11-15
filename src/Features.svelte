@@ -17,6 +17,15 @@
     stopping: "Stopping…",
   };
 
+  const STATE_TONES: Record<FeatureState, string> = {
+    registered: "",
+    disabled: "",
+    initializing: "info",
+    running: "success",
+    failed: "danger",
+    stopping: "info",
+  };
+
   let features = $state<FeatureInfo[] | null>(null);
   let storageError = $state<string | null>(null);
   let error = $state<string | null>(null);
@@ -66,6 +75,7 @@
 
 <section aria-labelledby="features-heading">
   <h2 id="features-heading">Features</h2>
+  <p class="muted small-text">Built-in parts of sotyware that run in the background. Your choice is remembered.</p>
   {#if features}
     {#if features.length === 0}
       <p>No built-in features.</p>
@@ -82,7 +92,7 @@
             />
             {feature.name}
           </label>
-          <span class="meta">{feature.version} · <span class="state">{STATE_LABELS[feature.state]}</span></span>
+          <span class="meta">{feature.version} · <span class="state badge {STATE_TONES[feature.state]}">{STATE_LABELS[feature.state]}</span></span>
           <p class="description">{feature.description}</p>
           {#if feature.error}
             <p class="feature-error">{feature.error}</p>
@@ -103,52 +113,56 @@
 </section>
 
 <style>
-  section {
-    margin-top: 2rem;
-  }
-
   h2 {
-    font-size: 1.1em;
+    margin-bottom: var(--space-1);
   }
 
   ul {
     list-style: none;
     padding: 0;
+    margin: var(--space-4) 0 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
 
   li {
-    padding: 0.5rem 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: var(--space-1) var(--space-4);
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  li:last-child {
+    border-bottom: none;
+  }
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-weight: var(--weight-medium);
   }
 
   .meta {
-    margin-left: 0.5rem;
-    color: #6b6b73;
-    font-size: 0.9em;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    justify-self: end;
   }
 
   .description {
-    margin: 0.25rem 0 0 1.6rem;
-    font-size: 0.9em;
-  }
-
-  .feature-error,
-  .error {
-    color: #c62828;
+    grid-column: 1 / -1;
+    margin: 0 0 0 calc(15px + var(--space-3));
+    font-size: var(--text-sm);
+    color: var(--text-muted);
   }
 
   .feature-error {
-    margin: 0.25rem 0 0 1.6rem;
-    font-size: 0.9em;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .meta {
-      color: #a0a0a8;
-    }
-
-    .feature-error,
-    .error {
-      color: #ef7070;
-    }
+    grid-column: 1 / -1;
+    margin: var(--space-1) 0 0 calc(15px + var(--space-3));
+    font-size: var(--text-sm);
+    color: var(--danger);
   }
 </style>

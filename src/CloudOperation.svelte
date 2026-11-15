@@ -17,6 +17,7 @@
   } from "./cloudFiles";
   import { describeOperationError, describeOperationFailure } from "./cloudMessages";
   import { formatSize, shownName } from "./format";
+  import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
   // Copy, move, rename, delete and restore (ADR-026): Rust plans the
@@ -432,7 +433,7 @@
       <ul class="plan-items">
         {#each p.items.slice(0, 100) as item (item.index)}
           <li class:problem={item.problem !== null} class:conflict={item.conflict !== null}>
-            <span aria-hidden="true">{item.folder ? "📁" : "📄"}</span>
+            <span class="item-icon" aria-hidden="true"><Icon name={item.folder ? "folder" : "file"} size={14} /></span>
             <strong class="key">{shownName(item.name)}</strong>
             {#if item.problem === null}
               <span class="detail">
@@ -546,25 +547,27 @@
 
 <style>
   .operation {
-    margin: 0.75rem 0;
-    padding: 0.5rem 1rem;
-    border-left: 3px solid #1565c0;
-    background: rgb(0 0 0 / 4%);
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    font-size: var(--text-sm);
   }
 
   .operation.failed {
-    border-left-color: #c62828;
+    border-color: var(--danger-border);
   }
 
   .operation p,
   .review p {
-    margin: 0.25rem 0;
+    margin: var(--space-1) 0;
     overflow-wrap: anywhere;
   }
 
-  progress {
-    width: 100%;
-    max-width: 28rem;
+  .operation progress {
+    margin: var(--space-2) 0;
   }
 
   .key {
@@ -573,93 +576,76 @@
   }
 
   .note {
-    color: #4a4a52;
-    font-size: 0.92em;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
   .note.warning {
-    color: #b71c1c;
-    font-weight: 600;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text);
+    font-weight: var(--weight-medium);
+    background: var(--warning-soft);
+    border: 1px solid var(--warning-border);
+    border-radius: var(--radius-md);
   }
 
   .plan-items,
   .op-items {
-    margin: 0.5rem 0;
-    padding-left: 1.1rem;
+    margin: var(--space-3) 0;
+    padding: var(--space-2) var(--space-3) var(--space-2) var(--space-6);
     max-height: 16rem;
     overflow: auto;
+    font-size: var(--text-sm);
+    background: var(--surface-2);
+    border-radius: var(--radius-md);
+  }
+
+  .plan-items li,
+  .op-items li {
+    padding: 2px 0;
   }
 
   .plan-items li.problem {
-    color: #6b6b73;
+    color: var(--text-muted);
   }
 
   .plan-items li.conflict .detail {
-    color: #8a5300;
+    color: var(--warning);
   }
 
   .detail {
-    margin-left: 0.4rem;
-    font-size: 0.92em;
+    margin-left: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
   }
 
   .failures {
-    font-size: 0.9em;
-    color: #b71c1c;
+    font-size: var(--text-xs);
+    color: var(--danger);
   }
 
   fieldset.conflicts {
-    border: 1px solid rgb(0 0 0 / 15%);
-    border-radius: 4px;
-    margin: 0.5rem 0;
+    margin: var(--space-3) 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
   }
 
   fieldset.conflicts label {
-    display: block;
-    margin: 0.2rem 0;
-  }
-
-  .actions {
     display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin: 0.5rem 0;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-1) 0;
+    font-size: var(--text-sm);
   }
 
-  button {
-    font: inherit;
-    padding: 0.4rem 0.9rem;
-    cursor: pointer;
+  .operation .actions {
+    margin-top: var(--space-2);
   }
 
-  button.primary {
-    font-weight: 600;
-  }
-
-  button.danger {
-    background: #c62828;
-    color: #fff;
-    border: 1px solid #b71c1c;
-  }
-
-  .error {
-    color: #b71c1c;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .operation {
-      background: rgb(255 255 255 / 6%);
-      border-left-color: #90caf9;
-    }
-
-    .note {
-      color: #b8b8c0;
-    }
-
-    .note.warning,
-    .failures,
-    .error {
-      color: #ef9a9a;
-    }
+  .item-icon {
+    display: inline-flex;
+    vertical-align: -2px;
+    color: var(--text-subtle);
   }
 </style>

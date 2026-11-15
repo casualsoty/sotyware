@@ -33,7 +33,7 @@ update source is configured; see [updates.md](updates.md#flow)).
 | `list_features`, `set_feature_enabled` | `features/mod.rs` | The frontend's only access to features |
 | `Example` | `features/example.rs` | The example feature |
 | `BackupScheduler` | `features/backup.rs` | Starts and stops the backup scheduler through `backup::SCHEDULER_LINK`, set in `run()` before the event loop (without it, as in unit tests, start and stop do nothing) |
-| `src/features.ts`, `src/Features.svelte` | frontend | Typed command wrappers that validate responses; the minimal Features section on the dashboard |
+| `src/features.ts`, `src/Features.svelte` | frontend | Typed command wrappers that validate responses; the Features list in Settings › Features (ADR-035) |
 
 ## Registration
 

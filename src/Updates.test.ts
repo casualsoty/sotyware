@@ -21,7 +21,10 @@ function status(over: Partial<UpdateStatus> = {}): UpdateStatus {
     available: null,
     postponed: false,
     error: null,
+    errorKind: null,
     blockedBy: [],
+    installed: null,
+    usesInstaller: true,
     ...over,
   };
 }
@@ -54,6 +57,8 @@ beforeEach(() => {
         return null;
       case "cancel_update":
         return true;
+      case "restart_after_update":
+        return null;
       default:
         return null;
     }
@@ -132,12 +137,22 @@ describe("Updates", () => {
     answers["check_for_update"] = () => {
       throw { kind: "integrity", message: "the update information is not signed by sotyware's release key" };
     };
-    current = status({ lastCheckMs: 5, error: "the update information is not signed by sotyware's release key" });
+    current = status({ lastCheckMs: 5, error: "the update information is not signed by sotyware's release key", errorKind: "signature" });
     button(root, "Check for updates").click();
     await settle();
     const alerts = [...root.querySelectorAll('[role="alert"]')].map((a) => a.textContent ?? "");
     expect(alerts.some((a) => a.includes("not signed by sotyware's release key"))).toBe(true);
+    expect(alerts.some((a) => a.includes("The update is not signed by sotyware's release key."))).toBe(true);
+    expect(text(root)).toContain("Last check failed");
     expect(hasButton(root, "Update now")).toBe(false);
+  });
+
+  it("names an unreachable update server as a network problem", async () => {
+    current = status({ lastCheckMs: 5, error: "the update server could not be reached: HTTP 404", errorKind: "network" });
+    const root = await render();
+    const alert = root.querySelector('[role="alert"]')?.textContent ?? "";
+    expect(alert).toContain("The update server could not be reached.");
+    expect(alert).toContain("HTTP 404");
   });
 
   it("installs only on click, with progress, and can be cancelled", async () => {
@@ -168,8 +183,13 @@ describe("Updates", () => {
     button(root, "Update now").click();
     await settle();
     const ch = channels[0]!;
-    await send(ch, { type: "failed", message: "the downloaded update does not match its signed description: SHA-256 x, expected y" });
+    await send(ch, {
+      type: "failed",
+      kind: "integrity",
+      message: "the downloaded update does not match its signed description: SHA-256 x, expected y",
+    });
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("nothing was installed");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("The downloaded update failed verification.");
     button(root, "Try again").click();
     await settle();
     const again = channels[1]!;
@@ -177,8 +197,40 @@ describe("Updates", () => {
     expect(text(root)).toContain("downloaded and verified");
     await send(again, { type: "installing" });
     expect(text(root)).toContain("sotyware closes and the installer starts the new version");
+    // Windows: the installer ends sotyware here. Elsewhere Rust reports the
+    // installation and the status names the installed version.
+    current = status({ lastCheckMs: 5, available: AVAILABLE, installed: "0.2.0", usesInstaller: false });
     await send(again, { type: "installed" });
-    expect(text(root)).toContain("takes effect when sotyware starts again");
+    expect(text(root)).toContain("sotyware 0.2.0 is installed.");
+    expect(text(root)).toContain("Restart required");
+    expect(hasButton(root, "Update now")).toBe(false);
+  });
+
+  it("restarts into an installed update only on click, and not while something runs", async () => {
+    current = status({ lastCheckMs: 5, available: AVAILABLE, installed: "0.2.0", usesInstaller: false, blockedBy: ["a download"] });
+    const root = await render();
+    expect(button(root, "Restart now").disabled).toBe(true);
+    expect(text(root)).toContain("Wait until a download has finished, then restart.");
+    expect(calls).not.toContain("restart_after_update");
+    unmount(app!);
+    app = undefined;
+    document.body.innerHTML = "";
+    current = status({ lastCheckMs: 5, available: AVAILABLE, installed: "0.2.0", usesInstaller: false });
+    const fresh = await render();
+    button(fresh, "Restart now").click();
+    await settle();
+    expect(calls).toContain("restart_after_update");
+    expect(text(fresh)).toContain("Restarting…");
+  });
+
+  it("says how the update is installed on each platform", async () => {
+    current = status({ lastCheckMs: 5, available: AVAILABLE, usesInstaller: false });
+    const root = await render();
+    button(root, "Update now").click();
+    await settle();
+    await send(channels[0]!, { type: "installing" });
+    expect(text(root)).toContain("Installing the new version…");
+    expect(text(root)).not.toContain("the installer starts");
   });
 
   it("does not offer to update while a transfer or backup runs", async () => {
@@ -222,6 +274,15 @@ describe("Updates", () => {
     expect(parseUpdateStatus(status({ available: AVAILABLE })).available).toEqual(AVAILABLE);
     expect(() => parseInstallEvent({ type: "progress", downloaded: "x", total: null })).toThrow();
     expect(() => parseInstallEvent({ type: "other" })).toThrow();
-    expect(parseInstallEvent({ type: "failed", message: "m" })).toEqual({ type: "failed", message: "m" });
+    expect(() => parseInstallEvent({ type: "failed", message: "m" })).toThrow();
+    expect(() => parseInstallEvent({ type: "failed", kind: "unknown", message: "m" })).toThrow();
+    expect(parseInstallEvent({ type: "failed", kind: "signature", message: "m" })).toEqual({
+      type: "failed",
+      kind: "signature",
+      message: "m",
+    });
+    expect(() => parseUpdateStatus({ ...status(), errorKind: "other" })).toThrow();
+    expect(() => parseUpdateStatus({ ...status(), usesInstaller: "yes" })).toThrow();
+    expect(() => parseUpdateStatus({ ...status(), installed: 1 })).toThrow();
   });
 });

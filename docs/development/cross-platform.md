@@ -1,21 +1,26 @@
 # Cross-platform development
 
-Code targets: **Windows and Linux desktops**; every change must keep both
-building and working. This is not the release support scope: the first
-release targets Windows 11 only, and Windows 10 and Linux are not validated
-([release.md](release.md#support-scope)). macOS is not a target,
-although the single-instance dependency is also enabled for it (see below).
+Code targets: **Windows, Linux and macOS desktops**; every change must keep
+all three building and working (macOS since ADR-037; it is compiled and
+tested only on GitHub's macOS runners, [macos.md](macos.md)). This is not
+the release support scope: the first release targets Windows 11 only, and
+Windows 10, Linux and macOS are not validated
+([release.md](release.md#support-scope)).
 Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
 `run()` is Tauri template boilerplate.
 
 ## Rules
 
-- **Prefer cross-platform Tauri APIs.** All current code uses them. The one
-  `#[cfg(target_os = "linux")]` in sotyware's own source is
-  `tray::unavailable_reason()` (and its tests): only Linux has tray errors that
-  mean "no tray host", and they are typed by the Linux-only `ksni` and `zbus`
-  crates. Keep platform checks there instead of spreading them through the
-  lifecycle code; the rest of the code sees only the `OperatingMode`.
+- **Prefer cross-platform Tauri APIs.** All current code uses them. Platform
+  checks in sotyware's own source are few and kept where the difference is:
+  `tray::unavailable_reason()` (only Linux has tray errors that mean "no
+  tray host"), the credential store backends in `cloud/keyring.rs` (one per
+  OS), the macOS menu bar and Dock click (`app_menu.rs`, `RunEvent::Reopen`
+  in `lib.rs`), and `cfg!(windows)` for whether an installer finishes an
+  update (`updates.rs`). The rest of the code sees only the
+  `OperatingMode`. Keep pure decisions in plain functions so every
+  platform's tests check them (as `macos_kind` and `app_menu`'s
+  `MenuAction` are tested on Linux too).
 - **Gate desktop-only code twice, as the single-instance plugin is gated:** in
   `Cargo.toml` with
   `[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]`,
@@ -31,6 +36,13 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
   messages and in [the status document](../status/status.md).
 
 ## Platform differences that affect current code
+
+macOS (ADR-037) behaves like Windows' tray mode: always a tray (menu bar)
+icon, close hides, plus a menu bar with Quit ⌘Q and the Edit menu the
+webview needs for ⌘C/⌘V, and a Dock click shows the dashboard. Webview
+WKWebView; credentials in the login keychain; single instance through a
+Unix socket; builds on a Mac only, one per architecture. Details:
+[macos.md](macos.md#what-is-mac-specific).
 
 | Area | Windows | Linux |
 | --- | --- | --- |

@@ -1576,13 +1576,27 @@ the stored floor and postponing, the plugin's download with every way a
 package can differ from the signed manifest, cancelling a stalled download,
 and a manifest and installers signed once by the real `tauri signer sign
 --app-version` (`scripts/fixtures/update/`, throwaway key, public half
-only). `scripts/update-manifest.test.mjs` checks the release tool against
-the same fixture and keys made with Node's crypto. `src/Updates.test.ts`
-covers the panel with mocked commands and channels.
+only). For GitHub Releases (ADR-036) it adds a local server that answers
+like GitHub (`releases/latest/download/<asset>` → the tag's URL → an asset
+store), a release published between the manifest and signature requests
+(fetched once more, then refused), redirect loops and a redirect to plain
+HTTP (refused), a missing release (HTTP 404 named), every failure's kind,
+the restart rule, the key file's parsing and that `MANIFEST_URL` is the
+repository's, and the real-CLI fixture `scripts/fixtures/update-github/`
+(a `latest.json` for all seven platforms made with `release.yml`'s own
+commands; every platform's entry, signature and SHA-256 verified).
+`scripts/update-manifest.test.mjs` checks the release tool against both
+fixtures and keys made with Node's crypto: every platform kind, the GitHub
+asset-name rule, `--require` (exactly the platforms built), `--base-url`
+(URLs under the tag's folder) and `check-signature`. `src/Updates.test.ts`
+covers the panel (error kinds, restart, per-platform wording) and
+`src/App.test.ts` the notification, with mocked commands and channels.
 
-Not covered by any test: installing an update, the Windows installer
-restarting sotyware, data surviving an update (needs two signed release
-builds; [release.md](release.md#updates)).
+Not covered by any test: installing an update on any platform, the Windows
+installer or `request_restart` starting the new version, data surviving an
+update (needs two signed releases;
+[release.md](release.md#testing-updates-locally)), `release.yml` itself
+(never run: no key, private repository).
 
 ## Cloud Storage UI end-to-end test
 
@@ -1810,8 +1824,8 @@ official mocks (`mockWindows`, `mockIPC` from `@tauri-apps/api/mocks`) in place 
 the Rust side. The mocked Rust side answers `operating_mode` with `"tray"` unless
 a test says otherwise. It checks that:
 
-- the page asks for the mode once on mount and makes no other call (its
-  Features and Updates panels ask `list_features` and `update_status`);
+- the shell asks for the mode, the accounts (sidebar), the backups (Overview
+  summary) and the update status once each on mount, and nothing else;
 - in tray mode, "Hide dashboard" sends exactly `plugin:window|hide` for window
   `main` once per click, a failing or denied call shows the error in a
   `role="alert"`, and a successful retry clears it;
@@ -1820,7 +1834,23 @@ a test says otherwise. It checks that:
   closing it quits; there is no button and no hide call;
 - if `operating_mode` fails or returns an unknown value, the error is shown and
   there is no Hide button;
-- `main.ts` throws without `#app`.
+- `main.ts` throws without `#app`, and mounts the Overview into it;
+- the update notification shows once for an available version, installs
+  only on its **Update** button, is disabled while a transfer runs, goes
+  away with **Later** (saved) or close (this session), offers **Restart
+  now** after an in-place install, and **Details** leads to Settings › About
+  & updates (where it is not repeated);
+- Ctrl/⌘+3 and Ctrl/⌘+, switch sections, plain keys do not; navigation
+  moves focus to the page's `<h1>`; the theme chosen in Settings applies
+  `data-theme`, is saved in `localStorage` and asks the window to follow
+  (`plugin:window|set_theme`); the Settings tabs follow the arrow keys.
+
+`src/theme.test.ts` checks the theme preference against a stub and a
+throwing storage; `src/navigation.test.ts` the shell's shortcut mapping
+and the colour meaning of every connection-check result.
+`src/CloudStorage.test.ts` also opens a bucket from the sidebar (and the
+Cloud Storage link closes it) and adds an account from the sidebar's **Add
+storage account**.
 
 `src/Features.test.ts` mounts `Features.svelte` (and once the whole `App`) with
 a mocked registry. It checks that the list is read once on mount and shown in
@@ -1842,9 +1872,11 @@ side answers `list_features` with no features and no storage error.
 
 `src/CloudStorage.test.ts` mounts `CloudStorage.svelte` (and the whole `App`
 for navigation) with a mocked Rust side that plays the six cloud commands. It
-checks the navigation (the dashboard opens on the Overview with no cloud
-command sent and the only button "Hide dashboard"; the "Cloud Storage" link
-shows the section and back); the empty state with its Add account action;
+checks the navigation (the dashboard opens on the Overview with only the
+sidebar's account list requested and "Hide dashboard" as the page header's
+one button; the sidebar's section links; the "Cloud Storage" link shows the
+section and back; an account opened from the sidebar; the sidebar's Add
+storage account); the empty state with its Add account action;
 the list with provider, bucket, region, endpoint and status, also for two
 accounts at the same provider, each with its own actions; a stored account
 that no longer validates; an unopenable account database (no actions) and a
@@ -2356,9 +2388,9 @@ GitHub Actions, in `.github/workflows/`. The repository is **private on GitHub
 Free**, so hosted-runner time comes out of a small monthly allowance (see
 [GitHub Free budget](#github-free-budget)). Only the headless workflow runs
 automatically; the desktop tests and the release build run only when started
-by hand. Nothing in CI signs, uploads artifacts, publishes a release, runs on a
-schedule, uses secrets, or uses a runner other than standard `ubuntu-latest`
-and `windows-latest`; only the manual `release-build.yml` builds installers.
+by hand. Only `release.yml` (on a tag) uses secrets, uploads artifacts and
+publishes a release; `macos.yml` uses the Apple secrets when they exist and
+runs on `macos-15` and `macos-15-intel`. Nothing runs on a schedule.
 
 | Workflow | Trigger | Runner | Runs | Category |
 | --- | --- | --- | --- | --- |
@@ -2368,6 +2400,8 @@ and `windows-latest`; only the manual `release-build.yml` builds installers.
 | `desktop-virtual.yml` | **manual only** (`workflow_dispatch`) | `ubuntu-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:virtual` | B. virtual display: **not a real Linux desktop** |
 | `desktop-windows-isolated.yml` | **manual only**, **experimental** | `windows-latest` | `npm run check:rfd-patch`, `npm run check:desktop-isolation`, `npm run build:test-profile` (ADR-027), `npm run test:desktop:windows:isolated` | B″. private desktop |
 | `release-build.yml` | **manual only**; passed on GitHub (runs 43643326406 at `369d0cb` and 43646814979 at `f9a0c71`, 2026-11-14) | `windows-latest` | `npm ci`, `cargo fetch --locked`, rfd and release-binary guards and their self-tests, `npm run build:release` (LTO release binary with the path remaps of ADR-028, `beforeBundleCommand` guard, MSI + NSIS), then each installer unpacked without installing (`msiexec /a`, `7z x`) and its `sotyware.exe` compared with the checked binary (equal apart from the bundle-type marker Tauri patches in per bundle) and checked with `--local-paths`; then `npm run check:icons`, `npm run test:installer-icons` and the installer icon check on the real artifacts (MSI `ProductIcon` and shortcuts, MSI image, NSIS setup program and reconstructed uninstaller, every `sotyware.exe`; [icons.md](icons.md#installer-icons)). Only with the secret `TAURI_SIGNING_PRIVATE_KEY` (+ password), the variable `SOTYWARE_UPDATE_PUBKEY` and the input `update_base_url`: both installers and an update manifest signed with `tauri signer sign --app-version` and verified by `scripts/update-manifest.mjs` (ADR-033; never run: no key exists). Nothing uploaded or published | release artifacts (no install) |
+| `macos.yml` | **manual**, or called by `release.yml` with `package: true` (ADR-037; never run yet) | `macos-15` (Apple Silicon) + `macos-15-intel` | per architecture: `npm ci`, check, build, `cargo fetch --locked`, rfd guard, fmt, clippy (default and test-profile), `npm run test:headless`, the OS credential store round trip in a keychain made for the run; with `package`: `npm run build:release`, binary and `Info.plist` checks, Developer ID signing and notarization when the Apple secrets exist ([macos.md](macos.md#ci)) | A. headless + release artifacts |
+| `release.yml` | **tag `vX.Y.Z`**, or manual on a tag (dry run by default; ADR-036; never run yet: no key, private repository) | `ubuntu-latest`, `ubuntu-22.04` + the called workflows | version/tag check, signing secret against `update-key.pub`, public repository check; `ci.yml`; `release-build.yml` (upload); Linux AppImage/deb/rpm; `macos.yml` (package); then sign, write and verify `latest.json`, draft → pre-release → public download verified → latest ([release.md](release.md#publishing-a-release)) | release |
 | — | not in CI | — | `npm run test:desktop:windows` and the [manual checklist](#manual-check-real-desktop-linux-or-windows) | C. real desktop |
 
 Start a manual workflow from the repository's **Actions** tab (select the
@@ -2383,6 +2417,10 @@ gh workflow run desktop-windows-isolated.yml --ref main
 
 ```bash
 gh workflow run release-build.yml --ref main
+```
+
+```bash
+gh workflow run macos.yml --ref main -f package=false
 ```
 
 ### Automatic headless workflow (`ci.yml`)
@@ -2465,7 +2503,7 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   gir1.2-atspi-2.0 at-spi2-core dbus-x11`). `virtual.sh` already fails on any
   FAIL or SKIP, a missing dependency (exit 2) and a display that does not start
   (exit 3). The workflow additionally requires the summary line
-  `119 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
+  `139 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
   in the same commit that adds or removes a check; it stayed at 92 when
   `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
   run summary, and fails on anything else. It is virtual-display testing, not
@@ -2507,8 +2545,10 @@ These figures change; re-check them before relying on them.
   storage (shared with GitHub Packages); **10 GB** cache per repository. The
   allowance resets at the start of each billing cycle.
 - **Per-minute rates of standard runners:** Linux 2-core x64 **$0.006**,
-  Windows 2-core **$0.010** (Windows costs about 1.7 times Linux), macOS $0.062
-  (not used). $12 is therefore about 2,000 Linux minutes, or 1,200 Windows
+  Windows 2-core **$0.010** (Windows costs about 1.7 times Linux), macOS
+  $0.062 (about ten times Linux: used only by the manual `macos.yml` and by
+  `release.yml`; one run of both architectures with packaging is likely
+  $3–5 at a cold cache, an estimate, not measured). $12 is therefore about 2,000 Linux minutes, or 1,200 Windows
   minutes, or any mix. The pages read do not state how a job's time is rounded.
 - **When the allowance is used up:** without a payment method on file, "usage is
   blocked once you consume the included compute usage" until the next cycle.
@@ -2551,9 +2591,11 @@ Cache size: the repository's **Actions → Caches** page.
   GPU rendering, screen readers. The automatic jobs never start sotyware.
 - The Windows tray, tray menu, left click and Quit (only `windows.ps1` on a real
   desktop, by hand).
-- Windows 10, macOS, release builds with LTO in the automatic jobs (only the
-  manual workflows build `--release`), installers (`.msi`, NSIS, `.deb`, `.rpm`,
-  AppImage), code signing.
+- Windows 10, macOS on a real Mac (only hosted runners, by hand), release
+  builds with LTO in the automatic jobs (only the manual and release
+  workflows build `--release`), installing any package (`.msi`, NSIS,
+  `.deb`, `.rpm`, AppImage, `.dmg`), Authenticode signing, installing an
+  update.
 - Real Linux desktops: the virtual-display workflow uses Xvfb, openbox and a
   stub tray host.
 

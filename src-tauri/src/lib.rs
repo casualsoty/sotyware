@@ -13,6 +13,10 @@
 //! In both modes only one instance runs: launching the app again shows the existing
 //! dashboard (via `tauri-plugin-single-instance`) and the new process exits.
 //!
+//! macOS (ADR-037) is always tray mode (a menu bar icon). It also has a menu
+//! bar (`app_menu`: About, Hide, Quit, Edit, Window), and clicking the Dock
+//! icon shows the dashboard (`RunEvent::Reopen`).
+//!
 //! Built-in features (`features`) are registered when the app is built, started in
 //! `setup` once the mode is known (in both modes), and stopped when the process
 //! exits. Whether each one starts comes from the stored feature preferences
@@ -33,6 +37,7 @@
 //! event loop. The Tauri handlers below only wire them to the runtime.
 
 pub(crate) mod account;
+mod app_menu;
 pub(crate) mod backup;
 pub mod cloud;
 mod features;
@@ -225,6 +230,13 @@ fn on_second_launch(app: &impl AppControl) {
     app.show_dashboard();
 }
 
+/// What a click on the Dock icon does (macOS `RunEvent::Reopen`): the
+/// hidden dashboard comes back, as from the tray's Open Dashboard.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn on_reopen(app: &impl AppControl) {
+    app.show_dashboard();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // A test-profile build (ADR-027) checks its profile before anything else
@@ -282,6 +294,14 @@ pub fn run() {
         // frontend an `updater:` permission; the page uses sotyware's own
         // update commands, which verify a signed manifest first.
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    // The menu bar a Mac app is expected to have; its Quit goes through
+    // `AppControl::quit` like the tray's (app_menu.rs, ADR-037).
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .menu(app_menu::build)
+            .on_menu_event(app_menu::handle_menu_event);
     }
 
     let app = builder
@@ -377,7 +397,8 @@ pub fn run() {
             updates::check_for_update,
             updates::install_update,
             updates::cancel_update,
-            updates::postpone_update
+            updates::postpone_update,
+            updates::restart_after_update
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -625,6 +646,9 @@ pub fn run() {
         // is not a user choice, so no preference changes. Then wait for a save
         // in progress and refuse new ones, so none is cut off halfway.
         RunEvent::Exit => release_resources(app),
+        // The Dock icon was clicked (macOS).
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => on_reopen(app),
         _ => {}
     });
 }
@@ -875,6 +899,13 @@ mod tests {
         assert_eq!(*app.calls.borrow(), ["show_dashboard"]);
     }
 
+    #[test]
+    fn a_dock_click_only_shows_the_dashboard() {
+        let app = RecordingApp::default();
+        on_reopen(&app);
+        assert_eq!(*app.calls.borrow(), vec!["show_dashboard"]);
+    }
+
     fn read_json(path: &str) -> serde_json::Value {
         let full = format!("{}/{path}", env!("CARGO_MANIFEST_DIR"));
         let text = std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full}: {e}"));
@@ -927,7 +958,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
         assert_eq!(
             cap["permissions"],
@@ -1008,7 +1039,10 @@ mod tests {
                 "allow-check-for-update",
                 "allow-install-update",
                 "allow-cancel-update",
-                "allow-postpone-update"
+                "allow-postpone-update",
+                "allow-restart-after-update",
+                // The theme picker (ADR-035) asks the window to follow it.
+                "core:window:allow-set-theme"
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

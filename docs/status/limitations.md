@@ -811,24 +811,74 @@ server only; no real provider was asked.
 - **Losing the recovery key and every enrolled device** makes the vault
   unrecoverable by design; storage data is unaffected.
 
-## Updates (ADR-033)
+## Updates (ADR-033, ADR-036)
 
-- **Switched off in release builds:** no release signing key and no update
-  server exist (`updates::PRODUCTION` is `None`); the Overview says updates
-  are not set up. Steps to turn them on:
-  [release.md](../development/release.md#updates).
-- **No update was ever installed:** download, verification and refusal
-  are tested against a local server with the plugin on Tauri's mock
-  runtime; starting the Windows installer, the restart and that the data
-  folder and credentials survive are not tested.
+- **Not usable yet, for two reasons:** `src-tauri/update-key.pub` holds no
+  public key (no release key exists), and **the repository is private**:
+  GitHub serves the assets of a private repository only to signed-in
+  clients, so no installation could download `latest.json`. `release.yml`
+  refuses to publish until the repository is public (or releases go to a
+  public repository, [release.md](../development/release.md#github-releases)).
+  Release builds say updates are not set up.
+- **No update was ever installed, and `release.yml` never ran:** download,
+  verification and refusal are tested against local servers (one behaving
+  like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
+  release commands were rehearsed locally with the real Tauri CLI and a
+  throwaway key; starting the Windows installer, the in-place replacement
+  on macOS and Linux, `request_restart` starting the new version and the
+  data surviving are not tested.
 - **The first manifest a fresh installation sees sets its floor;** before
   that any validly signed, newer manifest is accepted. Manifests do not
-  expire, so a server (or someone between it and the user, without the key)
+  expire, so GitHub (or someone between it and the user, without the key)
   can withhold an update.
-- **Off Windows** the plugin installs without ending sotyware; the new
-  version runs from the next start (Linux is not a release target).
-- **No delta updates, no background download:** the whole installer is
-  downloaded when the user clicks Update now.
+- **The manifest and its signature are two requests;** a release published
+  between them is handled by fetching both once more, a second mismatch is
+  reported as a signature failure.
+- **Linux deb and rpm updates** run `dpkg -i`/`rpm -U` through `pkexec` or
+  a graphical `sudo`, which needs a polkit agent on the desktop; never tried.
+  The AppImage needs its file to be writable.
+- **macOS updates** swap `sotyware.app` in place; in a folder the user may
+  not write (`/Applications` for a standard user) the system asks for an
+  administrator's password. Never tried.
+- **No delta updates, no background download:** the whole package is
+  downloaded when the user clicks Update.
+
+## macOS (ADR-037)
+
+- **Never run on a Mac a person used.** The macOS code compiles and is
+  tested only on GitHub's hosted runners, and `macos.yml` has not run yet
+  (it needs the maintainer to start it); the macOS-only lines (`apple-native-keyring-store`
+  calls, the menu bar wiring, `RunEvent::Reopen`) were never compiled on
+  the development machine, which has no Mac and no cross toolchain.
+- **No signing or notarization yet:** no Developer ID certificate exists.
+  Unsigned builds are blocked by Gatekeeper when downloaded and are left
+  out of releases.
+- **Keychain prompts on unsigned builds:** the keychain ties an item's
+  access to the binary's signature, so every rebuild of an unsigned or
+  development build asks again.
+- **The menu bar icon is the coloured app icon,** not a monochrome
+  template image, so it does not follow the menu bar's light/dark tint.
+- **Minimum macOS 10.15 is declared, not tested;** only the runners'
+  versions (macOS 15) have run anything. Intel builds depend on GitHub's
+  `macos-15-intel` image, its last Intel one.
+- **File names from older HFS+ volumes** may be decomposed (NFD); object
+  keys keep the local name's exact bytes, so such a name and its composed
+  (NFC) spelling are different keys.
+
+## Dashboard (ADR-035)
+
+- **The theme is per webview profile:** it lives in the webview's
+  `localStorage`; clearing the webview data, a test profile or a new
+  computer starts from the system theme. It is not synced.
+- **WebKitGTK and native controls:** checkboxes and radio buttons keep the
+  GTK theme's look in dark mode on Linux.
+- **Seen only on WebKitGTK:** the redesign was looked at through the Linux
+  engine (screenshots of a preview with mocked data, and the real app on a
+  virtual display through AT-SPI). It has not been seen in WebView2 on
+  Windows or WKWebView on macOS, at another scaling, or with a screen
+  reader.
+- **The Windows desktop drivers were updated, not run** after the redesign
+  (`windows.ps1`, `windows-cloud-ui.ps1`).
 
 ## General
 
