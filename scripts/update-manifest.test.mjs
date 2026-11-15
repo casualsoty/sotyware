@@ -9,8 +9,9 @@
 //
 // Run: npm run test:update-manifest (node --test). No network, no key file.
 
+import { spawnSync } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, sign as edSign } from "node:crypto";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -72,6 +73,28 @@ describe("the Tauri CLI fixture", () => {
     assert.throws(() => verifyManifest({ bytes, signature: sig, publicKey: pub, artifactsDir: copy }), /en-US\.msi: signature does not match/);
     assert.throws(() => verifyManifest({ bytes, signature: sig, publicKey: pub, current: "0.2.0" }), /not newer/);
     assert.throws(() => verifyManifest({ bytes, signature: sig, publicKey: readPublicKey(testKey().pubkey) }), /another key/);
+  });
+
+  test("fails from the command line when started through a symlinked folder", (t) => {
+    // Node resolves the module's own path but not process.argv[1]; the
+    // tool must still run (and refuse what does not verify), never exit 0
+    // without having checked anything.
+    const link = join(mkdtempSync(join(work, "linked-")), "scripts");
+    try {
+      // A junction on Windows: no privilege needed, and Node resolves it
+      // like a symbolic link.
+      symlinkSync(here, link, process.platform === "win32" ? "junction" : "dir");
+    } catch (e) {
+      t.skip(`cannot create a directory link here: ${e.code}`);
+      return;
+    }
+    const tool = join(link, "update-manifest.mjs");
+    const bad = spawnSync(process.execPath, [tool, "verify", "--manifest", join(work, "missing.json"), "--pubkey", join(fixture, "test-key.pub")], { encoding: "utf8" });
+    assert.equal(bad.status, 1, `exit ${bad.status}: ${bad.stdout}${bad.stderr}`);
+    assert.match(bad.stderr, /missing\.json/);
+    const good = spawnSync(process.execPath, [tool, "verify", "--manifest", join(fixture, "sotyware-update.json"), "--pubkey", join(fixture, "test-key.pub")], { encoding: "utf8" });
+    assert.equal(good.status, 0, good.stderr);
+    assert.match(good.stdout, /manifest and signature verified/);
   });
 
   test("works from the command line", () => {

@@ -51,7 +51,7 @@
 // in src-tauri/update-key.pub) or the base64 line itself.
 
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -502,7 +502,22 @@ export function main(argv) {
   fail("usage: update-manifest.mjs create|verify|check-signature --pubkey <key> … | check-key | release-repository");
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+/** Whether this file is the program Node runs. Node gives the module's
+ * URL with symbolic links resolved but `process.argv[1]` as typed, so both
+ * are resolved: started through a symlinked folder, a plain comparison
+ * would do nothing and exit 0, a verification that silently passes. */
+function runAsProgram() {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (runAsProgram()) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (e) {
