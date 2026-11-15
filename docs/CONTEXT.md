@@ -915,6 +915,11 @@ the manual check on Windows 11, Windows 10, then real Linux desktops (including
 dashboard-only mode on vanilla GNOME; needs a VM, live session or Linux machine); record results in the
 [validation matrix](status/status.md#validation-matrix). See
 [roadmap.md](status/roadmap.md). Cloud storage next step (desktop driver runs of file management against the local servers; with approval, one Backblaze run per file operation; uploads at a real provider on Linux and Windows 10; still open for downloads: the UI at a real provider on Linux, Hetzner): [roadmap.md](status/roadmap.md#cloud-storage-after-the-proof-of-concept).
-Further local persistence (settings, other
-data), a feature-management UI, third-party plugins, sync and autostart are
-undecided ideas, not tasks.
+Production-readiness work of 2026-11-15 (storage reliability, backups,
+accounts and sync, updates, security review; nothing pushed, deployed or
+run at a provider): [journal](status/journal.md#final-assessment); next,
+with the maintainer's approval, hosted CI on this tree, desktop driver runs
+of the new pages, then the external gates (keys, certificates, hosting,
+email, provider access, an external review). Further local persistence
+(settings, other data), a feature-management UI, third-party plugins,
+background sync and autostart are undecided ideas, not tasks.

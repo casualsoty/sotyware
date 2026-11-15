@@ -17,8 +17,10 @@ another.
 
 ## Current milestone
 
-Phase A (audit and foundations) → see [Progress log](#progress-log) for where
-work stands.
+Phases A to H done as far as possible without external access (2026-11-15,
+last commit of the mission listed under [Commits](#commits)). Everything
+below is local: nothing was pushed, released, deployed or run at a real
+provider. See [Final assessment](#final-assessment).
 
 ## Baseline (2026-11-15, `7af4e3a`, WSL2)
 
@@ -209,6 +211,7 @@ Reliability scenarios the audit traced and their current behaviour:
 | --- | --- | --- | --- | --- |
 | 2026-11-15 | `7af4e3a` | WSL2 | `npm run test:headless` | Vitest 179 passed; Rust 412 passed, 27 ignored; guards ok |
 | 2026-11-15 | A3 change | WSL2 | `cargo test --lib`; `vitest run`; `npm run check`; fmt; clippy `-D warnings` | Rust 414 passed, 27 ignored; Vitest 179; 0 errors/warnings; clippy exit 0 |
+| 2026-11-15 | `51e347c` | WSL2 | `cargo test --lib -- --list`; `--ignored` Python recovery test | 522 tests listed (494 run, 28 opt-in ignored); recovery tool restored a snapshot byte-identically (1 passed) |
 | 2026-11-15 | `4896f78` + ADR-034 | native Windows 11 (build 26200), copy | `npm ci`; `npm run check`; `npm run test:headless`; `test:update-manifest`; clippy; server `cargo test`; after the fix `cargo test --locked` | check clean; guards ok; Vitest 213; update-manifest 8/8; clippy 0; server 5 + 20; Rust first did not start (0xC0000139), after ADR-034 480 passed, 0 failed, 28 ignored |
 | 2026-11-15 | Phase G | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `cargo fmt --check`; `cargo audit`; `npm audit`; `cargo build --release --locked` + strings check + release-binary guard | guards ok; Vitest 213; Rust 494 passed, 28 ignored; recorder 522 passed, 28 ignored; clippy 0/0; fmt clean; audits as in the threat model; release binary without overrides, guard ok |
 | 2026-11-15 | Phase F | WSL2 | `npm run test:headless`; clippy (default, test-profile); recorder tests; `test:update-manifest`; release-binary and isolation guard self-tests; profile helpers; `npm run check` | guards ok; Vitest 213; Rust 492 passed, 28 ignored (14 update tests; 2 mutants caught); recorder 520 passed, 28 ignored; update-manifest 8/8; guards 39/39 and 9/9; helpers 10 OK; clippy 0/0; check clean |
@@ -220,7 +223,19 @@ Reliability scenarios the audit traced and their current behaviour:
 
 ## Open defects and blockers
 
-None yet beyond the audit table.
+No known open defect. Found and fixed during the mission (each with a
+test): every object looked changed to the backup engine (timestamps of
+different precision), counts before content was known, deleted rows
+lingering in SQLite free pages, a non-atomic key rotation, an ignored 409
+in conflict resolution, a recursive spool cleanup, an unbounded manifest
+read, and the Windows test binary that could not start (ADR-034).
+
+Not verified (no defect known, but not run): the new pages through a
+desktop driver (Linux virtual display or Windows), a desktop run of a
+test-profile build with seven stores (the helpers' unit tests pass), the
+OS credential store with account secrets, a Windows release build and
+installers of this tree, any real provider, a deployed service, an
+installed update.
 
 ## External gates (cannot be completed autonomously)
 
@@ -236,9 +251,38 @@ None yet beyond the audit table.
   over.
 - External security review of the account service and the vault design.
 
+## Commits
+
+`a6eed80` docs (audit, threat model, designs), `53faad8` transfer-only
+downloads, `c2c149f` provider capabilities and conditional writes,
+`904f984` operation journal and recovery view, `6d65707` backups,
+`33263d4` account service, `ab5067f` desktop accounts and encrypted sync,
+`211b44a` updates, `4896f78` security review fixes, `51e347c` Windows test
+manifest (ADR-034), then this journal's final update. None pushed.
+
+## Final assessment
+
+| Area | State | Verified where | Missing for production |
+| --- | --- | --- | --- |
+| Storage reliability (B) | journal + recovery view, capability model, three integrity levels, conditional writes where established | WSL2 unit tests against in-process servers; Windows unit tests | a real-provider run per operation (needs authorization and an isolated bucket); desktop driver runs of the recovery view |
+| Backups and recovery (C) | incremental content-addressed backups, verification, retention, restore, recovery file, Python tool | in-process servers (two), Python tool byte-identical | an authorized real-provider DR test; Object Lock at a provider; desktop driver run |
+| Account service (D) | complete API, Argon2id, rotating tokens, lockout, backups | in process (WSL2 and Windows) | hosting, domain, TLS, email delivery, off-host backups, external security review, privacy notice |
+| Accounts and sync (E) | E2E-encrypted vault, recovery key, devices, rotation, conflicts | in-process service, several device profiles | the service above; OS credential store run with account secrets; desktop driver run |
+| Updates (F) | signed manifest + plugin, floor, SHA-256, install gate | test keys, local server, mock runtime, CLI-signed fixture (WSL2 and Windows) | release key, update server, compiled-in source, an installed N → N+1 update |
+| Security (G) | audits, permissions, spool, logs | WSL2; Windows unit tests | external review; re-audit per release |
+| Release | Windows 11 only | earlier hosted runs (`release-build.yml` at `82b17c6`) | code signing; this tree's hosted CI and release build; installation test |
+
+Honest summary: the code for every phase exists, is tested headless with
+the counts above on WSL2 and native Windows, and is documented; nothing of
+it is production-ready yet, because every remaining step needs something
+only the maintainer can provide or authorize (pushing for CI, keys,
+certificates, hosting, email, provider access, an external review).
+
 ## Next concrete task
 
-Phase G: security review: `cargo audit`/`npm audit` where available, the
-data folder's permissions on Linux (audit A9), logging review for secrets,
-threat-model status; then Phase H (production-readiness audit and the final
-report).
+With the maintainer's approval: push the branch so `ci.yml` (Linux and
+Windows), `isolation-guard.yml` and a manual `release-build.yml` run on
+this tree; then run the desktop drivers (test-profile builds) for the new
+pages; then the external gates above, in the order of
+[release.md](../development/release.md#updates) and
+[server.md](../development/server.md#external-gates).
