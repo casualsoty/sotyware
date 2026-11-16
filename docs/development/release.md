@@ -611,13 +611,17 @@ seen (screenshots for dialogs), and pass/fail.
    build refuses to start from a shortcut without its profile.)
 2. **First launch.** Start from the Start menu. Tray icon (in the
    hidden-icons flyout; the cube, legible on a light and a dark taskbar),
-   taskbar and title-bar icon, dashboard opens, close hides, tray Open Dashboard,
-   a second launch shows the existing window, tray Quit ends the process.
-   The profile folder now holds `preferences.sqlite3` (if a feature was
-   switched), `cloud-accounts.sqlite3`, `cloud-places.sqlite3` and
-   `EBWebView`. Add a test account with a throwaway key (a local test
+   taskbar icon, dashboard opens centred at half the primary screen's work
+   area (at least 900 × 540) with sotyware's own title bar (ADR-040; the
+   [manual title bar check](testing.md#manual-check-title-bar-and-window-placement-windows-11)),
+   its Close hides, tray Open Dashboard, a second launch shows the existing
+   window, tray Quit ends the process; started again, it opens where it was
+   left. The profile folder now holds `preferences.sqlite3` (if a feature was
+   switched), `cloud-accounts.sqlite3`, `cloud-places.sqlite3`,
+   `window-state.sqlite3`, `storage-usage.sqlite3` (both from versions after
+   0.1.0) and `EBWebView`. Add a test account with a throwaway key (a local test
    server works); check that it lands in Credential Manager under
-   `com.sotyware.desktop/cloud-account/<id>`; switch the example feature
+   `com.sotyware.desktop/cloud-account/<id>`; switch Scheduled backups
    off; add a favorite.
 3. **Upgrade from the previous version.** Start from a snapshot with the
    previous installer installed and used as in step 2, then install the new

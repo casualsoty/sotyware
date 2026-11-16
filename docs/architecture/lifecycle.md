@@ -52,7 +52,7 @@ delays the logout.
    and kept for the dashboard, and the features use their defaults
    ([features.md](features.md#persistence)). A second instance never gets here.
 5. `app.run(...)` starts the event loop. On its first event (`Ready`), Tauri
-   creates window `main` from `tauri.conf.json` (`visible: true`), with the
+   creates window `main` from `tauri.conf.json` (`visible: false`, ADR-040), with the
    webview's data in the same local data folder (if Tauri cannot create that
    folder, it panics with `Failed to setup app` and sotyware does not start),
    and then runs `setup` once (Tauri 2.12.5, `app.rs`, `fn setup`).
@@ -68,8 +68,37 @@ delays the logout.
    or, without one, its default. A feature that fails to start is
    recorded as `failed` and does not affect startup. With the fatal tray error,
    no feature is started ([features.md](features.md#lifecycle)).
+   Last, still in `setup` and never after the fatal tray error, the dashboard
+   gets its chrome and its place and is shown ([below](#placement-and-chrome)).
 6. The page asks for the mode with the `operating_mode` command and renders
    accordingly, and asks for the feature list with `list_features`.
+
+## Placement and chrome
+
+Since 2026-11-15 ([ADR-040](decisions.md#adr-040-on-windows-the-dashboard-draws-its-own-title-bar-the-window-opens-at-half-the-primary-work-area-and-remembers-its-place)),
+`setup` handles the hidden dashboard in this order:
+
+1. **Chrome (Windows only, `title_bar::apply`):** adds the runtime
+   capability `window-controls` (start dragging, the drag region's
+   double-click toggle, minimize, toggle maximize, is maximized, close) and
+   only then removes the decorations. A failure keeps the native title bar;
+   the page then draws no controls.
+2. **Placement (`window_state::place`):** the placement saved in
+   `window-state.sqlite3` (read before the event loop, with the other
+   stores), restored on the monitor it overlaps most and made fully
+   visible, or, with nothing saved or a saved place on no connected
+   monitor, half the primary monitor's work area, at least 900 × 540 logical
+   pixels (the sidebar layout's width) and at most the work area, centred. Without monitor information the window is centred at
+   its configured size. A saved maximized window is maximized again.
+3. **Show** (`reveal`: unminimize, show, focus).
+
+While sotyware runs, the dashboard's Moved and Resized events update its
+normal bounds in memory (not while minimized, hidden or maximized; a
+maximized window keeps the normal bounds it had). They are written when
+the window loses focus or is closed to the tray (on the blocking pool) and
+in `release_resources` at exit. `show_dashboard()` first moves a window
+that lies on no connected monitor (one was unplugged while it was hidden)
+to the default place.
 
 ## Mode selection
 

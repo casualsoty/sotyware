@@ -1,7 +1,7 @@
 # Native Windows desktop test of the sotyware release binary: window lifecycle,
-# "Hide dashboard" button, built-in features section (list and switch the example
-# feature), tray icon and menu, single instance, Quit and relaunch, and the
-# example feature's saved choice across real restarts.
+# "Hide dashboard" button, built-in features section (list and switch the
+# Scheduled backups feature), tray icon and menu, single instance, Quit and
+# relaunch, and that feature's saved choice across real restarts.
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
@@ -9,7 +9,8 @@
 #   build: npm run build:test-profile)
 #
 # This runs on your real desktop, not in a sandbox: it moves the mouse and clicks
-# (tray icon, tray menu, the dashboard's button and title-bar close button), and
+# (tray icon, tray menu, the dashboard's buttons, and its own title bar: Close, a
+# double click and a drag that moves the window by 80 x 60 px), and
 # opens the notification-area "Show Hidden Icons" flyout. Do not use the mouse or
 # keyboard while it runs. It needs no extra modules: Windows PowerShell 5.1, UI
 # Automation and user32 only.
@@ -74,6 +75,24 @@ public static class W {
     return res.ToArray();
   }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint a, uint b, ref RECT r, uint f);
+  // The primary monitor's work area (SPI_GETWORKAREA): x, y, width, height.
+  public static int[] WorkArea() { var r = new RECT(); SystemParametersInfo(0x0030, 0, ref r, 0); return new int[] { r.L, r.T, r.R - r.L, r.B - r.T }; }
+  // A window's rectangle: x, y, width, height (null if it is gone).
+  public static int[] Bounds(IntPtr h) { RECT r; if (!GetWindowRect(h, out r)) return null; return new int[] { r.L, r.T, r.R - r.L, r.B - r.T }; }
+  // A real drag with the left button: press at (x1, y1), move there in steps, release.
+  public static void Drag(int x1, int y1, int x2, int y2) {
+    SetCursorPos(x1, y1); System.Threading.Thread.Sleep(80);
+    mouse_event(0x0002u, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(150);
+    for (int i = 1; i <= 12; i++) { SetCursorPos(x1 + (x2 - x1) * i / 12, y1 + (y2 - y1) * i / 12); System.Threading.Thread.Sleep(30); }
+    System.Threading.Thread.Sleep(150); mouse_event(0x0004u, 0, 0, 0, UIntPtr.Zero);
+  }
+  public static void DoubleClick(int x, int y) {
+    SetCursorPos(x, y); System.Threading.Thread.Sleep(80);
+    for (int i = 0; i < 2; i++) { mouse_event(0x0002u, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(40); mouse_event(0x0004u, 0, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(60); }
+  }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
   [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
@@ -203,15 +222,17 @@ function TrayMenu([string]$item) {
 # Built-in features section (src/Features.svelte) as WebView2 exposes it through UIA:
 # the checkbox is named after the feature, and its list item's name is the item's
 # text (version, state label and description).
-$ExampleFeature = "Example"   # src-tauri/src/features/example.rs, enabled by default
-$ExampleVersion = "0.1.0"
-$ExampleDescription = "Demonstrates the built-in feature lifecycle. It does nothing visible."
+# The feature switched: backup-scheduler (src-tauri/src/features/backup.rs), enabled
+# by default; a fresh test profile has no backup job, so switching it does nothing visible.
+$SwitchedFeature = "Scheduled backups"
+$SwitchedVersion = "0.1.0"
+$SwitchedDescription = "Runs backup jobs that have an interval when they are due, while sotyware is running."
 $Toggle = [System.Windows.Automation.TogglePattern]::Pattern
 $Walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 function PCT($type) { [System.Windows.Automation.PropertyCondition]::new($A::ControlTypeProperty, $type) }
 function FindFeatureBox {
   $d = Dash; if (-not $d) { return $null }
-  $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::CheckBox)), (PC $A::NameProperty $ExampleFeature)))
+  $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::CheckBox)), (PC $A::NameProperty $SwitchedFeature)))
 }
 # Since the redesign the features are under Settings > Features: the Settings
 # link in the sidebar, then the Features tab (UIA Invoke, or SelectionItem
@@ -231,7 +252,7 @@ function FeatureBox {
   if (-not $b -and (OpenFeatures)) { Start-Sleep -Milliseconds 300; $b = FindFeatureBox }
   $b
 }
-# The example feature as shown: checkbox checked and enabled (not busy), and its
+# The switched feature as shown: checkbox checked and enabled (not busy), and its
 # list item's text. $null until the list has loaded.
 function FeatureView {
   $b = FeatureBox; if (-not $b) { return $null }
@@ -254,7 +275,7 @@ function SwitchedTo([bool]$on, [string]$state) {
   ($null -ne $v) -and $v.On -eq $on -and $v.Ready -and $v.Item.Contains($state) -and -not (PageError)
 }
 function FeatureDetail { $v = FeatureView; if ($v) { "on=$($v.On) ready=$($v.Ready) item='$($v.Item)' error=$(PageError)" } else { "checkbox not found" } }
-# Switches the example feature through UIA (TogglePattern, what assistive technology uses).
+# Switches the feature through UIA (TogglePattern, what assistive technology uses).
 function ToggleFeature { $v = FeatureView; if (-not $v) { return $false }; try { $v.Box.GetCurrentPattern($Toggle).Toggle(); $true } catch { $false } }
 # Switches it with a real mouse click on the checkbox, after checking that the click
 # would reach the dashboard and not a window covering it.
@@ -347,9 +368,66 @@ $items = MenuItems
 Check "tray: menu items are Open Dashboard, Quit" (($items -join "|") -eq "Open Dashboard|Quit") "got=$($items -join '|')"
 Check "tray: menu dismissed, process alive, still one process" ((Procs).Count -eq 1)
 
+# --- first placement (ADR-040) --------------------------------------------------
+# A fresh profile has no saved placement: half the primary monitor's work area,
+# at least 900 x 540 logical pixels (window_state::DEFAULT_MIN) and at most the
+# work area, centred in the work area.
+$GeoWork = [W]::WorkArea()
+$GeoScale = [double]([W]::GetDpiForWindow((Hwnd))) / 96.0
+if ($GeoScale -le 0) { $GeoScale = 1.0 }
+$GeoStart = [W]::Bounds((Hwnd))
+$GeoWantW = [Math]::Min($GeoWork[2], [Math]::Max([int][Math]::Floor($GeoWork[2] / 2), [int][Math]::Round(900 * $GeoScale)))
+$GeoWantH = [Math]::Min($GeoWork[3], [Math]::Max([int][Math]::Floor($GeoWork[3] / 2), [int][Math]::Round(540 * $GeoScale)))
+$GeoWantX = $GeoWork[0] + [int][Math]::Floor(($GeoWork[2] - $GeoWantW) / 2)
+$GeoWantY = $GeoWork[1] + [int][Math]::Floor(($GeoWork[3] - $GeoWantH) / 2)
+function Near($a, $b) { [Math]::Abs([int]$a - [int]$b) -le 2 }
+$geoDetail = "work=$($GeoWork -join ',') scale=$GeoScale window=$($GeoStart -join ',') want=$GeoWantX,$GeoWantY,$GeoWantW,$GeoWantH"
+Check "first placement: half the work area (at least 900 x 540)" ($null -ne $GeoStart -and (Near $GeoStart[2] $GeoWantW) -and (Near $GeoStart[3] $GeoWantH)) $geoDetail
+Check "first placement: centred in the work area" ($null -ne $GeoStart -and (Near $GeoStart[0] $GeoWantX) -and (Near $GeoStart[1] $GeoWantY)) $geoDetail
+
+# --- the page's own title bar (ADR-040) -------------------------------------------
+# No native caption: the window manager finds no close button; the page draws
+# Minimize, Maximize and Close in a group named "Window".
+Check "title bar: no native caption button (WM_NCHITTEST finds no HTCLOSE)" ($null -eq [W]::FindClose((Hwnd)))
+function TitleButton([string]$name) {
+  $d = Dash; if (-not $d) { return $null }
+  $g = $d.FindFirst($S::Descendants, (New-Object System.Windows.Automation.AndCondition (PC $A::ControlTypeProperty ([System.Windows.Automation.ControlType]::Group)), (PC $A::NameProperty "Window")))
+  if (-not $g) { return $null }
+  $g.FindFirst($S::Descendants, (New-Object System.Windows.Automation.AndCondition (PC $A::ControlTypeProperty ([System.Windows.Automation.ControlType]::Button)), (PC $A::NameProperty $name)))
+}
+function InvokeTitle([string]$name) { $b = TitleButton $name; if (-not $b) { return $false }; try { $b.GetCurrentPattern($Invoke).Invoke(); $true } catch { $false } }
+$tbFound = WaitFor { ($null -ne (TitleButton "Minimize")) -and ($null -ne (TitleButton "Maximize")) -and ($null -ne (TitleButton "Close")) } 10
+Check "title bar: the page draws Minimize, Maximize and Close" $tbFound
+$ok = (InvokeTitle "Maximize") -and (WaitFor { [W]::IsZoomed((Hwnd)) } 5)
+Check "title bar: Maximize (UIA) maximizes the window" $ok
+$ok = (WaitFor { $null -ne (TitleButton "Restore") } 5) -and (InvokeTitle "Restore") -and (WaitFor { -not [W]::IsZoomed((Hwnd)) } 5)
+$back = [W]::Bounds((Hwnd))
+Check "title bar: Restore (UIA) restores it to where it was" ($ok -and $null -ne $back -and (Near $back[0] $GeoStart[0]) -and (Near $back[1] $GeoStart[1]) -and (Near $back[2] $GeoStart[2]) -and (Near $back[3] $GeoStart[3])) "before=$($GeoStart -join ',') after=$($back -join ',')"
+# A point in the bar's empty middle: the drag region (40 logical px high).
+function TitleDragPoint { $b = [W]::Bounds((Hwnd)); if ($null -eq $b) { return $null }; @(([int]($b[0] + $b[2] / 2)), ([int]($b[1] + 20 * $GeoScale))) }
+$pt = TitleDragPoint
+$free = ($null -ne $pt) -and ([W]::TopLevelAt($pt[0], $pt[1]) -eq (Hwnd))
+Check "title bar: its middle is not covered by another window" $free "point=$($pt -join ',')"
+if ($free) {
+  [W]::DoubleClick($pt[0], $pt[1])
+  Check "title bar: double click (real mouse) maximizes" (WaitFor { [W]::IsZoomed((Hwnd)) } 5)
+  $pt = TitleDragPoint
+  [W]::DoubleClick($pt[0], $pt[1])
+  Check "title bar: double click again restores" (WaitFor { -not [W]::IsZoomed((Hwnd)) } 5)
+  $pt = TitleDragPoint; $from = [W]::Bounds((Hwnd))
+  [W]::Drag($pt[0], $pt[1], $pt[0] + 80, $pt[1] + 60)
+  $GeoMoved = $null
+  $moved = WaitFor { $script:GeoMoved = [W]::Bounds((Hwnd)); ($null -ne $script:GeoMoved) -and (Near $script:GeoMoved[0] ($from[0] + 80)) -and (Near $script:GeoMoved[1] ($from[1] + 60)) } 5
+  Check "title bar: dragging (real mouse) moves the window, size unchanged" ($moved -and (Near $GeoMoved[2] $from[2]) -and (Near $GeoMoved[3] $from[3])) "from=$($from -join ',') to=$($GeoMoved -join ',')"
+}
+$ok = (InvokeTitle "Minimize") -and (WaitFor { [W]::IsIconic((Hwnd)) } 5)
+Check "title bar: Minimize (UIA) minimizes the window, process alive" ($ok -and (Procs).Count -eq 1)
+[W]::ShowWindow((Hwnd), 9) | Out-Null
+Check "title bar: restored from the taskbar state" (WaitFor { Visible } 5)
+
 # --- built-in features (WebView2 content, real capability and IPC) ------------
 # list_features and set_feature_enabled through the static capability: the page
-# lists the example feature (enabled by default) and switching it round-trips to
+# lists Scheduled backups (enabled by default) and switching it round-trips to
 # Rust, whose answer updates the checkbox and the state label.
 $heading = $null
 $null = OpenFeatures
@@ -357,8 +435,8 @@ WaitFor { $script:heading = (Dash).FindFirst($S::Descendants, (PC $A::Automation
 Check "features: Settings > Features present in WebView2 content" (($null -ne $heading) -and $heading.Current.Name -eq "Features")
 $listed = WaitFor { $v = FeatureView; ($null -ne $v) -and $v.Item -ne "" } 10
 $v = FeatureView
-Check "features: example feature listed with name, version and description" ($listed -and $v.Item.Contains($ExampleVersion) -and $v.Item.Contains($ExampleDescription)) (FeatureDetail)
-Check "features: example checkbox checked and Running at startup" ($listed -and (SwitchedTo $true "Running")) (FeatureDetail)
+Check "features: Scheduled backups listed with name, version and description" ($listed -and $v.Item.Contains($SwitchedVersion) -and $v.Item.Contains($SwitchedDescription)) (FeatureDetail)
+Check "features: Scheduled backups checkbox checked and Running at startup" ($listed -and (SwitchedTo $true "Running")) (FeatureDetail)
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
 Check "features: unchecking (UIA toggle) disables it" $ok (FeatureDetail)
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
@@ -432,8 +510,12 @@ Check "tray menu Open Dashboard: dashboard shown" (WaitFor { Visible } 5)
 Check "tray menu Open Dashboard: one window" ((DashHwnds).Count -eq 1)
 
 # --- close button hides ------------------------------------------------------
-$close = [W]::FindClose((Hwnd))
-Check "close: title-bar close button located (WM_NCHITTEST = HTCLOSE)" ($null -ne $close)
+# The title bar is the page's own (ADR-040): its Close button, found through UIA
+# and clicked with the real mouse once the dashboard is the window under it.
+$closeBtn = TitleButton "Close"
+$close = $null
+if ($closeBtn) { $r = $closeBtn.Current.BoundingRectangle; if (-not $r.IsEmpty) { $close = @(([int]($r.X + $r.Width / 2)), ([int]($r.Y + $r.Height / 2))) } }
+Check "close: the title bar's Close button located (UIA) and not covered" (($null -ne $close) -and ([W]::TopLevelAt($close[0], $close[1]) -eq (Hwnd)))
 if ($close) {
   [W]::Click($close[0], $close[1], $false)
   Check "close (real click on X): dashboard hidden" (WaitFor { Hidden } 5)
@@ -475,10 +557,12 @@ Check "concurrent x4: one window" ((DashHwnds).Count -eq 1)
 $n = TrayIconCount; Check "after all launches: exactly one tray icon" ($n -eq 1) "count=$n"
 
 # --- quit and relaunch ------------------------------------------------------------
-# Quit with the example feature disabled; the relaunch (a new process) must keep it
+# Quit with Scheduled backups disabled; the relaunch (a new process) must keep it
 # disabled, since the choice is saved. Then enable it, quit, relaunch: running.
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
-Check "quit: example feature disabled before quitting" $ok (FeatureDetail)
+Check "quit: Scheduled backups disabled before quitting" $ok (FeatureDetail)
+# Where the dashboard is now (moved by the drag above): the relaunch must open it here.
+$GeoQuit = [W]::Bounds((Hwnd))
 $btn = (Dash).FindFirst($S::Descendants, (PC $A::NameProperty "Hide dashboard"))
 if ($btn) { $btn.GetCurrentPattern($Invoke).Invoke() }
 Check "quit: dashboard hidden first" (WaitFor { Hidden } 5)
@@ -497,7 +581,10 @@ Check "relaunch: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch: fresh process is the running primary" (-not $fresh.HasExited -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $fresh.Id)
 Check "relaunch: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
 Check "relaunch: preferences database exists" (Test-Path $PrefsDb) $PrefsDb
-Check "relaunch: example feature still Disabled, checkbox unchecked (persisted)" (WaitFor { SwitchedTo $false "Disabled" } 10) (FeatureDetail)
+$GeoRelaunch = [W]::Bounds((Hwnd))
+Check "relaunch: the dashboard opens where it was when sotyware quit (ADR-040)" ($null -ne $GeoQuit -and $null -ne $GeoRelaunch -and (Near $GeoRelaunch[0] $GeoQuit[0]) -and (Near $GeoRelaunch[1] $GeoQuit[1]) -and (Near $GeoRelaunch[2] $GeoQuit[2]) -and (Near $GeoRelaunch[3] $GeoQuit[3])) "quit=$($GeoQuit -join ',') relaunch=$($GeoRelaunch -join ',')"
+Check "relaunch: window-state.sqlite3 in the test profile" (Test-Path (Join-Path $Prof.DataDir "window-state.sqlite3"))
+Check "relaunch: Scheduled backups still Disabled, checkbox unchecked (persisted)" (WaitFor { SwitchedTo $false "Disabled" } 10) (FeatureDetail)
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
 Check "relaunch: checking (UIA toggle) enables it, no error shown" $ok (FeatureDetail)
 $ok = TrayMenu "Quit"; Check "relaunch: tray Quit invoked" $ok $script:why
@@ -510,7 +597,7 @@ $again = Start-Process $Exe -PassThru
 Verified $again "relaunch 2"
 Check "relaunch 2: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch 2: a new process is the running primary" (-not $again.HasExited -and $again.Id -ne $fresh.Id -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $again.Id)
-Check "relaunch 2: example feature Running, checkbox checked (persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
+Check "relaunch 2: Scheduled backups Running, checkbox checked (persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
 Check "relaunch 2: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
 $ok = TrayMenu "Quit"; Check "relaunch 2: tray Quit invoked" $ok $script:why
 Check "relaunch 2: quit exits 0" ($again.WaitForExit(10000) -and $again.ExitCode -eq 0)

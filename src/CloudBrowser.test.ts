@@ -356,6 +356,51 @@ describe("opening a bucket", () => {
   });
 });
 
+describe("the bucket's tabs (ADR-041)", () => {
+  it("opens on the files, mounts Usage and Snapshots only when chosen, and keeps the files mounted", async () => {
+    tree = { photos: PHOTOS };
+    const root = await render();
+    const b = await openBucket(root);
+    const tabs = [...b.querySelectorAll<HTMLButtonElement>('[role="tablist"] [role="tab"]')];
+    expect(tabs.map((t) => text(t))).toEqual(["Files", "Usage & costs", "Snapshots & backups"]);
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    const files = b.querySelector<HTMLElement>("#bucket-panel-files")!;
+    expect(files.hidden).toBe(false);
+    expect(b.querySelector("[data-usage]")).toBeNull();
+    expect(b.querySelector("[data-snapshots]")).toBeNull();
+
+    tabs[1]!.click();
+    await settle();
+    expect(files.hidden).toBe(true);
+    // Hidden, not destroyed: the listing is still there for when it comes back.
+    expect(rows(files)).toHaveLength(5);
+    expect(b.querySelector("#bucket-panel-usage [data-usage]")).not.toBeNull();
+    expect(tabs[1]!.getAttribute("aria-selected")).toBe("true");
+
+    // Arrow keys move between the tabs.
+    b.querySelector<HTMLElement>('[role="tablist"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await settle();
+    expect(b.querySelector("#bucket-panel-snapshots [data-snapshots]")).not.toBeNull();
+    expect(tabs[2]!.getAttribute("aria-selected")).toBe("true");
+    b.querySelector<HTMLElement>('[role="tablist"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    await settle();
+    expect(files.hidden).toBe(false);
+    // The Usage panel stays mounted after it was opened once.
+    expect(b.querySelector("#bucket-panel-usage [data-usage]")).not.toBeNull();
+  });
+
+  it("ignores the file manager's shortcuts while another tab shows", async () => {
+    tree = { photos: PHOTOS };
+    const root = await render();
+    const b = await openBucket(root);
+    button(b, "Usage & costs").click();
+    await settle();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+    await settle();
+    expect(b.querySelectorAll('tbody tr[aria-selected="true"]')).toHaveLength(0);
+  });
+});
+
 describe("navigation", () => {
   it("opens folders by the prefix Rust returned and goes back through breadcrumbs and Up", async () => {
     tree = { photos: PHOTOS };

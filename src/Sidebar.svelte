@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AccountInfo } from "./cloud";
   import Icon, { type IconName } from "./Icon.svelte";
+  import Logo from "./Logo.svelte";
   import { checkTone } from "./cloudMessages";
   import type { Section } from "./navigation";
 
@@ -20,9 +21,24 @@
     onaddaccount: () => void;
     /** Narrow windows: the sidebar is an overlay that closes after a choice. */
     onclose?: () => void;
+    /** False when the page's own title bar shows the name (Windows). */
+    showBrand?: boolean;
+    /** The sotyware account's sync state, when there is one to tell. */
+    syncStatus?: { tone: "success" | "warning"; text: string } | null;
   }
 
-  let { section, browsing, accounts, accountsError = null, onnavigate, onopenaccount, onaddaccount, onclose }: Props = $props();
+  let {
+    section,
+    browsing,
+    accounts,
+    accountsError = null,
+    onnavigate,
+    onopenaccount,
+    onaddaccount,
+    onclose,
+    showBrand = true,
+    syncStatus = null,
+  }: Props = $props();
 
   const MAIN: { id: Section; title: string; icon: IconName; key: string }[] = [
     { id: "overview", title: "Overview", icon: "overview", key: "1" },
@@ -47,21 +63,12 @@
 </script>
 
 <div class="sidebar-inner">
-  <div class="brand">
-    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
-      <defs>
-        <linearGradient id="brand-tile" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#2b6cf0" />
-          <stop offset="1" stop-color="#0f8b8d" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#brand-tile)" />
-      <path d="M16 5 L26 10 L16 15 L6 10 Z" fill="#fff" />
-      <path d="M6 10 L16 15 V27 L6 22 Z" fill="#fff" fill-opacity=".78" />
-      <path d="M26 10 L16 15 V27 L26 22 Z" fill="#fff" fill-opacity=".54" />
-    </svg>
-    <span class="name">sotyware</span>
-  </div>
+  {#if showBrand}
+    <div class="brand">
+      <Logo size={22} />
+      <span class="name">sotyware</span>
+    </div>
+  {/if}
 
   <!-- Links, not buttons: they switch sections and keep each page's
        buttons those of the section shown. -->
@@ -119,7 +126,13 @@
       href="#account"
       class="nav-item"
       aria-current={section === "account" ? "page" : undefined}
-      onclick={(e) => go(e, "account")}><Icon name="account" />Account</a
+      title={syncStatus?.text}
+      onclick={(e) => go(e, "account")}
+      ><Icon name="account" /><span class="grow">Account</span>{#if syncStatus}<span
+          class="dot {syncStatus.tone}"
+          data-sync={syncStatus.tone}
+          aria-hidden="true"
+        ></span><span class="visually-hidden">, {syncStatus.text}</span>{/if}</a
     >
     <a
       href="#settings"
@@ -234,6 +247,11 @@
   .add:hover:not(:disabled) {
     background: var(--surface-3);
     color: var(--text);
+  }
+
+  .grow {
+    flex: 1;
+    min-width: 0;
   }
 
   .bottom {

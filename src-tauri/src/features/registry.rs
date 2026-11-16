@@ -495,12 +495,12 @@ mod tests {
 
     #[test]
     fn ids_must_be_lowercase_kebab_case() {
-        for id in ["example", "clipboard-history", "v2", "a-1-b"] {
+        for id in ["backup-scheduler", "clipboard-history", "v2", "a-1-b"] {
             assert!(valid_id(id), "{id}");
         }
         for id in [
             "",
-            "Example",
+            "Backup",
             "with space",
             "under_score",
             "-lead",

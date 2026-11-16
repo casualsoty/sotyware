@@ -157,6 +157,33 @@ provider refuses deletes of locked versions; the run reports them as
 retained. A destination key without delete permission makes pruning report
 "not permitted" without affecting backups.
 
+## Deleting a snapshot
+
+Since 2026-11-15 (ADR-041) the user can delete one chosen snapshot, from
+Cloud Storage's **Snapshots & backups** tab (the dialog needs the word
+`delete` typed). It runs as the backup task `delete-snapshot` (one backup
+task at a time; command `delete_backup_snapshot`, events on the task's
+channel) through the same routine as retention (`engine::delete_chosen`):
+
+1. Every manifest under `P/snapshots/` is read first (all jobs sharing the
+   repository); if one cannot be read, nothing is deleted. A key that is
+   not a snapshot of this job is refused.
+2. The chosen manifest is deleted (a refused delete, from Object Lock or a
+   key without delete permission, fails the task and changes nothing).
+3. Blobs that no remaining manifest references and that are older than a
+   day before the oldest remaining snapshot are deleted; newer ones stay
+   for a later deletion or retention (a run on another device may still be
+   writing its manifest).
+
+Health ignores a deleted snapshot (a completed `delete-snapshot` run names
+it): it then rests on the newest snapshot still there, or reports never
+run when none is left. Deleting the newest or the only snapshot is
+allowed, with a warning in the dialog. On a versioned destination the
+provider keeps the deleted data until its lifecycle rules remove it.
+`backup_snapshot_details` reads one manifest for the tab's details: files
+and size, changes since the previous snapshot, the source, and this
+computer's last verification of that snapshot.
+
 ## Restore
 
 From a chosen snapshot, all entries or those under a prefix, to:
@@ -216,7 +243,8 @@ bucket folder), `export_backup_manifest` (a recovery file saved through a
 dialog Rust opens: the manifest, the destination's provider, endpoint,
 region, bucket and prefix, and instructions; never a key),
 `check_backup_protection` (versioning and Object Lock read from the
-destination bucket). The Backups page (third navigation link) shows each
+destination bucket), `backup_snapshot_details` and `delete_backup_snapshot`
+(ADR-041, [above](#deleting-a-snapshot)). The Backups page (third navigation link) shows each
 job's health, last backup and verification, next run, a same-account
 warning, the running task with Cancel, the last result, snapshots with
 restore and recovery-file actions, and the protection summary.

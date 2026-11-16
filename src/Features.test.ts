@@ -23,9 +23,9 @@ interface IpcCall {
 
 function feature(overrides: Partial<FeatureInfo> = {}): FeatureInfo {
   return {
-    id: "example",
-    name: "Example",
-    description: "Demonstrates the built-in feature lifecycle.",
+    id: "backup-scheduler",
+    name: "Scheduled backups",
+    description: "Runs backup jobs that have an interval when they are due, while sotyware is running.",
     version: "0.1.0",
     state: "running",
     enabled: true,
@@ -141,13 +141,13 @@ describe("feature list", () => {
   it("shows each feature's name, version, state and description in order", async () => {
     const root = await render();
     expect(root.querySelector("h2")?.textContent).toBe("Features");
-    expect([...root.querySelectorAll("li")].map((li) => li.dataset["feature"])).toEqual(["example", "other"]);
-    expect(item(root, "example").querySelector("label")?.textContent?.trim()).toBe("Example");
-    expect(item(root, "example").textContent).toContain("0.1.0");
-    expect(item(root, "example").textContent).toContain("Demonstrates the built-in feature lifecycle.");
-    expect(stateText(root, "example")).toBe("Running");
+    expect([...root.querySelectorAll("li")].map((li) => li.dataset["feature"])).toEqual(["backup-scheduler", "other"]);
+    expect(item(root, "backup-scheduler").querySelector("label")?.textContent?.trim()).toBe("Scheduled backups");
+    expect(item(root, "backup-scheduler").textContent).toContain("0.1.0");
+    expect(item(root, "backup-scheduler").textContent).toContain("Runs backup jobs that have an interval when they are due");
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
     expect(stateText(root, "other")).toBe("Disabled");
-    expect(checkbox(root, "example").checked).toBe(true);
+    expect(checkbox(root, "backup-scheduler").checked).toBe(true);
     expect(checkbox(root, "other").checked).toBe(false);
     expect(root.querySelector('[role="alert"]')).toBeNull();
   });
@@ -155,9 +155,9 @@ describe("feature list", () => {
   it("shows a failed feature as enabled, with its error", async () => {
     features = [feature({ state: "failed", enabled: true, error: "port in use" })];
     const root = await render();
-    expect(stateText(root, "example")).toBe("Failed");
-    expect(checkbox(root, "example").checked).toBe(true);
-    expect(item(root, "example").querySelector(".feature-error")?.textContent).toBe("port in use");
+    expect(stateText(root, "backup-scheduler")).toBe("Failed");
+    expect(checkbox(root, "backup-scheduler").checked).toBe(true);
+    expect(item(root, "backup-scheduler").querySelector(".feature-error")?.textContent).toBe("port in use");
     // A feature's own failure is its state, not an alert about the page.
     expect(root.querySelector('[role="alert"]')).toBeNull();
   });
@@ -201,11 +201,11 @@ describe("feature list", () => {
 describe("switching a feature", () => {
   it("disables a running feature", async () => {
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
-    expect(switchCalls()).toEqual([{ cmd: SET_FEATURE_ENABLED, payload: { id: "example", enabled: false } }]);
-    expect(stateText(root, "example")).toBe("Disabled");
-    expect(checkbox(root, "example").checked).toBe(false);
+    expect(switchCalls()).toEqual([{ cmd: SET_FEATURE_ENABLED, payload: { id: "backup-scheduler", enabled: false } }]);
+    expect(stateText(root, "backup-scheduler")).toBe("Disabled");
+    expect(checkbox(root, "backup-scheduler").checked).toBe(false);
     expect(stateText(root, "other")).toBe("Disabled");
   });
 
@@ -235,15 +235,15 @@ describe("switching a feature", () => {
   it("puts the checkbox back and shows the error when Rust refuses", async () => {
     respond = (cmd, payload): unknown =>
       cmd === SET_FEATURE_ENABLED
-        ? Promise.reject("cannot disable feature 'example' while it is Stopping")
+        ? Promise.reject("cannot disable feature 'backup-scheduler' while it is Stopping")
         : backend(cmd, payload);
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
-    expect(checkbox(root, "example").checked).toBe(true);
-    expect(stateText(root, "example")).toBe("Running");
+    expect(checkbox(root, "backup-scheduler").checked).toBe(true);
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
     expect(root.querySelector('[role="alert"]')?.textContent).toBe(
-      "Could not disable Example: cannot disable feature 'example' while it is Stopping",
+      "Could not disable Scheduled backups: cannot disable feature 'backup-scheduler' while it is Stopping",
     );
   });
 
@@ -252,14 +252,14 @@ describe("switching a feature", () => {
     respond = (cmd, payload): unknown =>
       cmd === SET_FEATURE_ENABLED && fail ? Promise.reject("busy") : backend(cmd, payload);
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     expect(root.querySelector('[role="alert"]')).not.toBeNull();
     fail = false;
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     expect(root.querySelector('[role="alert"]')).toBeNull();
-    expect(stateText(root, "example")).toBe("Disabled");
+    expect(stateText(root, "backup-scheduler")).toBe("Disabled");
   });
 
   it("offers no switch while a request is in flight", async () => {
@@ -271,13 +271,13 @@ describe("switching a feature", () => {
           })
         : backend(cmd, payload);
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
-    expect(checkbox(root, "example").disabled).toBe(true);
+    expect(checkbox(root, "backup-scheduler").disabled).toBe(true);
     expect(checkbox(root, "other").disabled).toBe(true);
     finish(null);
     await settle();
-    expect(checkbox(root, "example").disabled).toBe(false);
+    expect(checkbox(root, "backup-scheduler").disabled).toBe(false);
     expect(switchCalls()).toHaveLength(1);
   });
 });
@@ -296,32 +296,32 @@ describe("saved choices", () => {
       "Could not load the saved feature choices: /data/preferences.sqlite3: cannot read: file is not a database. " +
         "Every feature uses its default, and changes are not saved.",
     );
-    expect(stateText(root, "example")).toBe("Running");
-    expect(checkbox(root, "example").disabled).toBe(false);
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
+    expect(checkbox(root, "backup-scheduler").disabled).toBe(false);
   });
 
   it("keeps the storage warning after a switch", async () => {
     storageError = "no app data folder";
     saveError = "preferences are unavailable: no app data folder";
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     const alerts = [...root.querySelectorAll('[role="alert"]')].map((a) => a.textContent ?? "");
     expect(alerts).toHaveLength(2);
     expect(alerts[0]).toContain("Could not load the saved feature choices: no app data folder.");
-    expect(alerts[1]).toContain("Could not save the choice for Example");
+    expect(alerts[1]).toContain("Could not save the choice for Scheduled backups");
   });
 
   it("shows the new state and an alert when a disable could not be saved", async () => {
     saveError = "cannot save: disk I/O error";
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     // The switch happened: the page shows the real state, not the old one.
-    expect(stateText(root, "example")).toBe("Disabled");
-    expect(checkbox(root, "example").checked).toBe(false);
+    expect(stateText(root, "backup-scheduler")).toBe("Disabled");
+    expect(checkbox(root, "backup-scheduler").checked).toBe(false);
     expect(root.querySelector('[role="alert"]')?.textContent).toBe(
-      "Could not save the choice for Example: cannot save: disk I/O error. " +
+      "Could not save the choice for Scheduled backups: cannot save: disk I/O error. " +
         "It stays disabled until sotyware quits; the next start uses the last saved choice or the default.",
     );
   });
@@ -341,23 +341,23 @@ describe("saved choices", () => {
   it("clears the save alert after a switch that was saved", async () => {
     saveError = "disk full";
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     expect(root.querySelector('[role="alert"]')).not.toBeNull();
     saveError = null;
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
     expect(root.querySelector('[role="alert"]')).toBeNull();
-    expect(stateText(root, "example")).toBe("Running");
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
   });
 
   it("treats a malformed switch answer as an error and puts the checkbox back", async () => {
     respond = (cmd, payload): unknown => (cmd === SET_FEATURE_ENABLED ? feature({ state: "disabled", enabled: false }) : backend(cmd, payload));
     const root = await render();
-    toggle(checkbox(root, "example"));
+    toggle(checkbox(root, "backup-scheduler"));
     await settle();
-    expect(checkbox(root, "example").checked).toBe(true);
-    expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/^Could not disable Example: Error: invalid feature change: /);
+    expect(checkbox(root, "backup-scheduler").checked).toBe(true);
+    expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/^Could not disable Scheduled backups: Error: invalid feature change: /);
   });
 });
 
@@ -373,7 +373,7 @@ describe("features in Settings", () => {
     expect(root.querySelector("main h1")?.textContent).toBe("Settings");
     [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((t) => t.textContent?.trim() === "Features")!.click();
     await settle();
-    expect(stateText(root, "example")).toBe("Running");
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
     expect(calls.filter((c) => c.cmd === LIST_FEATURES)).toHaveLength(1);
     // Checkboxes, not buttons: the features panel adds no button of its own.
     const panel = root.querySelector<HTMLElement>('[role="tabpanel"]')!;
@@ -409,7 +409,7 @@ describe("parseFeature", () => {
   it("rejects anything else", () => {
     for (const bad of [
       null,
-      "example",
+      "backup-scheduler",
       [],
       { ...feature(), id: 1 },
       { ...feature(), enabled: "yes" },

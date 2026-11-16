@@ -20,6 +20,8 @@ const HIDE_CMD = "plugin:window|hide";
 const UPDATE_CMD = "update_status"; // #[tauri::command] in src-tauri/src/updates.rs; tested in Updates.test.ts
 const ACCOUNTS_CMD = "list_cloud_accounts"; // the sidebar's storage accounts; tested in CloudStorage.test.ts
 const BACKUPS_CMD = "list_backups"; // the Overview's backup summary; tested in Backup.test.ts
+const DECORATED_CMD = "plugin:window|is_decorated"; // whether the page draws its own title bar (ADR-040)
+const ACCOUNT_CMD = "account_status"; // automatic sync reads the account status (local); tested in accountSync.test.ts
 
 let calls: IpcCall[];
 let mode: unknown;
@@ -49,6 +51,10 @@ function updateStatus(over: Record<string, unknown> = {}): Record<string, unknow
 /** The storage accounts the sidebar lists. */
 let accountList: Record<string, unknown>[];
 
+/** What the window says about its native decorations (null: the default
+ * answer of the mock, which keeps the native title bar). */
+let decorated: boolean | null;
+
 /** The Rust side: answers the mode command with `mode`, the feature list with no
  * features (Features.test.ts covers them), the accounts, backups and update
  * status the shell reads, everything else with null. */
@@ -68,6 +74,8 @@ function backend(cmd: string): unknown {
       return { entries: [], storageError: null };
     case MODE_CMD:
       return mode;
+    case DECORATED_CMD:
+      return decorated;
     default:
       return null;
   }
@@ -83,6 +91,7 @@ beforeEach(() => {
   calls = [];
   update = updateStatus();
   accountList = [];
+  decorated = null;
   mode = "tray";
   respond = backend;
   mockWindows(DASHBOARD_LABEL);
@@ -134,9 +143,9 @@ function hideCalls(): IpcCall[] {
 }
 
 describe("dashboard in tray mode", () => {
-  it("asks Rust for the mode, the accounts, the backups and the update status once each, and nothing else", async () => {
+  it("asks Rust for the mode, the accounts, the backups, the update and account status once each, and nothing else", async () => {
     await render();
-    expect(sentCommands()).toEqual([BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([ACCOUNT_CMD, BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, DECORATED_CMD, UPDATE_CMD]);
   });
 
   it("renders the heading, the tray hint and a plain button, no error", async () => {
@@ -237,7 +246,7 @@ describe("dashboard in dashboard-only mode", () => {
     // The page header holds the Hide button in tray mode, and nothing here.
     expect(root.querySelectorAll("main .page-header button")).toHaveLength(0);
     expect(root.textContent).not.toContain("from the system tray");
-    expect(sentCommands()).toEqual([BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([ACCOUNT_CMD, BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, DECORATED_CMD, UPDATE_CMD]);
     expect(hideCalls()).toHaveLength(0);
   });
 });
@@ -460,6 +469,113 @@ describe("shell navigation", () => {
     list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     await settle();
     expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim()).toBe("General");
+  });
+});
+
+describe("the page's own title bar (ADR-040)", () => {
+  it("is not drawn while the window has its native title bar", async () => {
+    decorated = true;
+    const root = await render();
+    expect(root.querySelector("[data-titlebar]")).toBeNull();
+    expect(root.querySelector(".shell")?.classList.contains("custom-chrome")).toBe(false);
+    // The name stays at the top of the sidebar.
+    expect(root.querySelector("aside .brand")?.textContent?.trim()).toBe("sotyware");
+  });
+
+  it("is not drawn when the window cannot be asked", async () => {
+    respond = (cmd) => (cmd === DECORATED_CMD ? Promise.reject("no window") : backend(cmd));
+    const root = await render();
+    expect(root.querySelector("[data-titlebar]")).toBeNull();
+  });
+
+  it("is drawn across the top for an undecorated window, with the name moved into it", async () => {
+    decorated = false;
+    const root = await render();
+    const shell = root.querySelector<HTMLElement>(".shell")!;
+    expect(shell.classList.contains("custom-chrome")).toBe(true);
+    const bar = shell.querySelector<HTMLElement>(":scope > [data-titlebar]")!;
+    expect(bar).not.toBeNull();
+    // First in the window, before the navigation and the page.
+    expect(shell.firstElementChild).toBe(bar);
+    expect(bar.textContent).toContain("sotyware");
+    expect(root.querySelector("aside .brand")).toBeNull();
+    expect([...bar.querySelectorAll('[role="group"][aria-label="Window"] button')].map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Minimize",
+      "Maximize",
+      "Close",
+    ]);
+    // The page's name for narrow windows follows the section.
+    expect(bar.querySelector(".page-title")?.textContent).toBe("Overview");
+    [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.trim() === "Backups")!.click();
+    await settle();
+    expect(bar.querySelector(".page-title")?.textContent).toBe("Backups");
+  });
+
+  it("opens and closes the navigation overlay from its toggle", async () => {
+    decorated = false;
+    const root = await render();
+    const shell = root.querySelector<HTMLElement>(".shell")!;
+    const toggle = root.querySelector<HTMLButtonElement>("[data-titlebar] .nav-toggle")!;
+    toggle.click();
+    await settle();
+    expect(shell.classList.contains("sidebar-open")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    toggle.click();
+    await settle();
+    expect(shell.classList.contains("sidebar-open")).toBe(false);
+  });
+
+  it("closes the window through the same close request as Alt+F4 (Rust hides it in tray mode)", async () => {
+    decorated = false;
+    const root = await render();
+    root.querySelector<HTMLButtonElement>('[data-titlebar] button[aria-label="Close"]')!.click();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "plugin:window|close")).toHaveLength(1);
+    expect(hideCalls()).toHaveLength(0);
+  });
+});
+
+describe("automatic sync of the sotyware account", () => {
+  it("syncs an enrolled device at startup, reads the accounts again and shows the state by Account", async () => {
+    let synced = false;
+    const status = (lastSyncMs: number | null) => ({
+      configured: true,
+      service: "https://accounts.example.org",
+      signedIn: true,
+      email: "me@example.org",
+      deviceId: "d1",
+      vaultAccess: "enrolled",
+      lastSyncMs,
+      lastSyncError: null,
+      conflicts: [],
+      storageError: null,
+    });
+    respond = (cmd) => {
+      if (cmd === ACCOUNT_CMD) {
+        return status(synced ? Date.now() : null);
+      }
+      if (cmd === "account_sync") {
+        synced = true;
+        return null;
+      }
+      return backend(cmd);
+    };
+    const root = await render();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "account_sync")).toHaveLength(1);
+    // The sidebar's accounts were read again after the sync.
+    expect(calls.filter((c) => c.cmd === ACCOUNTS_CMD).length).toBeGreaterThanOrEqual(2);
+    const link = [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.includes("Account"))!;
+    expect(link.querySelector("[data-sync]")?.getAttribute("data-sync")).toBe("success");
+    expect(link.title).toBe("Synced just now.");
+    expect(link.textContent).toContain("Synced just now.");
+  });
+
+  it("shows nothing by Account without a sotyware account", async () => {
+    const root = await render();
+    const link = [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.includes("Account"))!;
+    expect(link.querySelector("[data-sync]")).toBeNull();
+    expect(calls.some((c) => c.cmd === "account_sync")).toBe(false);
   });
 });
 

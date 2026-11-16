@@ -720,6 +720,156 @@ impl crate::account::StateStore for SqliteUpdateState {
     }
 }
 
+/// Where the dashboard window was (ADR-040): its normal bounds, whether it
+/// was maximized and the monitor scaling, as one JSON row
+/// (`window_state::Saved`). Its own file: an older sotyware never opens it,
+/// so adding it changes no schema an older version knows. No secret, no path.
+pub const WINDOW_STATE_FILE_NAME: &str = "window-state.sqlite3";
+
+/// Schema of [`WINDOW_STATE_FILE_NAME`]; append only.
+pub const WINDOW_STATE_MIGRATIONS: &[&str] = &["CREATE TABLE window_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        state TEXT NOT NULL
+    ) STRICT;"];
+
+pub struct SqliteWindowState {
+    conn: Connection,
+}
+
+impl SqliteWindowState {
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, WINDOW_STATE_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+/// The window state store `run()` uses: [`WINDOW_STATE_FILE_NAME`] in `dir`.
+pub fn open_window_state(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::account::StateStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteWindowState::open(
+        &dir.join(WINDOW_STATE_FILE_NAME),
+    )?))
+}
+
+impl crate::account::StateStore for SqliteWindowState {
+    fn load(&mut self) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row("SELECT state FROM window_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(sql_error("cannot read the window placement"))
+    }
+
+    fn save(&mut self, state: &str) -> Result<(), StoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO window_state (id, state) VALUES (1, ?1)
+                 ON CONFLICT (id) DO UPDATE SET state = excluded.state",
+                [state],
+            )
+            .map(drop)
+            .map_err(sql_error("cannot save the window placement"))
+    }
+
+    fn clear(&mut self) -> Result<(), StoreError> {
+        self.conn
+            .execute("DELETE FROM window_state", [])
+            .map(drop)
+            .map_err(sql_error("cannot clear the window placement"))
+    }
+}
+
+/// Storage usage measurements (ADR-041): one row per measurement of an
+/// account's bucket, its figures as JSON (`cloud::usage::Measurement`). No
+/// secret, no path, no object key.
+pub const USAGE_FILE_NAME: &str = "storage-usage.sqlite3";
+
+/// Schema of [`USAGE_FILE_NAME`]; append only.
+pub const USAGE_MIGRATIONS: &[&str] = &["CREATE TABLE measurements (
+        id INTEGER PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        measured_ms INTEGER NOT NULL,
+        data TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX measurements_by_account ON measurements (account_id, measured_ms);"];
+
+pub struct SqliteUsageStore {
+    conn: Connection,
+}
+
+impl SqliteUsageStore {
+    pub fn open(path: &Path) -> Result<Self, StoreError> {
+        open_database(path, USAGE_MIGRATIONS).map(|conn| Self { conn })
+    }
+}
+
+/// The usage store `run()` uses: [`USAGE_FILE_NAME`] in `dir`.
+pub fn open_usage_store(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::cloud::usage::UsageStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteUsageStore::open(
+        &dir.join(USAGE_FILE_NAME),
+    )?))
+}
+
+impl crate::cloud::usage::UsageStore for SqliteUsageStore {
+    /// Adds `m` and keeps the newest `usage::KEPT` of its account, in one
+    /// transaction.
+    fn add(&mut self, m: &crate::cloud::usage::Measurement) -> Result<(), StoreError> {
+        let data = serde_json::to_string(m).map_err(|e| StoreError::new(e.to_string()))?;
+        let keep = i64::try_from(crate::cloud::usage::KEPT).unwrap_or(i64::MAX);
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(sql_error("cannot save the measurement"))?;
+        tx.execute(
+            "INSERT INTO measurements (account_id, measured_ms, data) VALUES (?1, ?2, ?3)",
+            params![m.account, m.measured_ms, data],
+        )
+        .map_err(sql_error("cannot save the measurement"))?;
+        tx.execute(
+            "DELETE FROM measurements WHERE account_id = ?1 AND id NOT IN (
+                 SELECT id FROM measurements WHERE account_id = ?1
+                 ORDER BY measured_ms DESC, id DESC LIMIT ?2)",
+            params![m.account, keep],
+        )
+        .map_err(sql_error("cannot trim the measurements"))?;
+        tx.commit()
+            .map_err(sql_error("cannot save the measurement"))
+    }
+
+    fn history(
+        &mut self,
+        account: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::cloud::usage::Measurement>, StoreError> {
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let read = || -> rusqlite::Result<Vec<String>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT data FROM measurements WHERE account_id = ?1
+                 ORDER BY measured_ms DESC, id DESC LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(params![account, limit], |r| r.get(0))?;
+            rows.collect()
+        };
+        let rows = read().map_err(sql_error("cannot read the measurements"))?;
+        // A row this version cannot read (written by a newer sotyware) is
+        // skipped, not an error: the others are still worth showing.
+        Ok(rows
+            .iter()
+            .filter_map(|text| serde_json::from_str(text).ok())
+            .collect())
+    }
+}
+
 /// The operation journal (ADR-030), separate from the other databases so
 /// its schema evolves on its own. Local paths are stored here and nowhere
 /// else; the file never leaves the device.
@@ -1023,12 +1173,15 @@ mod tests {
     fn saves_are_read_back_and_overwritten() {
         let dir = TestDir::new("save");
         let mut store = SqliteStore::open(&dir.db()).unwrap();
-        store.save("example", false).unwrap();
+        store.save("backup-scheduler", false).unwrap();
         store.save("other", true).unwrap();
-        store.save("example", true).unwrap();
+        store.save("backup-scheduler", true).unwrap();
         assert_eq!(
             store.load().unwrap(),
-            [("example".to_owned(), true), ("other".to_owned(), true)]
+            [
+                ("backup-scheduler".to_owned(), true),
+                ("other".to_owned(), true)
+            ]
         );
     }
 
@@ -1037,10 +1190,13 @@ mod tests {
         let dir = TestDir::new("reopen");
         {
             let mut store = SqliteStore::open(&dir.db()).unwrap();
-            store.save("example", false).unwrap();
+            store.save("backup-scheduler", false).unwrap();
         }
         let mut store = SqliteStore::open(&dir.db()).unwrap();
-        assert_eq!(store.load().unwrap(), [("example".to_owned(), false)]);
+        assert_eq!(
+            store.load().unwrap(),
+            [("backup-scheduler".to_owned(), false)]
+        );
     }
 
     #[test]
@@ -1336,36 +1492,77 @@ mod tests {
         prefs.close();
     }
 
-    fn example(registry: &FeatureRegistry) -> FeatureState {
-        registry.info("example").unwrap().state
+    /// The built-in feature these tests switch: it is on by default and,
+    /// without the link `run()` sets, starting and stopping it do nothing.
+    const SWITCHED: &str = "backup-scheduler";
+
+    fn scheduler(registry: &FeatureRegistry) -> FeatureState {
+        registry.info(SWITCHED).unwrap().state
     }
 
     #[test]
-    fn the_example_feature_stays_switched_across_restarts() {
+    fn a_feature_stays_switched_across_restarts() {
         let dir = TestDir::new("restart");
         let (registry, prefs) = launch(&dir);
         assert_eq!(
-            example(&registry),
+            scheduler(&registry),
             FeatureState::Running,
             "default on first launch"
         );
-        let change = features::switch_feature(&registry, &prefs, "example", false).unwrap();
+        let change = features::switch_feature(&registry, &prefs, SWITCHED, false).unwrap();
         assert_eq!(change.save_error, None);
         quit(registry, prefs);
 
         let (registry, prefs) = launch(&dir);
         assert_eq!(
-            example(&registry),
+            scheduler(&registry),
             FeatureState::Disabled,
             "stayed disabled"
         );
-        let change = features::switch_feature(&registry, &prefs, "example", true).unwrap();
+        let change = features::switch_feature(&registry, &prefs, SWITCHED, true).unwrap();
         assert_eq!(change.save_error, None);
         quit(registry, prefs);
 
         let (registry, prefs) = launch(&dir);
-        assert_eq!(example(&registry), FeatureState::Running, "stayed enabled");
+        assert_eq!(
+            scheduler(&registry),
+            FeatureState::Running,
+            "stayed enabled"
+        );
         quit(registry, prefs);
+    }
+
+    /// sotyware 0.1.0 had an `example` feature; a database that stored a
+    /// choice for it must still load: the row is ignored (no such feature
+    /// any more), the other features keep their stored choices, and the row
+    /// stays in the file (nothing is migrated or deleted).
+    #[test]
+    fn a_choice_stored_for_the_removed_example_feature_is_ignored_and_kept() {
+        let dir = TestDir::new("removed-example");
+        {
+            let mut store = SqliteStore::open(&dir.db()).unwrap();
+            store.save("example", false).unwrap();
+            store.save(SWITCHED, false).unwrap();
+        }
+        let (registry, prefs) = launch(&dir);
+        assert_eq!(prefs.load_error().map(ToString::to_string), None);
+        assert!(registry.info("example").is_none(), "no example feature");
+        assert_eq!(
+            scheduler(&registry),
+            FeatureState::Disabled,
+            "stored choice kept"
+        );
+        assert_eq!(
+            registry.info("update-check").unwrap().state,
+            FeatureState::Running,
+            "default"
+        );
+        quit(registry, prefs);
+        let mut store = SqliteStore::open(&dir.db()).unwrap();
+        assert_eq!(
+            store.load().unwrap(),
+            [(SWITCHED.to_owned(), false), ("example".to_owned(), false)]
+        );
     }
 
     #[test]
@@ -1373,11 +1570,11 @@ mod tests {
         let dir = TestDir::new("corrupt-launch");
         fs::write(dir.db(), b"garbage garbage garbage garbage garbage garbage").unwrap();
         let (registry, prefs) = launch(&dir);
-        assert_eq!(example(&registry), FeatureState::Running);
+        assert_eq!(scheduler(&registry), FeatureState::Running);
         let error = prefs.load_error().expect("reported").to_string();
         assert!(error.contains("not a database"), "{error}");
-        let change = features::switch_feature(&registry, &prefs, "example", false).unwrap();
-        assert_eq!(example(&registry), FeatureState::Disabled);
+        let change = features::switch_feature(&registry, &prefs, SWITCHED, false).unwrap();
+        assert_eq!(scheduler(&registry), FeatureState::Disabled);
         assert!(
             change
                 .save_error
@@ -1560,5 +1757,76 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         prepare_data_dir(&link).unwrap();
         assert_eq!(mode(&target), 0o755);
+    }
+
+    #[test]
+    fn the_window_placement_is_one_row_in_its_own_file() {
+        let dir = TestDir::new("window-state");
+        {
+            let mut store = open_window_state(Ok(dir.0.clone())).unwrap();
+            assert_eq!(store.load().unwrap(), None);
+            store.save(r#"{"format":1}"#).unwrap();
+            store.save(r#"{"format":1,"x":3}"#).unwrap();
+        }
+        let path = dir.0.join(WINDOW_STATE_FILE_NAME);
+        assert!(path.is_file());
+        assert_eq!(version(&path), 1);
+        assert_eq!(tables(&path), ["window_state"]);
+        let mut store = open_window_state(Ok(dir.0.clone())).unwrap();
+        assert_eq!(
+            store.load().unwrap().as_deref(),
+            Some(r#"{"format":1,"x":3}"#)
+        );
+        store.clear().unwrap();
+        assert_eq!(store.load().unwrap(), None);
+        // Not the preferences file: an older sotyware never sees its schema.
+        assert!(!dir.0.join(FILE_NAME).exists());
+    }
+
+    #[test]
+    fn usage_measurements_are_kept_newest_first_and_trimmed_per_account() {
+        use crate::cloud::usage::{KEPT, Measurement};
+        let dir = TestDir::new("usage");
+        let m = |account: &str, at: i64| Measurement {
+            account: account.into(),
+            bucket: "b".into(),
+            measured_ms: at,
+            bytes: u64::try_from(at).unwrap(),
+            ..Measurement::default()
+        };
+        {
+            let mut store = open_usage_store(Ok(dir.0.clone())).unwrap();
+            for at in 1..=(KEPT as i64 + 5) {
+                store.add(&m("a", at)).unwrap();
+            }
+            store.add(&m("other", 7)).unwrap();
+        }
+        let path = dir.0.join(USAGE_FILE_NAME);
+        assert_eq!(version(&path), 1);
+        assert_eq!(tables(&path), ["measurements"]);
+        let mut store = open_usage_store(Ok(dir.0.clone())).unwrap();
+        let all = store.history("a", 1_000).unwrap();
+        assert_eq!(all.len(), KEPT, "trimmed to the newest {KEPT}");
+        assert_eq!(all.first().map(|m| m.measured_ms), Some(KEPT as i64 + 5));
+        assert_eq!(all.last().map(|m| m.measured_ms), Some(6));
+        assert_eq!(
+            store
+                .history("a", 3)
+                .unwrap()
+                .iter()
+                .map(|m| m.measured_ms)
+                .collect::<Vec<_>>(),
+            [105, 104, 103]
+        );
+        assert_eq!(store.history("other", 10).unwrap(), [m("other", 7)]);
+        assert_eq!(store.history("nobody", 10).unwrap(), []);
+        // A row a newer sotyware wrote in another shape is skipped.
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO measurements (account_id, measured_ms, data) VALUES ('other', 9, '{\"unknown\":1}')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(store.history("other", 10).unwrap(), [m("other", 7)]);
     }
 }

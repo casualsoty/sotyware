@@ -10,15 +10,19 @@ The user's enable/disable choice is saved and survives restarts
 Third-party plugins, WASM and a management UI do not exist
 ([what is deferred](#deferred)).
 
-Today there are three features: `example`, which does nothing visible (it
-demonstrates the lifecycle and gives the dashboard and the desktop tests a
-feature to list and switch), `backup-scheduler` ("Scheduled backups",
+Today there are two features: `backup-scheduler` ("Scheduled backups",
 on by default, 2026-11-15, ADR-031), which starts and stops the backup
 scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)), and
 `update-check` ("Automatic update checks", on by default, 2026-11-15,
 ADR-033), which starts and stops the automatic update checks of
 `crate::updates` (one minute after startup, then daily; nothing when no
 update source is configured; see [updates.md](updates.md#flow)).
+The `example` feature of sotyware 0.1.0, which did nothing visible, was
+removed on 2026-11-15: Settings › Features no longer lists it, and the
+desktop tests switch "Scheduled backups" instead (with no backup job it
+starts and stops nothing visible). A choice stored for `example` in an
+existing `preferences.sqlite3` is ignored as an unknown ID and left in the
+file ([Persistence](#persistence)); nothing is migrated or deleted.
 
 ## Pieces
 
@@ -31,7 +35,6 @@ update source is configured; see [updates.md](updates.md#flow)).
 | `FeaturePreferences`, `PreferenceStore` | `features/preferences.rs` | The stored choices: decides at startup whether a feature runs (`enabled_at_startup`: stored choice, else the default) and saves each switch. `PreferenceStore` is the two-method storage trait |
 | `SqliteStore` | `storage.rs` | The `PreferenceStore` implementation: `preferences.sqlite3`, schema and migrations |
 | `list_features`, `set_feature_enabled` | `features/mod.rs` | The frontend's only access to features |
-| `Example` | `features/example.rs` | The example feature |
 | `BackupScheduler` | `features/backup.rs` | Starts and stops the backup scheduler through `backup::SCHEDULER_LINK`, set in `run()` before the event loop (without it, as in unit tests, start and stop do nothing) |
 | `src/features.ts`, `src/Features.svelte` | frontend | Typed command wrappers that validate responses; the Features list in Settings › Features (ADR-035) |
 
@@ -43,7 +46,7 @@ Registration:
 
 - **Deterministic:** features are registered, started and listed in the order of
   `builtin()`. They are stopped in reverse order.
-- **Validated:** the ID must be lowercase kebab-case (`example`,
+- **Validated:** the ID must be lowercase kebab-case (`backup-scheduler`,
   `clipboard-history`), and name, description and version must not be empty.
   A **duplicate ID is rejected** and the first feature with that ID is kept.
   A rejected feature is logged (`sotyware: feature not registered: …`) and
@@ -151,7 +154,7 @@ last error, with a checkbox to switch it. While a feature is busy or a request i
 in flight, the checkbox is disabled. A `storageError` is shown as an alert
 ("Could not load the saved feature choices: …. Every feature uses its default,
 and changes are not saved."), and so is a `saveError` ("Could not save the
-choice for Example: …. It stays disabled until sotyware quits; the next start
+choice for Scheduled backups: …. It stays disabled until sotyware quits; the next start
 uses the last saved choice or the default."), with the checkbox showing the
 feature's real, new state.
 

@@ -32,6 +32,9 @@
 //! - [`recovery`]: the recovery view over the operation journal: inspect
 //!   interrupted work, dismiss it, abort incomplete multipart uploads
 //!   (ADR-030).
+//! - [`usage`]: measuring a bucket's storage usage on request, its history
+//!   and the estimated cost (ADR-041), with the published prices as data in
+//!   [`pricing`].
 //!
 //! Design: docs/architecture/cloud-storage.md.
 
@@ -46,6 +49,7 @@ pub mod keyring;
 pub mod manage;
 pub mod operations;
 pub mod places;
+pub mod pricing;
 pub mod provider;
 /// The opt-in request recorder (ADR-024); only in builds with the
 /// `request-recorder` feature, never in a normal build.
@@ -54,6 +58,7 @@ pub mod recorder;
 pub mod recovery;
 pub mod s3;
 pub mod upload;
+pub mod usage;
 
 /// The SQLite account store lives with the other SQLite code in `storage.rs`.
 pub use crate::storage::{ACCOUNTS_FILE_NAME, SqliteAccountStore};

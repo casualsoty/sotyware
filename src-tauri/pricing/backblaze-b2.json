@@ -1,0 +1,38 @@
+{
+  "format": "sotyware-pricing",
+  "version": 1,
+  "provider": "backblaze-b2",
+  "name": "Backblaze B2, pay as you go",
+  "currency": "USD",
+  "taxes": "excluded",
+  "checkedOn": "2026-11-15",
+  "sources": [
+    "https://www.backblaze.com/cloud-storage/pricing",
+    "https://www.backblaze.com/cloud-storage/transaction-pricing"
+  ],
+  "accountScope": "region",
+  "tbBytes": 1000000000000,
+  "storage": {
+    "price": 6.95,
+    "per": "tb-30-days",
+    "freeBytes": 10000000000,
+    "minimumObjectBytes": null,
+    "note": "Billed per byte-hour at $6.95 per TB per 30 days; the first 10 GB of an account are free."
+  },
+  "baseFee": null,
+  "egress": {
+    "price": 0.01,
+    "per": "gb",
+    "freeMultipleOfStored": 3,
+    "includedBytes": 0,
+    "note": "Free up to 3 times the account's average stored data in the month, then $0.01 per GB."
+  },
+  "transactions": {
+    "note": "Class A, B and C API calls (every call sotyware makes) are free for pay-as-you-go accounts; class D (event notifications) costs $0.004 per 10,000 after the first 2,500 a day."
+  },
+  "notes": [
+    "Every B2 bucket keeps old versions: hidden files and older versions are stored data until a lifecycle rule removes them.",
+    "Unfinished large-file uploads keep their parts stored until they are cancelled.",
+    "Committed contracts (B2 Reserve, Overdrive) are priced differently."
+  ]
+}

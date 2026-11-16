@@ -2311,3 +2311,157 @@ Code: `src-tauri/src/updates.rs` (`release_repository!`,
   key. macOS CI time is free but slow (two Mac jobs per pull request). Intel
   Mac builds end when GitHub retires its last Intel image (announced for
   2027).
+
+## ADR-040: On Windows the dashboard draws its own title bar; the window opens at half the primary work area and remembers its place
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/title_bar.rs`,
+`src-tauri/src/window_state.rs`, `storage.rs` (`window-state.sqlite3`),
+`lib.rs` (`setup`, `on_window_event`, `show_dashboard`,
+`release_resources`), `src/TitleBar.svelte`, `src/App.svelte`;
+details: [frontend.md](frontend.md#title-bar-windows),
+[lifecycle.md](lifecycle.md#placement-and-chrome).
+
+- **Context:** on Windows the system title bar sat above the dashboard as a
+  separate strip in the system's colours. The window opened at a fixed
+  1120 × 760, wherever Windows put it, and forgot any size or place the
+  user chose. Tauri 2.12 supports an undecorated window with a page-drawn
+  title bar (`decorations: false`, `data-tauri-drag-region`, the window
+  API) and keeps native behaviour for it on Windows: `tauri-runtime-wry`
+  attaches a resize border (a child window on the top edge, the DWM frame
+  elsewhere), the DWM shadow gives Windows 11's rounded corners, and tao
+  keeps `WS_CAPTION`, `WS_SYSMENU`, `WS_SIZEBOX` and the maximize and
+  minimize boxes, hiding only the frame. There is no native "window
+  controls overlay" in Tauri for Windows.
+- **Decision:**
+  - The dashboard is created hidden (`visible: false`). In `setup`, after
+    the mode is known (never after a fatal tray error), Windows first gets
+    the runtime capability `window-controls` (start dragging, the drag
+    region's double-click toggle, minimize, toggle maximize, is maximized,
+    close), and only then loses its decorations, so an undecorated window
+    always has controls; a failure keeps the native title bar. The page
+    asks `isDecorated()` (a read-only permission in the static capability)
+    and draws `TitleBar.svelte` only for an undecorated window: the name,
+    a drag region over everything that is not a control (double click
+    maximizes or restores), and Windows 11-style Minimize, Maximize/Restore
+    and Close buttons in the design system's tokens (Close in the system's
+    red). Close sends the same close request as Alt+F4, which Rust turns
+    into hiding in tray mode (ADR-002). macOS and Linux keep their native
+    title bars.
+  - Placement (`window_state`): with nothing saved, half the width and
+    half the height of the primary monitor's work area, at least 900 × 540
+    logical pixels (`DEFAULT_MIN`: half of a 1366 or 1280 px wide screen
+    would fall below the 760 px breakpoint and collapse the sidebar into an
+    overlay; a first run of the virtual-display test showed exactly that)
+    and at most the work area, centred; on 1920 × 1080 that is 960 × 540.
+    The window can still be resized down to 640 × 480. Otherwise the
+    saved normal bounds (outer position, inner size, physical pixels) and
+    maximized state, restored on the monitor they overlap most, rescaled
+    when that monitor's scaling changed, and moved (and shrunk if needed)
+    to lie fully inside its work area; bounds on no connected monitor give
+    the default. Showing a hidden dashboard first moves it back onto a
+    connected monitor if it lies on none. The geometry is pure functions,
+    unit-tested.
+  - The bounds are tracked in memory from the window's Moved and Resized
+    events (not while minimized, hidden or maximized) and written to
+    `window-state.sqlite3` when the window is hidden or loses focus (off
+    the event loop) and at exit. Its own database file, so an older
+    sotyware, which never opens it, meets no unknown schema.
+- **Consequences:** one cohesive window on Windows with native moving,
+  snapping, resizing and keyboard behaviour. The Snap Layouts flyout that
+  Windows 11 shows when hovering a native maximize button does not appear
+  (Win+Z still opens it). On Windows 10 an undecorated window with a shadow
+  has a 1 px border (Windows 10 is not supported). The page's title bar is
+  covered by unit tests and by checks in `tests/desktop/windows.ps1` that
+  have not run yet (no native Windows build in this session); a person's
+  visual check on Windows 11 is still to do. A placement change during a
+  drag is written only once the window is hidden, loses focus or sotyware
+  quits: a crash loses it. Wayland compositors do not let a client choose
+  its position.
+
+## ADR-041: Storage usage is measured by listing; costs are estimates from versioned price lists; "snapshots" of a bucket are sotyware's backup snapshots
+
+Status: Accepted (2026-11-15). Code: `src-tauri/src/cloud/usage.rs`,
+`src-tauri/src/cloud/pricing.rs`, `src-tauri/pricing/*.json`,
+`cloud/s3/manage.rs` (`usage_versions_page`, `list_parts_page`),
+`storage.rs` (`storage-usage.sqlite3`), `backup/engine.rs`
+(`delete_snapshot`, the shared `delete_chosen`), `backup/mod.rs`
+(`start_delete_snapshot`, `backup_snapshot_details`), `src/CloudUsage.svelte`,
+`src/CloudSnapshots.svelte`, `src/CloudBrowser.svelte` (tabs); details:
+[cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates),
+[cloud-storage.md](cloud-storage.md#snapshots-and-backups-of-a-bucket),
+[backup.md](backup.md#deleting-a-snapshot).
+
+- **Context:** users want to see how much each bucket stores and costs, and
+  to manage "Backblaze B2 snapshots" from sotyware. Read on 2026-11-15 from
+  Backblaze's and Hetzner's official pages: no API reports a bucket's size
+  or the account's bill (`b2_list_buckets` has no size field; Hetzner shows
+  bucket statistics in its console only); Backblaze snapshots are ZIP files
+  created, downloaded and deleted only in the web console, kept in a
+  read-only `b2-snapshot-…` bucket, with statuses shown only there; no API
+  creates or lists them. The 2026-11-11 proposal for a cost estimator
+  ([cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates))
+  required prices as data with their source and date.
+- **Decision:**
+  - **Usage** is measured on request, read-only: every version and delete
+    marker (`ListObjectVersions`, falling back to the current objects with
+    `ListObjectsV2` where versions cannot be listed, and saying so), and
+    unfinished multipart uploads with their stored parts (`ListParts`, up
+    to 100 uploads). One measurement at a time in its own slot, progress on
+    a per-call channel, cancellable, at most 20,000 pages (then marked
+    incomplete). Results go to `storage-usage.sqlite3` (newest 100 per
+    account): the history is sotyware's own measurements.
+  - **Prices** are one JSON file per provider in `src-tauri/pricing/`
+    (format `sotyware-pricing` v1: currency, taxes excluded, `checkedOn`,
+    https sources, the provider's own units), compiled in and validated by
+    tests. A provider without a file gets usage and no estimate.
+  - **Estimates** are computed in Rust for 30 days per provider account
+    (Backblaze: buckets of one region; Hetzner: all buckets, one base fee),
+    as components (base price, storage, downloads at the amount the user
+    states, API calls) with the assumptions written out, in the provider's
+    currency, never summed across currencies, and labelled an estimate,
+    not a bill. No value is presented as billing data.
+  - **Snapshots:** the bucket view's "Snapshots & backups" tab explains
+    Backblaze's console snapshots without pretending to manage them, and
+    manages sotyware's backup snapshots (ADR-031) of the bucket: list,
+    details from the manifest, Back up now, Verify, and a new deletion of
+    one chosen snapshot behind a typed confirmation, run as the backup
+    task `delete-snapshot`. It reuses retention's deletion: every manifest
+    is read first, the chosen manifest is deleted, then only blobs no
+    remaining manifest references and older than a day before the oldest
+    remaining one. Health ignores a deleted snapshot.
+- **Consequences:** five new commands (83 in all), two new database files
+  in the test-profile handshake. A measurement of a large bucket takes
+  minutes and one listing request per 1,000 entries (free at both
+  providers today). The estimate misses what sotyware cannot see:
+  downloads by other programs (stated by the user), Hetzner's billed
+  metadata, prices of contracts, VAT. Price files must be updated by hand
+  when providers change prices (the tests pin the figures read on
+  2026-11-15). Deleting a snapshot is destructive at the destination; a
+  versioned destination keeps the data until its lifecycle rules remove
+  it.
+
+## ADR-042: An enrolled device syncs its vault automatically on events, never on a timer
+
+Status: Accepted (2026-11-15). Code: `src/accountSync.svelte.ts`,
+`src/App.svelte`, `src/Sidebar.svelte`, `src/CloudStorage.svelte`
+(`onlocalchange`, `generation`); details:
+[accounts.md](accounts.md#when-sync-runs).
+
+- **Context:** with ADR-032, a computer synced only after account actions
+  and on "Sync now": a storage account added on one computer reached the
+  others only when someone clicked there, and the shell showed nothing
+  about sync.
+- **Decision:** a device that is signed in and enrolled (the account key is
+  on it) syncs when sotyware starts, when the window is focused again (at
+  most every 15 minutes) and after a storage account was added, changed or
+  removed on it. The page drives it (one run at a time); Rust is
+  unchanged and records the outcome (`lastSyncMs`, `lastSyncError`). After
+  a sync the shell reads the storage accounts again. The sidebar's Account
+  item shows the state (synced, not synced and why, waiting for unlock,
+  conflicts). No timer or background loop: a window that stays unfocused
+  does not sync.
+- **Consequences:** offline, a sync fails quietly, the reason is shown, and
+  every storage account keeps working locally. Builds without an account
+  service (release builds today) only read the local status. A change made
+  on one computer reaches another when that one starts, is focused, or
+  changes something itself.

@@ -17,7 +17,7 @@
         "title": "sotyware",
         "width": 1120,
         "height": 760,
-        "visible": true,
+        "visible": false,
         "minWidth": 640,
         "minHeight": 480
       }

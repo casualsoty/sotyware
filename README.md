@@ -22,9 +22,11 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   and "Quit", hide-on-close, single-instance handling.
 - A desktop dashboard: a sidebar with the sections and your storage
   accounts, an Overview, Settings (light, dark or system theme; features;
-  about and updates), keyboard shortcuts.
+  about and updates), keyboard shortcuts. On Windows it draws its own title
+  bar (native moving, snapping and resizing kept); it opens at half your
+  primary screen (at least 900 × 540), centred, then where you left it.
 - Built-in features: native Rust modules that can be enabled and disabled from
-  the dashboard (an example, scheduled backups, automatic update checks); each
+  the dashboard (scheduled backups, automatic update checks); each
   choice is saved locally (SQLite, in the app's data folder, private to the
   user).
 - **Cloud Storage** for S3-compatible buckets (Backblaze B2, Hetzner or any
@@ -45,7 +47,16 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   - create temporary share links (1 hour, 1 day or 7 days);
   - favorites and recent items per account;
   - after a crash, a list of interrupted work, inspected at the provider
-    before you decide what to do, and a list of unfinished large uploads.
+    before you decide what to do, and a list of unfinished large uploads;
+  - **usage and costs** per bucket: measured by listing the bucket (files,
+    older versions, unfinished uploads; no provider reports this through
+    its API), with a history of sotyware's measurements and a 30-day cost
+    estimate from the providers' published prices (Backblaze B2, Hetzner),
+    always labelled as an estimate, never a bill;
+  - **snapshots and backups** per bucket: what Backblaze's own snapshots are
+    (made only in its web console; sotyware cannot manage them), and
+    sotyware's backup snapshots of the bucket: details, back up now,
+    verify, delete one (after typing `delete`).
 - **Backups**: jobs that keep an independent, verified, versioned copy of a
   bucket (or folder) in a second account, ideally at another provider:
   scheduled or manual runs that transfer only changes, verification, a
@@ -55,7 +66,9 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
 - **Optional sotyware account** with end-to-end encrypted sync of storage
   accounts (keys included) and backup jobs between computers: the service
   only ever stores ciphertext; a recovery key shown once, device approval,
-  revocation and key rotation. **Not available to users yet:** the service
+  revocation and key rotation; an enrolled computer syncs at startup, when
+  focused and after you change a storage account, and shows its sync state.
+  **Not available to users yet:** the service
   (`server/`) is not deployed and release builds have none configured.
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or

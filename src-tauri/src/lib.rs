@@ -31,6 +31,11 @@
 //! running upload batch is cancelled and incomplete multipart uploads are
 //! aborted, within a bounded wait (`cloud::upload::CloudUploads::shutdown`).
 //!
+//! The dashboard is created hidden (`tauri.conf.json`). Once the mode is
+//! known, `setup` gives it its chrome (on Windows the page's own title bar,
+//! `title_bar`) and its place (`window_state`: where it was, or half the
+//! primary monitor's work area, centred) and only then shows it (ADR-040).
+//!
 //! The decisions behind these rules are plain functions (`select_mode`,
 //! `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`,
 //! `reveal`) so that unit tests can check them without a display, a tray host or an
@@ -45,8 +50,10 @@ pub(crate) mod journal;
 mod storage;
 #[cfg(any(test, feature = "test-profile"))]
 mod test_profile;
+mod title_bar;
 mod tray;
 pub(crate) mod updates;
+mod window_state;
 
 use std::sync::Arc;
 
@@ -142,7 +149,32 @@ pub fn show_dashboard<R: Runtime>(app: &AppHandle<R>) {
         eprintln!("sotyware: dashboard window '{DASHBOARD_LABEL}' not found");
         return;
     };
+    // A monitor may have been unplugged while the window was hidden.
+    window_state::ensure_visible(&window.as_ref().window(), dashboard_min_size(app.config()));
     reveal(&window);
+}
+
+/// The dashboard's minimum inner size from `tauri.conf.json`, in logical
+/// pixels (the window placement never goes below it).
+fn dashboard_min_size(config: &tauri::Config) -> (f64, f64) {
+    config
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == DASHBOARD_LABEL)
+        .map_or((640.0, 480.0), |w| {
+            (w.min_width.unwrap_or(640.0), w.min_height.unwrap_or(480.0))
+        })
+}
+
+/// Saves the dashboard's placement off the event loop (SQLite).
+fn persist_window_state<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(states) = app.try_state::<window_state::WindowStates>() {
+            states.persist();
+        }
+    });
 }
 
 /// Un-minimizes, shows and focuses `window`, in that order. Each step is attempted
@@ -364,6 +396,9 @@ pub fn run() {
             cloud::recovery::dismiss_cloud_recovery,
             cloud::recovery::list_cloud_incomplete_uploads,
             cloud::recovery::abort_cloud_incomplete_upload,
+            cloud::usage::storage_usage_overview,
+            cloud::usage::measure_storage_usage,
+            cloud::usage::cancel_storage_usage,
             backup::list_backups,
             backup::save_backup_job,
             backup::remove_backup_job,
@@ -373,6 +408,8 @@ pub fn run() {
             backup::restore_backup,
             backup::export_backup_manifest,
             backup::check_backup_protection,
+            backup::backup_snapshot_details,
+            backup::delete_backup_snapshot,
             account::account_status,
             account::account_register,
             account::account_verify,
@@ -439,6 +476,22 @@ pub fn run() {
                     ) {
                         registry.start_all(|m| prefs.enabled_at_startup(m));
                     }
+                    // The dashboard was created hidden: its chrome and place
+                    // first, then it is shown (ADR-040). Never after a fatal
+                    // tray error.
+                    if let Some(window) = app.get_webview_window(DASHBOARD_LABEL) {
+                        if title_bar::wanted() {
+                            title_bar::apply(app.handle(), &window);
+                        }
+                        if let Some(states) = app.try_state::<window_state::WindowStates>() {
+                            window_state::place(
+                                &window.as_ref().window(),
+                                &states,
+                                dashboard_min_size(app.config()),
+                            );
+                        }
+                        reveal(&window);
+                    }
                 }
                 Err(code) => app.handle().exit(code),
             }
@@ -453,6 +506,23 @@ pub fn run() {
                 }
                 return;
             }
+            // Where the user puts the dashboard: tracked in memory as it
+            // moves, saved when it is hidden or loses focus (ADR-040).
+            if window.label() == DASHBOARD_LABEL {
+                match event {
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        if let Some(states) = window.try_state::<window_state::WindowStates>() {
+                            window_state::track(window, &states);
+                        }
+                        return;
+                    }
+                    WindowEvent::Focused(false) => {
+                        persist_window_state(window.app_handle());
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             let WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
@@ -466,6 +536,7 @@ pub fn run() {
                 CloseAction::HideInstead => {
                     // Closing the dashboard must not end the app: keep the window, hide it.
                     api.prevent_close();
+                    persist_window_state(window.app_handle());
                     if let Err(e) = window.hide() {
                         eprintln!("sotyware: failed to hide dashboard on close: {e}");
                     }
@@ -614,6 +685,16 @@ pub fn run() {
         updates::Updates::current(&app.package_info().version.to_string()),
     ));
     app.manage(updates);
+    // Storage usage measurements and their history (ADR-041): a separate
+    // small database; an unusable one only means nothing is kept.
+    app.manage(cloud::usage::StorageUsage::load(storage::open_usage_store(
+        clone_dir(&data_dir),
+    )));
+    // Where the dashboard was last (ADR-040): read now, applied in `setup`
+    // before the window is first shown.
+    app.manage(window_state::WindowStates::load(
+        storage::open_window_state(clone_dir(&data_dir)),
+    ));
     // Tells the test driver which process, paths and credential namespace
     // this is; it compares them with what it set up before touching the
     // window (ADR-027). Without it the driver refuses to go on, so a failed
@@ -629,6 +710,8 @@ pub fn run() {
             storage::BACKUP_FILE_NAME,
             storage::ACCOUNT_STATE_FILE_NAME,
             storage::UPDATES_FILE_NAME,
+            storage::WINDOW_STATE_FILE_NAME,
+            storage::USAGE_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -665,6 +748,11 @@ pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
         prefs.close();
     }
+    // The dashboard's last placement (a small write, on this thread: the
+    // process is ending).
+    if let Some(states) = app.try_state::<window_state::WindowStates>() {
+        states.persist();
+    }
     // A running download is cancelled; its temporary file is removed
     // before the process ends (bounded wait, ADR-020).
     if let Some(downloads) = app.try_state::<Arc<cloud::download::CloudDownloads>>() {
@@ -684,6 +772,10 @@ pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     // (bounded wait, ADR-026).
     if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
         ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
+    }
+    // A running usage measurement stops (it only reads; ADR-041).
+    if let Some(usage) = app.try_state::<Arc<cloud::usage::StorageUsage>>() {
+        usage.shutdown();
     }
     // A running backup task is cancelled; the scheduler stops
     // (bounded wait, ADR-031).
@@ -946,14 +1038,24 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_starts_visible() {
-        // In both modes the dashboard is on screen at startup; in dashboard-only
-        // mode it is the only way to reach sotyware.
+    fn dashboard_is_created_hidden_with_native_decorations() {
+        // In both modes the dashboard is on screen at startup (in
+        // dashboard-only mode it is the only way to reach sotyware), but
+        // `setup` shows it, after giving it its place and, on Windows, the
+        // page's own title bar (ADR-040): created visible, it would first
+        // appear at the configured size in the system's place. Decorations
+        // are removed at runtime on Windows only, after the controls'
+        // capability was granted.
         let conf = read_json("tauri.conf.json");
+        let window = &conf["app"]["windows"][0];
+        assert_eq!(window["visible"], serde_json::json!(false));
+        assert!(window.get("decorations").is_none(), "native by default");
         assert_eq!(
-            conf["app"]["windows"][0]["visible"],
-            serde_json::json!(true)
+            (window["minWidth"].as_f64(), window["minHeight"].as_f64()),
+            (Some(640.0), Some(480.0))
         );
+        let config: tauri::Config = serde_json::from_value(conf).unwrap();
+        assert_eq!(dashboard_min_size(&config), (640.0, 480.0));
     }
 
     #[test]
@@ -961,8 +1063,9 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036); update this test together with decisions.md. Hiding is granted
-        // at runtime, in tray mode only (TRAY_MODE_CAPABILITY).
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041); update this test together with decisions.md. Hiding is granted
+        // at runtime, in tray mode only (TRAY_MODE_CAPABILITY), and the window controls on Windows only
+        // (title_bar::CAPABILITY).
         assert_eq!(
             cap["permissions"],
             serde_json::json!([
@@ -1009,6 +1112,9 @@ mod tests {
                 "allow-dismiss-cloud-recovery",
                 "allow-list-cloud-incomplete-uploads",
                 "allow-abort-cloud-incomplete-upload",
+                "allow-storage-usage-overview",
+                "allow-measure-storage-usage",
+                "allow-cancel-storage-usage",
                 "allow-list-backups",
                 "allow-save-backup-job",
                 "allow-remove-backup-job",
@@ -1018,6 +1124,8 @@ mod tests {
                 "allow-restore-backup",
                 "allow-export-backup-manifest",
                 "allow-check-backup-protection",
+                "allow-backup-snapshot-details",
+                "allow-delete-backup-snapshot",
                 "allow-account-status",
                 "allow-account-register",
                 "allow-account-verify",
@@ -1044,8 +1152,8 @@ mod tests {
                 "allow-cancel-update",
                 "allow-postpone-update",
                 "allow-restart-after-update",
-                // The theme picker (ADR-035) asks the window to follow it.
-                "core:window:allow-set-theme"
+                "core:window:allow-set-theme",
+                "core:window:allow-is-decorated",
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");

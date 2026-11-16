@@ -44,7 +44,7 @@ the tray rows, real mouse clicks and Quit; details in
 | Feature preferences: SQLite round trip, reopen, schema migration and rollback, newer/corrupt/damaged/unopenable/read-only databases, unknown IDs, defaults, save failures, concurrent saves and connections, exit | ✅ unit tests (real SQLite files in a temp folder; policy with an in-memory store) | — | — | — |
 | Feature choice survives a real restart (quit, new process) | ✅ unit test with the real store and built-in features (simulated restart) | ✅ real binary: disable → Quit → relaunch: disabled; enable → Quit → relaunch: running; database rows checked | ✅ real binary: the same, in `%LOCALAPPDATA%` | ✅ (step 9) |
 | Storage failure shown on the dashboard | ✅ mocked IPC | ✅ real binary: corrupt database and a folder in its place: warning shown, defaults used, "not saved" after a switch, file untouched | — | — |
-| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: example listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | ✅ real WebView2 page via UIA: example listed with version and description, checked and Running; UIA toggle and real mouse click each disable and re-enable it; still Disabled after Quit and relaunch (persisted), Running after enabling, Quit and a second relaunch | ✅ (step 9) |
+| Features section lists features and switches them; errors shown | ✅ mocked IPC | ✅ real page via AT-SPI: Scheduled backups listed as running, unchecked → disabled, checked → running (so the static capability allows both commands); listed in dashboard-only mode too | ✅ real WebView2 page via UIA: Scheduled backups listed with version and description, checked and Running; UIA toggle and real mouse click each disable and re-enable it; still Disabled after Quit and relaunch (persisted), Running after enabling, Quit and a second relaunch | ✅ (step 9) |
 | Features stopped on exit | ✅ unit tests (`stop_all`) | — not observable from outside | — | — |
 | Hide permission granted in tray mode only (runtime capability) | ✅ unit test (the decision) | ✅ tray mode: Hide works; dashboard-only: no button | ✅ tray mode | — |
 | The OS window really hides / shows / restores | — | ✅ X11 under openbox | ✅ Win32 | ✅ |
@@ -199,9 +199,11 @@ Feature preferences are tested in two layers
   cannot be created; a read-only file (loads, saving fails); four connections
   saving concurrently (integrity check passes, last values stored). Two tests
   run the startup and exit sequence of `run()` with the real store and
-  `builtin()`: the example feature stays disabled, then enabled, across
+  `builtin()`: `backup-scheduler` stays disabled, then enabled, across
   simulated restarts, and a corrupt file gives defaults, a save error, and an
-  unchanged file.
+  unchanged file. A third loads a database holding a choice for the removed
+  `example` feature (sotyware 0.1.0): ignored, the other choices kept, the
+  row left in the file.
 
 Cloud storage (`src-tauri/src/cloud/`,
 [cloud-storage.md](../architecture/cloud-storage.md)) is tested in three
@@ -1570,6 +1572,92 @@ nothing the recorder did not see sent. The helper's own requests (seeding,
 recording that is incomplete fails the run as "count unknown", never as
 "no requests".
 
+## Title bar, placement, usage and snapshot tests (ADR-040 to ADR-042)
+
+Headless, in `npm run test:headless`; nothing below needs a display or a
+provider:
+
+```bash
+cd src-tauri && cargo test --lib window_state:: title_bar:: cloud::usage cloud::pricing backup::
+npm run test:frontend -- src/TitleBar.test.ts src/CloudUsage.test.ts src/CloudSnapshots.test.ts src/accountSync.test.ts
+```
+
+- `window_state.rs`: the default placement (half of a 1920 × 1080 work area
+  is 960 × 540, centred; taskbars on any side; the 900 × 540 first-launch
+  minimum on 1366 and 1280 px screens and in logical pixels at 150 %;
+  screens smaller than it; decorations; negative coordinates), restoring (unchanged, maximized, on an unplugged
+  monitor → default, partly visible → moved inside, too large → shrunk,
+  the monitor overlapped most, a changed scaling keeps the logical size),
+  the saved row's strict format, writes only on change, an unusable store.
+  `storage.rs`: `window-state.sqlite3` and `storage-usage.sqlite3` (newest
+  first, trimmed to 100 per account, unreadable rows skipped).
+- `title_bar.rs`: Windows only, exactly the controls' permissions, its own
+  capability name. `lib.rs`: the window is created hidden with native
+  decorations; the capability file's permissions (incl. `allow-is-decorated`).
+- `cloud/usage/tests.rs` against the in-process servers: versions, delete
+  markers and small objects counted apart; 2,345 objects over three pages,
+  no page read twice; an empty bucket; s3s-fs (no version listing) falling
+  back to current objects while an unfinished upload's part is measured;
+  cancellation; wrong key and missing bucket in sotyware's words; the slot,
+  events and the kept result; the overview's grouping (Backblaze per region,
+  Hetzner per provider, generic without estimate), downloads per group,
+  per-currency totals, history order, the page's JSON shape.
+- `cloud/pricing.rs`: both price lists valid and pinned to the figures read
+  on 2026-11-15; Backblaze's free 10 GB and 3× egress; Hetzner's base price,
+  per-TB-hour storage, egress and the 64 kB minimum; assumptions and
+  sources stated; a broken list refused.
+- `backup/tests.rs`: deleting a chosen snapshot removes its manifest at once
+  and its unshared blob only after the margin, keeps shared blobs, refuses
+  a foreign key; health rests on the previous snapshot after the newest was
+  deleted, and on none after the last; a deletion waits for the slot.
+- Vitest: `TitleBar.test.ts` (controls, maximize state followed after a
+  resize, drag region, close wording per mode, errors shown, narrow toggle,
+  inactive look) and `App.test.ts` (drawn only for an undecorated window,
+  name moved, close request); `CloudUsage.test.ts` (empty state, measuring
+  with progress and stale events dropped, tiles and parts, the estimate as an
+  estimate, downloads sent and remembered, the Hetzner meter, history and
+  its table, failures and cancel, busy); `CloudSnapshots.test.ts` (provider
+  snapshots explained, jobs and snapshots, details, Back up now, typed
+  deletion and its warnings, refusal, no job); `CloudBrowser.test.ts` (the
+  tabs); `accountSync.test.ts` and `App.test.ts` (when an enrolled device
+  syncs, the sidebar's sync state).
+
+### Manual check: title bar and window placement (Windows 11)
+
+Not automated beyond `windows.ps1`. On Windows 11, with a test-profile build
+in a fresh test profile (or an installed copy that was never started):
+
+1. **First start:** the dashboard opens centred on the primary monitor at
+   half its work area, at least 900 × 540 (on 1920 × 1080 with a 48 px
+   taskbar: 960 × 540; on 1366 × 768: 900 × 540),
+   with no system title bar: sotyware's own bar continues the sidebar's
+   colour on the left and the page's on the right, with no line between bar
+   and page; rounded corners and a shadow as other Windows 11 windows.
+2. **Controls:** hover shows the light fill, Close turns red; Minimize goes
+   to the taskbar; Maximize fills the work area (taskbar visible) and the
+   middle icon becomes Restore; Restore returns to the same place; Close
+   hides to the tray (tray mode), Open Dashboard brings it back.
+3. **Dragging:** dragging the bar's empty area moves the window; dragging to
+   the top edge maximizes, to a side snaps; double click maximizes and
+   restores; buttons never start a drag; Win+Z opens snap layouts;
+   Win+Arrow, Alt+Space and Alt+F4 behave as for any window.
+4. **Resizing:** every edge and corner resizes; the minimum is 640 × 480;
+   when maximized there is no resize border.
+5. **Themes and focus:** Settings › Appearance Light and Dark recolour the
+   bar; another window active dims its text.
+6. **Placement:** move and resize, Quit from the tray, start again: the same
+   place and size; maximize, Quit, start: maximized, and Restore gives the
+   earlier normal bounds; disconnect the monitor the window was on (or
+   lower the resolution) and start: it opens on a connected monitor, fully
+   visible.
+7. **Scaling:** at 150 % (Settings › Display) the bar is crisp, its glyphs
+   sharp, and a saved size keeps its apparent size after a scaling change.
+8. **Narrow window** (below 760 px): the navigation toggle and the page's
+   name appear in the bar; the sidebar overlay opens below the bar.
+
+Record the result with the build, Windows version and scaling in
+[status.md](../status/status.md).
+
 ## Update tests
 
 ```bash
@@ -1653,7 +1741,7 @@ sotyware's output. Account ids and labels are new for every run
 | Mode | Check connection expects | Also |
 | --- | --- | --- |
 | Linux `local` | **Network error** (endpoint `http://127.0.0.1:9`, made-up keys) | a second account with the login collection locked over D-Bus: **Credential store locked**, and Remove keeps the account while its key cannot be deleted. Where gnome-keyring's system prompter is installed (the distribution package ships `org.gnome.keyring.SystemPrompter.service`, which the private bus activates), the unlock dialog of `gcr-prompter` opens on the Xvfb display; the driver presses its Cancel through AT-SPI, as a person who declines would, and prints how many it declined. With an unpacked gnome-keyring there is no prompter and the store refuses at once; nothing is pressed |
-| Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Overview link and the example feature's switch still work, the process keeps running |
+| Linux `hang` | — (a Secret Service that never answers) | while the add waits: the Settings link and the Scheduled backups switch still work, the process keeps running |
 | Linux `browse`, Windows `-Mode browse` | — (Windows: **Connected**) | the bucket browser against the in-process listing server (`cargo test … serve_listing_for_ui -- --ignored`, started by the script in this checkout's `src-tauri`, made-up key): Open bucket → the root's folders and files with size; a folder with spaces and Unicode; the bucket breadcrumb; `photos/` without its marker or nested file; `photos/2024/` with a MiB size; Up one folder; a marker-only folder → "This folder is empty."; a folder of 1,005 entries → "1000 items shown; more are available", Load more → 1,005, no Load more; Refresh → 1,000 again; ← Back to accounts; remove. The server fails the phase if anything but `ListObjectsV2` (or `HeadBucket`) reached it |
 | Linux `download`, Windows `-Mode download` | — (Windows: **Connected**) | downloads through the **native save dialog** from the in-process object server (`cargo test … serve_objects_for_ui -- --ignored`, made-up key; it writes the objects' sizes and SHA-256 next to its endpoint file): every file row has Download; the dialog opens with the key's last segment suggested, and cancelling it starts nothing; Save → "Downloaded …" with the SHA-256 matched and the file's SHA-256 equal to the server's; an existing file → the dialog's own replace question (GTK: "already exists" + Replace; Windows: "Confirm Save As" + Yes), the old file untouched until then, replaced afterwards; `docs/Bericht 2024 ü & co.pdf` (3 MiB) suggested unchanged and verified; a file without a stored SHA-256 → completed, "could not be verified"; a slow 16 MiB file → percent and "of 16 MiB", a hidden `.large.bin.*.sotyware-partial`, Cancel → "Download cancelled. Nothing was saved.", no file left; a connection cut after 256 KiB → failed with the network text, Try download again (no dialog) fails the same way; content that does not match its SHA-256 → integrity failure, nothing saved; Windows only: `readme.txt` saved under `lone-<U+D800>-copy.txt` (an unpaired surrogate, typed into File name) → sotyware keeps running, verified, the file under exactly that name (failed with `0xC0000409` before the rfd patch, ADR-023); at the end the download folder holds exactly the completed files. Linux only: closing the window during a download (dashboard-only mode quits) → exit 0 and no temporary file. Files go to a folder in the throwaway HOME (Linux) or a new folder under `%TEMP%` (Windows, removed afterwards). The server fails the phase if anything but `GetObject`, `ListObjectsV2` or `HeadBucket` reached it. On Linux the GTK dialog's name field is found through AT-SPI and the path typed with XTest (ASCII paths only); on Windows the common item dialog's File name box, Save and Cancel are not in its UI Automation tree (Windows 11 25H2), so they are found as child windows by control id (Edit `1001`, Button `1`, `2`) and driven with `WM_SETTEXT` / `BM_CLICK`, and the Yes of "Confirm Save As" with `TDM_CLICK_BUTTON`; any script error in this mode is a failed check and the account is still removed |
 | Linux `upload` | — | upload batches through the **native GTK multi-file dialog** into the in-process **s3s-fs** server (`cargo test … serve_uploads_for_ui -- --ignored`, made-up key) behind a `ThrottledLink` taking 6 MiB/s towards the server, with the stub tray watcher of `virtual.sh` (**tray mode**). The server is seeded through `S3Store::upload` with `inbox/existing.txt`, `other/readme.txt` and a 24 MiB `downloads/big.bin`. The helper takes commands from `<endpoint file>.ctl` (`dump` → `.state.json` with every object's content SHA-256, size, `HeadObject` size and SHA-256 metadata, the open multipart files and the operations; `verify-denied`; `abort-denied`; `delete <key>`) and fails the phase if the app sent anything but listing, reads and upload requests. The dialog is driven by Ctrl+L, the folder path typed with XTest, Return, Ctrl+A in its `Files` table and its Open button pressed through AT-SPI. Ten batches ([results](../status/status.md#cloud-storage-uploads-through-the-release-binary-on-a-virtual-display-2026-11-12)): odd names, empty file, existing object and the Rust skip reasons, destination fixed while the browser moves; cancel during a PUT and Try again; cancel during multipart (aborted); refused abort (parts kept, retry cleans them); refused verification (needs inspection, no retry for it); a file changed while sent; a download beside an upload; ← Back to accounts during a batch; close (hide) and a second launch during a batch; tray Quit during multipart. Ends by deleting exactly the known keys and checking the bucket is empty. The phase is in `cloud_ui_upload.py`, run by `cloud_ui.py` |
@@ -2044,8 +2132,9 @@ Files:
     starts with one tray item and quits with 0, because the `ksni` backend
     writes no icon file.
   - 12: tray mode, the page: tray hint and a "Hide dashboard" button; the
-    Features section lists the example feature as running with a checked
-    checkbox (`CHECK_BOX` role, named "Example"); toggling it through AT-SPI
+    Features section lists Scheduled backups (`backup-scheduler`) as running
+    with a checked checkbox (`CHECK_BOX` role, named "Scheduled backups"; the
+    `example` feature it switched before 2026-11-15 was removed); toggling it through AT-SPI
     shows it disabled, toggling again shows it running, with no error (so the
     static capability allows `list_features` and `set_feature_enabled`);
     activating Hide through AT-SPI hides the window (so the runtime `tray-mode`
@@ -2061,7 +2150,7 @@ Files:
     dashboard visible; mode and reason on stderr; no item registered and no
     `org.kde.StatusNotifierItem-<pid>-*` name owned; the page shows the no-tray
     note and no button (scenario 12 is the control that proves a button would
-    be found); the example feature is listed as running here too; a second launch exits 0 and restores the minimized dashboard
+    be found); Scheduled backups is listed as running here too; a second launch exits 0 and restores the minimized dashboard
     without a new window or process; a watcher started afterwards gets no
     registration (no retry); closing the dashboard exits 0 and leaves nothing.
   - 14: relaunch with the watcher back: tray mode again, close hides, Quit.
@@ -2069,13 +2158,13 @@ Files:
     served, close exits 0.
   - 17: feature preferences across real restarts (tray mode). Each restart is a
     tray Quit with exit code 0 and no process left, then a new process; the page
-    is never just reloaded. The example feature (left enabled and saved by 12)
+    is never just reloaded. Scheduled backups (left enabled and saved by 12)
     is unchecked, sotyware quits, the database row (read with Python's
     `sqlite3`, read-only) says disabled, and the relaunch shows it disabled with
     no error and no storage warning in the log; it is checked again, sotyware
     quits, the row says enabled, and a second relaunch shows it running.
   - 18: a corrupt `preferences.sqlite3` (text): sotyware starts in tray mode
-    with the example feature running (its default); the page shows "Could not
+    with Scheduled backups running (its default); the page shows "Could not
     load the saved feature choices: … not a database" and the log says so;
     unchecking disables it and the page says the choice could not be saved and
     lasts until sotyware quits; after Quit the file is byte-for-byte unchanged.
@@ -2218,22 +2307,35 @@ longer be tested with it.
 
 It needs only Windows PowerShell 5.1 (UI Automation and `user32` via `Add-Type`), no
 extra modules. **It runs on your real desktop:** it moves the mouse and clicks the
-tray icon, the tray menu, the dashboard's button and feature checkbox and its
-title-bar close button, and
+tray icon, the tray menu, the dashboard's button and feature checkbox, and
+its own title bar (Close, a double click, and a drag that moves the window
+by 80 × 60 px; ADR-040), and
 opens the notification area's "Show Hidden Icons" flyout. Do not touch the mouse or
 keyboard while it runs (about 30 seconds).
 
 What it does, and how:
 
+- Since 2026-11-15 (ADR-040; **these checks have not run yet**): the first
+  placement (half the primary work area from `SPI_GETWORKAREA`, at least
+  900 × 540 at the window's DPI, centred, ±2 px); no native caption
+  (`WM_NCHITTEST` finds no `HTCLOSE`); the page's Minimize, Maximize and
+  Close in the UIA group "Window"; Maximize and Restore through UIA
+  (`IsZoomed`, back to the same rectangle); a real double click on the
+  bar's middle maximizes and restores; a real drag moves the window by
+  80 × 60 px without resizing it; Minimize through UIA; the page's Close
+  clicked with the real mouse hides to the tray (replacing the old native
+  close button check); after Quit and relaunch the window opens where it
+  was and `window-state.sqlite3` is in the test profile.
 - Finds the dashboard with `EnumWindows` (class `Tauri Window`, owned by a
   sotyware process). UI Automation is not enough: it does not list hidden windows.
 - Clicks "Hide dashboard" inside WebView2 twice: once through UI Automation
   `Invoke` and once with a real mouse click at the button's position. Each time it
   checks that the window becomes invisible, is not destroyed, and the process stays.
 - Reads the Features section through UI Automation: the heading
-  (`features-heading`), the example feature's `CheckBox` (named "Example") and its
+  (`features-heading`), the `CheckBox` of Scheduled backups (`backup-scheduler`;
+  the removed `example` feature before 2026-11-15) and its
   `ListItem`, whose name is the item's text (version, state label, description).
-  It checks the example is listed checked and Running, then switches it off and
+  It checks the feature is listed checked and Running, then switches it off and
   on twice: through `TogglePattern` and with a real mouse click on the checkbox
   (only after `WindowFromPoint` confirms the dashboard is the window under the
   point). Each switch waits until the checkbox state, its enabled flag (it is
@@ -2249,7 +2351,7 @@ What it does, and how:
   "Overview" back to the Hide button and the features. It adds no account,
   so it never writes to the Credential Manager.
 - Checks that the choice survives real restarts: before Quit it disables the
-  example again; the relaunch (a new process) must show it Disabled and
+  feature again; the relaunch (a new process) must show it Disabled and
   unchecked, with `preferences.sqlite3` present; it enables it, quits (exit 0,
   no process left), and a second relaunch (another new process) must show it
   Running and checked, all in the run's test profile, which starts empty
@@ -2684,7 +2786,7 @@ AppIndicator extension is enabled).
    log shows no error. Start sotyware again: it starts normally.
 8. Windows only: left-click the tray icon. Expected: the dashboard opens.
    Right-click shows the menu.
-9. In the dashboard's Features section, "Example" is listed as Running with a
+9. In Settings › Features, "Scheduled backups" is listed as Running with a
    checked box. Uncheck it: it shows Disabled and no red error. Check it again:
    Running. Uncheck it again, Quit, and start sotyware: it is still Disabled
    (the choice is saved). Check it, Quit, start: Running. No "Could not load the

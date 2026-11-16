@@ -445,13 +445,13 @@ def theme_radio(pid, name):
                  if r == Atspi.Role.RADIO_BUTTON and n == name), None)
 
 
-def example_feature(pid):
-    """The example feature's checkbox and the page text, once the list has loaded.
+def switched_feature(pid):
+    """The switched feature's checkbox and the page text, once the list has loaded.
     Opens Settings › Features when the list is not shown."""
-    box = page_checkboxes(pid).get(EXAMPLE_FEATURE)
+    box = page_checkboxes(pid).get(SWITCHED_FEATURE)
     if box is None and open_features(pid):
         time.sleep(0.3)
-        box = page_checkboxes(pid).get(EXAMPLE_FEATURE)
+        box = page_checkboxes(pid).get(SWITCHED_FEATURE)
     return box, page_text(pid)
 
 
@@ -530,9 +530,12 @@ def wait_exit(p, timeout=10):
 
 DASHBOARD_ONLY_LOG = "sotyware: running in dashboard-only mode"
 DASHBOARD_ONLY_TEXT = "No compatible system tray is available"
-# The built-in example feature (src-tauri/src/features/example.rs), enabled by
-# default; its checkbox is labelled with its name.
-EXAMPLE_FEATURE = "Example"
+# The built-in feature the checks switch: backup-scheduler
+# (src-tauri/src/features/backup.rs), enabled by default; in a fresh test
+# profile there is no backup job, so switching it starts and stops nothing
+# visible. Its checkbox is labelled with its name.
+SWITCHED_FEATURE = "Scheduled backups"
+SWITCHED_ID = "backup-scheduler"
 
 
 def tray_menu():
@@ -799,27 +802,27 @@ check("12 tray mode: page shows the tray hint and a Hide button, no dashboard-on
       and "Hide dashboard" in [n for n, _ in page_buttons(tm.pid)],
       f"text={text!r} buttons={[n for n, _ in page_buttons(tm.pid)]}")
 # Built-in features through the real capability and webview: list_features and
-# set_feature_enabled are allowed, and the example feature runs from startup.
-listed = page and wait_for(lambda: example_feature(tm.pid)[0] is not None, 10)
-box, text = example_feature(tm.pid) if listed else (None, "")
-check("12 tray mode: page lists the example feature as running, checkbox checked",
+# set_feature_enabled are allowed, and Scheduled backups runs from startup.
+listed = page and wait_for(lambda: switched_feature(tm.pid)[0] is not None, 10)
+box, text = switched_feature(tm.pid) if listed else (None, "")
+check("12 tray mode: page lists Scheduled backups as running, checkbox checked",
       listed and checked(box) and "Running" in text and "Could not" not in text,
       f"checkboxes={list(page_checkboxes(tm.pid)) if page else None} text={text!r}")
 
 
 def switched_to(want_checked, state):
-    box, text = example_feature(tm.pid)
+    box, text = switched_feature(tm.pid)
     return box is not None and checked(box) == want_checked and state in text and "Could not" not in text
 
 
-off = listed and Atspi.Action.do_action(example_feature(tm.pid)[0], 0) and wait_for(
+off = listed and Atspi.Action.do_action(switched_feature(tm.pid)[0], 0) and wait_for(
     lambda: switched_to(False, "Disabled"), 5)
-check("12 tray mode: unchecking the example feature disables it", off,
-      f"text={example_feature(tm.pid)[1] if page else ''!r}")
-on = off and Atspi.Action.do_action(example_feature(tm.pid)[0], 0) and wait_for(
+check("12 tray mode: unchecking Scheduled backups disables it", off,
+      f"text={switched_feature(tm.pid)[1] if page else ''!r}")
+on = off and Atspi.Action.do_action(switched_feature(tm.pid)[0], 0) and wait_for(
     lambda: switched_to(True, "Running"), 5)
 check("12 tray mode: checking it again starts it", on,
-      f"text={example_feature(tm.pid)[1] if page else ''!r}")
+      f"text={switched_feature(tm.pid)[1] if page else ''!r}")
 # The Cloud Storage section through the real webview and capability: the link
 # switches sections, list_cloud_providers and list_cloud_accounts are allowed,
 # and with no accounts (fresh test profile) the empty state and the Add
@@ -888,9 +891,9 @@ check("13 dashboard-only: page shows the no-tray note, not the tray hint",
 # On the Overview, before the feature checks leave it for Settings.
 buttons = [n for n, _ in page_buttons(do.pid)] if page else None
 no_hide = page and not click_button(do.pid, "Hide dashboard")
-listed = page and wait_for(lambda: example_feature(do.pid)[0] is not None, 10)
-box, text = example_feature(do.pid) if listed else (None, "")
-check("13 dashboard-only: features run too: example listed as running",
+listed = page and wait_for(lambda: switched_feature(do.pid)[0] is not None, 10)
+box, text = switched_feature(do.pid) if listed else (None, "")
+check("13 dashboard-only: features run too: Scheduled backups listed as running",
       listed and checked(box) and "Running" in text, f"text={text!r}")
 if can_click_hide:
     check("13 dashboard-only: page offers no Hide button, dashboard stays visible",
@@ -987,16 +990,17 @@ start_watcher()
 
 
 def feature_is(pid, want_checked, state):
-    box, text = example_feature(pid)
+    box, text = switched_feature(pid)
     return box is not None and checked(box) == want_checked and state in text and "Could not" not in text
 
 
-def stored_example():
-    """The example feature's row in the database, read after sotyware quit."""
+def stored_switched():
+    """The switched feature's row in the database, read after sotyware quit."""
     if not os.path.exists(PREFS_DB):
         return "no database"
     with sqlite3.connect(f"file:{PREFS_DB}?mode=ro", uri=True) as db:
-        row = db.execute("SELECT enabled FROM feature_preferences WHERE feature_id = 'example'").fetchone()
+        row = db.execute("SELECT enabled FROM feature_preferences WHERE feature_id = ?",
+                         (SWITCHED_ID,)).fetchone()
     return None if row is None else bool(row[0])
 
 
@@ -1008,7 +1012,7 @@ def start_tray_instance(label, env=None):
     up = wait_for(lambda: len(dashboards(p.pid)) == 1 and viewable(dashboards(p.pid)[0]), 20)
     registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
     page = up and registered and wait_for(lambda: page_ready(p.pid), 20) and wait_for(
-        lambda: example_feature(p.pid)[0] is not None, 10)
+        lambda: switched_feature(p.pid)[0] is not None, 10)
     return p, log, bool(page)
 
 
@@ -1026,34 +1030,34 @@ def quit_completely(label, p, log):
     return ended
 
 
-def switch_example(pid, want_checked, state):
-    box = example_feature(pid)[0]
+def switch_feature(pid, want_checked, state):
+    box = switched_feature(pid)[0]
     return box is not None and Atspi.Action.do_action(box, 0) and wait_for(
         lambda: feature_is(pid, want_checked, state), 5)
 
 
 # 17. Disable, quit, relaunch: still disabled. Enable, quit, relaunch: enabled.
-# Scenario 12 left the example feature enabled (and saved).
+# Scenario 12 left Scheduled backups enabled (and saved).
 p, log, page = start_tray_instance("17 persistence")
-check("17 persistence: starts with the example feature running (saved as enabled by 12)",
+check("17 persistence: starts with Scheduled backups running (saved as enabled by 12)",
       page and feature_is(p.pid, True, "Running") and os.path.exists(PREFS_DB),
-      f"text={example_feature(p.pid)[1] if page else ''!r} db={os.path.exists(PREFS_DB)}")
-off = page and switch_example(p.pid, False, "Disabled")
+      f"text={switched_feature(p.pid)[1] if page else ''!r} db={os.path.exists(PREFS_DB)}")
+off = page and switch_feature(p.pid, False, "Disabled")
 check("17 persistence: unchecking disables it, no error shown", off,
-      f"text={example_feature(p.pid)[1] if page else ''!r}")
+      f"text={switched_feature(p.pid)[1] if page else ''!r}")
 # The theme (ADR-035) is kept by the webview, not the database: choose Dark
 # in Settings › General now and look for it after the restart.
 dark_chosen = page and open_settings_tab(p.pid, "General") and wait_for(
     lambda: theme_radio(p.pid, "Dark") is not None, 5) and Atspi.Action.do_action(
     theme_radio(p.pid, "Dark"), 0) and wait_for(lambda: checked(theme_radio(p.pid, "Dark")), 5)
 quit_completely("17 persistence after disabling", p, log)
-check("17 persistence: the database stores the example feature as disabled",
-      stored_example() is False, f"stored={stored_example()!r}")
+check("17 persistence: the database stores Scheduled backups as disabled",
+      stored_switched() is False, f"stored={stored_switched()!r}")
 
 p, log, page = start_tray_instance("17 persistence relaunch 1")
-check("17 persistence relaunch 1: a new process, example still disabled, checkbox unchecked",
+check("17 persistence relaunch 1: a new process, Scheduled backups still disabled, checkbox unchecked",
       page and feature_is(p.pid, False, "Disabled"),
-      f"text={example_feature(p.pid)[1] if page else ''!r}")
+      f"text={switched_feature(p.pid)[1] if page else ''!r}")
 check("17 persistence relaunch 1: no storage warning in the log",
       "feature preferences unavailable" not in read_log(log), read_log(log).strip())
 dark_kept = page and open_settings_tab(p.pid, "General") and wait_for(
@@ -1061,17 +1065,17 @@ dark_kept = page and open_settings_tab(p.pid, "General") and wait_for(
 check("17 persistence relaunch 1: the theme chosen before quitting (Dark) is still chosen",
       bool(dark_chosen) and bool(dark_kept) and not checked(theme_radio(p.pid, "System")),
       f"chosen={bool(dark_chosen)} kept={bool(dark_kept)}")
-on = page and switch_example(p.pid, True, "Running")
+on = page and switch_feature(p.pid, True, "Running")
 check("17 persistence relaunch 1: checking enables it, no error shown", on,
-      f"text={example_feature(p.pid)[1] if page else ''!r}")
+      f"text={switched_feature(p.pid)[1] if page else ''!r}")
 quit_completely("17 persistence after enabling", p, log)
-check("17 persistence: the database stores the example feature as enabled",
-      stored_example() is True, f"stored={stored_example()!r}")
+check("17 persistence: the database stores Scheduled backups as enabled",
+      stored_switched() is True, f"stored={stored_switched()!r}")
 
 p, log, page = start_tray_instance("17 persistence relaunch 2")
-check("17 persistence relaunch 2: a new process, example running, checkbox checked",
+check("17 persistence relaunch 2: a new process, Scheduled backups running, checkbox checked",
       page and feature_is(p.pid, True, "Running"),
-      f"text={example_feature(p.pid)[1] if page else ''!r}")
+      f"text={switched_feature(p.pid)[1] if page else ''!r}")
 quit_completely("17 persistence relaunch 2", p, log)
 
 # 18. A corrupt database: defaults, a visible warning, a visible save failure,
@@ -1080,18 +1084,18 @@ GARBAGE = b"not an SQLite database\n" * 64
 with open(PREFS_DB, "wb") as f:
     f.write(GARBAGE)
 p, log, page = start_tray_instance("18 corrupt database")
-text = example_feature(p.pid)[1] if page else ""
-check("18 corrupt database: starts, example running by default, page says the choices could not be loaded",
-      page and p.poll() is None and checked(example_feature(p.pid)[0]) and "Running" in text
+text = switched_feature(p.pid)[1] if page else ""
+check("18 corrupt database: starts, Scheduled backups running by default, page says the choices could not be loaded",
+      page and p.poll() is None and checked(switched_feature(p.pid)[0]) and "Running" in text
       and "Could not load the saved feature choices" in text and "not a database" in text, f"text={text!r}")
 check("18 corrupt database: logged", "sotyware: feature preferences unavailable, using defaults" in read_log(log),
       read_log(log).strip())
-box = example_feature(p.pid)[0] if page else None
+box = switched_feature(p.pid)[0] if page else None
 switched = bool(box) and Atspi.Action.do_action(box, 0) and wait_for(
-    lambda: "Could not save the choice for Example" in example_feature(p.pid)[1], 5)
-text = example_feature(p.pid)[1] if page else ""
+    lambda: "Could not save the choice for Scheduled backups" in switched_feature(p.pid)[1], 5)
+text = switched_feature(p.pid)[1] if page else ""
 check("18 corrupt database: disabling works for the session and says it was not saved",
-      switched and not checked(example_feature(p.pid)[0]) and "Disabled" in text
+      switched and not checked(switched_feature(p.pid)[0]) and "Disabled" in text
       and "It stays disabled until sotyware quits" in text, f"text={text!r}")
 quit_completely("18 corrupt database", p, log)
 with open(PREFS_DB, "rb") as f:
@@ -1104,8 +1108,8 @@ os.remove(PREFS_DB)
 # and fails its own setup before sotyware's code matters.)
 os.mkdir(PREFS_DB)
 p, log, page = start_tray_instance("19 database cannot be opened")
-text = example_feature(p.pid)[1] if page else ""
-check("19 database cannot be opened: starts, example running by default, page says the choices could not be loaded",
+text = switched_feature(p.pid)[1] if page else ""
+check("19 database cannot be opened: starts, Scheduled backups running by default, page says the choices could not be loaded",
       page and p.poll() is None and "Running" in text and "Could not load the saved feature choices" in text
       and "cannot open" in text, f"text={text!r}")
 quit_completely("19 database cannot be opened", p, log)

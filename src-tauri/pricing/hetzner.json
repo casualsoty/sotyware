@@ -1,0 +1,43 @@
+{
+  "format": "sotyware-pricing",
+  "version": 1,
+  "provider": "hetzner",
+  "name": "Hetzner Object Storage",
+  "currency": "EUR",
+  "taxes": "excluded",
+  "checkedOn": "2026-11-15",
+  "sources": [
+    "https://www.hetzner.com/storage/object-storage/",
+    "https://docs.hetzner.com/storage/object-storage/overview/"
+  ],
+  "accountScope": "provider",
+  "tbBytes": 1000000000000,
+  "storage": {
+    "price": 0.0087,
+    "per": "tb-hour",
+    "freeBytes": 0,
+    "minimumObjectBytes": 64000,
+    "note": "Storage beyond the base price's 1 TB costs EUR 0.0087 per TB-hour; objects smaller than 64 kB are billed as 64 kB."
+  },
+  "baseFee": {
+    "price": 6.49,
+    "per": "month",
+    "includedStorageBytes": 1000000000000,
+    "includedEgressBytes": 1000000000000,
+    "note": "Billed hourly (EUR 0.0104) for every hour at least one bucket exists, even an empty one, capped at EUR 6.49 a month; it includes 1 TB of storage and 1 TB of egress for all buckets of the account together."
+  },
+  "egress": {
+    "price": 1.0,
+    "per": "tb",
+    "freeMultipleOfStored": null,
+    "includedBytes": 0,
+    "note": "Egress beyond the base price's 1 TB costs EUR 1.00 per TB; ingress is free."
+  },
+  "transactions": {
+    "note": "S3 API requests are free; only the egress they cause is billed."
+  },
+  "notes": [
+    "Metadata is billed as storage too; sotyware cannot measure it, so the estimate can be slightly low.",
+    "Old versions are stored data on buckets with versioning switched on."
+  ]
+}

@@ -14,6 +14,8 @@ export const LIST_BACKUP_SNAPSHOTS = "list_backup_snapshots";
 export const RESTORE_BACKUP = "restore_backup";
 export const EXPORT_BACKUP_MANIFEST = "export_backup_manifest";
 export const CHECK_BACKUP_PROTECTION = "check_backup_protection";
+export const BACKUP_SNAPSHOT_DETAILS = "backup_snapshot_details";
+export const DELETE_BACKUP_SNAPSHOT = "delete_backup_snapshot";
 
 export const HEALTHS = [
   "healthy",
@@ -27,7 +29,43 @@ export const HEALTHS = [
 ] as const;
 export type Health = (typeof HEALTHS)[number];
 
-export const TASK_KINDS = ["backup", "verify", "verify-full", "prune", "restore"] as const;
+// How the pages name a backup's health (Backups page, Cloud Storage's
+// Snapshots & backups tab).
+export const HEALTH_TEXT: Record<Health, string> = {
+  healthy: "Healthy: the newest backup was verified.",
+  "never-run": "Never run.",
+  "not-verified": "Not verified: the newest backup has not passed verification yet.",
+  "verification-failed": "Verification failed: backup data is missing or damaged. Run a backup again and check the destination.",
+  partial: "Partial: the last run did not complete, so no new snapshot was written. Older snapshots are still there.",
+  failed: "Failed: the last run could not back up anything.",
+  "out-of-date": "Out of date: no verified backup within twice the schedule interval.",
+  "large-change":
+    "Large change detected: many files changed or disappeared since the previous snapshot. Older snapshots are kept until you review it and run the next backup.",
+};
+
+export const HEALTH_SHORT: Record<Health, string> = {
+  healthy: "Healthy",
+  "never-run": "Never run",
+  "not-verified": "Not verified",
+  "verification-failed": "Verification failed",
+  partial: "Partial",
+  failed: "Failed",
+  "out-of-date": "Out of date",
+  "large-change": "Large change",
+};
+
+export const HEALTH_TONES: Record<Health, string> = {
+  healthy: "success",
+  "never-run": "",
+  "not-verified": "warning",
+  "verification-failed": "danger",
+  partial: "warning",
+  failed: "danger",
+  "out-of-date": "warning",
+  "large-change": "warning",
+};
+
+export const TASK_KINDS = ["backup", "verify", "verify-full", "prune", "restore", "delete-snapshot"] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
 export interface Location {
@@ -444,6 +482,63 @@ export async function checkBackupProtection(job: string): Promise<Protection> {
     immutable: b("protection", v, "immutable"),
     summary: s("protection", v, "summary"),
   };
+}
+
+/** What a snapshot's manifest says (`SnapshotDetails` in backup/mod.rs). */
+export interface SnapshotDetails {
+  key: string;
+  id: string;
+  created: string;
+  sourceProvider: string;
+  sourceBucket: string;
+  sourcePrefix: string;
+  stats: Stats;
+  suspicious: boolean;
+  /** The newest verification on this computer: passed, when, every byte. */
+  verified: boolean | null;
+  verifiedMs: number | null;
+  verifiedFull: boolean;
+}
+
+export async function backupSnapshotDetails(job: string, snapshot: string): Promise<SnapshotDetails> {
+  const w = "snapshot details";
+  const v = rec(w, await call(BACKUP_SNAPSHOT_DETAILS, { job, snapshot }));
+  const st = rec(w, v["stats"]);
+  const verified = v["verified"];
+  if (verified !== null && typeof verified !== "boolean") {
+    throw invalid(w, v);
+  }
+  return {
+    key: s(w, v, "key"),
+    id: s(w, v, "id"),
+    created: s(w, v, "created"),
+    sourceProvider: s(w, v, "sourceProvider"),
+    sourceBucket: s(w, v, "sourceBucket"),
+    sourcePrefix: s(w, v, "sourcePrefix"),
+    stats: {
+      objects: n(w, st, "objects"),
+      bytes: n(w, st, "bytes"),
+      new: n(w, st, "new"),
+      changed: n(w, st, "changed"),
+      deleted: n(w, st, "deleted"),
+      transferred: n(w, st, "transferred"),
+      transferredBytes: n(w, st, "transferredBytes"),
+    },
+    suspicious: b(w, v, "suspicious"),
+    verified,
+    verifiedMs: optN(w, v, "verifiedMs"),
+    verifiedFull: b(w, v, "verifiedFull"),
+  };
+}
+
+/** Deletes one snapshot (its manifest, then data no other snapshot uses);
+ * the result comes as a task's events. */
+export async function deleteBackupSnapshot(job: string, snapshot: string, onEvent: (e: BackupEvent) => void): Promise<string> {
+  const v = await call(DELETE_BACKUP_SNAPSHOT, { job, snapshot, onEvent: channel(onEvent) });
+  if (typeof v !== "string") {
+    throw invalid("task id", v);
+  }
+  return v;
 }
 
 export { strings as parseStrings };

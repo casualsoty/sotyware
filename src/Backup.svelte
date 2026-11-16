@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    HEALTH_SHORT,
+    HEALTH_TEXT,
+    HEALTH_TONES,
     cancelBackupTask,
     checkBackupProtection,
     exportBackupManifest,
@@ -11,7 +14,6 @@
     saveBackupJob,
     startBackupTask,
     type BackupEvent,
-    type Health,
     type JobInput,
     type JobStatus,
     type Progress,
@@ -29,40 +31,6 @@
   // account's bucket in a second destination. Everything remote happens in
   // Rust; the page never sends or receives a local path (restoring into a
   // folder and saving a recovery file use dialogs Rust opens).
-
-  const HEALTH_TEXT: Record<Health, string> = {
-    healthy: "Healthy: the newest backup was verified.",
-    "never-run": "Never run.",
-    "not-verified": "Not verified: the newest backup has not passed verification yet.",
-    "verification-failed": "Verification failed: backup data is missing or damaged. Run a backup again and check the destination.",
-    partial: "Partial: the last run did not complete, so no new snapshot was written. Older snapshots are still there.",
-    failed: "Failed: the last run could not back up anything.",
-    "out-of-date": "Out of date: no verified backup within twice the schedule interval.",
-    "large-change":
-      "Large change detected: many files changed or disappeared since the previous snapshot. Older snapshots are kept until you review it and run the next backup.",
-  };
-
-  const HEALTH_SHORT: Record<Health, string> = {
-    healthy: "Healthy",
-    "never-run": "Never run",
-    "not-verified": "Not verified",
-    "verification-failed": "Verification failed",
-    partial: "Partial",
-    failed: "Failed",
-    "out-of-date": "Out of date",
-    "large-change": "Large change",
-  };
-
-  const HEALTH_TONES: Record<Health, string> = {
-    healthy: "success",
-    "never-run": "",
-    "not-verified": "warning",
-    "verification-failed": "danger",
-    partial: "warning",
-    failed: "danger",
-    "out-of-date": "warning",
-    "large-change": "warning",
-  };
 
   const INTERVALS: { hours: number; label: string }[] = [
     { hours: 0, label: "Manual only" },
@@ -283,6 +251,7 @@
       writing: "Writing the snapshot…",
       verifying: `Verifying${counts}`,
       pruning: "Applying retention…",
+      deleting: "Deleting the snapshot…",
       restoring: `Restoring${counts}`,
     };
     return names[p.phase] ?? p.phase;
@@ -290,7 +259,14 @@
 
   function resultText(r: TaskSummary): string {
     const parts: string[] = [];
-    const what = { backup: "Backup", verify: "Verification", "verify-full": "Full verification", prune: "Retention", restore: "Restore" }[r.kind];
+    const what = {
+      backup: "Backup",
+      verify: "Verification",
+      "verify-full": "Full verification",
+      prune: "Retention",
+      restore: "Restore",
+      "delete-snapshot": "Snapshot deletion",
+    }[r.kind];
     parts.push(`${what}: ${r.state}.`);
     if (r.stats) {
       parts.push(

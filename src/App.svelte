@@ -1,8 +1,10 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import Account from "./Account.svelte";
   import Backup from "./Backup.svelte";
+  import { AutoSync, syncSummary } from "./accountSync.svelte";
   import { listAccounts, type AccountInfo } from "./cloud";
   import CloudStorage from "./CloudStorage.svelte";
   import { formatSize } from "./format";
@@ -11,6 +13,7 @@
   import Overview from "./Overview.svelte";
   import Settings from "./Settings.svelte";
   import Sidebar from "./Sidebar.svelte";
+  import TitleBar from "./TitleBar.svelte";
   import { UpdatesModel } from "./updatesModel.svelte";
 
   // The dashboard shell (docs/architecture/frontend.md): a sidebar with the
@@ -35,8 +38,17 @@
   /** Narrow windows: the sidebar is an overlay, open or closed. */
   let sidebarOpen = $state(false);
   let main: HTMLElement | undefined = $state();
+  /** The window has no native title bar (Windows, ADR-040): the page draws
+   * its own. Guessed from the platform for the first paint, then confirmed
+   * by asking the window; anything but a plain `false` keeps the native one. */
+  let customChrome = $state(typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent));
 
   const updates = new UpdatesModel();
+  /** Syncs the optional sotyware account on its own (accountSync.svelte.ts). */
+  const autoSync = new AutoSync();
+  /** Bumped after a sync, so Cloud Storage reads its list again. */
+  let accountsGeneration = $state(0);
+  const syncStatus = $derived(syncSummary(autoSync.status));
   const ustatus = $derived(updates.status);
   const uinstall = $derived(updates.install);
 
@@ -130,21 +142,53 @@
     if (!document.hidden && !updates.running && !updates.checking) {
       void updates.load();
     }
+    if (!document.hidden) {
+      void sync("focus");
+    }
+  }
+
+  /** A sync may add, change or remove storage accounts: read them again. */
+  async function sync(reason: "startup" | "focus" | "change"): Promise<void> {
+    if (await autoSync.run(reason)) {
+      accountsGeneration += 1;
+      await loadAccounts();
+    }
+  }
+
+  async function loadChrome(): Promise<void> {
+    try {
+      customChrome = (await getCurrentWindow().isDecorated()) === false;
+    } catch {
+      // No window to ask (the browser preview): the native title bar.
+      customChrome = false;
+    }
   }
 
   onMount(() => {
+    void loadChrome();
     void loadMode();
     void loadAccounts();
     void updates.load();
+    void sync("startup");
   });
 </script>
 
 <svelte:window {onkeydown} onfocus={onshown} />
 <svelte:document onvisibilitychange={onshown} />
 
-<div class="shell" class:sidebar-open={sidebarOpen}>
+<div class="shell" class:sidebar-open={sidebarOpen} class:custom-chrome={customChrome}>
+  {#if customChrome}
+    <TitleBar
+      title={SECTION_TITLES[section]}
+      {mode}
+      {sidebarOpen}
+      ontogglesidebar={() => (sidebarOpen = !sidebarOpen)}
+    />
+  {/if}
   <aside class="sidebar" aria-label="Navigation">
     <Sidebar
+      showBrand={!customChrome}
+      {syncStatus}
       {section}
       {browsing}
       {accounts}
@@ -249,6 +293,9 @@
           accounts = list;
           accountsError = null;
         }}
+        onopenbackups={() => void navigate("backups")}
+        onlocalchange={() => void sync("change")}
+        generation={accountsGeneration}
       />
     {:else if section === "backups"}
       <Backup />
@@ -266,6 +313,22 @@
     grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
     height: 100vh;
     overflow: hidden;
+  }
+
+  /* The page's own title bar across the top (Windows, ADR-040). */
+  .shell.custom-chrome {
+    grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+    grid-template-areas:
+      "titlebar titlebar"
+      "sidebar main";
+  }
+
+  .custom-chrome .sidebar {
+    grid-area: sidebar;
+  }
+
+  .custom-chrome .main {
+    grid-area: main;
   }
 
   .sidebar {
@@ -381,6 +444,29 @@
 
     .topbar-title {
       font-weight: var(--weight-semibold);
+    }
+
+    /* With the page's own title bar, it holds the navigation toggle and
+       the page's name; the overlay sidebar opens below it, so the window
+       controls stay reachable. */
+    .shell.custom-chrome {
+      grid-template-areas:
+        "titlebar"
+        "main";
+    }
+
+    .custom-chrome .topbar {
+      display: none;
+    }
+
+    .custom-chrome .sidebar,
+    .custom-chrome .scrim {
+      top: var(--titlebar-h);
+    }
+
+    .custom-chrome .main :global(th),
+    .custom-chrome .main :global(.selectionbar) {
+      top: 0;
     }
 
     /* Sticky table headers and the browser's selection bar stop below the

@@ -25,7 +25,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   ([release.md](docs/development/release.md#support-scope)).
 - **Current scope:** the desktop runtime (window, tray, lifecycle, single
   instance) and the foundation for built-in features (registry, lifecycle,
-  enable/disable from the dashboard, one example feature), and cloud storage
+  enable/disable from the dashboard), and cloud storage
   in the dashboard: account management (add, edit, check, remove), bucket
   browsing, downloading one file at a time, uploading batches of up to 100
   files into the folder shown, and file management (ADR-026): folders,
@@ -45,7 +45,13 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   exists since 2026-11-15, its public half in `src-tauri/update-key.pub`,
   and `v0.1.0` was published with it that day; no update was ever
   installed), in a
-  desktop shell with a sidebar, Settings and one design system (ADR-035). No other product features exist yet. Current milestone and status:
+  desktop shell with a sidebar, Settings and one design system (ADR-035),
+  on Windows with the page's own title bar and everywhere a remembered window
+  placement that starts at half the primary work area (ADR-040); storage usage
+  measured by listing, with cost estimates from versioned price lists, and a
+  bucket's snapshots and backups in Cloud Storage, including deleting one
+  sotyware backup snapshot (ADR-041); automatic sync of an enrolled device on
+  events (ADR-042). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -147,10 +153,14 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 - **Runtime:** `run()` builds the Tauri app: single-instance plugin (first, desktop
   only) → `FeatureRegistry` from `features::builtin()` (managed state) →
   `build()` → feature preferences loaded from SQLite (managed state, before the
-  event loop) → `app.run()`: window `main` from `tauri.conf.json` → `setup`
-  creates the tray, picks the `OperatingMode` (`select_mode`) and starts the
-  features that are enabled (stored choice, else default) → event loop.
-  `RunEvent::Exit` stops the running features and closes the preferences.
+  event loop) → `app.run()`: window `main` from `tauri.conf.json` (created
+  hidden) → `setup` creates the tray, picks the `OperatingMode`
+  (`select_mode`), starts the features that are enabled (stored choice, else
+  default), then gives the dashboard its chrome (Windows: `title_bar`) and its
+  place (`window_state`: saved, else half the primary work area, at least
+  900 × 540, centred) and
+  shows it (ADR-040) → event loop. `RunEvent::Exit` stops the running
+  features, closes the preferences and saves the window placement.
 - **Operating modes:** tray mode when the tray is created. Dashboard-only mode
   when `tray::unavailable_reason()` recognises a missing Linux tray host (no
   session bus, no StatusNotifierWatcher, no StatusNotifierHost). Any other tray
@@ -165,7 +175,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `show_dashboard()`; the new process exits 0. Same in both modes.
 - **Built-in features:** `src-tauri/src/features/` (`Feature` trait, `builtin()`
   list, `FeatureRegistry` with states registered/disabled/initializing/running/
-  failed/stopping, per-feature error isolation, the `example` feature). Details
+  failed/stopping, per-feature error isolation; the `backup-scheduler` and
+  `update-check` features; the `example` feature was removed 2026-11-15). Details
   and how to add a feature: [features.md](docs/architecture/features.md).
 - **Feature preferences:** each user switch is saved in `preferences.sqlite3`
   in Tauri's `app_local_data_dir()`; startup uses the stored choice, else
@@ -348,20 +359,26 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `upload_cloud_drop`) and the five recovery commands of ADR-030
   (`list_cloud_recovery`, `inspect_cloud_recovery`,
   `dismiss_cloud_recovery`, `list_cloud_incomplete_uploads`,
-  `abort_cloud_incomplete_upload`) and the nine backup commands of ADR-031
-  (`list_backups`, `save_backup_job`, `remove_backup_job`,
+  `abort_cloud_incomplete_upload`) and the three usage commands of ADR-041
+  (`storage_usage_overview`, `measure_storage_usage`,
+  `cancel_storage_usage`) and the eleven backup commands of ADR-031 and
+  ADR-041 (`list_backups`, `save_backup_job`, `remove_backup_job`,
   `start_backup_task`, `cancel_backup_task`, `list_backup_snapshots`,
-  `restore_backup`, `export_backup_manifest`, `check_backup_protection`) and
+  `restore_backup`, `export_backup_manifest`, `check_backup_protection`,
+  `backup_snapshot_details`, `delete_backup_snapshot`) and
   the 20 account commands of ADR-032 (`account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`)
   and the six update commands of ADR-033/ADR-036 (`update_status`,
   `check_for_update`, `install_update`, `cancel_update`, `postpone_update`,
   `restart_after_update`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/backup.ts`, `src/account.ts` and `src/updates.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts` and `src/updates.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
-  `setup`) and `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
-  ADR-035). No other custom command, no custom events (download progress,
+  `setup`), `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
+  ADR-035) and `isDecorated()` (`core:window:allow-is-decorated`), and on
+  Windows only the title bar's drag region, `minimize()`, `toggleMaximize()`,
+  `isMaximized()` and `close()` (granted at runtime by the `window-controls`
+  capability, `title_bar.rs`, ADR-040). No other custom command, no custom events (download progress,
   upload, operation, several-item download and drop notices use per-call
   Tauri channels, not events), no `dialog:`, `fs:` or `updater:` permission. CSP:
   `img-src 'self' data:` added for previews (ADR-026).
@@ -382,15 +399,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
-journal, the backup jobs, the account state and the update state, no settings, autostart,
+journal, the backup jobs, the account state, the update state, the window
+placement and the storage usage measurements, no settings, autostart,
 third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
 tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
 sotyware's own, content search, transfer queue UI or download history,
 credential
 import or any credential fallback outside the OS store, restic
-integration, encrypted backups, backup notifications, cost estimator, custom
-event, background (periodic) sync, or custom command besides the 78 listed above. Never describe these as existing.
+integration, encrypted backups, backup notifications, billing data from a
+provider (no API offers it; costs are estimates), management of Backblaze's
+console snapshots (no API), Windows 11 Snap Layouts on the page's maximize
+button, custom event, background (periodic) sync, or custom command besides
+the 83 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -501,9 +522,11 @@ Every coding agent must:
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
    `CloudDrops`, `Journal`/`JournalLink` (operation journal), `Backups` and
    the backup `model`/`engine`, `AccountService`, `account::crypto`,
-   `Updates`/`release_resources` (updates), the frontend shell and design
-   system (`App.svelte`, `tokens.css`/`base.css` and their vocabulary,
-   `UpdatesModel`, `Icon.svelte`), `app_menu` (macOS),
+   `Updates`/`release_resources` (updates), `WindowStates`/`window_state`
+   and `title_bar` (placement and Windows chrome), `StorageUsage`/`usage`
+   and `pricing` (usage and estimates), the frontend shell and design
+   system (`App.svelte`, `TitleBar.svelte`, `tokens.css`/`base.css` and their
+   vocabulary, `UpdatesModel`, `AutoSync`, `Icon.svelte`), `app_menu` (macOS),
    `account::vault`, `SecretStore`, provider
    `Capabilities`/`Support`, `test_server::Versioned`, `CredentialNamespace`, the test
    profile helpers (`test_profile.rs`, `tests/desktop/test_profile.py`,

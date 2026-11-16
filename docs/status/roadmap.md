@@ -74,6 +74,20 @@ Not started unless status.md says so. Scope and procedures:
    (`windows.ps1`, `windows-cloud-ui.ps1`, updated but not run) and look at
    it in WebView2 at 100 % and 150 %.
 
+## Desktop UX, usage, snapshots, accounts (after ADR-040 to ADR-042)
+
+1. Build on native Windows 11 and run `tests/desktop/windows.ps1` (its new
+   title-bar and placement checks have never run), then the manual title
+   bar check in [testing.md](../development/testing.md#manual-check-title-bar-and-window-placement-windows-11),
+   at 100 % and 150 % scaling and on two monitors.
+2. Measure a real bucket at Backblaze (read-only) and compare with the
+   Backblaze console; the same at Hetzner when an account exists.
+3. Delete a sotyware snapshot at a real destination (a throwaway backup)
+   and check what the provider kept.
+4. Production account service: the decisions and resources in
+   [server.md](../development/server.md#production-deployment-proposal-2026-11-15),
+   then mail delivery from the outbox, then `PRODUCTION_SERVER`.
+
 ## macOS (after ADR-037)
 
 1. Run `macos.yml` (both architectures; a pull request to `main` or a push
@@ -210,7 +224,11 @@ order:
    delete rights at the destination and a bucket with Object Lock; desktop
    driver steps for the Backups page; desktop notifications for failed
    scheduled backups (would need `tauri-plugin-notification`).
-10. The cost estimator with pricing data files ([proposal](../architecture/cloud-storage.md#cost-estimation-proposal-not-built)).
+10. Cost estimates: done 2026-11-15 (ADR-041; usage measured by listing,
+    price lists in `src-tauri/pricing/`, 30-day estimates;
+    [cloud-storage.md](../architecture/cloud-storage.md#storage-usage-and-cost-estimates)).
+    Next: one measurement at Backblaze and at Hetzner compared with their
+    consoles' figures, and a check of the price lists before each release.
 
 Synchronisation, folder watching and a virtual filesystem stay ideas until then (temporary share links exist,
 ADR-026; public ACLs do not).

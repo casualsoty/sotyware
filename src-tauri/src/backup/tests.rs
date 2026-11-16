@@ -558,6 +558,207 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
     );
 }
 
+/// Deletes `snapshot` of `job` through the service, as the page does.
+async fn delete_snapshot(e: &Env, job: &str, snapshot: &str) -> TaskSummary {
+    let sink = Arc::new(Sink::default());
+    let task = e
+        .backups
+        .start_delete_snapshot(
+            Arc::clone(&e.accounts),
+            job,
+            snapshot,
+            Arc::clone(&sink) as Arc<dyn BackupSink>,
+        )
+        .await
+        .unwrap();
+    sink.finished(&task).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses() {
+    let e = env().await;
+    e.put("a.txt", b"only in the first").await;
+    e.put("b.txt", b"in both").await;
+    let job = e.save(Retention::default());
+    let first = e.task(&job.id, TaskKind::Backup).await;
+    let first_key = first.snapshot.clone().unwrap();
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    e.delete_primary("a.txt");
+    e.put("c.txt", b"only in the second").await;
+    let second = e.task(&job.id, TaskKind::Backup).await;
+    let second_key = second.snapshot.clone().unwrap();
+    assert_eq!(e.snapshots(), [first_key.clone(), second_key.clone()]);
+    let only_first = model::blob_key("sotyware/", &sha256_hex(b"only in the first"));
+    let shared = model::blob_key("sotyware/", &sha256_hex(b"in both"));
+    let only_second = model::blob_key("sotyware/", &sha256_hex(b"only in the second"));
+
+    // Details read from the manifest, and this computer's verification.
+    let runs = e.backups.runs(&job.id).unwrap();
+    let stores = prepare(&e.accounts, &job).await.unwrap();
+    let cancel = Cancel::default();
+    let mut nothing = |_: Progress| {};
+    let ctx = Ctx {
+        dest: &stores.dest,
+        dest_bucket: VAULT,
+        dest_prefix: "sotyware/",
+        spool: Path::new("."),
+        cancel: &cancel,
+        journal: None,
+        progress: &mut nothing,
+    };
+    let m = engine::read_manifest(&ctx, &first_key).await.unwrap();
+    let d = snapshot_details(&first_key, &m, &runs);
+    assert_eq!((d.stats.objects, d.source_bucket.as_str()), (2, PRIMARY));
+    assert_eq!(
+        (d.verified, d.verified_full),
+        (Some(true), false),
+        "verified after the run"
+    );
+    assert!(d.verified_ms.is_some());
+
+    // With the service's 24-hour margin, the manifest goes at once; the
+    // data it alone used stays until it is older than a day.
+    let s = delete_snapshot(&e, &job.id, &first_key).await;
+    assert_eq!(s.state, "completed", "{:?}", s.error);
+    assert_eq!(s.kind, TaskKind::DeleteSnapshot);
+    let p = s.prune.unwrap();
+    assert_eq!(
+        (p.snapshots_deleted, p.snapshots_kept, p.blobs_deleted),
+        (1, 1, 0)
+    );
+    assert_eq!(e.snapshots(), std::slice::from_ref(&second_key));
+    assert!(
+        e.vault_keys().contains(&only_first),
+        "younger than the margin"
+    );
+
+    // A key that is not (or no longer) a snapshot of the job: refused,
+    // nothing deleted.
+    let s = delete_snapshot(&e, &job.id, &first_key).await;
+    assert_eq!(s.state, "failed");
+    assert_eq!(
+        s.error.as_ref().map(|e| e.kind),
+        Some(ErrorKind::ObjectNotFound)
+    );
+    let e2 = e
+        .backups
+        .start_delete_snapshot(
+            Arc::clone(&e.accounts),
+            &job.id,
+            "sotyware/blobs/x.json",
+            Arc::new(Sink::default()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e2.kind, ErrorKind::InvalidInput);
+    assert_eq!(e.snapshots(), std::slice::from_ref(&second_key));
+
+    // Once the data is old enough, only the blob no snapshot uses goes.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let spool = e.dir.path("spool-delete");
+    fs::create_dir_all(&spool).unwrap();
+    let mut ctx = Ctx {
+        dest: &stores.dest,
+        dest_bucket: VAULT,
+        dest_prefix: "sotyware/",
+        spool: &spool,
+        cancel: &cancel,
+        journal: None,
+        progress: &mut nothing,
+    };
+    let e3 = engine::delete_snapshot_with_margin(&mut ctx, &job, &first_key, Duration::ZERO)
+        .await
+        .unwrap_err();
+    assert!(matches!(e3, StorageError::NotFound(_)), "{e3:?}");
+    let p = engine::prune_with_margin(
+        &mut ctx,
+        &JobConfig {
+            retention: keep_last(5),
+            ..job.clone()
+        },
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
+    assert_eq!((p.snapshots_deleted, p.blobs_deleted), (0, 1));
+    let keys = e.vault_keys();
+    assert!(!keys.contains(&only_first));
+    assert!(keys.contains(&shared) && keys.contains(&only_second));
+    // What is left verifies.
+    let v = e.task(&job.id, TaskKind::VerifyFull).await;
+    assert!(v.verification.unwrap().passed);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
+    let e = env().await;
+    e.put("a.txt", b"one").await;
+    let job = e.save(Retention::default());
+    let first = e.task(&job.id, TaskKind::Backup).await;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    e.put("a.txt", b"two").await;
+    let second = e.task(&job.id, TaskKind::Backup).await;
+    let status = e.backups.status(job.clone(), now_ms()).unwrap();
+    assert_eq!(status.last_snapshot, second.snapshot);
+    let s = delete_snapshot(&e, &job.id, second.snapshot.as_deref().unwrap()).await;
+    assert_eq!(s.state, "completed", "{:?}", s.error);
+    let status = e.backups.status(job.clone(), now_ms()).unwrap();
+    assert_eq!(
+        status.last_snapshot, first.snapshot,
+        "the deleted one no longer counts"
+    );
+    assert_eq!(status.health, Health::Healthy, "the first was verified");
+    // Deleting the only one left: nothing vouches for the backup any more.
+    let s = delete_snapshot(&e, &job.id, first.snapshot.as_deref().unwrap()).await;
+    assert_eq!(s.state, "completed");
+    let status = e.backups.status(job, now_ms()).unwrap();
+    assert_eq!(status.last_snapshot, None);
+    assert_eq!(status.health, Health::NeverRun);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_deletion_waits_for_the_slot_and_is_refused_as_a_plain_task() {
+    let e = env().await;
+    e.put("a.txt", b"x").await;
+    let job = e.save(Retention::default());
+    let e1 = e
+        .backups
+        .start(
+            Arc::clone(&e.accounts),
+            &job.id,
+            TaskKind::DeleteSnapshot,
+            Arc::new(Sink::default()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e1.kind, ErrorKind::InvalidInput);
+    // While another task holds the slot, a deletion is refused as busy.
+    let sink = Arc::new(Sink::default());
+    let task = e
+        .backups
+        .start(
+            Arc::clone(&e.accounts),
+            &job.id,
+            TaskKind::Backup,
+            Arc::clone(&sink) as Arc<dyn BackupSink>,
+        )
+        .await
+        .unwrap();
+    let busy = e
+        .backups
+        .start_delete_snapshot(
+            Arc::clone(&e.accounts),
+            &job.id,
+            "sotyware/snapshots/everything/20261115T000000Z-x.json",
+            Arc::new(Sink::default()),
+        )
+        .await;
+    if let Err(err) = busy {
+        assert_eq!(err.kind, ErrorKind::Busy);
+    }
+    sink.finished(&task).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn damaged_or_missing_backup_data_fails_verification_and_is_never_healthy() {
     let e = env().await;

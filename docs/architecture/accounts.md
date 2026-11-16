@@ -129,9 +129,25 @@ wrap. The UI says plainly that the revoked device may still hold
 credentials it decrypted before and that provider keys should be rotated
 at the provider.
 
-**When sync runs:** after sign-in with access, set-up, unlock, approval,
-approving another device, revocation, rotation, conflict resolution, and
-"Sync now". There is no background (periodic) sync yet.
+### When sync runs
+
+After sign-in with access, set-up, unlock, approval, approving another
+device, revocation, rotation, conflict resolution and "Sync now", as
+before; and, since 2026-11-15 (ADR-042), on its own for a device that is
+signed in and enrolled (`src/accountSync.svelte.ts`):
+
+- when sotyware starts, so a computer picks up what the others changed;
+- when the window is focused again, at most every 15 minutes;
+- after a storage account was added, changed or removed on this computer.
+
+These are events, not a timer: there is still no background (periodic)
+sync, and a window that stays unfocused does not sync. Offline, the sync
+fails, Rust records why (`lastSyncError`), the sidebar's Account item shows
+it (a dot and its tooltip: synced N minutes ago, not synced and why,
+waiting for unlock, conflicts to review), and every storage account keeps
+working locally. After a sync the shell reads the storage accounts again.
+Release builds have no service configured, so they only read the local
+status.
 
 **Password change / reset:** change needs the old password and revokes other
 sessions; reset (`/v1/password/reset/request` → always `202`, code by mail;

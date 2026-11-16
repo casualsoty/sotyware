@@ -6,8 +6,17 @@ for personal files, photos, documents and project backups, today 200 GB on
 Google Drive at €30/year, possibly growing to 1 TB or more, used only through
 sotyware.
 
-All facts were read on 2026-11-11 from the providers' official pages. Prices
-change: **everything below is an estimate from published list prices, not a
+All facts were read on 2026-11-11 from the providers' official pages; the
+prices, egress and request terms of both providers were read again on
+2026-11-15 and had not changed. Since then the figures sotyware computes
+with live in `src-tauri/pricing/*.json` (ADR-041,
+[cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates)); this
+page keeps the research. Also read on 2026-11-15: Backblaze B2 snapshots are
+ZIP files made only in the web console (no API), kept in a read-only
+`b2-snapshot-…` bucket, at most 10 TB and 10 million files each, charged as
+storage only; and neither provider offers an API for bucket size or billing
+(Hetzner's console shows bucket statistics, updated after 15–20 minutes).
+Prices change: **everything below is an estimate from published list prices, not a
 quote or a guarantee.** Nothing here was checked against a real invoice; no
 provider account was used.
 

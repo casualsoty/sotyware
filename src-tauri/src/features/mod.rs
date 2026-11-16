@@ -11,7 +11,6 @@
 //! How to add a feature: docs/architecture/features.md.
 
 mod backup;
-mod example;
 mod preferences;
 mod registry;
 mod updates;
@@ -30,7 +29,6 @@ pub use registry::FeatureRegistry;
 /// command.
 pub fn builtin() -> Vec<Box<dyn Feature>> {
     vec![
-        Box::new(example::Example::default()),
         Box::new(backup::BackupScheduler),
         Box::new(updates::UpdateCheck),
     ]
@@ -40,7 +38,7 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
 /// registration, so it cannot change while the app runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeatureMetadata {
-    /// Stable, unique, lowercase kebab-case (`example`, `clipboard-history`).
+    /// Stable, unique, lowercase kebab-case (`backup-scheduler`, `update-check`).
     /// Never change it once released: stored preferences are keyed by it.
     pub id: &'static str,
     /// Human-readable name shown in the dashboard.
@@ -59,6 +57,10 @@ pub struct FeatureMetadata {
 pub struct FeatureError(String);
 
 impl FeatureError {
+    /// How a feature reports a failed start or stop. Neither built-in
+    /// feature can fail today (both only switch work that lives elsewhere),
+    /// so outside the tests nothing calls it; it stays the trait's API.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
@@ -250,8 +252,8 @@ mod tests {
     #[test]
     fn frontend_receives_feature_info_in_this_shape() {
         let info = FeatureInfo {
-            id: "example",
-            name: "Example",
+            id: "test-feature",
+            name: "Test feature",
             description: "Does nothing.",
             version: "0.1.0",
             state: FeatureState::Failed,
@@ -261,8 +263,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&info).unwrap(),
             serde_json::json!({
-                "id": "example",
-                "name": "Example",
+                "id": "test-feature",
+                "name": "Test feature",
                 "description": "Does nothing.",
                 "version": "0.1.0",
                 "state": "failed",
@@ -276,8 +278,8 @@ mod tests {
     #[test]
     fn frontend_receives_the_list_and_the_change_in_this_shape() {
         let info = FeatureInfo {
-            id: "example",
-            name: "Example",
+            id: "test-feature",
+            name: "Test feature",
             description: "Does nothing.",
             version: "0.1.0",
             state: FeatureState::Disabled,

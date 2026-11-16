@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -74,7 +74,7 @@ verified byte for byte; the object was deleted again by its version id
 | `operating_mode` command | `lib.rs`, app manifest in `build.rs` |
 | Built-in feature foundation: `Feature` trait, `builtin()` list, `FeatureRegistry` (duplicate/malformed IDs rejected, lifecycle registered → disabled / initializing → running / failed, stopping → disabled; per-feature error isolation; started in `setup`, stopped on exit) | `src-tauri/src/features/` ([features.md](../architecture/features.md)) |
 | Persistent feature preferences: each user switch saved in `preferences.sqlite3` (app local data folder, SQLite via `rusqlite` bundled), loaded before the event loop, stored choice or `enabled_by_default` at startup; schema versioned with `PRAGMA user_version` and transactional migrations; unusable database left untouched and reported (`storageError`), failed saves reported (`saveError`) | `features/preferences.rs`, `storage.rs`, `run()` in `lib.rs` ([features.md](../architecture/features.md#persistence), [ADR-015](../architecture/decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)) |
-| Example feature `example` (enabled by default, does nothing visible) | `src-tauri/src/features/example.rs` |
+| ~~Example feature `example`~~ (removed 2026-11-15; a stored choice for it is ignored and kept) | — |
 | `list_features` (`{ features, storageError }`) and `set_feature_enabled` (`{ feature, saveError }`) commands, and the dashboard's minimal Features section (state and enable checkbox per feature, storage and save errors as alerts) | `features/mod.rs`, `build.rs`, `capabilities/default.json`; `src/features.ts`, `src/Features.svelte` |
 | Cloud Storage section in the dashboard (navigation link; account list with empty state, add/edit form with provider presets, connection check, removal with confirmation; keys in two password inputs, sent only to Rust and never returned) and its six commands `list_cloud_providers`, `list_cloud_accounts`, `add_cloud_account`, `update_cloud_account`, `remove_cloud_account`, `check_cloud_account` (safe DTOs, structured errors, `spawn_blocking` for SQLite and the credential store); connection check `S3Store::check_bucket` (`HeadBucket`, one-key `ListObjectsV2` only after a refused HEAD, never `ListBuckets`) | `src/App.svelte`, `src/CloudStorage.svelte`, `src/CloudAccountForm.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/dashboard.rs`, `check_bucket` in `cloud/s3.rs`, `run()` in `lib.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#dashboard), [ADR-018](../architecture/decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)) |
 | Read-only bucket browser in the Cloud Storage section ("Open bucket" per account: folders, files, sizes, dates, breadcrumbs, Up, Refresh, Load more, back to the accounts) and the command `list_cloud_folder` (one `ListObjectsV2` page of one folder level of the account's configured bucket, delimiter `/`; folder prefixes kept exactly, marker objects hidden; continuation tokens kept in Rust behind cursors tied to account, bucket and prefix; structured errors) | `src/CloudBrowser.svelte`, `src/CloudStorage.svelte`, `src/cloud.ts`, `src/cloudMessages.ts`; `src-tauri/src/cloud/browser.rs`, cursors in `cloud/dashboard.rs`, `list_folder` in `cloud/s3.rs`, `build.rs`, `capabilities/default.json` ([cloud-storage.md](../architecture/cloud-storage.md#browsing-a-bucket), [ADR-019](../architecture/decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust)) |
@@ -100,6 +100,11 @@ verified byte for byte; the object was deleted again by its version id
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
 | Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, `allow-list-cloud-folder`, the three download and the three upload permissions; no `dialog:` or `fs:` permission; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
+| Windows title bar drawn by the page (drag region, Minimize, Maximize/Restore, Close; native resize, snapping, keys; ADR-040) — not run on Windows yet | `title_bar.rs`, `src/TitleBar.svelte`, `App.svelte` |
+| Window placement: half the primary work area (at least 900 × 540) at first launch, then the saved place made visible (ADR-040) | `window_state.rs`, `window-state.sqlite3` |
+| Storage usage by listing, history and 30-day cost estimates from price lists (ADR-041) — local test servers only | `cloud/usage.rs`, `cloud/pricing.rs`, `src-tauri/pricing/`, `src/CloudUsage.svelte` |
+| Snapshots & backups tab: Backblaze console snapshots explained; sotyware backup snapshots with details, back up, verify, typed deletion (ADR-041) | `src/CloudSnapshots.svelte`, `backup/mod.rs`, `backup/engine.rs` |
+| Automatic sync of an enrolled device on startup, focus and local changes, state in the sidebar (ADR-042) | `src/accountSync.svelte.ts`, `Sidebar.svelte` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -109,16 +114,18 @@ a minimized dashboard and focus on second launch run on Linux only under the
 virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 [testing.md](../development/testing.md).
 
-Nothing else exists: no product features (only the example feature and
-cloud storage: accounts, browsing, transfers and the file management of
-ADR-026, the operation journal of ADR-030 and the backups of ADR-031), no
+Nothing else exists: no product features (only cloud storage: accounts,
+browsing, transfers and the file management of ADR-026, the operation
+journal of ADR-030, the backups of ADR-031, usage and cost estimates and the
+snapshots tab of ADR-041; the example feature was removed 2026-11-15), no
 settings, no persistence other than the feature choices, the cloud storage
 accounts and their favorites and recent items, the operation journal,
-the backup jobs, the account state and the update state, no overwriting
+the backup jobs, the account state, the update state, the window placement
+and the storage usage measurements, no overwriting
 uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
 own, content search, transfer queue UI or download history, no
-sync, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 78 listed in
+background (periodic) sync, no billing data from a provider, no custom Tauri events, no feature-management UI, no third-party
+plugins, and no custom command other than the 83 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -137,6 +144,85 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Desktop UX, usage and costs, snapshots, and automatic sync (2026-11-15)
+
+Uncommitted on `e48a95d` when written (the maintainer asked for no
+commit); committed on `main` on 2026-11-16 at the maintainer's request,
+after `310fd49` (the account service's deployment proposal); not pushed.
+Decisions:
+[ADR-040](../architecture/decisions.md#adr-040-on-windows-the-dashboard-draws-its-own-title-bar-the-window-opens-at-half-the-primary-work-area-and-remembers-its-place),
+[ADR-041](../architecture/decisions.md#adr-041-storage-usage-is-measured-by-listing-costs-are-estimates-from-versioned-price-lists-snapshots-of-a-bucket-are-sotywares-backup-snapshots),
+[ADR-042](../architecture/decisions.md#adr-042-an-enrolled-device-syncs-its-vault-automatically-on-events-never-on-a-timer).
+
+**Implemented:**
+
+- **Windows title bar** (`title_bar.rs`, `TitleBar.svelte`): decorations
+  removed at runtime after the `window-controls` capability was granted;
+  drag region, double-click maximize, Minimize, Maximize/Restore, Close in
+  the design tokens; native resize, snapping and keys kept; above dialog
+  backdrops. macOS and Linux keep their native title bars.
+- **Window placement** (`window_state.rs`, `window-state.sqlite3`): first
+  launch at half the primary work area (at least 900 × 540, at most the work
+  area), centred; afterwards the saved place (made visible on a connected
+  monitor, rescaled for a changed scaling, maximized again), saved on hide,
+  focus loss and exit; a hidden window on a gone monitor comes back on a
+  connected one.
+- **Example feature removed** (code, tests, drivers, docs); a stored
+  choice for it is ignored and kept (regression test).
+- **Usage and costs** (`cloud/usage.rs`, `cloud/pricing.rs`,
+  `src-tauri/pricing/*.json`, `storage-usage.sqlite3`, `CloudUsage.svelte`):
+  measurement by listing, history, 30-day estimates per provider account
+  with components and assumptions; prices read on 2026-11-15 from
+  Backblaze's and Hetzner's pages (unchanged since 2026-11-11).
+- **Snapshots and backups of a bucket** (`CloudSnapshots.svelte`,
+  `backup_snapshot_details`, `delete_backup_snapshot`, the shared deletion in
+  `backup/engine.rs`): Backblaze's console-only snapshots explained; sotyware
+  backup snapshots listed with details, Back up now, Verify, typed deletion;
+  health ignores deleted snapshots.
+- **Automatic sync** (`accountSync.svelte.ts`): startup, focus (15 min),
+  local account changes; the state by the sidebar's Account item.
+- **Infrastructure proposal** for the account service:
+  [server.md](../development/server.md#production-deployment-proposal-2026-11-15).
+
+**Tested (WSL2 Ubuntu 24.04, 2026-11-15):** `npm run check` (0 errors, 0
+warnings), `npm run build`, `cargo fmt --check`, `cargo clippy -D warnings`
+(default and test-profile builds), `npm run test:headless` (rfd patch,
+release-binary, desktop-isolation, icon and update-key guards; Vitest
+17 files, 284 tests; Rust 566 passed, 28 ignored), the recorder build's tests (594 passed, 28 ignored),
+`npm run test:profile-helpers` (10). Virtual display (`npm run
+test:desktop:virtual`, test-profile build, Xvfb 1280 × 800 + openbox): the
+first run failed **121 passed, 18 failed**: half of the 1280 px screen
+(640 px) is below the 760 px breakpoint, so the sidebar collapsed into an
+overlay and the driver found no navigation links. The first-launch minimum
+of 900 × 540 was added for that (a 1366 px laptop would have looked the
+same); the run after it passed **139/0/0** (three frontend-only fixes from
+the UI review below came after it). On 2026-11-16, before committing, every
+check above and the virtual display ran again on the committed tree, with
+the same results (virtual display **139/0/0**). `windows.ps1` was
+checked statically (`check-ps-variables.ps1`) and its C# helpers compiled
+with `Add-Type` on the Windows machine; it was **not run**.
+
+**UI looked at:** the real Svelte components with Tauri's IPC mocks and
+sample data (a harness in the session's scratchpad, not in the repository),
+rendered by headless Microsoft Edge (Chromium, like WebView2) on the
+development machine's Windows 11, with the title bar forced on as on
+Windows: Overview, the Usage & costs and Snapshots & backups tabs, the
+delete dialog, a 700 px window, light and dark. Found and fixed there: the
+history chart scaled its text with the card, the cost table's row headers
+took the file table's sticky header style, the tab bar showed a stray
+scrollbar, and dialog backdrops covered the title bar. (A frozen CSS
+transition under headless virtual time made the previous tab look selected
+in one screenshot; the DOM and a reduced-motion render showed the right
+state.) This is not the app's binary in WebView2.
+
+**Not tested:** a native Windows build and run (the title bar, dragging,
+snapping, resizing, scaling and placement on Windows; the new `windows.ps1`
+checks) — the machine's C: drive had about 14 GB free in the last session,
+less than a debug build needs; macOS (not compiled here); any real provider
+(no measurement, snapshot listing or deletion at Backblaze or Hetzner);
+automatic sync against a running service (Rust unchanged; the page's logic
+with mocked IPC only); a real Linux desktop.
 
 ### v0.1.0 installed by the maintainer (2026-11-15)
 

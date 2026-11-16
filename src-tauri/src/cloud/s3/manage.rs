@@ -136,6 +136,33 @@ pub struct IncompletePage {
     pub next: Option<(String, Option<String>)>,
 }
 
+/// One stored version (or delete marker) as usage measurement counts it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UsageEntry {
+    pub size: u64,
+    /// The current version of its key.
+    pub is_latest: bool,
+    /// A delete marker (Backblaze: a hide marker); it stores nothing.
+    pub delete_marker: bool,
+}
+
+/// One page of a bucket's versions for usage measurement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsagePage {
+    pub entries: Vec<UsageEntry>,
+    /// `(key marker, version id marker)` of the next page.
+    pub next: Option<(String, Option<String>)>,
+}
+
+/// One page of the parts an open multipart upload has stored so far.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartsPage {
+    pub parts: u64,
+    pub bytes: u64,
+    /// The part number marker of the next page.
+    pub next: Option<String>,
+}
+
 /// The first bytes of an object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectHead {
@@ -395,6 +422,90 @@ impl S3Store {
             _ => None,
         };
         Ok(VersionPage { entries, next })
+    }
+
+    /// One page (at most 1,000) of every version and delete marker in the
+    /// bucket, for measuring its usage (ADR-041). Unlike
+    /// [`Self::list_versions_page`] it keeps entries without a version id
+    /// (some services list an unversioned bucket's objects so): they are
+    /// stored data all the same. Read-only.
+    pub async fn usage_versions_page(
+        &self,
+        bucket: &str,
+        marker: Option<(String, Option<String>)>,
+    ) -> Result<UsagePage, StorageError> {
+        self.check_target(bucket, None)?;
+        let (key_marker, version_marker) =
+            marker.clone().map_or((None, None), |(k, v)| (Some(k), v));
+        let out = self
+            .client
+            .list_object_versions()
+            .bucket(bucket)
+            .max_keys(1000)
+            .set_key_marker(key_marker)
+            .set_version_id_marker(version_marker)
+            .send()
+            .await
+            .map_err(|e| classify("list versions", e))?;
+        let mut entries: Vec<UsageEntry> = out
+            .versions()
+            .iter()
+            .map(|v| UsageEntry {
+                size: size_of(v.size()),
+                is_latest: v.is_latest() != Some(false),
+                delete_marker: false,
+            })
+            .collect();
+        entries.extend(out.delete_markers().iter().map(|m| UsageEntry {
+            size: 0,
+            is_latest: m.is_latest() == Some(true),
+            delete_marker: true,
+        }));
+        let next = match (out.is_truncated(), out.next_key_marker()) {
+            (Some(true), Some(k)) => {
+                let v = out.next_version_id_marker().map(str::to_owned);
+                // The same marker again would repeat the page forever.
+                if marker.as_ref().is_some_and(|(mk, mv)| mk == k && *mv == v) {
+                    None
+                } else {
+                    Some((k.to_owned(), v))
+                }
+            }
+            _ => None,
+        };
+        Ok(UsagePage { entries, next })
+    }
+
+    /// One page (at most 1,000) of the parts uploaded so far for the open
+    /// multipart upload `upload_id` of `key` (`ListParts`). Read-only.
+    pub async fn list_parts_page(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+        marker: Option<String>,
+    ) -> Result<PartsPage, StorageError> {
+        self.check_target(bucket, Some(key))?;
+        let out = self
+            .client
+            .list_parts()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .set_part_number_marker(marker.clone())
+            .send()
+            .await
+            .map_err(|e| classify("list parts", e))?;
+        let parts = out.parts();
+        let next = match (out.is_truncated(), out.next_part_number_marker()) {
+            (Some(true), Some(n)) if Some(n) != marker.as_deref() => Some(n.to_owned()),
+            _ => None,
+        };
+        Ok(PartsPage {
+            parts: parts.len() as u64,
+            bytes: parts.iter().map(|p| size_of(p.size())).sum(),
+            next,
+        })
     }
 
     /// One page (at most 1,000) of the multipart uploads under `prefix`

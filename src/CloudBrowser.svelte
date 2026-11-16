@@ -19,7 +19,9 @@
   import CloudFolderPicker from "./CloudFolderPicker.svelte";
   import CloudOperation from "./CloudOperation.svelte";
   import CloudProperties from "./CloudProperties.svelte";
+  import CloudSnapshots from "./CloudSnapshots.svelte";
   import CloudUpload from "./CloudUpload.svelte";
+  import CloudUsage from "./CloudUsage.svelte";
   import {
     createFolder,
     listPlaces,
@@ -87,11 +89,13 @@
     account: AccountInfo;
     /** Back to the account list; `message` says why if it was not the user. */
     onclose: (message: string | null) => void;
+    /** Opens the Backups page (to create or change a backup job). */
+    onopenbackups?: (() => void) | undefined;
     /** Back to the account list with this account's edit form open. */
     onedit: () => void;
   }
 
-  let { account, onclose, onedit }: Props = $props();
+  let { account, onclose, onedit, onopenbackups }: Props = $props();
 
   // Shortcut labels as this system writes them.
   const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
@@ -152,6 +156,42 @@
   // ------------------------------------------------------------ file manager
 
   let view = $state<"folder" | "search" | "deleted">("folder");
+
+  // The bucket view's tabs (ADR-041): the files, the bucket's usage and
+  // costs, and its snapshots and backups. The files stay mounted while
+  // another tab shows (a running upload or download goes on); the other
+  // panels are mounted the first time they are opened.
+  type BucketTab = "files" | "usage" | "snapshots";
+  const BUCKET_TABS: { id: BucketTab; title: string; icon: "folder" | "usage" | "snapshot" }[] = [
+    { id: "files", title: "Files", icon: "folder" },
+    { id: "usage", title: "Usage & costs", icon: "usage" },
+    { id: "snapshots", title: "Snapshots & backups", icon: "snapshot" },
+  ];
+  let tab = $state<BucketTab>("files");
+  let opened = $state<Record<BucketTab, boolean>>({ files: true, usage: false, snapshots: false });
+
+  function showTab(next: BucketTab): void {
+    tab = next;
+    opened[next] = true;
+  }
+
+  function onTabKey(event: KeyboardEvent): void {
+    const i = BUCKET_TABS.findIndex((t) => t.id === tab);
+    const last = BUCKET_TABS.length - 1;
+    const next =
+      event.key === "ArrowRight" ? (i === last ? 0 : i + 1)
+      : event.key === "ArrowLeft" ? (i === 0 ? last : i - 1)
+      : event.key === "Home" ? 0
+      : event.key === "End" ? last
+      : null;
+    if (next === null) {
+      return;
+    }
+    event.preventDefault();
+    const t = BUCKET_TABS[next]!;
+    showTab(t.id);
+    document.getElementById(`bucket-tab-${t.id}`)?.focus();
+  }
   let sortBy = $state<SortKey>("listed");
   let sortDirection = $state<SortDirection>("ascending");
   let filter = $state<Filter>({ ...NO_FILTER });
@@ -632,7 +672,7 @@
     // A dialog (rename, picker, review, properties) owns the keyboard. In
     // Deleted items the folder's entries are not shown, so no shortcut may
     // act on them (Delete, F2, Ctrl+A, Ctrl+X …).
-    if (dialog !== null || document.querySelector('[role="dialog"]') !== null || view === "deleted") {
+    if (dialog !== null || document.querySelector('[role="dialog"]') !== null || view === "deleted" || tab !== "files") {
       return;
     }
     const action = shortcutOf(event);
@@ -1056,6 +1096,22 @@
     </div>
   </header>
 
+  <div class="bucket-tabs" role="tablist" aria-label="{account.label}: views" tabindex="-1" onkeydown={onTabKey}>
+    {#each BUCKET_TABS as t (t.id)}
+      <button
+        type="button"
+        role="tab"
+        id="bucket-tab-{t.id}"
+        class="bucket-tab"
+        aria-selected={tab === t.id}
+        aria-controls="bucket-panel-{t.id}"
+        tabindex={tab === t.id ? 0 : -1}
+        onclick={() => showTab(t.id)}><Icon name={t.icon} size={15} />{t.title}</button
+      >
+    {/each}
+  </div>
+
+  <div role="tabpanel" id="bucket-panel-files" aria-labelledby="bucket-tab-files" hidden={tab !== "files"}>
   <nav aria-label="Folder path" class="crumbs">
     <ol>
       <li>
@@ -1452,6 +1508,19 @@
     {/if}
   {/if}
   {/if}
+  </div>
+
+  <div role="tabpanel" id="bucket-panel-usage" aria-labelledby="bucket-tab-usage" class="bucket-panel" hidden={tab !== "usage"}>
+    {#if opened.usage}
+      <CloudUsage {account} />
+    {/if}
+  </div>
+
+  <div role="tabpanel" id="bucket-panel-snapshots" aria-labelledby="bucket-tab-snapshots" class="bucket-panel" hidden={tab !== "snapshots"}>
+    {#if opened.snapshots}
+      <CloudSnapshots {account} {onopenbackups} />
+    {/if}
+  </div>
 </section>
 
 {#snippet table()}
@@ -1656,6 +1725,51 @@
 {/if}
 
 <style>
+  .bucket-tabs {
+    display: flex;
+    gap: var(--space-1);
+    margin: 0 0 var(--space-3);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .bucket-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 34px;
+    padding: 0 var(--space-3);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    white-space: nowrap;
+  }
+
+  .bucket-tab:hover {
+    color: var(--text);
+    background: transparent;
+  }
+
+  .bucket-tab[aria-selected="true"] {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .bucket-tab:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+
+  .bucket-panel {
+    padding-bottom: var(--space-6);
+  }
+
   .browser {
     padding: var(--space-4) var(--space-8) var(--space-12);
   }

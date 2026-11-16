@@ -86,6 +86,8 @@ pub enum TaskKind {
     VerifyFull,
     Prune,
     Restore,
+    /// Deleting one snapshot the user chose (ADR-041).
+    DeleteSnapshot,
 }
 
 /// The last run of one kind, as the page shows it.
@@ -347,9 +349,18 @@ impl Backups {
     pub fn status(&self, job: JobConfig, now: i64) -> Result<JobStatus, CommandError> {
         let runs = self.runs(&job.id)?;
         let last_backup = runs.iter().find(|r| r.kind == "backup");
-        let last_snapshot_run = runs
+        // A snapshot the user deleted (ADR-041) no longer vouches for the
+        // backup: health then rests on the newest one still there.
+        let deleted: std::collections::HashSet<&str> = runs
             .iter()
-            .find(|r| r.kind == "backup" && r.state == "completed" && r.snapshot.is_some());
+            .filter(|r| r.kind == "delete-snapshot" && r.state == "completed")
+            .filter_map(|r| r.snapshot.as_deref())
+            .collect();
+        let last_snapshot_run = runs.iter().find(|r| {
+            r.kind == "backup"
+                && r.state == "completed"
+                && r.snapshot.as_deref().is_some_and(|k| !deleted.contains(k))
+        });
         let last_verification = last_snapshot_run.and_then(|s| {
             runs.iter().find(|r| {
                 (r.kind == "verify" || r.kind == "verify-full")
@@ -517,10 +528,10 @@ impl Backups {
         kind: TaskKind,
         sink: Arc<dyn BackupSink>,
     ) -> Result<String, CommandError> {
-        if kind == TaskKind::Restore {
+        if matches!(kind, TaskKind::Restore | TaskKind::DeleteSnapshot) {
             return Err(CommandError::new(
                 ErrorKind::InvalidInput,
-                "a restore is started with its target",
+                "a restore is started with its target, a snapshot deletion with its snapshot",
             ));
         }
         let config = self.job(job)?;
@@ -772,8 +783,116 @@ impl Backups {
                     Err(e) => s.error = Some(e),
                 }
             }
-            TaskKind::Restore => {}
+            TaskKind::Restore | TaskKind::DeleteSnapshot => {}
         }
+        clear_task_spool(&spool);
+        s
+    }
+
+    /// Deletes snapshot `snapshot` of `job` (ADR-041): its manifest, then
+    /// the data no remaining snapshot uses. One backup task at a time.
+    pub async fn start_delete_snapshot(
+        self: &Arc<Self>,
+        accounts: Arc<CloudAccounts>,
+        job: &str,
+        snapshot: &str,
+        sink: Arc<dyn BackupSink>,
+    ) -> Result<String, CommandError> {
+        let config = self.job(job)?;
+        if !snapshot.starts_with(&model::snapshots_prefix(
+            &config.destination.prefix,
+            &config.id,
+        )) || !snapshot.ends_with(".json")
+        {
+            return Err(CommandError::new(
+                ErrorKind::InvalidInput,
+                "this is not a snapshot of this backup",
+            ));
+        }
+        let (task, cancel) = self.reserve(job, TaskKind::DeleteSnapshot)?;
+        let stores = match prepare(&accounts, &config).await {
+            Ok(s) => s,
+            Err(e) => {
+                self.free();
+                return Err(e);
+            }
+        };
+        let this = Arc::clone(self);
+        let (t, key) = (task.clone(), snapshot.to_owned());
+        tauri::async_runtime::spawn(async move {
+            let summary = this
+                .execute_delete(&t, &config, &stores, &key, &cancel, &sink)
+                .await;
+            this.free();
+            sink.emit(BackupEvent {
+                task: t,
+                seq: u64::MAX,
+                body: BackupEventBody::Finished {
+                    summary: Box::new(summary),
+                },
+            });
+        });
+        Ok(task)
+    }
+
+    async fn execute_delete(
+        &self,
+        task: &str,
+        job: &JobConfig,
+        stores: &Stores,
+        key: &str,
+        cancel: &Cancel,
+        sink: &Arc<dyn BackupSink>,
+    ) -> TaskSummary {
+        let mut seq = 0u64;
+        let mut progress = |p: Progress| {
+            seq += 1;
+            sink.emit(BackupEvent {
+                task: task.into(),
+                seq,
+                body: BackupEventBody::Progress { progress: p },
+            });
+        };
+        let spool = self.task_spool(task);
+        let mut ctx = Ctx {
+            dest: &stores.dest,
+            dest_bucket: &job.destination.bucket,
+            dest_prefix: &job.destination.prefix,
+            spool: &spool,
+            cancel,
+            journal: None,
+            progress: &mut progress,
+        };
+        let mut s = self.summary(task, &job.id, TaskKind::DeleteSnapshot);
+        s.snapshot = Some(key.to_owned());
+        let started = now_ms();
+        let r = engine::delete_snapshot(&mut ctx, job, key).await;
+        let (state, error) = match &r {
+            Ok(p) if p.snapshots_deleted == 1 => ("completed", None),
+            Ok(_) => (
+                "failed",
+                Some(CommandError::new(
+                    ErrorKind::AccessDenied,
+                    "the destination refused to delete the snapshot (Object Lock, or a key without delete permission); nothing was changed",
+                )),
+            ),
+            Err(StorageError::Cancelled) => ("cancelled", None),
+            Err(e) => ("failed", Some(backup_error(e))),
+        };
+        self.record(RunRow {
+            job_id: job.id.clone(),
+            kind: "delete-snapshot".into(),
+            state: state.into(),
+            started_ms: started,
+            finished_ms: Some(now_ms()),
+            snapshot: Some(key.to_owned()),
+            summary: r.as_ref().ok().and_then(|p| serde_json::to_string(p).ok()),
+            error: error.as_ref().map(|e| e.message.clone()),
+            ..RunRow::default()
+        });
+        s.state = state.into();
+        s.error = error;
+        s.prune = r.ok();
         clear_task_spool(&spool);
         s
     }
@@ -1246,6 +1365,109 @@ pub async fn list_backup_snapshots(
     engine::snapshots(&ctx, &config.id)
         .await
         .map_err(|e| backup_error(&e))
+}
+
+/// One snapshot's manifest as the page shows it (ADR-041).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotDetails {
+    pub key: String,
+    /// The snapshot id written in the manifest.
+    pub id: String,
+    /// RFC 3339.
+    pub created: String,
+    pub source_provider: String,
+    pub source_bucket: String,
+    pub source_prefix: String,
+    pub stats: Stats,
+    pub suspicious: bool,
+    /// The newest verification of this snapshot recorded on this computer:
+    /// passed or not, when, and whether it read every byte.
+    pub verified: Option<bool>,
+    pub verified_ms: Option<i64>,
+    pub verified_full: bool,
+}
+
+/// What a snapshot's manifest says, and this computer's verifications of
+/// it. Reads one object at the destination. Allowed by
+/// `allow-backup-snapshot-details`.
+#[tauri::command]
+pub async fn backup_snapshot_details(
+    backups: State<'_, Arc<Backups>>,
+    accounts: State<'_, Arc<CloudAccounts>>,
+    job: String,
+    snapshot: String,
+) -> Result<SnapshotDetails, CommandError> {
+    let (config, runs) = {
+        let b = Arc::clone(&backups);
+        let id = job.clone();
+        crate::cloud::dashboard::blocking_pub(move || Ok((b.job(&id)?, b.runs(&id)?))).await?
+    };
+    if !snapshot.starts_with(&model::snapshots_prefix(
+        &config.destination.prefix,
+        &config.id,
+    )) {
+        return Err(CommandError::new(
+            ErrorKind::InvalidInput,
+            "this is not a snapshot of this backup",
+        ));
+    }
+    let stores = prepare(&accounts, &config).await?;
+    let cancel = Cancel::default();
+    let mut nothing = |_: Progress| {};
+    let ctx = Ctx {
+        dest: &stores.dest,
+        dest_bucket: &config.destination.bucket,
+        dest_prefix: &config.destination.prefix,
+        spool: Path::new("."),
+        cancel: &cancel,
+        journal: None,
+        progress: &mut nothing,
+    };
+    let m = engine::read_manifest(&ctx, &snapshot)
+        .await
+        .map_err(|e| backup_error(&e))?;
+    Ok(snapshot_details(&snapshot, &m, &runs))
+}
+
+/// [`SnapshotDetails`] from a manifest and the job's runs (newest first).
+pub fn snapshot_details(key: &str, m: &model::Manifest, runs: &[RunRow]) -> SnapshotDetails {
+    let verification = runs.iter().find(|r| {
+        (r.kind == "verify" || r.kind == "verify-full")
+            && r.snapshot.as_deref() == Some(key)
+            && r.passed.is_some()
+    });
+    SnapshotDetails {
+        key: key.to_owned(),
+        id: m.snapshot.clone(),
+        created: m.created.clone(),
+        source_provider: m.source.provider.clone(),
+        source_bucket: m.source.bucket.clone(),
+        source_prefix: m.source.prefix.clone(),
+        stats: m.stats,
+        suspicious: m.suspicious,
+        verified: verification.and_then(|r| r.passed),
+        verified_ms: verification.map(|r| r.finished_ms.unwrap_or(r.started_ms)),
+        verified_full: verification.is_some_and(|r| r.kind == "verify-full"),
+    }
+}
+
+/// Deletes one snapshot of a backup (ADR-041): its manifest at the
+/// destination, then the data no remaining snapshot uses (older than a day
+/// before the oldest remaining snapshot). Returns the task id; the result
+/// comes on the channel like any backup task's. Allowed by
+/// `allow-delete-backup-snapshot`.
+#[tauri::command]
+pub async fn delete_backup_snapshot(
+    backups: State<'_, Arc<Backups>>,
+    accounts: State<'_, Arc<CloudAccounts>>,
+    job: String,
+    snapshot: String,
+    on_event: Channel<BackupEvent>,
+) -> Result<String, CommandError> {
+    Arc::clone(&backups)
+        .start_delete_snapshot(Arc::clone(&accounts), &job, &snapshot, Arc::new(on_event))
+        .await
 }
 
 /// The restore target as the page names it.

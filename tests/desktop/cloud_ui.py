@@ -1101,12 +1101,12 @@ try:
             lambda: any(n == "Features" for n, _ in by_role(pid, Atspi.Role.PAGE_TAB)), 5)
         tab = [node for n, node in by_role(pid, Atspi.Role.PAGE_TAB) if n == "Features"] if nav else []
         nav = nav and tab and Atspi.Action.do_action(tab[0], 0) and wait_for(
-            lambda: any(n == "Example" for n, _ in by_role(pid, Atspi.Role.CHECK_BOX)), 5)
+            lambda: any(n == "Scheduled backups" for n, _ in by_role(pid, Atspi.Role.CHECK_BOX)), 5)
         check("while it waits, the window still switches sections", bool(nav) and time.time() - t0 < 5,
               f"{time.time() - t0:.1f}s")
-        box = [node for n, node in by_role(pid, Atspi.Role.CHECK_BOX) if n == "Example"]
+        box = [node for n, node in by_role(pid, Atspi.Role.CHECK_BOX) if n == "Scheduled backups"]
         toggled = box and Atspi.Action.do_action(box[0], 0) and wait_for(lambda: "Disabled" in text(pid), 5)
-        check("while it waits, other commands still run (example feature disabled)", bool(toggled), text(pid))
+        check("while it waits, other commands still run (Scheduled backups disabled)", bool(toggled), text(pid))
         back = link(pid, "Cloud Storage") and wait_for(lambda: "Cloud Storage" in text(pid), 5)
         check("back to Cloud Storage while the add waits", bool(back))
         check("process still running", p.poll() is None)

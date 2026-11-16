@@ -753,9 +753,8 @@ pub async fn prune_with_margin(
     job: &JobConfig,
     margin: Duration,
 ) -> Result<PruneReport, StorageError> {
-    let mut report = PruneReport::default();
     if job.retention.keeps_everything() {
-        return Ok(report);
+        return Ok(PruneReport::default());
     }
     (ctx.progress)(Progress {
         phase: "pruning",
@@ -763,6 +762,69 @@ pub async fn prune_with_margin(
         total: 0,
         bytes: 0,
     });
+    delete_chosen(ctx, &job.id, margin, |mine| {
+        let keep = model::keep(mine, job.retention);
+        Ok(mine
+            .iter()
+            .filter(|s| !keep.contains(&s.key))
+            .map(|s| s.key.clone())
+            .collect())
+    })
+    .await
+}
+
+/// Deletes one snapshot of `job` that the user chose (ADR-041): its
+/// manifest, then the blobs no remaining manifest references, by the same
+/// rules and with the same safety margin as retention. Reads every manifest
+/// first; nothing is deleted if one cannot be read, or if `key` is not a
+/// snapshot of `job`.
+pub async fn delete_snapshot(
+    ctx: &mut Ctx<'_>,
+    job: &JobConfig,
+    key: &str,
+) -> Result<PruneReport, StorageError> {
+    delete_snapshot_with_margin(ctx, job, key, PRUNE_MARGIN).await
+}
+
+/// [`delete_snapshot`] with another safety margin (tests).
+pub async fn delete_snapshot_with_margin(
+    ctx: &mut Ctx<'_>,
+    job: &JobConfig,
+    key: &str,
+    margin: Duration,
+) -> Result<PruneReport, StorageError> {
+    (ctx.progress)(Progress {
+        phase: "deleting",
+        done: 0,
+        total: 0,
+        bytes: 0,
+    });
+    delete_chosen(ctx, &job.id, margin, |mine| {
+        if mine.iter().any(|s| s.key == key) {
+            Ok(BTreeSet::from([key.to_owned()]))
+        } else {
+            Err(StorageError::NotFound(format!(
+                "{key} is not a snapshot of this backup (it may have been deleted already)"
+            )))
+        }
+    })
+    .await
+}
+
+/// The deletion shared by retention and a user's delete: reads every
+/// manifest under `P/snapshots/` (all jobs of the repository; stops if any
+/// cannot be read), deletes the manifests of `job_id` that `choose` picks,
+/// then deletes the blobs that no remaining manifest references and that
+/// were last modified more than `margin` before the oldest remaining
+/// manifest was created (a blob uploaded by a run on another device has no
+/// manifest yet, and clocks differ).
+async fn delete_chosen(
+    ctx: &mut Ctx<'_>,
+    job_id: &str,
+    margin: Duration,
+    choose: impl FnOnce(&[SnapshotInfo]) -> Result<BTreeSet<String>, StorageError>,
+) -> Result<PruneReport, StorageError> {
+    let mut report = PruneReport::default();
     let all_prefix = format!("{}snapshots/", ctx.dest_prefix);
     let listed = list_all(
         ctx.dest,
@@ -781,14 +843,14 @@ pub async fn prune_with_margin(
     }
     let mine: Vec<SnapshotInfo> = manifests
         .iter()
-        .filter(|(_, m)| m.job.id == job.id)
+        .filter(|(_, m)| m.job.id == job_id)
         .map(|(k, m)| SnapshotInfo {
             key: k.clone(),
             created: m.created.clone(),
         })
         .collect();
-    let keep = model::keep(&mine, job.retention);
-    for s in mine.iter().filter(|s| !keep.contains(&s.key)) {
+    let chosen = choose(&mine)?;
+    for s in mine.iter().filter(|s| chosen.contains(&s.key)) {
         if ctx.cancel.is_cancelled() {
             return Err(StorageError::Cancelled);
         }
@@ -805,7 +867,7 @@ pub async fn prune_with_margin(
             Err(e) => return Err(e),
         }
     }
-    report.snapshots_kept = manifests.values().filter(|m| m.job.id == job.id).count() as u64;
+    report.snapshots_kept = manifests.values().filter(|m| m.job.id == job_id).count() as u64;
     let referenced: BTreeSet<String> = manifests
         .values()
         .flat_map(|m| {

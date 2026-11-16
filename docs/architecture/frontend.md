@@ -13,7 +13,8 @@ what it shows and how it is built.
 
 | Part | File | What it holds |
 | --- | --- | --- |
-| Sidebar | `src/Sidebar.svelte` | sotyware's name and mark; the sections **Overview**, **Cloud Storage**, **Backups** (links, `aria-current="page"` on the one shown); **Storage accounts**: one link per account, with a status dot, that opens its bucket; **Add storage account**; at the bottom **Account** and **Settings**. Navigation only: every action belongs to a page. |
+| Title bar (Windows only) | `src/TitleBar.svelte` | The page's own title bar across the top ([below](#title-bar-windows)). |
+| Sidebar | `src/Sidebar.svelte` | sotyware's name and mark (`src/Logo.svelte`; in the title bar instead on Windows); the sections **Overview**, **Cloud Storage**, **Backups** (links, `aria-current="page"` on the one shown); **Storage accounts**: one link per account, with a status dot, that opens its bucket; **Add storage account**; at the bottom **Account** (with a dot and tooltip for the sotyware account's sync state when there is an account, ADR-042) and **Settings**. Navigation only: every action belongs to a page. |
 | Main area | `src/App.svelte` | One update notification when a version is available or installed (never on Settings › About & updates, which shows the same thing), then the page. |
 
 Navigation is local state in `App.svelte` (`section`, `browsing`,
@@ -25,8 +26,37 @@ sidebar; the Cloud Storage page reports every later change of the list back
 the page's `browsing` (bindable) and `requestAdd` props.
 
 **Narrow windows** (below 760 px): the sidebar becomes an overlay opened by
-a button in a top bar, closed by Escape, a click outside or a choice. The
-window's minimum size is 640×480 (`tauri.conf.json`).
+a button in a top bar (in the title bar on Windows), closed by Escape, a
+click outside or a choice. The window's minimum size is 640×480
+(`tauri.conf.json`); where it opens and how big is decided in Rust
+([lifecycle.md](lifecycle.md#placement-and-chrome)).
+
+### Title bar (Windows)
+
+Since 2026-11-15 ([ADR-040](decisions.md#adr-040-on-windows-the-dashboard-draws-its-own-title-bar-the-window-opens-at-half-the-primary-work-area-and-remembers-its-place)).
+On Windows the window has no native decorations, and `App.svelte` draws
+`TitleBar.svelte` as the shell's first row (40 px, `--titlebar-h`) when
+`getCurrentWindow().isDecorated()` answers `false` (a guess from the user
+agent covers the first paint); anything else keeps the native title bar,
+as on macOS and Linux. The bar continues the sidebar's colour and edge over
+the sidebar column and the page's colour over the main column, so there is
+no line between title bar and page. It holds the mark and the name (moved
+from the sidebar), the page's name and the navigation toggle in narrow
+windows, a refused window action as an inline alert, and the window
+controls in a group named "Window": Minimize, Maximize/Restore (the icon
+follows `isMaximized()`, read again after each resize) and Close, 46 px
+wide caption buttons with Windows' own glyphs (Segoe Fluent Icons / MDL2
+Assets), a light hover fill and the system's red for Close
+(`--titlebar-*` tokens, light and dark). They are out of the tab order like
+native caption buttons; the keyboard has Alt+Space, Win+Arrow and Alt+F4.
+Everything that is not a control is Tauri's drag region
+(`data-tauri-drag-region="deep"`): dragging uses the system's move loop
+(Aero Snap included) and a double click maximizes or restores. While
+another window is active the bar's text is dimmed. It stays above dialog
+backdrops, as a native title bar does, so the window can be moved,
+minimized or closed while a dialog is open. Close sends the same close
+request as Alt+F4; in tray mode its tooltip says sotyware keeps running in
+the tray.
 
 ## Pages
 
@@ -34,7 +64,7 @@ window's minimum size is 640×480 (`tauri.conf.json`).
 | --- | --- | --- |
 | Overview | `src/Overview.svelte` | Tray mode: the hint where sotyware keeps running ("system tray", "menu bar" on a Mac) and **Hide dashboard**; dashboard-only mode: the no-tray note. Three summary cards: storage accounts and their last check, backup jobs and how many need attention (`list_backups`), version and update state. Reads only. |
 | Cloud Storage | `src/CloudStorage.svelte`, `CloudAccountForm.svelte`, `CloudRecovery.svelte` | Account cards in a grid (status badge, bucket, region, endpoint, **Open bucket**, **Check connection**, Edit, Remove with confirmation), the add/edit form, interrupted work. |
-| Bucket browser | `src/CloudBrowser.svelte` and its panels | Full width. Back link, title and bucket/folder line, breadcrumb, toolbar (Up one folder, Refresh, **Upload files…**, Upload folder…, New folder…, paste, Deleted items), search row, favourites and recent items, sort and filter bar, a sticky selection bar, the file table, a context menu (also from the ⋯ button and the keyboard), transfer panels (`CloudUpload`, `CloudOperation`, `CloudBulkDownload`, the download panel), a toast for the last action, dialogs (`Modal`): new folder, rename, destination picker (`CloudFolderPicker`), review of plans, properties and preview as a side sheet (`CloudProperties`). |
+| Bucket browser | `src/CloudBrowser.svelte` and its panels | Full width. Back link, title and bucket/folder line, then three tabs (ADR-041): **Files** (everything below; kept mounted while another tab shows, so transfers go on), **Usage & costs** (`CloudUsage.svelte`) and **Snapshots & backups** (`CloudSnapshots.svelte`), both mounted when first opened ([cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates)); the file manager's shortcuts act only on the Files tab. Files: breadcrumb, toolbar (Up one folder, Refresh, **Upload files…**, Upload folder…, New folder…, paste, Deleted items), search row, favourites and recent items, sort and filter bar, a sticky selection bar, the file table, a context menu (also from the ⋯ button and the keyboard), transfer panels (`CloudUpload`, `CloudOperation`, `CloudBulkDownload`, the download panel), a toast for the last action, dialogs (`Modal`): new folder, rename, destination picker (`CloudFolderPicker`), review of plans, properties and preview as a side sheet (`CloudProperties`). |
 | Backups | `src/Backup.svelte` | Job cards with a health badge, the job form, task progress and results, snapshots and restore. |
 | Account | `src/Account.svelte` | The optional sotyware account (ADR-032). |
 | Settings | `src/Settings.svelte` | Tabs down the left (across the top when narrow): **General** (Appearance: System, Light, Dark; how closing the window behaves; keyboard shortcuts), **Features** (`Features.svelte`), **About & updates** (`Updates.svelte`). |

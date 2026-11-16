@@ -31,9 +31,35 @@
     onaddrequested?: () => void;
     /** The list changed (loaded, added, edited, checked, removed). */
     onaccountschange?: (accounts: AccountInfo[]) => void;
+    /** Opens the Backups page (from a bucket's Snapshots & backups tab). */
+    onopenbackups?: (() => void) | undefined;
+    /** An account was added, changed or removed here (the shell syncs). */
+    onlocalchange?: (() => void) | undefined;
+    /** Changes when the accounts may have changed elsewhere (a sync):
+     * the list is read again. */
+    generation?: number;
   }
 
-  let { browsing = $bindable(null), requestAdd = false, onaddrequested, onaccountschange }: Props = $props();
+  let {
+    browsing = $bindable(null),
+    requestAdd = false,
+    onaddrequested,
+    onaccountschange,
+    onopenbackups,
+    onlocalchange,
+    generation = 0,
+  }: Props = $props();
+
+  // A sync applied other devices' changes: read the list again (not on
+  // the first value, which `onMount` loads).
+  let seenGeneration: number | null = null;
+  $effect(() => {
+    const g = generation;
+    if (seenGeneration !== null && g !== seenGeneration) {
+      void load();
+    }
+    seenGeneration = g;
+  });
 
   let providers = $state<ProviderInfo[] | null>(null);
   let accounts = $state<AccountInfo[] | null>(null);
@@ -111,6 +137,7 @@
   function saved(info: AccountInfo, wasNew: boolean): void {
     upsert(info);
     form = null;
+    onlocalchange?.();
     notice = wasNew ? `Added ${info.label}. Check its connection to make sure the key works.` : `Saved ${info.label}.`;
   }
 
@@ -138,6 +165,7 @@
       await removeAccount(account.id);
       accounts = (accounts ?? []).filter((a) => a.id !== account.id);
       confirmingRemove = null;
+      onlocalchange?.();
       notice = `Removed ${account.label} from sotyware. Its bucket and files at the provider were not changed.`;
     } catch (e) {
       actionError = `Could not remove ${account.label}: ${describeError(e)} The account is still listed.`;
@@ -170,7 +198,7 @@
 
 {#if browsed}
   {#key browsed.id}
-    <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} />
+    <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} {onopenbackups} />
   {/key}
 {:else}
   <div class="page">

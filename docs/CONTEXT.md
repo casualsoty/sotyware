@@ -23,6 +23,30 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 ## What works today
 
+**Desktop UX, usage and costs, snapshots, automatic sync** (2026-11-15,
+committed on `main` after `310fd49` on 2026-11-16, not pushed;
+[status](status/status.md#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)):
+on Windows the dashboard draws its own title bar (drag region, Minimize,
+Maximize/Restore, Close; native resizing, snapping, Alt+F4 kept) and
+everywhere it opens at half the primary monitor's work area (at least
+900 × 540), centred, then where the user left it (`window-state.sqlite3`; ADR-040). The bucket view
+has tabs: **Usage & costs** measures a bucket by listing it (versions,
+unfinished uploads; no provider API reports size or billing), keeps the
+history (`storage-usage.sqlite3`) and estimates 30-day costs from price
+lists in `src-tauri/pricing/` (Backblaze, Hetzner; read 2026-11-15),
+labelled as estimates with components and assumptions; **Snapshots &
+backups** explains Backblaze's console-only snapshots and manages
+sotyware's backup snapshots of the bucket, including deleting one chosen
+snapshot (ADR-041). An enrolled device syncs its vault at startup, on focus
+(at most every 15 minutes) and after local account changes, with the state
+by the sidebar's Account item (ADR-042). The `example` feature was removed
+(a stored choice for it is ignored and kept). WSL2 only: `test:headless`
+(Vitest 284, Rust 566, all guards), clippy (default and test-profile),
+recorder build 594; the title bar and placement were **not run on Windows**
+(no native build this session; `windows.ps1` gained checks that have not
+run), no desktop driver and no provider was run.
+[Infrastructure proposal for accounts](development/server.md#production-deployment-proposal-2026-11-15).
+
 **Redesign, macOS, GitHub Releases updates** (2026-11-15, committed as
 `2e3972e` on branch `feat/desktop-redesign-macos-github-updates`, pushed
 to `main` with `d9cf561`; [status](status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)):
@@ -132,8 +156,9 @@ update server exist), all tested headless against in-process servers only.
   in `features::builtin()` and run by a `FeatureRegistry`. Enabled ones start in
   `setup`, and running ones stop on exit. A failing feature becomes `failed`
   without affecting the others. The dashboard lists them and has an enable
-  checkbox per feature. The features are `example` (does nothing visible),
-  `backup-scheduler` (ADR-031) and `update-check` (ADR-033).
+  checkbox per feature. The features are `backup-scheduler` (ADR-031) and
+  `update-check` (ADR-033); the `example` feature was removed on 2026-11-15
+  (a choice stored for it is ignored and kept).
   [features.md](architecture/features.md).
 - Feature preferences (both modes): each user switch is saved in
   `preferences.sqlite3` in Tauri's `app_local_data_dir()`
@@ -306,10 +331,10 @@ update server exist), all tested headless against in-process servers only.
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
-src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + storage.rs (SQLite)
-src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), example.rs
-src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs; tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
+src/                 Svelte frontend (main.ts, App.svelte, TitleBar.svelte, CloudUsage.svelte + cloudUsage.ts, CloudSnapshots.svelte, accountSync.svelte.ts, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
+src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + title_bar.rs + window_state.rs + storage.rs (SQLite)
+src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), backup.rs, updates.rs
+src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs, usage.rs (storage usage, ADR-041), pricing.rs (+ src-tauri/pricing/*.json); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/ (generated from icons/source/*.svg, npm run icons), patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
 .github/workflows/   CI: ci.yml (automatic, headless, incl. the rfd patch guard), desktop-*.yml (manual)
@@ -336,14 +361,17 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `check_cloud_account`, `list_cloud_folder`, `download_cloud_file`,
   `cancel_cloud_download`, `retry_cloud_download`, `upload_cloud_files`,
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
-  commands of ADR-026, the five recovery commands of ADR-030, the nine
-  backup commands of ADR-031, the 20 account commands of ADR-032 and the
-  six update commands of ADR-033/ADR-036 (78 in all; listed in
+  commands of ADR-026, the five recovery commands of ADR-030, the three
+  usage commands of ADR-041, the eleven backup commands of ADR-031/ADR-041,
+  the 20 account commands of ADR-032 and the six update commands of
+  ADR-033/ADR-036 (83 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
-  runtime), and `setTheme()` for the theme chosen in Settings
-  (`core:window:allow-set-theme`). No other custom command, no custom events (download progress
+  runtime), `setTheme()` for the theme chosen in Settings
+  (`core:window:allow-set-theme`), `isDecorated()`, and on Windows only the
+  title bar's drag region, minimize, maximize and close (runtime capability
+  `window-controls`, ADR-040). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored
   credential or a local path, or accepts a local path.
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line

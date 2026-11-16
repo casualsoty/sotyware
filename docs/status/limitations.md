@@ -192,8 +192,10 @@ affected.
 Design and rationale: [features.md](../architecture/features.md),
 [ADR-014](../architecture/decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry).
 
-- **Only one feature, and it does nothing.** `example` demonstrates the
-  lifecycle. There are no product features.
+- **Two features, both switches for background work.** `backup-scheduler`
+  and `update-check` start and stop work that lives elsewhere (`crate::backup`,
+  `crate::updates`). The `example` feature was removed (2026-11-15); a choice
+  stored for it stays in `preferences.sqlite3`, ignored.
 - **No events.** The page sees a state change only in the response to its own
   switch, plus the list it reads on mount. A feature still `initializing` when
   the page loads is shown so until the page is reloaded.
@@ -956,6 +958,71 @@ server only; no real provider was asked.
 - **File names from older HFS+ volumes** may be decomposed (NFD); object
   keys keep the local name's exact bytes, so such a name and its composed
   (NFC) spelling are different keys.
+
+## Title bar and window placement (ADR-040)
+
+- **Not seen on Windows yet.** The page's title bar and the placement are
+  covered by unit tests (geometry, chrome permissions, the title bar's
+  controls with mocked IPC) and by new checks in `tests/desktop/windows.ps1`
+  (first placement, controls, double click, a real drag, close, placement
+  after a restart) that have **not run**: no native Windows build was made
+  in the session that added them. Linux keeps its native title bar; the
+  hidden-then-placed startup ran there only on the virtual display.
+- **No Snap Layouts flyout.** Hovering the page's Maximize button does not
+  open Windows 11's snap layouts (only a native caption button can); Win+Z,
+  dragging to the screen's top edge and Win+Arrow work.
+- **Windows 10** shows a 1 px border around an undecorated window with a
+  shadow (Windows 10 is not supported).
+- **No system menu on right click** of the title bar (Alt+Space opens it).
+- **Placement is saved when the window is hidden, loses focus or sotyware
+  quits**, not while it is dragged: a crash or a power cut loses a move made
+  since. A placement on a monitor that is gone gives the default place; a
+  partly visible one is moved fully inside the monitor it overlaps most
+  (also when the user put it partly off-screen on purpose).
+- **Decorated windows (macOS, Linux):** the default size counts the frame
+  only where the platform reports it before the window is first shown; on
+  Linux the window can come out a title bar's height taller than half the
+  work area. Wayland compositors ignore the position.
+
+## Storage usage and estimates (ADR-041)
+
+- **Measured, not reported:** a measurement lists the whole bucket (one
+  request per 1,000 versions; free at both providers today, but it takes
+  minutes for millions of objects, and a Backblaze transaction cap can stop
+  it). It stops after 20 million entries ("at least"). It is a snapshot of
+  that moment: nothing measures continuously.
+- **What is not measured:** older versions on a service or key that cannot
+  list versions (said in the measurement); the parts of more than 100
+  unfinished uploads, or of uploads whose parts cannot be listed; Hetzner's
+  billed metadata; anything outside the account's configured bucket.
+- **Estimates, not bills:** no provider API gives billing data. Downloads
+  are what the user enters; taxes, card fees, contracts, promotions and
+  price changes after the price list's `checkedOn` date are not included;
+  buckets are assumed to share one provider account per Backblaze region and
+  one per Hetzner (both shown on the page). Prices are maintained by hand in
+  `src-tauri/pricing/`; a generic S3 service has none.
+- **Never run at a real provider:** measured only against sotyware's
+  in-process S3 servers.
+
+## Snapshots of a bucket (ADR-041)
+
+- **Backblaze's own snapshots cannot be managed:** Backblaze offers no API
+  to create, list, download or delete them or to read their status; the tab
+  only explains them. A `b2-snapshot-…` bucket can be browsed only as a
+  storage account of its own, with a key that may read it.
+- **Deleting a sotyware snapshot** removes its manifest at once and its
+  unshared data only once that data is a day older than the oldest
+  remaining snapshot; on a versioned destination the provider keeps the
+  deleted versions until a lifecycle rule removes them. A deletion is not
+  journaled (like retention); it cannot be cancelled once started. Never run
+  at a real provider.
+
+## Automatic sync (ADR-042)
+
+- Events only: a window that is never focused again does not sync; a change
+  made on one computer reaches another when that one starts, is focused or
+  changes something. No service exists in release builds, so nothing syncs
+  there yet.
 
 ## Dashboard (ADR-035)
 

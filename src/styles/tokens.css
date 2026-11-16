@@ -55,6 +55,7 @@
   --control-h-sm: 26px;
   --sidebar-w: 256px;
   --topbar-h: 52px;
+  --titlebar-h: 40px; /* the page's own title bar (Windows, ADR-040) */
   --content-w: 56rem; /* reading width of form and list pages */
   --icon-sm: 14px;
   --icon-md: 16px;
@@ -110,6 +111,19 @@
   --info-border: rgb(43 98 217 / 22%);
 
   --overlay: rgb(20 19 18 / 38%);
+  /* The title bar's caption buttons, as Windows 11 draws its own. */
+  --titlebar-hover: rgb(0 0 0 / 6%);
+  --titlebar-pressed: rgb(0 0 0 / 10%);
+  --titlebar-close: #c42b1c;
+  --titlebar-close-pressed: #b3271a;
+  --titlebar-close-text: #ffffff;
+  /* Charts (ADR-041): three categorical slots, validated together on the
+     light surface (dataviz validator; slot 3 is below 3:1 there, so every
+     chart labels its parts next to the marks), and a meter's track. */
+  --chart-1: #2b62d9;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-track: rgb(43 98 217 / 14%);
   --shadow-sm: 0 1px 2px rgb(20 19 18 / 6%);
   --shadow-md: 0 4px 12px rgb(20 19 18 / 10%), 0 1px 3px rgb(20 19 18 / 6%);
   --shadow-lg: 0 18px 48px rgb(20 19 18 / 18%), 0 2px 8px rgb(20 19 18 / 8%);
@@ -153,6 +167,15 @@
     --info-soft: rgb(110 155 245 / 9%);
     --info-border: rgb(110 155 245 / 26%);
     --overlay: rgb(0 0 0 / 55%);
+    --titlebar-hover: rgb(255 255 255 / 8%);
+    --titlebar-pressed: rgb(255 255 255 / 5%);
+    --titlebar-close: #c42b1c;
+    --titlebar-close-pressed: #b3271a;
+    --titlebar-close-text: #ffffff;
+    --chart-1: #3b6fe0;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-track: rgb(110 155 245 / 18%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
     --shadow-md: 0 6px 16px rgb(0 0 0 / 35%), 0 1px 3px rgb(0 0 0 / 30%);
     --shadow-lg: 0 20px 56px rgb(0 0 0 / 50%), 0 2px 8px rgb(0 0 0 / 30%);
@@ -194,6 +217,15 @@
   --info-soft: rgb(110 155 245 / 9%);
   --info-border: rgb(110 155 245 / 26%);
   --overlay: rgb(0 0 0 / 55%);
+  --titlebar-hover: rgb(255 255 255 / 8%);
+  --titlebar-pressed: rgb(255 255 255 / 5%);
+  --titlebar-close: #c42b1c;
+  --titlebar-close-pressed: #b3271a;
+  --titlebar-close-text: #ffffff;
+  --chart-1: #3b6fe0;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-track: rgb(110 155 245 / 18%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
   --shadow-md: 0 6px 16px rgb(0 0 0 / 35%), 0 1px 3px rgb(0 0 0 / 30%);
   --shadow-lg: 0 20px 56px rgb(0 0 0 / 50%), 0 2px 8px rgb(0 0 0 / 30%);

@@ -365,27 +365,111 @@ are kept for reference. Findings (restic 0.19.1, docs and the experiment in
   locking, and Backblaze's "keep all versions" default, which keeps data that
   `prune` removed billed until a lifecycle rule hides it.
 
-## Cost estimation (proposal, not built)
+## Storage usage and cost estimates
 
-- **Pricing is data, not code.** A versioned pricing file (for example
-  `pricing/<provider>.json`, shipped with the app and replaceable) per provider:
-  currency, VAT treatment, `valid_from`, `checked_on`, `source_url`, and
-  components (`base_fee`, `storage_per_tb_month`, `included_storage_tb`,
-  `free_egress` as a fixed amount or as a multiple of stored data,
-  `egress_per_tb`, `request_classes`, `minimum_object_size`,
-  `minimum_storage_days`). Profiles reference a pricing id; they never contain
-  prices.
-- **Inputs:** stored bytes per account (sum of `list_objects`, or the
-  provider's usage API where there is one); egress counted locally by sotyware
-  for its own downloads.
-- **Outputs:** monthly and yearly estimate for current use and for 200 GB,
-  1 TB, 2 TB and 5 TB, with the pricing file's date and source shown. Every
-  number is labelled **estimate**. Billing data from the provider (B2 has a
-  usage report; Hetzner shows usage in its console) would be a separate,
-  clearly labelled "billed" value, never mixed with the estimate.
-- Local egress counting misses downloads by other tools, and listing is not
-  free in time for millions of objects. Both are reasons to prefer provider
-  usage data when it can be fetched.
+Implemented 2026-11-15
+([ADR-041](decisions.md#adr-041-storage-usage-is-measured-by-listing-costs-are-estimates-from-versioned-price-lists-snapshots-of-a-bucket-are-sotywares-backup-snapshots));
+tested against sotyware's in-process S3 servers only, never at a real
+provider. Code: `cloud/usage.rs` (measurement, history, overview, three
+commands), `cloud/pricing.rs` and `src-tauri/pricing/*.json` (price lists
+and the estimate), `storage-usage.sqlite3` (`storage.rs`), the page
+`src/CloudUsage.svelte` (the bucket view's **Usage & costs** tab) with
+`src/cloudUsage.ts`.
+
+- **Why measured:** no supported provider reports a bucket's size or the
+  bill through an API (read 2026-11-15: Backblaze's `b2_list_buckets` and
+  the S3 API have no size field; Hetzner shows bucket statistics only in
+  its console). sotyware lists the bucket when the user clicks **Measure
+  now**, read-only: every version and delete marker (`ListObjectVersions`,
+  1,000 per page; a service or key that cannot list versions falls back to
+  `ListObjectsV2` and the measurement says older versions are not
+  included), then unfinished multipart uploads (`ListMultipartUploads`) and
+  the parts the first 100 of them store (`ListParts`). Current versions are
+  the files; older versions and the versions behind a delete marker
+  (Backblaze keeps them in every bucket) are stored data; delete markers
+  store nothing. Objects under 64 kB are counted apart, for providers that
+  bill a minimum object size (Hetzner).
+- **Running it:** one measurement at a time (`busy` otherwise), progress on
+  a per-call channel (`versions` / `objects` / `uploads`: entries, bytes,
+  requests), Cancel stops after the request in flight and keeps nothing,
+  quitting stops it. At most 20,000 pages: a bigger bucket is measured as
+  "at least". Errors are sotyware's own sentences (key may not list, bucket
+  not found, the provider asked to slow down).
+- **History:** each finished measurement is kept in
+  `storage-usage.sqlite3`, the newest 100 per account; the tab draws the
+  last 30 (stored over time, with a table view). These are sotyware's own
+  measurements, not the provider's records. A measurement of another
+  bucket (the account was changed) stays history but is never the latest.
+- **Prices** are data, one file per provider (`backblaze-b2.json`,
+  `hetzner.json`; format `sotyware-pricing` version 1): currency, taxes
+  excluded, `checkedOn` (2026-11-15), https sources, which buckets share an
+  account (`accountScope`: Backblaze per region, Hetzner per provider),
+  what "TB" is taken to be (10¹² bytes), and the published figures in the
+  provider's own units (Backblaze: storage $6.95 per TB per 30 days, first
+  10 GB free; egress free up to three times the stored data, then $0.01 per
+  GB; classes A–C free. Hetzner: €6.49 a month including 1 TB of storage
+  and 1 TB of egress, extra storage €0.0087 per TB-hour, extra egress €1.00
+  per TB, objects under 64 kB billed as 64 kB). The files are validated by
+  tests, which also pin the figures: a price change is an edit of the file
+  and of that test. A provider without a file (a generic S3 service) shows
+  usage and no estimate.
+- **The estimate** is computed in Rust for 30 days, per provider account
+  (the buckets assumed to share one account: all Backblaze buckets of one
+  region; all Hetzner buckets, one base fee), from the latest measurement
+  of each measured bucket and the downloads the user enters (GB per 30
+  days; kept per device in the webview, `src/usagePrefs.ts`). It lists its
+  components (base price, storage beyond what is free or included,
+  downloads beyond what is free, API calls) with how each was computed, and
+  its assumptions (prices as published on the date, no taxes, stored
+  amount constant, downloads as entered, which buckets share an account,
+  buckets not measured). Totals are per currency, never converted or
+  summed across currencies. The tab says plainly that it is an estimate,
+  not a bill, and that the provider's console has the invoice: neither
+  provider offers billing data through an API.
+- **What the tab shows:** the time and cost of the last measurement; tiles
+  (stored, files, estimated cost); a thin segmented bar with the parts
+  (current files, older versions and deleted files, unfinished uploads)
+  named with their counts and sizes; for a base price with included
+  storage (Hetzner), a meter of how much of it the account's measured
+  buckets use; the history; the estimate with its components, the
+  downloads field and "How this is estimated". Sizes are decimal (1 GB =
+  10⁹ bytes), as providers bill. Chart colours are design-system tokens
+  (`--chart-1` … `--chart-3`, validated together for colour-vision
+  deficiencies in light and dark; parts are always also named in text).
+
+## Snapshots and backups of a bucket
+
+Implemented 2026-11-15 (ADR-041). The bucket view's **Snapshots &
+backups** tab (`src/CloudSnapshots.svelte`) keeps two different things
+apart:
+
+- **The provider's own snapshots.** Backblaze B2 snapshots (read
+  2026-11-15 from Backblaze's documentation) are ZIP files of a bucket's
+  files at one moment, created, downloaded and deleted only in the web
+  console, kept (and billed) in a read-only `b2-snapshot-…` bucket, with
+  statuses (preparing, in progress, uploading, error) shown only there; no
+  API creates, lists or deletes them. The tab explains this and how to
+  browse such a bucket with sotyware (add it as an account with a key that
+  may read it); it offers no action it cannot perform. For Hetzner it says
+  that sotyware knows of no snapshot feature in its API; for other services
+  that sotyware does not manage their snapshots.
+- **sotyware's backup snapshots** (ADR-031) of this bucket: every backup
+  job whose source is this account, with its health, destination and
+  schedule; **Back up now** (writes a new snapshot), **Verify newest**; the
+  snapshots at the destination, newest first, each with **Details** (read
+  from its manifest: files and size, changes since the previous one,
+  source, this computer's last verification) and **Delete…** (a dialog
+  that says what goes and what stays, warns for the newest and the only
+  snapshot, and needs the word `delete` typed;
+  [backup.md](backup.md#deleting-a-snapshot)). Restoring and recovery
+  files stay on the Backups page, linked from the tab. Jobs that keep
+  their snapshots in this bucket are named, with a warning that changing
+  those objects damages the backup. Without any job, the tab offers to set
+  one up on the Backups page.
+
+The tab never calls a sotyware snapshot a Backblaze snapshot, or the
+reverse. Older versions of deleted files (Backblaze keeps them) are under
+Files › Deleted items.
 
 ## Dashboard
 
@@ -1225,5 +1309,5 @@ integration, client-side encryption of objects or backups, public ACLs or
 bucket permission changes, virtual filesystem, retrying queue, parallel
 parts within one file, resumable uploads, credential import from
 environment variables or files, automatic provider or bucket discovery,
-cost estimator, or a credential fallback outside the OS store. See
+a credential fallback outside the OS store, billing data from a provider (no API offers it), or management of Backblaze's console snapshots. See
 [roadmap.md](../status/roadmap.md).
