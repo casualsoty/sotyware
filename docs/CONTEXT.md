@@ -414,6 +414,16 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Usage & costs tab in the Linux desktop test** (2026-11-16,
+  [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
+  `cloud-ui.sh usage` measures a seeded versioned bucket through the UI
+  and checks at three window sizes that nothing on the Usage & costs and
+  Snapshots & backups tabs reaches past its section or `<main>`; it fails
+  a build without the cost table's wrap fix. Its first runs found two
+  defects, both fixed: a measurement never finished on the page (the last
+  event's `save_error`; **in `v0.1.1`**) and the tiles' figures were
+  missing from the accessibility tree. WSL2 virtual display only, 21/21
+  three times.
 - **Two flaky tests after the release key push** (2026-11-15,
   [status.md](status/status.md#two-flaky-tests-after-the-release-key-push-2026-11-15)):
   recent items recorded in one millisecond were trimmed by name (fixed in

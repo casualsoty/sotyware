@@ -32,6 +32,7 @@ mod versioned;
 pub use versioned::{Version, Versioned};
 
 mod files_ui;
+mod usage_ui;
 
 /// A running test server. Stopped and its folder removed on drop.
 pub struct TestServer {

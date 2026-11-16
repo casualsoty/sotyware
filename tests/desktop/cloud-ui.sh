@@ -5,8 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files b2 b2-browse
-#        (default: local hang browse download upload files)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage b2 b2-browse
+#        (default: local hang browse download upload files usage)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/test-profile/release/sotyware;
 #                            a test-profile build is required, ADR-027)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
@@ -34,6 +34,15 @@
 #        Hide can be tested). Checks every object on the server, deletes
 #        exactly the objects the phase knows about, and fails if the app sent
 #        anything but listing, reads and upload requests; contacts no provider.
+# files: file management (ADR-026) against the in-memory versioned server of
+#        the Rust tests (serve_files_for_ui); contacts no provider.
+# usage: a bucket's Usage & costs tab (ADR-041) against the in-memory
+#        versioned server of the Rust tests (serve_usage_for_ui), which fails
+#        if the app sent anything but listings or the bucket changed:
+#        measure, the figures, the estimate, the history, and at three
+#        window sizes nothing on the Usage & costs and Snapshots & backups
+#        tabs reaching past its section or the page's scroll area;
+#        contacts no provider.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -56,7 +65,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/test-profile/release/sotyware}")
@@ -84,7 +93,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse|download|upload|files) ;;
+      local|hang|browse|download|upload|files|usage) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -262,6 +271,29 @@ for phase in "${PHASES[@]}"; do
         echo "[PASS] files: no real version was deleted for good; only file-manager requests ($(grep -o 'operations: .*' "$WORK/files-server.log"))"
       else
         echo "[FAIL] files: the files server failed:"; grep -E 'versions removed|panicked|unexpected' "$WORK/files-server.log" | tail -5; rc=1
+      fi
+      SRV_PID="" ;;
+    usage)
+      # Storage usage (ADR-041) against the in-memory versioned server of
+      # serve_usage_for_ui; it writes what a measurement must find to
+      # $SRV_FILE.json and fails at the end if the app sent anything but
+      # listings or the bucket changed.
+      SRV_FILE=$WORK/usage-endpoint
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+        cloud::test_server::usage_ui::serve_usage_for_ui -- --ignored --nocapture >"$WORK/usage-server.log" 2>&1) &
+      SRV_PID=$!
+      for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
+      [ -s "$SRV_FILE" ] || { echo "usage server did not start:"; cat "$WORK/usage-server.log"; exit 3; }
+      grep -E '^serving' "$WORK/usage-server.log" | sed 's/^/  /'
+      start_keyring
+      SOTYWARE_UI_ENDPOINT="$(cat "$SRV_FILE")" SOTYWARE_UI_MANIFEST="$SRV_FILE.json" \
+        python3 "$H/cloud_ui.py" usage "$BIN" || rc=1
+      stop_keyring
+      rm -f -- "$SRV_FILE" "$SRV_FILE.json"
+      if wait "$SRV_PID"; then
+        echo "[PASS] usage: the app only listed, and the bucket is unchanged ($(grep -o 'operations: .*' "$WORK/usage-server.log"))"
+      else
+        echo "[FAIL] usage: the usage server failed:"; grep -E 'operations|panicked|sent more|changed|reached' "$WORK/usage-server.log" | tail -5; rc=1
       fi
       SRV_PID="" ;;
     upload)

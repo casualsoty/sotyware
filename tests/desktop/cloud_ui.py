@@ -2,8 +2,8 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse|download|upload <binary>   (run by cloud-ui.sh, which sets up
-Xvfb + openbox, a private D-Bus session and the Secret Service)
+usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage <binary>   (run by cloud-ui.sh, which
+sets up Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
   local  a real GNOME Keyring; made-up keys and an endpoint nobody listens on;
@@ -21,6 +21,14 @@ Phases:
   upload a real GNOME Keyring, the stub tray watcher and the in-process
          s3s-fs server of serve_uploads_for_ui: upload batches through the
          native GTK multi-file dialog (cloud_ui_upload.py)
+  files  file management against the in-memory versioned server of
+         serve_files_for_ui (cloud_ui_files.py)
+  usage  the bucket's Usage & costs tab against the in-memory versioned
+         server of serve_usage_for_ui (figures a measurement must find in
+         SOTYWARE_UI_MANIFEST): measure, the figures, the estimate, the
+         history, and at three window sizes nothing on the Usage & costs
+         and Snapshots & backups tabs past its section or the page's scroll
+         area (cloud_ui_usage.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -254,6 +262,14 @@ elif PHASE == "files":
     BUCKET, REGION = "files-versioned", "eu-central-003"
     ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
     CONTROL = os.environ["SOTYWARE_UI_CONTROL"]
+elif PHASE == "usage":
+    # The made-up key of serve_usage_for_ui (src-tauri/src/cloud/test_server/usage_ui.rs).
+    KEY1, SECRET1 = "e2eUsageKey00000000001", "e2e-Usage-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "usage-versioned", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
+    with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
+        EXPECTED = json.load(mf)
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -1082,6 +1098,17 @@ try:
         except (Exception, SystemExit) as e:  # noqa: BLE001
             import traceback
             check("the files phase ran to its end", False, f"{type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    elif PHASE == "usage":
+        # As for files: a phase that stops early is a failure.
+        try:
+            exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_ui_usage.py"),
+                      encoding="utf-8").read())
+            check("the usage phase ran to its end", True)
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            import traceback
+            check("the usage phase ran to its end", False, f"{type(e).__name__}: {e}")
             traceback.print_exc()
 
     elif PHASE == "upload":

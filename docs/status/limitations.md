@@ -1009,6 +1009,13 @@ server only; no real provider was asked.
   `src-tauri/pricing/`; a generic S3 service has none.
 - **Never run at a real provider:** measured only against sotyware's
   in-process S3 servers.
+- **In `v0.1.1` a measurement never finishes on the page:** the
+  measurement completes and is kept, but the page drops its last message
+  and keeps showing the progress line and Cancel; opening the bucket again
+  shows the result. Rust named one field of that message `save_error`
+  where the page reads `saveError`. Fixed on `main` on 2026-11-16, after
+  `v0.1.1`
+  ([status](status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)).
 
 ## Snapshots of a bucket (ADR-041)
 

@@ -1758,8 +1758,8 @@ folder." with the network error and Try again; in `b2` it is pressed at the
 root once and must show a listing or Access denied (the test key is limited
 to `sotyware-it/`), then ← Back to accounts.
 
-**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [download] [upload] [b2] [b2-browse]`, default `local
-hang browse download upload`): Xvfb + openbox and a private `dbus-run-session`, a real
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [download] [upload] [files] [usage] [b2] [b2-browse]`,
+default `local hang browse download upload files usage`): Xvfb + openbox and a private `dbus-run-session`, a real
 `gnome-keyring-daemon --unlock` with a throwaway login keyring in a
 throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
 keyring included; never your own keyrings or display). It needs what
@@ -1823,6 +1823,38 @@ WebKitGTK on Xvfb), or cancelling a folder upload while a file is sent
 (the same batch code as Upload files…, cancelled in the `upload` phase),
 and says so. The server's `hang <Operation> <n>` holds requests open for
 the cancel step.
+
+The `usage` phase (ADR-041, `cloud_ui_usage.py`) drives a bucket's **Usage
+& costs** tab against the in-memory server of `serve_usage_for_ui`
+(`src-tauri/src/cloud/test_server/usage_ui.rs`: one versioned bucket with
+current files, older versions and a file under a delete marker, 127.0.0.1,
+made-up key). The server writes the figures a measurement must find; the
+unit test `a_measurement_of_the_seed_finds_what_the_desktop_test_expects`
+checks them against the measurement code, so the two cannot drift. The
+phase: the tab before any measurement; Measure now, which must finish
+(with 2 listing requests); the tiles, the stored parts and the delete
+markers against those figures; the estimate from Backblaze B2's price list
+(each component, the long note on API calls, the total); How this is
+estimated; 700 GB of expected downloads (egress and the total follow);
+Measure again (the history chart of 2 measurements). Then, at the
+first-launch size (900 × 540 on its 1280 × 900 screen), at 1,240 × 820 and
+at 700 × 540 (below 760 px the navigation is an overlay), the window
+resized through the window manager (`XResizeWindow`, as dragging its
+border would), it compares the AT-SPI extents of the Usage & costs and the
+Snapshots & backups tabs' sections and of every visible element in them
+with the edges of the section and of the page's scroll area (`<main>`,
+which keeps the window's width less the sidebar): nothing may reach past
+them. That is the check for
+[the cost table running past its card](../status/status.md#the-cost-table-inside-its-card-2026-11-16),
+which no headless test can see (happy-dom lays nothing out). Both edges,
+because the engines fail differently: in Chromium the table spills out of
+a card that keeps its width; in WebKitGTK it widens the card, the section
+and the bucket view up to `<main>`, so a comparison with the section alone
+passed a build without the fix. It counts content scrolled out of the
+window too, and fails unless the cost table's row headers were among the
+elements compared. The server fails the phase if the app sent anything
+but listings (`ListObjectsV2`, `ListObjectVersions`,
+`ListMultipartUploads`, `ListParts`, `HeadBucket`) or the bucket changed.
 
 For `b2`, the same four variables as the integration test, entered at
 prompts (or loaded from your own 0600 file, as described there) so they
