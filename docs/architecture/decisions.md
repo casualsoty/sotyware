@@ -2580,3 +2580,50 @@ Status: Accepted (2026-11-16). Code: `src-tauri/src/folder_sync/`,
   hold names it refuses: those objects are reported as not synced. Tested
   only against the in-process servers and the WSL2 file system; never at a
   real provider, on native Windows or macOS, or on a real Linux desktop.
+
+## ADR-044: The account service delivers its outbox through any SMTP relay, with lettre
+
+Status: Accepted (2026-11-16). Code: `server/src/mail.rs`, migration 2 in
+`server/src/db.rs`, the wake-ups in `server/src/api.rs`, `send-test-mail`
+in `server/src/main.rs`; operations: [server.md](../development/server.md#email).
+Replaces ADR-032's "SMTP is an external gate" for the code; choosing and
+configuring a relay stays one.
+
+- **Context:** the service queued verification codes, reset codes and
+  notices in an `outbox` table that nothing sent, so no real person could
+  verify an address or reset a password. The maintainer chose a free email
+  plan with SMTP (Brevo suggested) beside a small VM.
+- **Decision:**
+  - **SMTP, not a provider's HTTP API.** Every transactional email
+    provider accepts SMTP submission, so changing provider is a change of
+    environment variables (`SOTYWARE_SMTP_HOST`, `_PORT`, `_SECURITY`,
+    `_USERNAME`, `_PASSWORD`, `SOTYWARE_MAIL_FROM`), not of code.
+  - **`lettre` 0.11** (no default features; `smtp-transport`, `builder`,
+    `hostname`, `tokio1-rustls`, `ring`, `rustls-native-certs`): the
+    established Rust SMTP client, on the tokio runtime the service already
+    uses, with rustls on ring as in the desktop app (no OpenSSL, no
+    aws-lc-rs) and the system's root certificates. Writing an SMTP client
+    with STARTTLS and AUTH ourselves would be more code to get wrong.
+  - **The outbox stays the queue.** Handlers still only insert into it,
+    inside the transaction that decided to send, and then wake one
+    delivery task (`tokio::sync::Notify`; a sweep once a minute as a
+    fallback). A sent mail is deleted; a temporary failure is retried after
+    30 s, doubling up to 15 minutes; a permanent refusal (5xx, unusable
+    address) or a day without success drops it. Delivery is therefore at
+    least once: a mail in flight when the service stops is sent again.
+  - **Encryption is required to any remote relay:** `starttls` (default;
+    the upgrade is required, nothing is sent without it) or `tls`;
+    `none` only to a loopback host. A setting error stops `serve` at
+    startup.
+  - **Logs carry no personal data:** the row id and the kind of failure
+    (SMTP code, timeout, TLS, connection), never the address, subject, body
+    or the relay's reply text. Only the operator's `send-test-mail` prints
+    the relay's full answer.
+- **Consequences:** 62 more packages in the service's lock file (81 →
+  143; many are Windows-only platform crates that a Linux build does not
+  compile: `lettre`, `rustls` and its tree, `hostname`, email encoding);
+  none in the desktop app. The relay's password lives on the host, in a root-only
+  environment file. A queued mail holds its code in plaintext until sent.
+  Tested only against an SMTP server in the test process, without TLS or
+  authentication; the first real check is `send-test-mail` against the
+  chosen provider.

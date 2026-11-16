@@ -781,9 +781,15 @@ server only; no real provider was asked.
 
 ## Account service (ADR-032)
 
-- **Not deployed; no production email.** Codes and notices go to a
-  development outbox; a real deployment needs hosting, TLS, an email
-  provider and off-host backups (external gates, [server.md](../development/server.md)).
+- **Not deployed; no mail relay configured.** Mail delivery through SMTP
+  exists (ADR-044) but was tested only against an SMTP server in the test
+  process, never through a real provider or over TLS; without a relay codes
+  and notices stay in the outbox. A real deployment needs hosting, TLS, an
+  email provider and off-host backups (external gates,
+  [server.md](../development/server.md), [server-setup.md](../development/server-setup.md)).
+- **Mail is at least once, not exactly once:** a mail being sent when the
+  service stops is sent again at the next start; one not accepted within a
+  day is dropped (logged by row id).
 - **One SQLite connection, hashing under its lock:** roughly 20 sign-ins per
   second per instance.
 - **Rate limits and the unknown-address lockout are in memory** and start

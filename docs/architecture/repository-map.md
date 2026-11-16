@@ -21,7 +21,7 @@ Where things are. Generated and ignored paths are listed in
 ├── docs/
 │   ├── CONTEXT.md            Short session-start context for agents
 │   ├── architecture/         How it works and why (this file, overview, frontend, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
-│   ├── development/          Setup, commands, testing, cross-platform rules, release builds, GitHub Releases and installer testing (release.md), macOS (macos.md), application icons (icons.md)
+│   ├── development/          Setup, commands, testing, cross-platform rules, release builds, GitHub Releases and installer testing (release.md), macOS (macos.md), application icons (icons.md), the account service (server.md) and its first deployment step by step (server-setup.md)
 │   ├── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
 │   └── user/                 User guides: recovering files from a backup (recovery.md)
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
@@ -84,13 +84,15 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Features.test.ts      Tests of the Features section and of features.ts
 │   └── features.ts           Typed wrappers for list_features / set_feature_enabled; validates responses
 ├── package.json              npm scripts and JS dependencies
-├── server/                   The account and sync service (ADR-032), its own crate and Cargo.lock; operations: docs/development/server.md
-│   ├── src/main.rs           sotyware-server: serve, backup <file>, restore <file>, outbox (development)
+├── server/                   The account and sync service (ADR-032), its own crate and Cargo.lock; operations: docs/development/server.md, first deployment: docs/development/server-setup.md
+│   ├── src/main.rs           sotyware-server: serve, backup <file>, restore <file>, send-test-mail <address>, outbox (development)
+│   ├── src/mail.rs           Delivery of the outbox through an SMTP relay (SmtpConfig from SOTYWARE_SMTP_*, Mailer, retries; ADR-044)
 │   ├── src/lib.rs            AppState, Config (token lifetimes, Argon2 cost, proxy trust)
 │   ├── src/api.rs            The /v1 HTTP API (axum): accounts, sessions, devices, enrollments, recovery wrap, vault, audit events, health
 │   ├── src/db.rs             SQLite schema (append-only MIGRATIONS), queries, online backup and checked restore
 │   ├── src/security.rs       Argon2id, random tokens/codes/ids, SHA-256 storage of secrets, constant-time comparison, rate limits, lockout
-│   └── tests/api.rs          The API over HTTP in process (fresh database, controllable clock)
+│   ├── tests/api.rs          The API over HTTP in process (fresh database, controllable clock)
+│   └── tests/mail.rs         Mail delivery against an SMTP server in the test process (sent, retried, dropped; a registration code by mail)
 ├── scripts/
 │   ├── check-rfd-patch.mjs   Guard (npm run check:rfd-patch): fails unless Cargo resolves rfd 0.17.2 from src-tauri/patches/rfd (ADR-023)
 │   ├── check-rfd-patch.test.mjs  Its tests (node --test, npm run test:rfd-patch-guard) against broken temporary copies of src-tauri

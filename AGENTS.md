@@ -147,7 +147,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `http` (dev only, already in the tree: the test server's `ListMultipartUploads` route) | `1` | 1.5.0 |
 | `bytes`, `futures-core` (dev only, already in the tree: the test server's slow, stalled or cut-off object bodies) | `1`, `0.3` | 1.12.1, 0.3.34 |
 | Linux webview / tray | WebKitGTK 4.1 / StatusNotifierItem via `ksni` (libayatana-appindicator3 is not loaded) | system packages / crate |
-| **Account service** (`server/`, own `Cargo.lock`, ADR-032): `axum` (http1, json, tokio, query), `tokio`, `serde`, `serde_json`, `rusqlite` (bundled, backup), `argon2` (Argon2id), `getrandom`, `sha2`, `subtle`, `base64`; dev: `tower`, `http-body-util` | `0.8`, `1`, `1`, `1`, `0.41`, `0.5`, `0.3`, `0.10`, `2`, `0.22`; `0.5`, `0.1` | 0.8.9, 1.54.1, 1.0.229, 1.0.154, 0.41.1, 0.5.3, 0.3.4, 0.10.9, 2.6.1, 0.22.1; 0.5.3, 0.1.5 |
+| **Account service** (`server/`, own `Cargo.lock`, ADR-032): `axum` (http1, json, tokio, query), `tokio`, `serde`, `serde_json`, `rusqlite` (bundled, backup), `argon2` (Argon2id), `getrandom`, `sha2`, `subtle`, `base64`, `lettre` (no default features; `smtp-transport`, `builder`, `hostname`, `tokio1-rustls`, `ring`, `rustls-native-certs`: SMTP over rustls on ring, ADR-044; adds `rustls` 0.23.46, `tokio-rustls` 0.26.6, `rustls-native-certs` 0.8.5, `hostname` 0.4.2); dev: `tower`, `http-body-util`, `tokio` (`io-util`: the test SMTP server) | `0.8`, `1`, `1`, `1`, `0.41`, `0.5`, `0.3`, `0.10`, `2`, `0.22`, `0.11.23`; `0.5`, `0.1`, `1` | 0.8.9, 1.54.1, 1.0.229, 1.0.154, 0.41.1, 0.5.3, 0.3.4, 0.10.9, 2.6.1, 0.22.1, 0.11.23; 0.5.3, 0.1.5, 1.54.1 |
 | Windows webview | WebView2 | system |
 
 Re-check this table against the lockfiles when you change dependencies.
@@ -420,9 +420,13 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   refresh rotation with reuse detection, sign-out, account, password change
   and reset, deletion, recovery wrap, device wraps with a key proof, vault
   with optimistic concurrency, devices, enrollment by approval, audit
-  events, `/healthz`), `main.rs` (`serve`, `backup`, `restore`, `outbox`).
-  Mail goes to a development outbox; production email, hosting and TLS are
-  external gates ([server.md](docs/development/server.md)).
+  events, `/healthz`), `main.rs` (`serve`, `backup`, `restore`, `send-test-mail`, `outbox`),
+  `mail.rs` (ADR-044: the outbox delivered through an SMTP relay set by
+  `SOTYWARE_SMTP_*`, retried, never logging an address; without a relay
+  mails stay in the outbox). No relay, host or TLS certificate is set up
+  anywhere: hosting, the domain and the email provider are external gates
+  ([server.md](docs/development/server.md),
+  [server-setup.md](docs/development/server-setup.md)).
 
 **Not implemented (planned or only discussed):** everything in
 [docs/status/roadmap.md](docs/status/roadmap.md). In particular there is no
@@ -431,7 +435,7 @@ storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
 placement, the storage usage measurements and the folder syncs with their
 synced state, no settings, autostart,
-third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
+third-party plugin system, feature-management UI, a deployed account service, a configured mail relay, XEmbed
 tray fallback, overwriting uploads (other than folder sync replacing the
 version it synced), parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of

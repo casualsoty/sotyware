@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod db;
+pub mod mail;
 pub mod security;
 
 use std::collections::HashMap;
@@ -57,6 +58,8 @@ pub struct AppState {
     /// Failed sign-ins for addresses without an account, kept in memory so
     /// lockouts look the same for them: `(failures, locked until)`.
     unknown: Mutex<HashMap<String, (i64, i64)>>,
+    /// Wakes the mail delivery task (`mail::run`) after a mail was queued.
+    pub mail_queued: tokio::sync::Notify,
     /// Milliseconds since the epoch (replaceable in tests).
     pub clock: Box<dyn Fn() -> i64 + Send + Sync>,
 }
@@ -75,6 +78,7 @@ impl AppState {
             config,
             limits: security::Limits::default(),
             unknown: Mutex::new(HashMap::new()),
+            mail_queued: tokio::sync::Notify::new(),
             clock: Box::new(now_ms),
         })
     }

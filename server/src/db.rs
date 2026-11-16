@@ -82,6 +82,10 @@ pub const MIGRATIONS: &[&str] = &[
         subject TEXT NOT NULL,
         body TEXT NOT NULL
     ) STRICT;",
+    // 2: delivery of the outbox through SMTP (src/mail.rs): failed attempts
+    // and when the next one is due. A sent mail is deleted.
+    "ALTER TABLE outbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE outbox ADD COLUMN next_ms INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// Opens (creating it if needed) the database, checks it and migrates it. A
@@ -692,4 +696,54 @@ pub fn outbox(c: &Connection) -> rusqlite::Result<Vec<(String, String, String)>>
     let mut stmt = c.prepare("SELECT to_email, subject, body FROM outbox ORDER BY id")?;
     stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect()
+}
+
+/// One queued mail, as the delivery task sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueuedMail {
+    pub id: i64,
+    pub at_ms: i64,
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+    pub attempts: i64,
+}
+
+/// Up to `limit` mails whose next attempt is due at `now`, oldest first.
+pub fn due_mails(c: &Connection, now: i64, limit: i64) -> rusqlite::Result<Vec<QueuedMail>> {
+    let mut stmt = c.prepare(
+        "SELECT id, at_ms, to_email, subject, body, attempts FROM outbox
+         WHERE next_ms <= ?1 ORDER BY id LIMIT ?2",
+    )?;
+    stmt.query_map(params![now, limit], |r| {
+        Ok(QueuedMail {
+            id: r.get(0)?,
+            at_ms: r.get(1)?,
+            to: r.get(2)?,
+            subject: r.get(3)?,
+            body: r.get(4)?,
+            attempts: r.get(5)?,
+        })
+    })?
+    .collect()
+}
+
+/// When the next queued mail is due, if any is queued.
+pub fn next_mail_due(c: &Connection) -> rusqlite::Result<Option<i64>> {
+    c.query_row("SELECT min(next_ms) FROM outbox", [], |r| r.get(0))
+}
+
+/// Removes a mail that was sent or given up on.
+pub fn remove_mail(c: &Connection, id: i64) -> rusqlite::Result<()> {
+    c.execute("DELETE FROM outbox WHERE id = ?1", [id])
+        .map(drop)
+}
+
+/// Records a failed attempt; the next one is due at `next_ms`.
+pub fn mail_failed(c: &Connection, id: i64, next_ms: i64) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE outbox SET attempts = attempts + 1, next_ms = ?2 WHERE id = ?1",
+        params![id, next_ms],
+    )
+    .map(drop)
 }

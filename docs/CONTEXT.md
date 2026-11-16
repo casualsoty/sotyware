@@ -350,6 +350,10 @@ update server exist), all tested headless against in-process servers only.
   conflict copies; rollback refused; revoke + atomic key rotation. Release
   builds have no service configured (`PRODUCTION_SERVER = None`). Tested
   end to end with the service in process and several device profiles.
+  Since 2026-11-16 the service sends its mail through any SMTP relay
+  (ADR-044; tested against an in-process SMTP server only, no relay
+  configured); a first deployment is described step by step in
+  [server-setup.md](development/server-setup.md), not yet followed.
 - **Updates** (2026-11-15, ADR-033; source since ADR-036: the latest
   GitHub release, see above; [updates.md](architecture/updates.md)):
   a minisign-signed `sotyware-update.json` is verified (signature, format,

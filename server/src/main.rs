@@ -6,14 +6,18 @@
 //! - `SOTYWARE_SERVER_ADDR`: listen address (default `127.0.0.1:8787`; TLS
 //!   is terminated by a reverse proxy in front, see docs/development/server.md)
 //! - `SOTYWARE_SERVER_TRUST_PROXY=1`: client addresses from `X-Forwarded-For`
+//! - `SOTYWARE_SMTP_HOST`, `_PORT`, `_SECURITY`, `_USERNAME`, `_PASSWORD`
+//!   and `SOTYWARE_MAIL_FROM`: the mail relay (`mail::SmtpConfig`); without
+//!   a host, mails stay in the outbox
 //!
 //! Commands: `serve` (default), `backup <file>`, `restore <file>`,
+//! `send-test-mail <address>` (checks the relay settings),
 //! `outbox` (development only: prints queued mails, which contain codes).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use sotyware_server::{AppState, Config, api, db, now_ms};
+use sotyware_server::{AppState, Config, api, db, mail, now_ms};
 
 fn main() {
     let db_path = PathBuf::from(
@@ -40,6 +44,10 @@ fn main() {
                 println!("restored {from} to {}", db_path.display());
                 Ok(())
             }),
+        Some("send-test-mail") => args
+            .get(1)
+            .ok_or_else(|| "usage: send-test-mail <address>".to_owned())
+            .and_then(|to| send_test_mail(to)),
         Some("outbox") => db::open(&db_path).and_then(|conn| {
             for (to, subject, body) in db::outbox(&conn).map_err(|e| e.to_string())? {
                 println!("To: {to}\nSubject: {subject}\n\n{body}\n---");
@@ -54,7 +62,39 @@ fn main() {
     }
 }
 
+fn smtp_config() -> Result<Option<mail::SmtpConfig>, String> {
+    mail::SmtpConfig::from_env(|name| std::env::var(name).ok())
+}
+
+fn send_test_mail(to: &str) -> Result<(), String> {
+    let config = smtp_config()?.ok_or("SOTYWARE_SMTP_HOST is not set")?;
+    let mailer = mail::Mailer::new(&config)?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    rt.block_on(mailer.send_test(to))
+        .map_err(|e| format!("the relay did not accept the test mail: {e}"))?;
+    println!(
+        "the relay {}:{} accepted the test mail; check the inbox (and the spam folder) of {to}",
+        config.host, config.port
+    );
+    Ok(())
+}
+
 fn serve(db_path: PathBuf) -> Result<(), String> {
+    let mailer = match smtp_config()? {
+        Some(config) => {
+            eprintln!(
+                "sotyware-server: mail delivery through {}:{} ({:?})",
+                config.host, config.port, config.security
+            );
+            Some(mail::Mailer::new(&config)?)
+        }
+        None => {
+            eprintln!(
+                "sotyware-server: mail delivery is off (no SOTYWARE_SMTP_HOST): mails stay in the outbox, for development only"
+            );
+            None
+        }
+    };
     let conn = db::open(&db_path)?;
     let config = Config {
         trust_proxy: std::env::var("SOTYWARE_SERVER_TRUST_PROXY").is_ok_and(|v| v == "1"),
@@ -67,6 +107,9 @@ fn serve(db_path: PathBuf) -> Result<(), String> {
     let state = AppState::new(conn, config);
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async move {
+        if let Some(mailer) = mailer {
+            tokio::spawn(mail::run(std::sync::Arc::clone(&state), mailer));
+        }
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|e| format!("cannot listen on {addr}: {e}"))?;

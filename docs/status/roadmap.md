@@ -86,7 +86,8 @@ Not started unless status.md says so. Scope and procedures:
    and check what the provider kept.
 4. Production account service: the decisions and resources in
    [server.md](../development/server.md#production-deployment-proposal-2026-11-15),
-   then mail delivery from the outbox, then `PRODUCTION_SERVER`.
+   following [server-setup.md](../development/server-setup.md) (mail
+   delivery exists since 2026-11-16, ADR-044), then `PRODUCTION_SERVER`.
 
 ## macOS (after ADR-037)
 

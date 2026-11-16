@@ -240,7 +240,12 @@ and the [journal](../status/journal.md), not here.
   recovery key or update key (errors that could carry one are typed and
   tested, e.g. `errors_never_contain_a_secret`). The service's `outbox`
   command prints development mail, verification codes included, by design;
-  production must use a mail provider instead.
+  production sends it through an SMTP relay (ADR-044), whose log lines name
+  only the mail's row id and the kind of failure, never the address or the
+  relay's reply text. A queued mail holds its code in plaintext in the
+  `outbox` table until it is sent (seconds, at most a day while the relay
+  refuses), so a database backup taken then contains it; codes expire after
+  15 minutes.
 - An update check sends a plain GET with `User-Agent: sotyware/<version>`;
   GitHub (and its asset store) learns the IP address, the time and the
   version.

@@ -6,6 +6,8 @@ separate Rust crate with its own `Cargo.lock`, not part of the desktop app's
 build. **No production instance exists**: hosting, a domain, a TLS
 certificate, an email provider and backup storage are external decisions
 (see [External gates](#external-gates)). Everything below is tested locally.
+A step-by-step guide to a first deployment (domain, Brevo, Oracle Cloud,
+Caddy): [server-setup.md](server-setup.md).
 
 ## Build and test
 
@@ -34,6 +36,13 @@ Environment variables only (nothing secret is passed on the command line):
 | `SOTYWARE_SERVER_DB` | `sotyware-server.sqlite3` | The database file (WAL mode, `secure_delete` on) |
 | `SOTYWARE_SERVER_ADDR` | `127.0.0.1:8787` | Listen address |
 | `SOTYWARE_SERVER_TRUST_PROXY` | unset | `1`: take the client address from `X-Forwarded-For` (only behind a proxy that overwrites that header) |
+| `SOTYWARE_SMTP_HOST` | unset | The mail relay ([Email](#email)); unset: no mail is sent, mails stay in the outbox (development) |
+| `SOTYWARE_SMTP_SECURITY` | `starttls` | `starttls` (required upgrade, nothing is sent if it fails), `tls` (TLS from the first byte) or `none` (only to `localhost` or a loopback address) |
+| `SOTYWARE_SMTP_PORT` | 587 / 465 / 25 | By the security above |
+| `SOTYWARE_SMTP_USERNAME`, `SOTYWARE_SMTP_PASSWORD` | unset | The relay's login; both or neither. The password is a secret: put it in a root-only environment file, never on the command line or in git |
+| `SOTYWARE_MAIL_FROM` | — | Required with a host: the sender, e.g. `sotyware <no-reply@example.com>`, at a domain the relay is allowed to send for |
+
+An invalid mail setting stops `serve` at startup with the reason.
 
 The service has no secret of its own: no signing key, no encryption key.
 Tokens are random and stored as SHA-256 hashes; passwords as Argon2id
@@ -93,18 +102,44 @@ restored one). Accounts registered after the backup must register again.
 | Audit events (event name, account id, device id, time) | kept after deletion with the account id only (pseudonymous); purge them with the backups' retention |
 | Expired or revoked sessions | pruned a day after their refresh token expires |
 | Verification and reset codes (hashed) | deleted on use or expiry |
-| Development outbox (mails with codes) | development only; production would send mail instead |
+| Outbox (queued mails, with codes) | sent: deleted at once; a temporary failure: retried for at most a day; a permanent refusal or a day without success: deleted. Without a relay (development) they stay |
 
 Nothing in the service can decrypt the vault or the wraps: deleting an
 account removes ciphertext only. Devices keep their local configuration.
 
 ## Email
 
-The service queues verification codes, reset codes and notices through one
-function (`db::queue_mail`) into an outbox table. `sotyware-server outbox`
-prints it (development only: it contains codes). **Production email
-delivery is not implemented**: it needs an SMTP server or a transactional
-email provider (an external gate), connected where `queue_mail` is called.
+Handlers queue verification codes, reset codes and notices through one
+function (`db::queue_mail`) into the `outbox` table, in the same
+transaction that decided to send them, and wake the delivery task
+(`server/src/mail.rs`, ADR-044). The task sends each mail through the
+configured SMTP relay (`lettre`, rustls with ring, the system's root
+certificates), deletes it once the relay accepted it, retries a temporary
+failure (4xx reply, network, TLS, timeout) after 30 s, doubling up to
+15 minutes, and drops a mail after a permanent refusal (5xx, an unusable
+address) or a day without success. Besides the wake-up it looks at the
+outbox once a minute. Each mail opens its own connection.
+
+Log lines name the mail's row id and the kind of failure only
+(`sotyware-server: mail 12 not sent, attempt 1: temporary failure (smtp 451); trying again in 30 s`):
+never the address, subject, body or the relay's reply text, which often
+repeats the address.
+
+Check the settings before starting the service:
+
+```bash
+sotyware-server send-test-mail you@example.com   # with the SOTYWARE_SMTP_* variables set
+```
+
+It sends one test mail directly (not through the outbox) and prints the
+relay's full answer if it refuses. Without `SOTYWARE_SMTP_HOST`, `serve`
+says that delivery is off and mails stay in the outbox;
+`sotyware-server outbox` prints them (development only: they contain
+codes).
+
+Any relay that accepts SMTP submission works: a transactional email
+provider (Brevo, Resend, Mailgun, Amazon SES, …) with a sender domain
+authenticated by SPF, DKIM and DMARC, or a mail server on the same machine.
 
 ## External gates
 
@@ -147,12 +182,12 @@ no database credentials are needed from you.**
 | Off-host backup storage | hourly `sotyware-server backup` copies, kept 30 days | a bucket at another provider (or another account), encrypted at rest there |
 | Uptime monitoring | `GET /healthz` | any HTTP monitor |
 
-**Code still missing before production:** sending the outbox's mails
-through the chosen provider (today `db::queue_mail` only writes the outbox
-table; `sotyware-server outbox` prints it, for development). Everything
-else in the service is implemented and tested in process.
+**Code:** everything the service needs is implemented and tested in
+process, mail delivery included since 2026-11-16 ([Email](#email);
+tested against an SMTP server in the test process only, never through a
+real provider).
 
-### Schema (SQLite, `server/src/db.rs`, migration 1)
+### Schema (SQLite, `server/src/db.rs`, migrations 1 and 2)
 
 `accounts` (id, email, Argon2id password hash, verified, lockout counters,
 recovery wrap, key-proof hash, vault ciphertext with revision and
@@ -161,7 +196,7 @@ attempts), `devices` (name, platform, X25519 public key, state, sealed
 account key), `sessions` (hashed access and refresh tokens, family for
 reuse detection, expiry), `enrollments` (approval requests with the
 sealed key), `audit` (event names with account and device ids), `outbox`
-(mails to send). No column holds a provider credential, the account key
+(mails to send, with failed attempts and the next attempt's time, migration 2). No column holds a provider credential, the account key
 or the recovery key in plaintext.
 
 ### Endpoints (`/v1`, JSON, bearer tokens)
@@ -213,8 +248,9 @@ maintainer.
 5. A systemd timer (hourly) running `sotyware-server backup` and copying
    the file off the host; a monthly restore test (`restore` on a scratch
    VM).
-6. Connect mail delivery (the missing code above) and test registration
-   end to end with a real address.
+6. Set the `SOTYWARE_SMTP_*` and `SOTYWARE_MAIL_FROM` variables in a
+   root-only environment file of the unit, check them with
+   `send-test-mail`, and test registration end to end with a real address.
 7. Set `PRODUCTION_SERVER` to `https://accounts.<domain>` in
    `src-tauri/src/account/mod.rs`, publish a privacy notice (what is
    stored: [Data retention](#data-retention-and-deletion)), have the
@@ -236,8 +272,8 @@ Roughly **€5–15 per month** for a small user base.
 
 1. A domain or subdomain and access to its DNS.
 2. A VM (or the choice of a provider, and SSH access for the deployment).
-3. An email-sending account and a verified sender domain (SPF, DKIM,
-   DMARC records), and which provider to support in the mail code.
+3. An email-sending account with SMTP access and a verified sender domain
+   (SPF, DKIM, DMARC records); any provider that offers SMTP works.
 4. An off-host bucket and a write-only key for the backups.
 5. The decisions above: SQLite (recommended) or PostgreSQL; keep the
    recovery-key model or add a password-derived unlock.

@@ -250,6 +250,7 @@ async fn register(
         Ok(())
     })
     .await?;
+    state.mail_queued.notify_one();
     Ok(accepted())
 }
 
@@ -407,7 +408,7 @@ async fn sign_in(
         ));
     }
     let state2 = Arc::clone(&state);
-    with_db(&state, move |c, now| {
+    let result = with_db(&state, move |c, now| {
         let account = db::account_by_email(c, &email)?;
         let locked_until = match &account {
             Some(a) => a.locked_until_ms,
@@ -461,7 +462,9 @@ async fn sign_in(
         db::audit(c, now, Some(&account.id), Some(&device.id), "sign-in");
         Ok(Json(issue(c, &state2, &account, &device, &security::id(), now)?))
     })
-    .await
+    .await;
+    state.mail_queued.notify_one();
+    result
 }
 
 #[derive(Deserialize)]
@@ -627,7 +630,7 @@ async fn change_password(
         return Err(ApiError::bad(p));
     }
     let hash = security::hash_password(&body.new_password, state.config.cost);
-    authed(&state, &headers, move |c, now, who| {
+    let result = authed(&state, &headers, move |c, now, who| {
         if !security::verify_password(&body.current_password, &who.account.password_hash) {
             return Err(ApiError::credentials());
         }
@@ -637,7 +640,9 @@ async fn change_password(
         db::audit(c, now, Some(&who.account.id), Some(&who.device.id), "password-changed");
         Ok(StatusCode::NO_CONTENT)
     })
-    .await
+    .await;
+    state.mail_queued.notify_one();
+    result
 }
 
 #[derive(Deserialize)]
@@ -652,7 +657,7 @@ async fn delete_account(
     headers: HeaderMap,
     Json(body): Json<Password>,
 ) -> ApiResult<StatusCode> {
-    authed(&state, &headers, move |c, now, who| {
+    let result = authed(&state, &headers, move |c, now, who| {
         if !security::verify_password(&body.password, &who.account.password_hash) {
             return Err(ApiError::credentials());
         }
@@ -661,7 +666,9 @@ async fn delete_account(
         db::audit(c, now, Some(&who.account.id), None, "account-deleted");
         Ok(StatusCode::NO_CONTENT)
     })
-    .await
+    .await;
+    state.mail_queued.notify_one();
+    result
 }
 
 #[derive(Deserialize)]
@@ -690,6 +697,7 @@ async fn reset_request(
         Ok(())
     })
     .await?;
+    state.mail_queued.notify_one();
     Ok(accepted())
 }
 
