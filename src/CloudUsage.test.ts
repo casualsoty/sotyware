@@ -244,6 +244,19 @@ describe("the Usage & costs tab", () => {
     expect(text(root)).toContain("The stored parts of 1 unfinished upload(s) were not measured.");
   });
 
+  it("keeps the tiles' figures where WebKitGTK exposes them to assistive technology", async () => {
+    // Found 2026-11-16 by `cloud-ui.sh usage`: WebKitGTK leaves the text of a
+    // span that is a flex item (a tile is a flex column) out of the
+    // accessibility tree, so "Stored", "210 GB" and the cost were never read.
+    overview = overviewWith(measurement());
+    const root = await render();
+    const tiles = [...root.querySelectorAll(".tile")];
+    expect(tiles).toHaveLength(3);
+    for (const tile of tiles) {
+      expect([...tile.children].map((c) => c.tagName)).toEqual(["P", "P", "P"]);
+    }
+  });
+
   it("labels the cost as an estimate with its parts, assumptions and source, never as a bill", async () => {
     overview = overviewWith(measurement());
     const root = await render();

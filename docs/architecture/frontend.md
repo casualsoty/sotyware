@@ -118,8 +118,10 @@ block box (`display: flex`/`block`) inside a **table cell** becomes a
 second accessible object that repeats the cell's text. Therefore: put a
 message's text directly in its `<p>` (the toast, the update notification,
 "Last checked …", "N selected"), use a `<p>` rather than a `<span>` for text
-that must be read inside a flex row, and keep cell content inline (the row
-icon is `inline-block`). `src/CloudFileManager.test.ts` pins the shapes;
+that must be read inside a flex row (the Usage & costs tiles, whose figures
+`cloud-ui.sh usage` found missing on 2026-11-16), and keep cell content
+inline (the row icon is `inline-block`). `src/CloudFileManager.test.ts` and
+`src/CloudUsage.test.ts` pin the shapes;
 after changing a layout, compare a page's `innerText` with an AT-SPI dump
 (the method is in [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)).
 

@@ -280,26 +280,26 @@
   {#if latest}
     <div class="tiles">
       <div class="tile">
-        <span class="tile-label">Stored</span>
-        <span class="tile-value">{formatDecimalSize(total)}</span>
-        <span class="tile-sub">{latest.complete ? "everything kept in the bucket" : "at least (the measurement stopped early)"}</span>
+        <p class="tile-label">Stored</p>
+        <p class="tile-value">{formatDecimalSize(total)}</p>
+        <p class="tile-sub">{latest.complete ? "everything kept in the bucket" : "at least (the measurement stopped early)"}</p>
       </div>
       <div class="tile">
-        <span class="tile-label">Files</span>
-        <span class="tile-value">{latest.objects.toLocaleString()}</span>
-        <span class="tile-sub">{latest.versionsListed ? `${latest.noncurrentVersions.toLocaleString()} older versions` : "versions not listed"}</span>
+        <p class="tile-label">Files</p>
+        <p class="tile-value">{latest.objects.toLocaleString()}</p>
+        <p class="tile-sub">{latest.versionsListed ? `${latest.noncurrentVersions.toLocaleString()} older versions` : "versions not listed"}</p>
       </div>
       <div class="tile">
-        <span class="tile-label">Estimated cost, {group?.estimate?.period ?? "30 days"}</span>
+        <p class="tile-label">Estimated cost, {group?.estimate?.period ?? "30 days"}</p>
         {#if group?.estimate}
-          <span class="tile-value">{formatMoney(group.estimate.total, group.estimate.currency)}</span>
-          <span class="tile-sub"
+          <p class="tile-value">{formatMoney(group.estimate.total, group.estimate.currency)}</p>
+          <p class="tile-sub"
             ><span class="badge info">estimate</span>
-            {group.accounts.length > 1 ? `for ${group.accounts.length} buckets of this ${name} account` : "without taxes"}</span
+            {group.accounts.length > 1 ? `for ${group.accounts.length} buckets of this ${name} account` : "without taxes"}</p
           >
         {:else}
-          <span class="tile-value none">—</span>
-          <span class="tile-sub">{group?.noEstimate ?? ""}</span>
+          <p class="tile-value none">—</p>
+          <p class="tile-sub">{group?.noEstimate ?? ""}</p>
         {/if}
       </div>
     </div>
@@ -510,6 +510,15 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     min-width: 0;
+  }
+
+  /* Paragraphs, not spans: WebKitGTK leaves the text of a span that is a
+     flex item out of the accessibility tree (frontend.md), so a screen
+     reader never read the figures. */
+  .tile-label,
+  .tile-value,
+  .tile-sub {
+    margin: 0;
   }
 
   .tile-label {
