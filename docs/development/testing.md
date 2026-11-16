@@ -1870,7 +1870,15 @@ read -rs SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY && export SOTYWARE_CLOUD_IT_B2_S
 tests/desktop/cloud-ui.sh b2
 ```
 
-**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|files|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`;
+**Windows** (`tests\desktop\windows-cloud-ui.ps1 [-Mode local|browse|download|upload|files|usage|b2|b2-browse|b2-download|b2-upload|b2-lifecycle]`;
+`usage`: the steps of the Linux `usage` phase against `serve_usage_for_ui`,
+through UI Automation (the tab by Invoke or SelectionItem, the cost table
+read from its header items, the expected downloads set through the Value
+pattern), with the window sized by `SetWindowPos` (no mouse) so that the
+page is 900 × 540, about 1,240 × 820 (less where the work area is smaller)
+and 700 × 540 CSS pixels at the window's scale, and every element's
+bounding rectangle compared with the section's and with `<main>`'s (the
+landmark whose ARIA role is `main`);
 `files`: the file manager against `serve_files_for_ui`, UI Automation
 only, as the Linux `files` phase minus selection by pointer, search, the
 clipboard keys and the drop; with folder uploads and several-item

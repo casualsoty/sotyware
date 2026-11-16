@@ -422,8 +422,11 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   a build without the cost table's wrap fix. Its first runs found two
   defects, both fixed: a measurement never finished on the page (the last
   event's `save_error`; **in `v0.1.1`**) and the tiles' figures were
-  missing from the accessibility tree. WSL2 virtual display only, 21/21
-  three times.
+  missing from the accessibility tree. WSL2 virtual display, 21/21
+  three times; and on native Windows 11 the same day,
+  `windows-cloud-ui.ps1 -Mode usage` (UI Automation, no mouse): 41/41,
+  its layout checks failing a build without the fix too
+  ([status.md](status/status.md#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)).
 - **Two flaky tests after the release key push** (2026-11-15,
   [status.md](status/status.md#two-flaky-tests-after-the-release-key-push-2026-11-15)):
   recent items recorded in one millisecond were trimmed by name (fixed in

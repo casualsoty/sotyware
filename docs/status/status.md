@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-16 (the Usage & costs tab in the Windows desktop test, `windows-cloud-ui.ps1 -Mode usage`: 41/41 on native Windows 11 through UI Automation, and a build without the cost table's fix fails exactly its three layout checks: [details](#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -145,6 +145,59 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### The Usage & costs tab in the Windows desktop test (2026-11-16)
+
+The maintainer asked for the same coverage on Windows after
+[the Linux phase](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16):
+`windows-cloud-ui.ps1 -Mode usage`
+([testing.md](../development/testing.md#cloud-storage-ui-end-to-end-test)).
+
+**Runs** (native Windows 11 Home 25H2, build 26200.9974,
+the development machine's real desktop, UI Automation and window messages
+only, no mouse; a fresh copy `C:\dev\sotyware-usage` of this tree, its
+test-profile build `09623c0c…`; the page at scale 1, opening at 1,704 ×
+687 CSS pixels there):
+
+- The first two runs failed on the driver, not the app: 34 passed and 7
+  failed (WebView2 does not expose the cost table's row headers as header
+  items, so the table was not found, and it names a list item after its
+  parts without spaces, "Current files31.75 MB"), then 27 passed and 2
+  failed (`$?` in a double-quoted pattern became `True`). The driver now
+  reads the table through its Grid pattern and compares those figures
+  without white space.
+- **Third run: 41 passed, 0 failed**: every step of the Linux phase; at
+  900 × 540, 1,240 × 820 and 700 × 540 CSS pixels the usage section was
+  570, 896 and 658 px wide inside `<main>` (644, 984 and 700), 65
+  elements compared on the Usage & costs tab (the cost table's four row
+  headers among them) and 16 on Snapshots & backups; the server saw 1
+  `HeadBucket` (the connection check), 2 `ListObjectVersions`, 2
+  `ListMultipartUploads` and 1 `ListObjectsV2`, the bucket unchanged.
+  After the control below, the same binary again (copied to a folder of
+  its own): **41 passed, 0 failed**. A first try of that copy, named
+  `sotyware-final.exe`, found no window, since the driver finds the app by
+  its process name `sotyware`, and stopped; its test process was then
+  stopped and its test profile removed by hand (no credential entry had
+  been written).
+- **Negative control:** the copy without the cost table's wrap rule
+  (binary `76ff0c94…`): 38 passed, **3 failed**, exactly the three Usage
+  & costs layout checks, naming the table, its rows, row headers and
+  amounts past the section. Here the section kept its width (570, 896 and
+  658 px) and the table spilled out of it (to x 1,250 against the
+  section's right edge at 866 at 900 × 540), as Chromium does.
+- In the first run the check "the user's own sotyware folders are
+  unchanged" (this process tree's view) failed once while the same check
+  of the real folder, read from outside the process tree, passed; the
+  maintainer's installed sotyware (`D:\Program Files\sotyware`) was
+  running throughout. Every later run also fingerprinted those folders
+  around the whole run: no difference; with no test running they stayed
+  the same for 40 s. What changed in that one run is not known.
+
+Checked statically before every run: `check-ps-variables.ps1` and
+PowerShell's parser. **Not run** on Windows after this change: the other
+modes of `windows-cloud-ui.ps1` (it changed only in the usage mode, its
+key and server lists and new window helpers), another display scale than
+100 %, Hetzner's price list through the UI, a real provider, Windows 10.
+
 ### The Usage & costs tab in the Linux desktop test (2026-11-16)
 
 The maintainer asked for desktop-test coverage of a bucket's **Usage &
@@ -200,7 +253,8 @@ of this tree; the window opens at 900 × 540 there):
   first version of the check, which compared with the section alone,
   passed this control; it now compares with `<main>` too.
 - **Regression** with the final binary: `local` 16/16, `hang` 8/8,
-  `browse` 17/17 (the server saw only listings).
+  `browse` 17/17 (the server saw only listings), `download` 22/22 and
+  `upload` 51/51 (their servers saw only the expected requests).
 
 Headless on WSL2: `npm run check` (0 errors, 0 warnings), `npm run
 build`, `npm run test:headless` with every guard, Vitest 285 (one new),
@@ -208,8 +262,7 @@ Rust 567 passed and 29 ignored (one new test, and the new helper
 ignored); `cargo fmt --check` and `cargo clippy --all-targets -- -D
 warnings` clean.
 
-**Not run:** the other Linux phases (`download`, `upload`, `files`); the
-Windows driver, which has no usage mode; Hetzner's price list through the
+**Not run:** the Linux `files` phase; Hetzner's price list through the
 UI (the phase adds a Backblaze B2 account); a real provider; a real Linux
 desktop.
 

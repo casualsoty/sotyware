@@ -5,7 +5,7 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle] [-Exe <path>] [-ExpectSha256 <hex>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle|files|usage] [-Exe <path>] [-ExpectSha256 <hex>]
 #   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
 #   b2-lifecycle takes -Scenario multipart|cancel|retry|leave|quit and -Rehearse or -ConfirmB2Lifecycle lifecycle-ui-validation
 #   (or -Scenario settle, only with -Rehearse -RecordRequests)
@@ -23,6 +23,17 @@
 #   the Rust tests (cargo test ... serve_listing_for_ui -- --ignored, in this
 #   checkout's src-tauri; made-up key), which fails if anything but a listing
 #   or the connection check reached it. Contacts no provider.
+# -Mode usage: a bucket's Usage & costs tab (ADR-041) against the in-process
+#   versioned server of the Rust tests (cargo test ... serve_usage_for_ui --
+#   --ignored; one bucket with current files, older versions and a deleted
+#   file; made-up key), which writes the figures a measurement must find and
+#   fails if the app sent anything but listings or the bucket changed:
+#   measure, the figures, the estimate and the expected downloads, the
+#   history; then, with the window resized through SetWindowPos (no mouse) to
+#   900 x 540, a wide size and 700 x 540 CSS pixels, nothing on the Usage &
+#   costs and Snapshots & backups tabs may reach past its section or the
+#   page's scroll area (<main>), by UI Automation bounding rectangles.
+#   Contacts no provider.
 # -Mode download: downloads through the native Windows save dialog (the common
 #   item dialog: Cancel, File name + Save, the "Confirm Save As" question for
 #   an existing file; its controls are not in the UI Automation tree, so they
@@ -164,7 +175,7 @@
 # or b2 credentials missing, 3 (upload, b2-lifecycle quit) no interactive
 # desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle", "files")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle", "files", "usage")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\test-profile\release\sotyware.exe"),
   [string]$ProfileParent = (Join-Path $PSScriptRoot "..\..\src-tauri\target\desktop-test-profiles"),
   [string]$Region = "eu-central-003",
@@ -323,6 +334,19 @@ public static class CloudUiW {
   }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr h, IntPtr m, uint i, out RECT r);
+  // ---- usage mode: the window's size, as dragging its border would set it ----
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint a, uint b, ref RECT r, uint f);
+  // The primary monitor's work area (SPI_GETWORKAREA): x, y, width, height.
+  public static int[] WorkArea() { var r = new RECT(); SystemParametersInfo(0x0030, 0, ref r, 0); return new int[] { r.L, r.T, r.R - r.L, r.B - r.T }; }
+  // Outer size minus client size: what a window's frame adds (width, height).
+  public static int[] Frame(IntPtr h) { RECT w, c; GetWindowRect(h, out w); GetClientRect(h, out c); return new int[] { (w.R - w.L) - (c.R - c.L), (w.B - w.T) - (c.B - c.T) }; }
+  public static int[] Client(IntPtr h) { RECT c; if (!GetClientRect(h, out c)) return null; return new int[] { c.R - c.L, c.B - c.T }; }
   [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string n);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint f, bool inherit, uint access);
@@ -348,6 +372,8 @@ public static class CloudUiW {
 }
 "@
 $ErrorActionPreference = "Continue"
+# usage: window sizes and UI Automation rectangles both in physical pixels.
+if ($Mode -eq "usage") { [void][CloudUiW]::SetProcessDPIAware() }
 
 $A = [System.Windows.Automation.AutomationElement]; $S = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
@@ -540,12 +566,15 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # Replacing the key only stores it (no request); made-up values.
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files") {
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files" -or $Mode -eq "usage") {
   # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
-  # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs) and
-  # serve_files_for_ui (test_server/files_ui.rs).
+  # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs),
+  # serve_files_for_ui (test_server/files_ui.rs) and serve_usage_for_ui
+  # (test_server/usage_ui.rs).
   if ($Mode -eq "files") {
     $Key1 = "e2eFilesKey00000000001"; $Secret1 = "e2e-Files-Secret-0123456789"; $Bucket = "files-versioned"; $Helper = "files_ui::serve_files_for_ui"
+  } elseif ($Mode -eq "usage") {
+    $Key1 = "e2eUsageKey00000000001"; $Secret1 = "e2e-Usage-Secret-0123456789"; $Bucket = "usage-versioned"; $Helper = "usage_ui::serve_usage_for_ui"
   } elseif ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
   } elseif ($Mode -eq "upload" -or $IsB2Up) {
@@ -581,6 +610,9 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
     $Out = Join-Path $env:TEMP "sotyware-files-downloads-$run"
     New-Item -ItemType Directory $Out | Out-Null
   }
+  # usage: what a measurement of the seeded bucket must find (the server's
+  # own figures, which a Rust unit test checks against the measurement).
+  if ($Mode -eq "usage") { $UsageExpected = Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json }
   if ($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
     # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
@@ -1346,6 +1378,162 @@ function UpCleanup {
   Check "upload cleanup by exact key: the bucket is empty, no multipart upload left" ($st.Objects.Count -eq 0 -and $st.Multipart.Count -eq 0) "$(SortedKeys $st.Objects.Keys) $($st.Multipart -join ',')"
 }
 
+# ---- usage mode (ADR-041): the Usage & costs tab against serve_usage_for_ui ----
+# A size as src/format.ts formatDecimalSize writes it (decimal units).
+function DecSize([double]$n) {
+  if ($n -lt 1000) { return "$([long]$n) bytes" }
+  $v = $n / 1000; $u = 0
+  while ($v -ge 1000 -and $u -lt 4) { $v /= 1000; $u++ }
+  $digits = if ($v -lt 10) { 2 } elseif ($v -lt 100) { 1 } else { 0 }
+  "$($v.ToString("F$digits", [System.Globalization.CultureInfo]::InvariantCulture)) $(@('kB', 'MB', 'GB', 'TB', 'PB')[$u])"
+}
+# The page as one line of text: every element's name in tree order, empty
+# names and an element's name repeated by its text child dropped.
+function UsageText {
+  $d = Dash; if (-not $d) { return "" }
+  $names = New-Object System.Collections.Generic.List[string]; $last = $null
+  try { foreach ($e in $d.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { $n = $e.Current.Name; if ($n -and $n -ne $last) { $names.Add($n); $last = $n } } } catch { }
+  SameText ($names -join " ")
+}
+function NoSpace([string]$t) { $t -replace '\s', '' }
+# Selects the bucket view's tab `name` (Invoke, else SelectionItem, as windows.ps1).
+function UsageTab([string]$name) {
+  $d = Dash; if (-not $d) { return $false }
+  $tab = $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $CT::TabItem), (PCN $name)))
+  if (-not $tab) { Write-Host "  no tab '$name'"; return $false }
+  try { $tab.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
+  try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); $true } catch { $false }
+}
+# The page section labelled `name` (a region; its heading has the same name).
+function UsageSection([string]$name) {
+  $d = Dash; if (-not $d) { return $null }
+  $all = @($d.FindAll($S::Descendants, (PCN $name)))
+  $region = @($all | Where-Object { $_.Current.AriaRole -eq "region" })
+  if ($region.Count -gt 0) { return $region[0] }
+  @($all | Where-Object { $_.Current.ControlType -ne $CT::Text -and $_.Current.ControlType -ne $CT::TabItem })[0]
+}
+# The page's scroll area above `el`: <main>, which keeps the window's width
+# less the sidebar, so anything past its edges has to be scrolled to.
+function UsageMain($el) {
+  $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+  $n = $el
+  for ($i = 0; $n -and $i -lt 40; $i++) {
+    if ($n.Current.AriaRole -eq "main" -or $n.Current.LocalizedControlType -eq "main") { return $n }
+    $n = $walker.GetParent($n)
+  }
+  $null
+}
+# An element's own name and its descendants' as one line (a repeated name,
+# an element's and its text child's, once).
+function NamesOf($el) {
+  if (-not $el) { return "" }
+  $names = New-Object System.Collections.Generic.List[string]; $last = $null
+  $own = $el.Current.Name; if ($own) { $names.Add($own); $last = $own }
+  try { foreach ($e in $el.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) { $n = $e.Current.Name; if ($n -and $n -ne $last) { $names.Add($n); $last = $n } } } catch { }
+  SameText ($names -join " ")
+}
+# The Estimated cost table, the only table on the usage tab, through its
+# Grid pattern: how WebView2 types its cells does not matter.
+function CostGrid {
+  $sec = UsageSection "Storage usage"; if (-not $sec) { return $null }
+  $tb = $sec.FindFirst($S::Descendants, (PCT $CT::Table)); if (-not $tb) { return $null }
+  try { $tb.GetCurrentPattern([System.Windows.Automation.GridPattern]::Pattern) } catch { $null }
+}
+# Each row: its header (with the sentence) and its amount without white space.
+function CostRows {
+  $g = CostGrid; if (-not $g) { return , @() }
+  $rows = @()
+  for ($r = 0; $r -lt $g.Current.RowCount; $r++) {
+    try { $rows += , @((NamesOf ($g.GetItem($r, 0))), (NoSpace (NamesOf ($g.GetItem($r, 1))))) } catch { }
+  }
+  , $rows
+}
+# The row headers' cells (the first column), for the layout check.
+function CostHeaders {
+  $g = CostGrid; if (-not $g) { return @() }
+  @(for ($r = 0; $r -lt $g.Current.RowCount; $r++) { try { $g.GetItem($r, 0) } catch { } })
+}
+# Failure details: the page's text from `from` on, and the section's elements.
+function UsageFrom([string]$t, [string]$from, [int]$n = 700) {
+  $i = $t.IndexOf($from); if ($i -lt 0) { $i = [Math]::Max(0, $t.Length - $n) }
+  $t.Substring($i, [Math]::Min($n, $t.Length - $i))
+}
+function UsageShapes([string]$name) {
+  $sec = UsageSection $name; if (-not $sec) { return "no section '$name'" }
+  @($sec.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -ne $CT::Text } | Select-Object -First 45 | ForEach-Object { $nm = "$($_.Current.Name)"; if ($nm.Length -gt 24) { $nm = $nm.Substring(0, 24) }; "$($_.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '')/$($_.Current.LocalizedControlType)/$($_.Current.AriaRole) '$nm'" }) -join "; "
+}
+# A US dollar amount in any of the page's locales: $7.00, US$7.00, 7,00 $US.
+# Single quotes: in a double-quoted string `$?` is PowerShell's last-status variable.
+function IsUsd([string]$a, [string]$whole) { $a.Contains('$') -and $a -match ('^(?:US\$|\$US|\$)?' + $whole + '[.,]00(?:US\$|\$US|\$)?$') }
+# The page's viewport in CSS pixels, and the window's scale.
+function UsageViewport {
+  $h = Hwnd (Dash); $c = [CloudUiW]::Client($h); if ($null -eq $c) { return $null }
+  $scale = [double]([CloudUiW]::GetDpiForWindow($h)) / 96.0; if ($scale -le 0) { $scale = 1.0 }
+  @([int][Math]::Round($c[0] / $scale), [int][Math]::Round($c[1] / $scale), $scale)
+}
+# Sizes the window so that its page is $w x $h CSS pixels, at the work
+# area's top-left corner: what dragging its border does, without the mouse.
+function UsageResize([int]$w, [int]$h) {
+  $hw = Hwnd (Dash)
+  if ([CloudUiW]::IsZoomed($hw)) { [void][CloudUiW]::ShowWindow($hw, 9) }
+  $scale = [double]([CloudUiW]::GetDpiForWindow($hw)) / 96.0; if ($scale -le 0) { $scale = 1.0 }
+  $fr = [CloudUiW]::Frame($hw); $work = [CloudUiW]::WorkArea()
+  # SWP_NOZORDER | SWP_NOACTIVATE
+  [void][CloudUiW]::SetWindowPos($hw, [IntPtr]::Zero, $work[0], $work[1], [int][Math]::Round($w * $scale) + $fr[0], [int][Math]::Round($h * $scale) + $fr[1], 0x0014)
+  WaitFor { $v = UsageViewport; $v -and [Math]::Abs($v[0] - $w) -le 1 -and [Math]::Abs($v[1] - $h) -le 1 } 10
+}
+# Waits until section `name` keeps its rectangle for a moment (the page has
+# laid itself out again).
+function UsageSettled([string]$name) {
+  $script:usPrev = $null
+  WaitFor { Start-Sleep -Milliseconds 300; $sec = UsageSection $name; $r = if ($sec) { "$($sec.Current.BoundingRectangle)" } else { "" }; $same = $r -and $r -eq $script:usPrev; $script:usPrev = $r; $same } 10 | Out-Null
+}
+# Section `name` and every element in it whose rectangle reaches past the
+# section's left or right edge or past <main> (1.5 px of rounding allowed).
+# Both, because the engines differ: Chromium keeps the section's width and an
+# unbreakable table spills out of its card; WebKitGTK widens the card, the
+# section and the bucket view up to <main>. Elements scrolled out of the
+# window keep their rectangles and count too.
+function UsageEdges([string]$name) {
+  $sec = UsageSection $name
+  if (-not $sec) { return @{ ok = $false; count = 0; headers = 0; bad = @("no section named '$name'") } }
+  $main = UsageMain $sec
+  $sr = $sec.Current.BoundingRectangle
+  $mr = if ($main) { $main.Current.BoundingRectangle } else { [System.Windows.Rect]::Empty }
+  if ($sr.IsEmpty -or $mr.IsEmpty) { return @{ ok = $false; count = 0; headers = 0; section = $sr; main = $mr; bad = @("the section or <main> has no rectangle") } }
+  $left = [Math]::Max($sr.Left, $mr.Left); $right = [Math]::Min($sr.Right, $mr.Right)
+  $bad = New-Object System.Collections.Generic.List[string]; $count = 0
+  if ($sr.Left -lt $mr.Left - 1.5 -or $sr.Right -gt $mr.Right + 1.5) { $bad.Add("the section itself at x $([int]$sr.Left)..$([int]$sr.Right)") }
+  # The cost table's row headers with a rectangle: they are among the
+  # elements below, so the comparison covers what once ran past the card.
+  $headers = @(CostHeaders | Where-Object { $hr = $_.Current.BoundingRectangle; -not $hr.IsEmpty -and $hr.Width -gt 0 -and $hr.Height -gt 0 }).Count
+  foreach ($e in $sec.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+    $r = $e.Current.BoundingRectangle
+    if ($r.IsEmpty -or $r.Width -le 0 -or $r.Height -le 0) { continue }
+    $count++
+    if ($r.Left -lt $left - 1.5 -or $r.Right -gt $right + 1.5) {
+      $nm = "$($e.Current.Name)"; if ($nm.Length -gt 50) { $nm = $nm.Substring(0, 50) }
+      $bad.Add("$($e.Current.LocalizedControlType) '$nm' at x $([int]$r.Left)..$([int]$r.Right)")
+    }
+  }
+  @{ ok = $bad.Count -eq 0; count = $count; headers = $headers; section = $sr; main = $mr; bad = @($bad) }
+}
+# Both tabs at the current window size: nothing past its section or <main>.
+function UsageLayout([string]$sizeLabel) {
+  foreach ($pair in @(@("Usage & costs", "Storage usage"), @("Snapshots & backups", "Snapshots and backups"))) {
+    $shown = (UsageTab $pair[0]) -and (WaitFor { $null -ne (UsageSection $pair[1]) } 15)
+    if ($shown) { UsageSettled $pair[1] }
+    $res = if ($shown) { UsageEdges $pair[1] } else { @{ ok = $false; count = 0; headers = 0; bad = @("the $($pair[0]) tab did not open") } }
+    "  ${sizeLabel}, $($pair[0]): section $($res.section), main $($res.main), $($res.count) elements compared, the cost table's row headers among them: $($res.headers)"
+    # Not vacuous: the usage tab's comparison includes the cost table's four
+    # row headers, whose sentences once ran past the card.
+    $enough = if ($pair[1] -eq "Storage usage") { $res.headers -ge 4 } else { $res.count -ge 5 }
+    Check "usage: ${sizeLabel}: nothing on the $($pair[0]) tab reaches past its section or the page" ($shown -and $enough -and $res.ok) "section $($res.section), main $($res.main), $($res.count) compared; past the edges: $(@($res.bad | Select-Object -First 8) -join ' | ')"
+  }
+  $null = UsageTab "Usage & costs"
+  $null = WaitFor { $null -ne (Named "Measure again" $CT::Button) } 10
+}
+
 $label = "sotyware e2e $run"; $id = "sotyware-e2e-$run"; $renamed = "$label renamed"
 try {
   $p = Start-Process $Exe -PassThru; $null = $p.Handle  # without a cached handle, ExitCode stays empty
@@ -1755,6 +1943,69 @@ try {
    } catch {
     Check "files steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
     Recover
+   }
+  } elseif ($Mode -eq "usage") {
+   try {
+    $ok = $ok -and (WaitFor { (PageText) -like "*notes.txt*" } 30)
+    Check "usage: Open bucket lists the bucket's root on the Files tab" $ok (PageText)
+    $ok = (UsageTab "Usage & costs") -and (WaitFor { $null -ne (Named "Measure now" $CT::Button) } 15)
+    $t = UsageText
+    Check "usage: the Usage & costs tab: not measured yet, says why it lists the bucket" ($ok -and $t.Contains("No measurement for $label yet.") -and $t.Contains("lists the bucket to measure it")) $t
+    # Finishes only if the page reads the last event (its saveError field).
+    $ok = (Press "Measure now") -and (WaitFor { $null -ne (Named "Measure again" $CT::Button) } 60)
+    $t = UsageText
+    Check "usage: Measure now finishes, with one listing of versions and one of unfinished uploads" ($ok -and $t.Contains("Measured just now") -and $t.Contains("with 2 listing requests")) $t
+    $usStored = [double]$UsageExpected.bytes + [double]$UsageExpected.noncurrentBytes + [double]$UsageExpected.incompleteBytes
+    $usWant = [ordered]@{
+      "the Stored tile" = "Stored $(DecSize $usStored) everything kept in the bucket"
+      "the Files tile" = "Files $($UsageExpected.objects) $($UsageExpected.noncurrentVersions) older versions"
+      "current files" = "Current files $($UsageExpected.objects) $(DecSize $UsageExpected.bytes)"
+      "older versions" = "Older versions and deleted files $($UsageExpected.noncurrentVersions) $(DecSize $UsageExpected.noncurrentBytes)"
+      "unfinished uploads" = "Unfinished uploads $($UsageExpected.incompleteUploads) $(DecSize $UsageExpected.incompleteBytes)"
+      "delete markers" = "$($UsageExpected.deleteMarkers) delete marker (they store nothing)"
+    }
+    # Without white space: UI Automation names a list item after its parts
+    # with none between them ("Current files31.75 MB").
+    $usMissing = @($usWant.Keys | Where-Object { -not (NoSpace $t).Contains((NoSpace $usWant[$_])) } | ForEach-Object { "${_}: $($usWant[$_])" })
+    Check "usage: the figures are what the server says a measurement finds (tiles, parts, delete markers)" ($usMissing.Count -eq 0) "missing $($usMissing -join ' / '); page from the tiles: $(UsageFrom $t 'Stored')"
+    $script:usRows = @()
+    $null = WaitFor { $script:usRows = CostRows; $script:usRows.Count -eq 4 } 10
+    $usHeads = @("Storage $(DecSize $usStored) stored, the first 10.0 GB free, at USD 6.95 per TB for 30 days.",
+      "Downloads (egress) 0 bytes assumed for 30 days; $(DecSize (3 * $usStored)) free (3 times the stored data)",
+      "API calls Class A, B and C API calls (every call sotyware makes) are free for pay-as-you-go accounts",
+      "Total for 30 days, without taxes")
+    $ok = $script:usRows.Count -eq 4
+    for ($i = 0; $ok -and $i -lt 4; $i++) { $ok = (NoSpace $script:usRows[$i][0]).StartsWith((NoSpace $usHeads[$i])) -and (IsUsd $script:usRows[$i][1] "0") }
+    Check "usage: the estimate: Backblaze B2's price list, each component with its sentence and `$0.00, the total" $ok "$(if ($script:usRows.Count -eq 0) { "no table rows; the section holds: $(UsageShapes 'Storage usage')" } else { @($script:usRows | ForEach-Object { "[$($_[0]) = $($_[1])]" }) -join ' ' })"
+    # How this is estimated open, so its lists are laid out too.
+    $script:usOpened = $false
+    foreach ($e in @((Dash).FindAll($S::Descendants, (PCN "How this is estimated")))) {
+      try { $e.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() } catch { try { $e.GetCurrentPattern($Invoke).Invoke() } catch { continue } }
+      if (WaitFor { (UsageText).Contains("Price list: Backblaze B2, pay as you go, checked") } 5) { $script:usOpened = $true; break }
+    }
+    Check "usage: How this is estimated opens: the assumptions and the price list's date" $script:usOpened
+    $usField = @((Dash).FindAll($S::Descendants, (PCT $CT::Edit)) | Where-Object { $_.Current.Name.StartsWith("Downloads you expect per 30 days") })[0]
+    $ok = $null -ne $usField
+    if ($ok) { try { $usField.GetCurrentPattern($ValuePattern).SetValue("700") } catch { $ok = $false } }
+    # 700 GB less 3 times the stored data, at $0.01 per GB: $7.00 (6.9999...).
+    $ok = $ok -and (WaitFor { $script:usRows = CostRows; $script:usRows.Count -eq 4 -and (NoSpace $script:usRows[1][0]).Contains((NoSpace "700 GB assumed for 30 days")) -and (IsUsd $script:usRows[1][1] "7") -and (IsUsd $script:usRows[3][1] "7") } 15)
+    Check "usage: 700 GB of expected downloads: egress beyond 3 times the stored data is estimated, the total follows" $ok "$(@($script:usRows | ForEach-Object { "[$($_[0]) = $($_[1])]" }) -join ' ')"
+    $ok = (Press "Measure again") -and (WaitFor { @((Dash).FindAll($S::Descendants, (PCT $CT::Image)) | Where-Object { $_.Current.Name.StartsWith("Stored data in 2 measurements") }).Count -gt 0 } 60)
+    Check "usage: Measure again: the history draws both measurements" $ok (UsageText)
+    # The layout at three sizes of the page, set through the window manager.
+    $usVp = UsageViewport
+    "  first launch: the page is $($usVp[0]) x $($usVp[1]) CSS pixels at scale $($usVp[2])"
+    $usWork = [CloudUiW]::WorkArea()
+    $usWideW = [Math]::Min(1240, [int][Math]::Floor($usWork[2] / $usVp[2]) - 16)
+    $usWideH = [Math]::Min(820, [int][Math]::Floor($usWork[3] / $usVp[2]) - 16)
+    foreach ($size in @(@(900, 540, "first-launch minimum"), @($usWideW, $usWideH, "wide"), @(700, 540, "narrow, navigation as an overlay"))) {
+      $resized = UsageResize $size[0] $size[1]
+      $vp = UsageViewport
+      Check "usage: the page resizes to $($size[0]) x $($size[1]) CSS pixels" $resized "now $($vp[0]) x $($vp[1])"
+      if ($resized) { UsageLayout "$($size[0]) x $($size[1]) ($($size[2]))" }
+    }
+   } catch {
+    Check "usage steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
    }
   } elseif ($Mode -eq "download") {
    try {
@@ -2482,7 +2733,7 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files") {
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage") {
     # Removing the endpoint file stops the helper (and with it its temporary bucket).
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
@@ -2509,7 +2760,7 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files") {
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage") {
   $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
   if ($Mode -eq "b2-upload") {
@@ -2551,7 +2802,7 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB
     Check "rehearsal: the app sent $want" $okOps $ops
   }
   if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
-  $what = if ($Mode -eq "files") { "only file-manager requests, and no real version was deleted for good" } elseif ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
+  $what = if ($Mode -eq "files") { "only file-manager requests, and no real version was deleted for good" } elseif ($Mode -eq "usage") { "only listings and the check, and the bucket is unchanged" } elseif ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }
