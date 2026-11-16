@@ -104,7 +104,11 @@ Rules: a component's `<style>` holds layout that only it has and uses
 tokens for every value; no colour literal outside `tokens.css` (the theme
 swatches and the brand mark are pictures of fixed colours); meanings, not
 colour names (`.danger`, never `.red`); status is never told by colour
-alone (every badge has text).
+alone (every badge has text). A `th` in `base.css` is a file table's
+column header: sticky, on the page background, on one line. A component
+whose `th` are row headers (`scope="row"`, as in the Estimated cost table
+of `CloudUsage.svelte`) resets `position`, `background` and `white-space`,
+or a long header keeps the table wider than its card.
 
 **Accessibility tree (WebKitGTK).** Found 2026-11-15 by the Linux desktop
 driver and confirmed by dumping AT-SPI: WebKitGTK leaves the text of a

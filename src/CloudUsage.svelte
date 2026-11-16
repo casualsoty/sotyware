@@ -696,6 +696,13 @@
     color: var(--text);
   }
 
+  /* A row header carries a sentence of detail: it wraps inside the card
+     instead of keeping base.css's single line for column headers, which
+     pushed the table past the card's edge. */
+  .components th {
+    white-space: normal;
+  }
+
   .components td.num {
     text-align: right;
     padding-left: var(--space-4);
