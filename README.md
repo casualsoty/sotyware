@@ -4,7 +4,7 @@ sotyware is a desktop application meant to run continuously in the
 background while staying lightweight. It lives in the system tray and opens a
 dashboard window on demand.
 
-**Platforms.** The first release targets **Windows 11** only, and only once its
+**Platforms.** The releases target **Windows 11** only, and only once their
 installers have been validated (not done yet; see
 [docs/development/release.md](docs/development/release.md)). **Windows 10 is not
 validated** and is not claimed as supported. The code also builds and runs on
@@ -72,8 +72,9 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   (`server/`) is not deployed and release builds have none configured.
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
-  backup. The first release, `v0.1.0`, was published on 2026-11-15; no
-  update has been installed yet (that needs a later version).
+  backup. `v0.1.0` was published on 2026-11-15 and `v0.1.1` on
+  2026-11-16; no update has been installed yet (moving from 0.1.0 to
+  0.1.1 will be the first).
 
 It does not search file contents, download as ZIP, keep a trash of its own or
 permanently delete old object versions, and it does not copy objects larger

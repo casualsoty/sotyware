@@ -17,9 +17,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   Silicon and Intel, ADR-037), and every change must keep all three working
   ([cross-platform.md](docs/development/cross-platform.md)); macOS is built
   and tested only on GitHub's hosted runners ([macos.md](docs/development/macos.md)).
-  **Release support** is narrower: the first release, `v0.1.0` (published
-  2026-11-15), targets Windows 11 only, and its installers have not yet been
-  through the installation test; Windows 10 is not validated, Linux has
+  **Release support** is narrower: the releases, `v0.1.0` (published
+  2026-11-15) and `v0.1.1` (2026-11-16), target Windows 11 only, and their
+  installers have not yet been through the installation test; Windows 10 is not validated, Linux has
   never run on a real desktop and macOS never on a Mac a person used, so
   none of them may be described as supported
   ([release.md](docs/development/release.md#support-scope)).
@@ -43,8 +43,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
   signing key only in the protected `release` environment; the release key
   exists since 2026-11-15, its public half in `src-tauri/update-key.pub`,
-  and `v0.1.0` was published with it that day; no update was ever
-  installed), in a
+  and `v0.1.0` was published with it that day, `v0.1.1` on 2026-11-16; no
+  update was ever installed), in a
   desktop shell with a sidebar, Settings and one design system (ADR-035),
   on Windows with the page's own title bar and everywhere a remembered window
   placement that starts at half the primary work area (ADR-040); storage usage

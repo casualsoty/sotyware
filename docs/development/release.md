@@ -1,16 +1,17 @@
 # Release builds, signing and installer testing
 
-sotyware 0.1.0 has **not been released**. This page says what a first release
-may claim, how its binaries are built, what signing needs, and how its
-installers must be tested before anyone is told to install them. Nothing here
-has been done for a release yet unless [status.md](../status/status.md) records
-it with a date.
+sotyware is released on GitHub Releases: `v0.1.0` on 2026-11-15 and
+`v0.1.1` on 2026-11-16 ([status](../status/status.md#release-011-2026-11-16)).
+This page says what a release may claim, how its binaries are built, what
+signing needs, and how its installers must be tested before anyone is told
+to install them. Nothing here has been done for a release unless
+[status.md](../status/status.md) records it with a date.
 
 ## Support scope
 
 | Platform | Code and builds | Release support |
 | --- | --- | --- |
-| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the first release's only target**; `v0.1.0` (2026-11-15) was published before its installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do; the maintainer runs it on their personal Windows 11 and reports it working ([status](../status/status.md#v010-installed-by-the-maintainer-2026-11-15)) |
+| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the releases' only target**; `v0.1.0` (2026-11-15) and `v0.1.1` (2026-11-16) were published before their installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do; the maintainer runs `v0.1.0` on their personal Windows 11 and reports it working ([status](../status/status.md#v010-installed-by-the-maintainer-2026-11-15)) |
 | Windows 10 | the same binary; never run | **not validated, not claimed.** Do not list it as supported |
 | Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop.** Releases carry the AppImage, deb and rpm for testing, labelled as such in the release notes |
 | macOS (Apple Silicon, Intel) | builds and tests only on GitHub's hosted macOS runners ([macos.md](macos.md)); never run on a Mac a person used | **not validated.** Releases carry Mac packages only when they are signed and notarized; none can be until a Developer ID certificate exists |
@@ -339,6 +340,13 @@ gh api repos/casualsoty/sotyware/environments --jq '.environments[] | {name, pro
      **Re-run failed jobs**. A draft that existed before is left alone and
      stops the run. A force-cancel or a lost runner skips the deletion:
      delete the draft by hand, or the next attempt stops at it.
+     A failed build or test job is re-run the same way: only that job
+     runs again, the others keep their results. A failure caused by the
+     runner rather than the code can be re-run as it is (`v0.1.1`'s
+     Intel Mac tests missed a timing limit twice on slow runners and
+     passed at the third attempt;
+     [status](../status/status.md#release-011-2026-11-16)); a change to
+     the code needs a new version, since the tag cannot move.
    - **After the pre-release, before the promotion** (the anonymous check,
      or the promotion request itself): the release stays a public
      pre-release, never the latest, so installations, which follow the

@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-16 (version raised to 0.1.1 for its release; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -199,7 +199,57 @@ the development machine): the tree of `2626ca0` copied to a fresh
 
 Not checked: a person's look at it, snapping by dragging to an edge or by
 Win+Arrow (only the styles they use), other scalings, several monitors,
-Windows 10. **Not done yet:** the tag and the release.
+Windows 10.
+
+**The tag and the release run.** The annotated tag `v0.1.1` on `ec27b17`
+(the head of `main`; its application code is `2626ca0`'s), its message
+the release notes, was pushed at 02:06 UTC; GitHub reported the
+`release tags: who` restriction bypassed by the Repository admin role,
+as for `v0.1.0`. Before it, `ci.yml` and `macos.yml` had passed on
+`2626ca0` (runs 43789134365 and 43789134349) and `isolation-guard.yml`
+on `ec27b17` (43790086020). Run 43790165722:
+
+- `prepare`, `ci` (Ubuntu 22.04, Windows, account service), the Windows
+  installers, the Linux packages, the Apple Silicon tests and both macOS
+  packages (unsigned) passed at the first attempt.
+- **The Intel Mac tests failed twice** on one test,
+  `a_stalled_upload_times_out_and_stores_nothing`: the upload timed out
+  as designed ("no progress for 1.5 s") and stored nothing, but after
+  10.2 s and then 11.0 s in all, over the test's 10 s limit, on runners
+  running at half speed (the suite took 143 s and 145 s, against 72 s on
+  `2626ca0` just before). Re-running only that job (attempt 3, 8 min
+  51 s) passed. The test now bounds the time from the last progress
+  update to the timeout instead (`a18b529`, on `main` after the tag; the
+  tagged tree keeps the old test).
+- `publish` waited for the maintainer's approval in `release`, then
+  passed every step in 37 s (02:54:13 to 02:54:50 UTC): the tag and key
+  checks, signing with the release key and verifying, the draft and its
+  byte-for-byte check, the pre-release, the anonymous downloads, the
+  promotion with the `/releases/latest` read-back and the endpoint
+  check. Published at 02:54:40 UTC by `github-actions[bot]`.
+
+**Published:** <https://github.com/casualsoty/sotyware/releases/tag/v0.1.1>,
+a full release, GitHub's latest and immutable, with 13 assets like
+`v0.1.0`'s: the NSIS setup program and the MSI, the AppImage, deb and
+rpm, each with its minisign signature, and `latest.json`,
+`latest.json.sig` and `SHA256SUMS`; no macOS packages (not signed and
+notarized). Its notes are the tag's message and the workflow's
+paragraphs on platforms and signatures.
+
+Checked on WSL2 without a token: GitHub's latest release is `v0.1.1`;
+all 13 assets, downloaded anonymously, equal GitHub's SHA-256 digests;
+`SHA256SUMS` matches the 12 files; `releases/latest/download/latest.json`
+and its `.sig` are byte-identical to the release's own;
+`update-manifest.mjs verify` with the committed key passed (the
+signature, the five platforms under `…/releases/download/v0.1.1/`, every
+package's signature, its signed version 0.1.1 and SHA-256, newer than
+0.1.0); the notes in `latest.json`, which the app shows, are the tag's
+message.
+
+**Not done:** the installation test of
+[release.md](../development/release.md#installation-test-plan-disposable-windows-11);
+no update was ever installed, so the first 0.1.0 installation that
+moves to 0.1.1 will be the first.
 
 ### Desktop UX, usage and costs, snapshots, and automatic sync (2026-11-15)
 
