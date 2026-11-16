@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-16 (version raised to 0.1.1 for its release; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -145,12 +145,44 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Release 0.1.1 (2026-11-16)
+
+The maintainer asked for `v0.1.1` with the work of 2026-11-15: `310fd49`
+(the account service's deployment proposal, docs only) and `5d68c0f` (the
+Windows title bar and window placement, usage and costs, bucket snapshots
+and backups, automatic sync, the Example feature removed;
+[details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)).
+The version is raised to 0.1.1 in `package.json`, `package-lock.json`,
+`src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and
+`src-tauri/tauri.conf.json`, the five files `release.yml` compares; the
+account service (`server/`) keeps 0.1.0 and each built-in feature its own
+version.
+
+**Hosted runs at `5d68c0f`:** the maintainer pushed both commits to
+`main` at 00:09 UTC, and every automatic run passed:
+
+- `ci.yml` (run 43778721080): headless on Ubuntu 22.04 in 5 min 29 s
+  (Vitest 284; Rust 566 passed, 28 ignored; the recorder build 594
+  passed, 28 ignored; the standalone recovery script's test) and on
+  Windows in 5 min 50 s (Vitest 284; Rust 551 passed, 28 ignored); the
+  account service in 23 s (25 tests).
+- `macos.yml` (run 43778720900): Apple Silicon in 4 min 30 s, Intel in 7
+  min 15 s (Rust 556 passed, 28 ignored, and the Keychain round trip on
+  each); the package job skipped, as on every push.
+- `isolation-guard.yml` (run 43778720883): the guard and the PowerShell
+  helpers' self-test.
+
+They are headless: the title bar and the placement have still not run on
+a Windows desktop. **Not done yet:** the Windows desktop runs, the tag
+and the release.
+
 ### Desktop UX, usage and costs, snapshots, and automatic sync (2026-11-15)
 
 Uncommitted on `e48a95d` when written (the maintainer asked for no
 commit); committed on `main` on 2026-11-16 at the maintainer's request,
-after `310fd49` (the account service's deployment proposal); not pushed.
-Decisions:
+after `310fd49` (the account service's deployment proposal). The
+maintainer pushed both at 00:09 UTC, and the
+[hosted runs at `5d68c0f`](#release-011-2026-11-16) passed. Decisions:
 [ADR-040](../architecture/decisions.md#adr-040-on-windows-the-dashboard-draws-its-own-title-bar-the-window-opens-at-half-the-primary-work-area-and-remembers-its-place),
 [ADR-041](../architecture/decisions.md#adr-041-storage-usage-is-measured-by-listing-costs-are-estimates-from-versioned-price-lists-snapshots-of-a-bucket-are-sotywares-backup-snapshots),
 [ADR-042](../architecture/decisions.md#adr-042-an-enrolled-device-syncs-its-vault-automatically-on-events-never-on-a-timer).

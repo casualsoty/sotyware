@@ -9,7 +9,8 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.0, **released on 2026-11-15** as `v0.1.0`
+TypeScript. Version 0.1.1 in the tree, raised on 2026-11-16 for its release
+([status](status/status.md#release-011-2026-11-16)); `v0.1.0` was **released on 2026-11-15**
 ([status](status/status.md#first-release-v010-2026-11-15)). Code and builds target
 Windows, Linux and macOS (Apple Silicon and Intel; macOS built and tested
 only on GitHub's runners, ADR-037); the **first release targets Windows 11
@@ -24,7 +25,8 @@ built with `npm run build:release`, which keeps the build machine's paths out
 ## What works today
 
 **Desktop UX, usage and costs, snapshots, automatic sync** (2026-11-15,
-committed on `main` after `310fd49` on 2026-11-16, not pushed;
+committed on `main` after `310fd49` and pushed on 2026-11-16, where
+`ci.yml`, `macos.yml` and `isolation-guard.yml` passed at `5d68c0f`;
 [status](status/status.md#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)):
 on Windows the dashboard draws its own title bar (drag region, Minimize,
 Maximize/Restore, Close; native resizing, snapping, Alt+F4 kept) and
