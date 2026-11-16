@@ -2309,20 +2309,28 @@ It needs only Windows PowerShell 5.1 (UI Automation and `user32` via `Add-Type`)
 extra modules. **It runs on your real desktop:** it moves the mouse and clicks the
 tray icon, the tray menu, the dashboard's button and feature checkbox, and
 its own title bar (Close, a double click, and a drag that moves the window
-by 80 × 60 px; ADR-040), and
+by 80 × 60 px; ADR-040), drags the window's bottom-right corner and top edge
+to resize it, and
 opens the notification area's "Show Hidden Icons" flyout. Do not touch the mouse or
 keyboard while it runs (about 30 seconds).
 
 What it does, and how:
 
-- Since 2026-11-15 (ADR-040; **these checks have not run yet**): the first
+- Since 2026-11-15 (ADR-040; first run on native Windows 11 on 2026-11-16,
+  130/0 with the frame checks below): the first
   placement (half the primary work area from `SPI_GETWORKAREA`, at least
   900 × 540 at the window's DPI, centred, ±2 px); no native caption
   (`WM_NCHITTEST` finds no `HTCLOSE`); the page's Minimize, Maximize and
   Close in the UIA group "Window"; Maximize and Restore through UIA
   (`IsZoomed`, back to the same rectangle); a real double click on the
   bar's middle maximizes and restores; a real drag moves the window by
-  80 × 60 px without resizing it; Minimize through UIA; the page's Close
+  80 × 60 px without resizing it; the frame (since 2026-11-16): the window
+  keeps `WS_CAPTION`, `WS_THICKFRAME`, `WS_MINIMIZEBOX` and `WS_MAXIMIZEBOX`
+  (tao only hides the frame, so Snap, Win+Arrow and the system menu keep
+  working), a real drag of the bottom-right corner (the system's invisible
+  border) grows it by 60 × 40 px in place, and one of the top edge (Tauri's
+  resize strip, `SM_CYFRAME` high, above the drag region) by 30 px with its
+  bottom kept; Minimize through UIA; the page's Close
   clicked with the real mouse hides to the tray (replacing the old native
   close button check); after Quit and relaunch the window opens where it
   was and `window-state.sqlite3` is in the test profile.

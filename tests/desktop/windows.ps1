@@ -75,6 +75,7 @@ public static class W {
     return res.ToArray();
   }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint a, uint b, ref RECT r, uint f);
@@ -419,6 +420,26 @@ if ($free) {
   $GeoMoved = $null
   $moved = WaitFor { $script:GeoMoved = [W]::Bounds((Hwnd)); ($null -ne $script:GeoMoved) -and (Near $script:GeoMoved[0] ($from[0] + 80)) -and (Near $script:GeoMoved[1] ($from[1] + 60)) } 5
   Check "title bar: dragging (real mouse) moves the window, size unchanged" ($moved -and (Near $GeoMoved[2] $from[2]) -and (Near $GeoMoved[3] $from[3])) "from=$($from -join ',') to=$($GeoMoved -join ',')"
+  # The frame without native decorations: tao keeps the styles that Snap,
+  # Win+Arrow and the system menu use (it only hides the frame), the left,
+  # right and bottom resize borders are the system's own (invisible, outside
+  # the page) and the top edge is Tauri's resize strip above the drag region
+  # (SM_CYFRAME high), so both edges must resize the window, not move it.
+  $FrameStyle = [W]::GetWindowLong((Hwnd), -16)
+  $FrameWant = 0x00C00000 -bor 0x00040000 -bor 0x00020000 -bor 0x00010000
+  Check "frame: WS_CAPTION, WS_THICKFRAME, WS_MINIMIZEBOX and WS_MAXIMIZEBOX kept (Snap, Win+Arrow)" (($FrameStyle -band $FrameWant) -eq $FrameWant) ("style=0x{0:X8}" -f $FrameStyle)
+  $from = [W]::Bounds((Hwnd))
+  $cornerX = $from[0] + $from[2] - 3; $cornerY = $from[1] + $from[3] - 3
+  [W]::Drag($cornerX, $cornerY, $cornerX + 60, $cornerY + 40)
+  $GeoGrown = $null
+  $grown = WaitFor { $script:GeoGrown = [W]::Bounds((Hwnd)); ($null -ne $script:GeoGrown) -and (Near $script:GeoGrown[2] ($from[2] + 60)) -and (Near $script:GeoGrown[3] ($from[3] + 40)) } 5
+  Check "frame: dragging the bottom-right corner (real mouse) resizes the window, its position kept" ($grown -and (Near $GeoGrown[0] $from[0]) -and (Near $GeoGrown[1] $from[1])) "from=$($from -join ',') to=$($GeoGrown -join ',')"
+  $from = [W]::Bounds((Hwnd))
+  $edgeX = [int]($from[0] + $from[2] / 2); $edgeY = $from[1] + 1
+  [W]::Drag($edgeX, $edgeY, $edgeX, $edgeY - 30)
+  $GeoTaller = $null
+  $taller = WaitFor { $script:GeoTaller = [W]::Bounds((Hwnd)); ($null -ne $script:GeoTaller) -and (Near $script:GeoTaller[1] ($from[1] - 30)) -and (Near $script:GeoTaller[3] ($from[3] + 30)) } 5
+  Check "frame: dragging the top edge (real mouse) resizes the window, its bottom kept" ($taller -and (Near $GeoTaller[0] $from[0]) -and (Near $GeoTaller[2] $from[2])) "from=$($from -join ',') to=$($GeoTaller -join ',')"
 }
 $ok = (InvokeTitle "Minimize") -and (WaitFor { [W]::IsIconic((Hwnd)) } 5)
 Check "title bar: Minimize (UIA) minimizes the window, process alive" ($ok -and (Procs).Count -eq 1)
@@ -563,9 +584,14 @@ $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
 Check "quit: Scheduled backups disabled before quitting" $ok (FeatureDetail)
 # Where the dashboard is now (moved by the drag above): the relaunch must open it here.
 $GeoQuit = [W]::Bounds((Hwnd))
-$btn = (Dash).FindFirst($S::Descendants, (PC $A::NameProperty "Hide dashboard"))
+# Since the redesign (ADR-035) the Hide button is on the Overview page only,
+# and the switch above left Settings open: go back to Overview first.
+$overview = Named "Overview" $HyperlinkType
+if ($overview) { $overview.GetCurrentPattern($Invoke).Invoke() }
+$btn = $null
+WaitFor { $script:btn = Named "Hide dashboard" $ButtonType; $script:btn -ne $null } 10 | Out-Null
 if ($btn) { $btn.GetCurrentPattern($Invoke).Invoke() }
-Check "quit: dashboard hidden first" (WaitFor { Hidden } 5)
+Check "quit: dashboard hidden first (Hide button on Overview)" (WaitFor { Hidden } 5)
 $ok = TrayMenu "Quit"; Check "quit: tray Quit invoked" $ok $script:why
 Check "quit: process exited" ($primary.WaitForExit(10000))
 Check "quit: exit code 0" ($primary.ExitCode -eq 0) "code=$($primary.ExitCode)"

@@ -961,13 +961,19 @@ server only; no real provider was asked.
 
 ## Title bar and window placement (ADR-040)
 
-- **Not seen on Windows yet.** The page's title bar and the placement are
-  covered by unit tests (geometry, chrome permissions, the title bar's
-  controls with mocked IPC) and by new checks in `tests/desktop/windows.ps1`
-  (first placement, controls, double click, a real drag, close, placement
-  after a restart) that have **not run**: no native Windows build was made
-  in the session that added them. Linux keeps its native title bar; the
-  hidden-then-placed startup ran there only on the virtual display.
+- **Seen on Windows only through the desktop test.** Besides unit tests
+  (geometry, chrome permissions, the title bar's controls with mocked
+  IPC), `tests/desktop/windows.ps1` passed 130/0 on native Windows 11 25H2
+  on 2026-11-16 (first placement, controls, double click, a real drag,
+  the frame styles, resizing by the bottom-right corner and the top edge,
+  close, placement after a restart;
+  [status](status.md#release-011-2026-11-16)), on one monitor at the
+  machine's own scaling. Not checked: a person's look
+  ([manual check](../development/testing.md#manual-check-title-bar-and-window-placement-windows-11)),
+  snapping by dragging to an edge or by Win+Arrow (only the window styles
+  they use), other scalings, several monitors or a monitor that goes away,
+  Windows 10. Linux keeps its native title bar; the hidden-then-placed
+  startup ran there only on the virtual display.
 - **No Snap Layouts flyout.** Hovering the page's Maximize button does not
   open Windows 11's snap layouts (only a native caption button can); Win+Z,
   dragging to the screen's top edge and Win+Arrow work.

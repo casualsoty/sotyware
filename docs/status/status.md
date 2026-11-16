@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-16 (version raised to 0.1.1 for its release; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-16 (version raised to 0.1.1 for its release; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -100,8 +100,8 @@ verified byte for byte; the object was deleted again by its version id
 | Fatal exit (code 1) if the tray cannot be created for a reason other than a missing tray host | `setup` in `lib.rs` |
 | Single instance via `tauri-plugin-single-instance` | `run()` in `lib.rs` |
 | Minimal capability (`allow-operating-mode`, `allow-list-features`, `allow-set-feature-enabled`, one `allow-…` permission per cloud account command, `allow-list-cloud-folder`, the three download and the three upload permissions; no `dialog:` or `fs:` permission; `core:window:allow-hide` added at runtime in tray mode only) and CSP | `capabilities/default.json`, `setup` in `lib.rs`, `tauri.conf.json` |
-| Windows title bar drawn by the page (drag region, Minimize, Maximize/Restore, Close; native resize, snapping, keys; ADR-040) — not run on Windows yet | `title_bar.rs`, `src/TitleBar.svelte`, `App.svelte` |
-| Window placement: half the primary work area (at least 900 × 540) at first launch, then the saved place made visible (ADR-040) | `window_state.rs`, `window-state.sqlite3` |
+| Windows title bar drawn by the page (drag region, Minimize, Maximize/Restore, Close; native resize, snapping, keys; ADR-040) — native Windows 11, `windows.ps1` 130/0 (2026-11-16) | `title_bar.rs`, `src/TitleBar.svelte`, `App.svelte` |
+| Window placement: half the primary work area (at least 900 × 540) at first launch, then the saved place made visible (ADR-040) — native Windows 11, `windows.ps1` 130/0 (2026-11-16) | `window_state.rs`, `window-state.sqlite3` |
 | Storage usage by listing, history and 30-day cost estimates from price lists (ADR-041) — local test servers only | `cloud/usage.rs`, `cloud/pricing.rs`, `src-tauri/pricing/`, `src/CloudUsage.svelte` |
 | Snapshots & backups tab: Backblaze console snapshots explained; sotyware backup snapshots with details, back up, verify, typed deletion (ADR-041) | `src/CloudSnapshots.svelte`, `backup/mod.rs`, `backup/engine.rs` |
 | Automatic sync of an enrolled device on startup, focus and local changes, state in the sidebar (ADR-042) | `src/accountSync.svelte.ts`, `Sidebar.svelte` |
@@ -172,9 +172,34 @@ version.
 - `isolation-guard.yml` (run 43778720883): the guard and the PowerShell
   helpers' self-test.
 
-They are headless: the title bar and the placement have still not run on
-a Windows desktop. **Not done yet:** the Windows desktop runs, the tag
-and the release.
+They are headless, so the title bar and the placement then ran on a
+Windows desktop for the first time.
+
+**Windows desktop runs** (native Windows 11 Home 25H2, build 26200.9974,
+the development machine): the tree of `2626ca0` copied to a fresh
+`C:\dev\sotyware-v011`, `npm ci` and `npm run build:test-profile` (6 min;
+`sotyware.exe` 11.7 MB, SHA-256 `53be3684…dcf44`).
+
+- `windows-isolated.ps1` (private desktop, unattended): **57 passed, 0
+  failed**: the hidden-then-placed startup, hide, second launches,
+  minimize, `WM_CLOSE` and the UIA close request, four concurrent
+  launches (no tray on a private desktop).
+- `windows.ps1` (real desktop, approved by the maintainer; it moves the
+  mouse), with three new frame checks: the window keeps the styles Snap
+  and Win+Arrow need, and a real drag of its bottom-right corner and of
+  its top edge resizes it. The first run: **129 passed, 1 failed**,
+  `quit: dashboard hidden first`, a driver defect since the redesign: the
+  feature switch had left Settings open, and the Hide button is on
+  Overview only (the hide checks earlier in the same run passed). With
+  the driver going back to Overview first, the second run: **130 passed,
+  0 failed**, every title bar, frame and placement check included.
+- Each run left the user's sotyware folders, the real app folder (read
+  through WMI, outside the agent's process tree) and the credentials
+  unchanged, and removed its test profile.
+
+Not checked: a person's look at it, snapping by dragging to an edge or by
+Win+Arrow (only the styles they use), other scalings, several monitors,
+Windows 10. **Not done yet:** the tag and the release.
 
 ### Desktop UX, usage and costs, snapshots, and automatic sync (2026-11-15)
 
@@ -233,7 +258,9 @@ the UI review below came after it). On 2026-11-16, before committing, every
 check above and the virtual display ran again on the committed tree, with
 the same results (virtual display **139/0/0**). `windows.ps1` was
 checked statically (`check-ps-variables.ps1`) and its C# helpers compiled
-with `Add-Type` on the Windows machine; it was **not run**.
+with `Add-Type` on the Windows machine; it was **not run** then. It ran
+on 2026-11-16, before the release of 0.1.1:
+[130/0](#release-011-2026-11-16).
 
 **UI looked at:** the real Svelte components with Tauri's IPC mocks and
 sample data (a harness in the session's scratchpad, not in the repository),

@@ -44,9 +44,11 @@ snapshot (ADR-041). An enrolled device syncs its vault at startup, on focus
 by the sidebar's Account item (ADR-042). The `example` feature was removed
 (a stored choice for it is ignored and kept). WSL2 only: `test:headless`
 (Vitest 284, Rust 566, all guards), clippy (default and test-profile),
-recorder build 594; the title bar and placement were **not run on Windows**
-(no native build this session; `windows.ps1` gained checks that have not
-run), no desktop driver and no provider was run.
+recorder build 594; the title bar and placement first ran on native
+Windows 11 on 2026-11-16 (`windows.ps1` 130/0 with new frame checks,
+`windows-isolated.ps1` 57/0;
+[status](status/status.md#release-011-2026-11-16)); the Cloud Storage
+drivers and no provider were run.
 [Infrastructure proposal for accounts](development/server.md#production-deployment-proposal-2026-11-15).
 
 **Redesign, macOS, GitHub Releases updates** (2026-11-15, committed as
