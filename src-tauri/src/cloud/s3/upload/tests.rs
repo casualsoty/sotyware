@@ -1082,14 +1082,32 @@ async fn a_stalled_upload_times_out_and_stores_nothing() {
     let src = dir.file("src", 24 * MIB, 34);
     let started = Instant::now();
     let (result, events) = run(&s, "stalled", &src, &Arc::new(TransferControl::new())).await;
-    let elapsed = started.elapsed();
+    let ended = Instant::now();
+    let elapsed = ended.duration_since(started);
     let e = expect_err(result);
-    println!("stalled after {elapsed:?}: {e}");
+    // The stall timer ends the request `stall_timeout` after the body last
+    // moved, whatever came before (hashing 24 MiB, the existence check,
+    // filling the socket buffers), which a slow machine stretches (10.2 s
+    // in all on a loaded Intel Mac runner): measure from the last progress
+    // update instead. That can be a held-back one, flushed up to one
+    // interval after the last move (about 1.3 s before the timeout here),
+    // and timers run late on a loaded machine: hence two intervals' margin.
+    let last_update = events
+        .iter()
+        .rev()
+        .find(|(_, p)| p.stage == UploadStage::Sending)
+        .map(|(t, _)| *t)
+        .expect("a sending update");
+    let quiet = ended.duration_since(last_update);
+    println!("stalled after {elapsed:?}, {quiet:?} after the last progress update: {e}");
     assert!(matches!(e.error, StorageError::Timeout(_)), "{e:?}");
     assert_eq!(e.remote, RemoteOutcome::NothingStored);
+    // The 1.5 s stall timeout ended it, not the 30 s read timeout.
+    assert!(elapsed >= Duration::from_millis(1500), "{elapsed:?}");
     assert!(
-        elapsed >= Duration::from_millis(1500) && elapsed < Duration::from_secs(10),
-        "{elapsed:?}"
+        quiet >= Duration::from_millis(1500) - 2 * PROGRESS_INTERVAL
+            && quiet < Duration::from_secs(10),
+        "{quiet:?} after the last progress update, {elapsed:?} in all"
     );
     check_progress(&events, 24 * MIB as u64, false);
     assert!(!server.object_path(BUCKET, "stalled").exists());
