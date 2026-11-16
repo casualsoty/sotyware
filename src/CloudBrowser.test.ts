@@ -357,17 +357,18 @@ describe("opening a bucket", () => {
 });
 
 describe("the bucket's tabs (ADR-041)", () => {
-  it("opens on the files, mounts Usage and Snapshots only when chosen, and keeps the files mounted", async () => {
+  it("opens on the files, mounts Usage, Snapshots and Sync only when chosen, and keeps the files mounted", async () => {
     tree = { photos: PHOTOS };
     const root = await render();
     const b = await openBucket(root);
     const tabs = [...b.querySelectorAll<HTMLButtonElement>('[role="tablist"] [role="tab"]')];
-    expect(tabs.map((t) => text(t))).toEqual(["Files", "Usage & costs", "Snapshots & backups"]);
-    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    expect(tabs.map((t) => text(t))).toEqual(["Files", "Usage & costs", "Snapshots & backups", "Sync"]);
+    expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual(["true", "false", "false", "false"]);
     const files = b.querySelector<HTMLElement>("#bucket-panel-files")!;
     expect(files.hidden).toBe(false);
     expect(b.querySelector("[data-usage]")).toBeNull();
     expect(b.querySelector("[data-snapshots]")).toBeNull();
+    expect(b.querySelector("[data-sync-tab]")).toBeNull();
 
     tabs[1]!.click();
     await settle();
@@ -382,6 +383,11 @@ describe("the bucket's tabs (ADR-041)", () => {
     await settle();
     expect(b.querySelector("#bucket-panel-snapshots [data-snapshots]")).not.toBeNull();
     expect(tabs[2]!.getAttribute("aria-selected")).toBe("true");
+    // End: the last tab, the bucket's sync with a folder (ADR-043).
+    b.querySelector<HTMLElement>('[role="tablist"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    await settle();
+    expect(b.querySelector("#bucket-panel-sync [data-sync-tab]")).not.toBeNull();
+    expect(tabs[3]!.getAttribute("aria-selected")).toBe("true");
     b.querySelector<HTMLElement>('[role="tablist"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     await settle();
     expect(files.hidden).toBe(false);

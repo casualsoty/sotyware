@@ -684,6 +684,18 @@ impl StorageUsage {
         (all, None)
     }
 
+    /// The newest measurement of `account`, if any (blocking: SQLite).
+    pub fn latest(&self, account: &str) -> Option<Measurement> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        store
+            .as_mut()
+            .ok()?
+            .history(account, 1)
+            .ok()?
+            .into_iter()
+            .next()
+    }
+
     /// The overview (blocking: SQLite).
     pub fn overview(
         &self,

@@ -108,6 +108,14 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["r
 minisign-verify = "0.3"
 # Already in the tree through Tauri: release versions in the update check.
 semver = "1"
+# Folder sync (ADR-043): recursive file change notifications in the sync
+# folder (ReadDirectoryChangesW, inotify, FSEvents). Only the default
+# feature, FSEvents on macOS; no channel or async integration crates.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# Folder sync's "Open folder" (ADR-043): the official opener plugin's
+# `open_path`, called from Rust only. The plugin is not registered and the
+# page gets no `opener:` permission.
+tauri-plugin-opener = "2"
 
 [dev-dependencies]
 # Already in the dependency tree through tauri; used by tests that check
@@ -154,6 +162,15 @@ aws-smithy-types = "1"
 # Windows Credential Manager for keyring-core (ADR-017). No default features:
 # `search` (and its regex) is not needed.
 windows-native-keyring-store = { version = "1", default-features = false }
+# Already in the tree through notify and tauri: folder sync's free space
+# check (`GetDiskFreeSpaceExW`) and hiding its own folder in a sync folder
+# (`SetFileAttributesW`), ADR-043.
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+# Already in the tree (through async-io and others): folder sync's free
+# space check (`statvfs`) without unsafe code, ADR-043.
+rustix = { version = "1", default-features = false, features = ["fs", "std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The macOS Keychain for keyring-core (ADR-017, ADR-037): the "legacy"

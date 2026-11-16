@@ -5,6 +5,8 @@
   import Account from "./Account.svelte";
   import Backup from "./Backup.svelte";
   import { AutoSync, syncSummary } from "./accountSync.svelte";
+  import { overallSummary, stateLabel } from "./folderSync";
+  import { FolderSyncModel } from "./folderSyncModel.svelte";
   import { listAccounts, type AccountInfo } from "./cloud";
   import CloudStorage from "./CloudStorage.svelte";
   import { formatSize } from "./format";
@@ -49,6 +51,19 @@
   /** Bumped after a sync, so Cloud Storage reads its list again. */
   let accountsGeneration = $state(0);
   const syncStatus = $derived(syncSummary(autoSync.status));
+
+  /** Every folder sync's live state (ADR-043): the sidebar's indicator and
+   * the bucket view's Sync tab. The engines run in Rust either way. */
+  const folderSyncs = new FolderSyncModel();
+  const folderSync = $derived(overallSummary(folderSyncs.overview));
+  const syncedAccounts = $derived(
+    Object.fromEntries(
+      (folderSyncs.overview?.syncs ?? []).map((s) => {
+        const l = stateLabel(s);
+        return [s.account, { tone: l.tone, label: l.label }];
+      }),
+    ),
+  );
   const ustatus = $derived(updates.status);
   const uinstall = $derived(updates.install);
 
@@ -170,6 +185,8 @@
     void loadAccounts();
     void updates.load();
     void sync("startup");
+    void folderSyncs.start();
+    return () => folderSyncs.stop();
   });
 </script>
 
@@ -189,6 +206,8 @@
     <Sidebar
       showBrand={!customChrome}
       {syncStatus}
+      {folderSync}
+      {syncedAccounts}
       {section}
       {browsing}
       {accounts}
@@ -296,6 +315,7 @@
         onopenbackups={() => void navigate("backups")}
         onlocalchange={() => void sync("change")}
         generation={accountsGeneration}
+        {folderSyncs}
       />
     {:else if section === "backups"}
       <Backup />

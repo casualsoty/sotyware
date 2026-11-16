@@ -46,6 +46,7 @@ mod app_menu;
 pub(crate) mod backup;
 pub mod cloud;
 mod features;
+pub(crate) mod folder_sync;
 pub(crate) mod journal;
 mod storage;
 #[cfg(any(test, feature = "test-profile"))]
@@ -435,7 +436,23 @@ pub fn run() {
             updates::install_update,
             updates::cancel_update,
             updates::postpone_update,
-            updates::restart_after_update
+            updates::restart_after_update,
+            folder_sync::list_folder_syncs,
+            folder_sync::watch_folder_syncs,
+            folder_sync::unwatch_folder_syncs,
+            folder_sync::choose_sync_folder,
+            folder_sync::discard_sync_folder_choice,
+            folder_sync::enable_folder_sync,
+            folder_sync::set_folder_sync_paused,
+            folder_sync::sync_folder_now,
+            folder_sync::retry_folder_sync,
+            folder_sync::set_folder_sync_interval,
+            folder_sync::disable_folder_sync,
+            folder_sync::change_sync_folder,
+            folder_sync::open_sync_folder,
+            folder_sync::folder_sync_details,
+            folder_sync::resolve_folder_sync_conflict,
+            folder_sync::answer_folder_sync_deletions
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -643,6 +660,17 @@ pub fn run() {
         .record_in(Arc::clone(&journal));
     app.state::<Arc<cloud::operations::CloudOperations>>()
         .record_in(Arc::clone(&journal));
+    // Folder sync (ADR-043): its configurations and synced state in their
+    // own database; the `folder-sync` feature starts the engines in
+    // `setup` through this link. No engine runs before that.
+    let folder_syncs = folder_sync::FolderSyncs::load(
+        storage::open_sync_store(clone_dir(&data_dir)),
+        Arc::clone(&app.state::<Arc<cloud::dashboard::CloudAccounts>>()),
+        data_dir.as_ref().ok().cloned(),
+    );
+    folder_syncs.record_in(Arc::clone(&journal));
+    let _ = folder_sync::LINK.set(Arc::clone(&folder_syncs));
+    app.manage(folder_syncs);
     // Backup jobs and their history (ADR-031): their own database and a
     // spool folder sotyware owns. The `backup-scheduler` feature starts the
     // scheduler in `setup` through this link.
@@ -712,6 +740,7 @@ pub fn run() {
             storage::UPDATES_FILE_NAME,
             storage::WINDOW_STATE_FILE_NAME,
             storage::USAGE_FILE_NAME,
+            storage::SYNC_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -772,6 +801,11 @@ pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     // (bounded wait, ADR-026).
     if let Some(ops) = app.try_state::<Arc<cloud::operations::CloudOperations>>() {
         ops.shutdown(cloud::operations::SHUTDOWN_WAIT);
+    }
+    // Every folder sync stops: transfers cancelled, partial downloads
+    // removed (bounded wait, ADR-043).
+    if let Some(syncs) = app.try_state::<Arc<folder_sync::FolderSyncs>>() {
+        syncs.shutdown(folder_sync::SHUTDOWN_WAIT);
     }
     // A running usage measurement stops (it only reads; ADR-041).
     if let Some(usage) = app.try_state::<Arc<cloud::usage::StorageUsage>>() {
@@ -1063,7 +1097,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041, ADR-043); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY), and the window controls on Windows only
         // (title_bar::CAPABILITY).
         assert_eq!(
@@ -1152,6 +1186,22 @@ mod tests {
                 "allow-cancel-update",
                 "allow-postpone-update",
                 "allow-restart-after-update",
+                "allow-list-folder-syncs",
+                "allow-watch-folder-syncs",
+                "allow-unwatch-folder-syncs",
+                "allow-choose-sync-folder",
+                "allow-discard-sync-folder-choice",
+                "allow-enable-folder-sync",
+                "allow-set-folder-sync-paused",
+                "allow-sync-folder-now",
+                "allow-retry-folder-sync",
+                "allow-set-folder-sync-interval",
+                "allow-disable-folder-sync",
+                "allow-change-sync-folder",
+                "allow-open-sync-folder",
+                "allow-folder-sync-details",
+                "allow-resolve-folder-sync-conflict",
+                "allow-answer-folder-sync-deletions",
                 "core:window:allow-set-theme",
                 "core:window:allow-is-decorated",
             ])

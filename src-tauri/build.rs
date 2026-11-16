@@ -88,6 +88,22 @@ fn main() {
             "cancel_update",
             "postpone_update",
             "restart_after_update",
+            "list_folder_syncs",
+            "watch_folder_syncs",
+            "unwatch_folder_syncs",
+            "choose_sync_folder",
+            "discard_sync_folder_choice",
+            "enable_folder_sync",
+            "set_folder_sync_paused",
+            "sync_folder_now",
+            "retry_folder_sync",
+            "set_folder_sync_interval",
+            "disable_folder_sync",
+            "change_sync_folder",
+            "open_sync_folder",
+            "folder_sync_details",
+            "resolve_folder_sync_conflict",
+            "answer_folder_sync_deletions",
         ]));
     if windows_msvc_target() {
         attributes = attributes

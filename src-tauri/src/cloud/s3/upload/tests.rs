@@ -307,6 +307,112 @@ async fn a_multipart_upload_checks_the_destination_again_before_completing() {
     assert_eq!(fs::read(&theirs).unwrap(), b"theirs");
 }
 
+/// Folder sync's replacement (ADR-043): only over the object it expects.
+/// Against the versioned in-memory server, whose `HeadObject` sends the
+/// ETag as providers do (s3s-fs sends none).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replacement_goes_only_over_the_object_it_expects() {
+    let (server, data) =
+        TestServer::start_versioned("upload-key", "upload-Secret-0123456789", &[(BUCKET, true)])
+            .await;
+    let s = store(&server);
+    let dir = TempDir::new("up-replace");
+    let first = dir.file("first", 1000, 5);
+    let second = dir.file("second", 2000, 6);
+    let original = run(&s, "doc", &first, &Arc::new(TransferControl::new()))
+        .await
+        .0
+        .unwrap();
+    let etag = original
+        .e_tag
+        .clone()
+        .expect("the verification reads the ETag");
+    let replace = |e_tag: &str| UploadOptions {
+        destination: Destination::Replace {
+            e_tag: e_tag.to_owned(),
+        },
+        mtime_ms: Some(1_700_000_000_123),
+    };
+    let upload = |options: UploadOptions, key: &'static str| {
+        let s = &s;
+        let second = second.clone();
+        async move {
+            s.upload_with(
+                BUCKET,
+                key,
+                &second,
+                &options,
+                &Arc::new(TransferControl::new()),
+                &mut |_| {},
+            )
+            .await
+        }
+    };
+    // Another object than the one expected: nothing sent.
+    let before = server.ops().len();
+    let e = upload(replace("not-the-etag"), "doc").await.unwrap_err();
+    assert!(matches!(e.error, StorageError::AlreadyExists(_)), "{e:?}");
+    assert_eq!(e.remote, RemoteOutcome::NothingStored);
+    assert_eq!(server.ops()[before..], ["HeadObject"]);
+    // No object at all: nothing sent either.
+    let e = upload(replace(&etag), "missing").await.unwrap_err();
+    assert!(matches!(e.error, StorageError::NotFound(_)), "{e:?}");
+    // The expected object: replaced, verified, the time stored with it.
+    let report = upload(replace(&etag), "doc").await.unwrap();
+    assert_eq!(report.sha256, sha256_hex(&fs::read(&second).unwrap()));
+    assert_ne!(report.e_tag.as_deref(), Some(etag.as_str()));
+    {
+        let st = data.lock();
+        let versions = &st.buckets[BUCKET].keys["doc"];
+        assert_eq!(versions.len(), 2, "the earlier version is kept");
+        assert_eq!(*versions[1].data, fs::read(&second).unwrap());
+        assert_eq!(
+            versions[1].metadata.get(MTIME_METADATA).map(String::as_str),
+            Some("1700000000123")
+        );
+    }
+    // A new upload never replaces, with or without a time.
+    let e = upload(UploadOptions::default(), "doc").await.unwrap_err();
+    assert!(matches!(e.error, StorageError::AlreadyExists(_)), "{e:?}");
+}
+
+/// Where `HeadObject` sends no ETag (s3s-fs), a replacement is refused, never
+/// sent blind.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replacement_without_an_etag_to_compare_is_refused() {
+    let server = server().await;
+    let s = store(&server);
+    let dir = TempDir::new("up-replace-noetag");
+    let first = dir.file("first", 1000, 5);
+    let second = dir.file("second", 12 * MIB, 6);
+    run(&s, "doc", &first, &Arc::new(TransferControl::new()))
+        .await
+        .0
+        .unwrap();
+    let e = s
+        .upload_with(
+            BUCKET,
+            "doc",
+            &second,
+            &UploadOptions {
+                destination: Destination::Replace {
+                    e_tag: "anything".into(),
+                },
+                mtime_ms: None,
+            },
+            &Arc::new(TransferControl::new()),
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(e.error, StorageError::AlreadyExists(_)), "{e:?}");
+    assert_eq!(
+        fs::read(server.object_path(BUCKET, "doc")).unwrap(),
+        fs::read(&first).unwrap()
+    );
+    assert_eq!(count(&server.ops(), "CreateMultipartUpload"), 0);
+}
+
 /// A store whose profile has conditional writes established (tests only,
 /// ADR-029); the test server enforces `If-None-Match: *` like Amazon.
 fn conditional_store(server: &TestServer) -> S3Store {

@@ -233,6 +233,22 @@ order:
 Synchronisation, folder watching and a virtual filesystem stay ideas until then (temporary share links exist,
 ADR-026; public ACLs do not).
 
+## Folder sync (after ADR-043)
+
+- A desktop driver for the Sync tab (Linux virtual display and native
+  Windows 11): choose a folder in the native dialog, Explorer/file manager
+  changes, pause, move, turn off; then the release binary on native
+  Windows 11 (file locking by Office, junctions, NTFS case rules, a
+  disconnected USB drive).
+- With the maintainer's approval, one sync against a test bucket at
+  Backblaze (ETags of single and multipart objects in listings and `HEAD`,
+  delete markers, listing costs), and later Hetzner.
+- A large-bucket run (100,000 objects) for planning time and memory.
+- Possible later features, each a decision of its own: online-only files
+  on demand (Windows Cloud Files API), selective folders (the configuration
+  has a prefix), per-sync bandwidth limits, exclusion patterns, several
+  syncs per bucket.
+
 ## Known follow-ups (not started, no design yet)
 
 - CI follow-ups (the workflows exist since `5fe62b9`, see
@@ -291,4 +307,6 @@ request and a recorded decision.
 - Third-party plugins (possibly sandboxed WASM). The built-in feature registry
   ([ADR-014](../architecture/decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry))
   is not a plugin runtime.
-- Synchronization.
+- Synchronization beyond folder sync (ADR-043): online-only files,
+  selective folders, bandwidth limits, exclusions (listed under
+  [Folder sync](#folder-sync-after-adr-043)).

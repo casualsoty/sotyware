@@ -245,7 +245,7 @@ impl CredentialInput {
 }
 
 /// What kind of failure a command had, for the page to choose its message.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ErrorKind {
     /// Something in the form is not valid; nothing was changed.
@@ -1186,10 +1186,12 @@ pub async fn remove_cloud_account(
     id: String,
 ) -> Result<(), CommandError> {
     remove_account(Arc::clone(&state), id.clone()).await?;
-    // Its favorites and recent items go with it (local data only).
+    // Its favorites and recent items go with it (local data only), and its
+    // folder sync is turned off (the folder's files stay, ADR-043).
     let places = Arc::clone(&places);
     blocking(move || {
         places.forget(&id);
+        crate::folder_sync::account_removed(&id);
         Ok(())
     })
     .await

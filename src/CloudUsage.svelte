@@ -14,6 +14,7 @@
     type UsageOverview,
     type UsageProgress,
   } from "./cloudUsage";
+  import type { SyncStatus } from "./folderSync";
   import { formatAgo, formatDecimalSize } from "./format";
   import Icon from "./Icon.svelte";
   import { loadDownloads, saveDownloads } from "./usagePrefs";
@@ -26,9 +27,12 @@
 
   interface Props {
     account: AccountInfo;
+    /** The bucket's folder sync, if it has one (ADR-043): what it keeps on
+     * this computer, told apart from what the bucket stores. */
+    sync?: SyncStatus | null;
   }
 
-  let { account }: Props = $props();
+  let { account, sync = null }: Props = $props();
 
   let overview = $state<UsageOverview | null>(null);
   let loadError = $state<string | null>(null);
@@ -463,6 +467,28 @@
       {:else}
         <p class="muted">{group.noEstimate}</p>
       {/if}
+    </div>
+  {/if}
+
+  {#if sync}
+    <div class="card local-copy" aria-labelledby="local-copy-heading" data-usage-local>
+      <h3 class="section-title" id="local-copy-heading">On this computer (folder sync)</h3>
+      <p class="small-text muted">
+        A copy of the bucket's current files is kept in <span class="mono">{sync.path}</span>. It takes space on this computer,
+        not in the bucket, and costs nothing at the provider beyond the downloads that filled it.
+      </p>
+      <dl class="meta-list">
+        <dt>Synced here</dt>
+        <dd>{formatDecimalSize(sync.bytes)} in {sync.files.toLocaleString()} files</dd>
+        <dt>Waiting to upload</dt>
+        <dd>{sync.pendingUploads.toLocaleString()} files, {formatDecimalSize(sync.pendingUploadBytes)}</dd>
+        <dt>Waiting to download</dt>
+        <dd>{sync.pendingDownloads.toLocaleString()} files, {formatDecimalSize(sync.pendingDownloadBytes)}</dd>
+        {#if sync.trashFiles > 0}
+          <dt>Sync trash</dt>
+          <dd>{formatDecimalSize(sync.trashBytes)} in {sync.trashFiles.toLocaleString()} files (kept 30 days)</dd>
+        {/if}
+      </dl>
     </div>
   {/if}
 </section>

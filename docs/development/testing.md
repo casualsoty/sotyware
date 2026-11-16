@@ -1658,6 +1658,81 @@ in a fresh test profile (or an installed copy that was never started):
 Record the result with the build, Windows version and scaling in
 [status.md](../status/status.md).
 
+## Folder sync
+
+Folder sync (ADR-043, [folder-sync.md](../architecture/folder-sync.md)):
+headless, in `npm run test:headless`; nothing needs a display or a
+provider:
+
+```bash
+cd src-tauri && cargo test --lib folder_sync storage::folder_sync replacement
+npm run test:frontend -- src/CloudSync.test.ts src/App.test.ts src/CloudBrowser.test.ts
+```
+
+- `folder_sync/model.rs`: every row of the decision table (new, unchanged,
+  changed on one side, on both, deleted, a change against a deletion,
+  folders, a file against a folder), keys ↔ relative paths (prefixes, own
+  folder, empty segments), Windows and Unix name rules on every system,
+  long keys, exclusions, the deletion guard's thresholds, retry and offline
+  delays, conflict copy names, UTC dates and trash ages, intervals.
+- `folder_sync/scan.rs`: the walk (own folder and system files left out),
+  links never followed, an unreadable folder reported as unknown (Unix),
+  hashing with its stamp, the marker and the folder states, the trash
+  (never replacing, old days removed), inspecting a chosen folder.
+- `storage/folder_sync.rs`: the schema on disk and the TEMP tables per
+  session, only differing paths as candidates (paged), an unfinished
+  listing never dropping entries, a folder marker never cleared by an
+  implied folder, a full scan keeping what is below an unreadable folder,
+  subtrees by range (never by `LIKE`), move sources, removing one sync
+  only, bounded activity, counts.
+- `folder_sync/migrate.rs`: a verified copy (content and time, never over a
+  file); `watch.rs`: relative paths.
+- `folder_sync/tests.rs`, end to end with real folders against the
+  in-process versioned S3 server (s3s-fs for multipart), passes driven by
+  hand: choosing (checked, marked, one per bucket; refused: a whole drive,
+  sotyware's data folder, a missing folder, folders inside or around
+  another sync's, a read-only folder on Unix, an unknown interval); an
+  empty bucket receiving a folder (folder markers only for empty folders;
+  a second pass only lists); a bucket coming down (Unicode, implied and
+  marker folders, keys skipped); a folder with files merged (equal content
+  recorded without a transfer, different content kept twice); changes both
+  ways (a touched file recorded, not sent); a watched path looked at alone;
+  renames as server-side copies and local renames (nothing sent); deletions
+  both ways (delete markers, the sync trash, no version removed); a change
+  winning over a deletion; conflicts kept and settled three ways; the
+  deletion guard holding an emptied listing (restore, then an allowed
+  deletion); a failed listing never deleting (offline, refused); a failed
+  transfer retried after its time or on "Try again now"; a disconnected
+  drive and an empty folder in its place (nothing deleted, sync goes on
+  when it is back); a full drive holding downloads while uploads go on; an
+  unreadable folder never taken as deleted (Unix); links, system files and
+  unsupported names skipped; a changed account bucket stopping the sync; a
+  12 MiB file uploaded in three parts and downloaded whole on a second
+  folder with its time; a restart during transfers (a fresh service on the
+  same database) without duplicates and with the staging folder cleared;
+  an inconsistent synced state repaired without a transfer; pausing,
+  turning off (files and objects kept) and the running engine with a real
+  watcher and a nudge; moving a folder (one drive: nothing sent again;
+  another drive: `/dev/shm` where it is another file system, else copying
+  forced: hashed, not sent); starting fresh; re-linking a folder that lost
+  its marker; removing the account; names differing only in case (only
+  where the file system ignores case: Windows and macOS runners).
+- `cloud/s3/upload/tests.rs`: a replacement only over the expected ETag
+  (another ETag or none refused with only a `HeadObject`; the time stored);
+  refused where `HeadObject` sends no ETag (s3s-fs).
+- Frontend: `CloudSync.test.ts` (no sync: choose, cancel, the facts shown
+  before anything starts, a problem blocking; with a sync: figures, live
+  updates and transfers, pause/resume/now/open by id only, a refusal shown,
+  the guard's two answers, conflicts settled, activity, problems with
+  retry, not synced, interval, turning off after a question, moving only
+  into an empty folder; the parsers); `App.test.ts` (the sidebar's sync
+  glyph and summary, live updates, late overviews ignored);
+  `CloudBrowser.test.ts` (the fourth tab mounted only when chosen).
+
+Not run: the release binary on a desktop (no driver exercises the Sync tab
+yet), native Windows or macOS (Windows file locking, junctions, Explorer,
+NTFS case-insensitivity), a real provider.
+
 ## Update tests
 
 ```bash

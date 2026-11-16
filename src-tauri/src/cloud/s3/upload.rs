@@ -79,6 +79,7 @@
 //! object. It is never deleted automatically (on a versioned bucket a delete
 //! would only hide it, and it may be the user's only good copy).
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -98,8 +99,8 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Notify;
 
 use super::{
-    MIB, S3Store, SHA256_METADATA, StorageError, TransferControl, UploadPlan, UploadReport,
-    classify, hex, io_error, plan_upload,
+    MIB, MTIME_METADATA, S3Store, SHA256_METADATA, StorageError, TransferControl, UploadPlan,
+    UploadReport, classify, hex, io_error, plan_upload,
 };
 use crate::journal::{self, EntryKind, EntryRow, EntryState, JournalLink};
 
@@ -601,6 +602,37 @@ pub enum AbortOutcome {
 
 use AbortOutcome as Abort;
 
+/// What an upload's destination key may hold when the upload checks it
+/// (before any file data is sent and, for multipart, again right before
+/// completion).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Destination {
+    /// Nothing: an existing object fails the upload with
+    /// [`StorageError::AlreadyExists`]. Every upload the user starts uses
+    /// this; nothing is ever overwritten by accident.
+    #[default]
+    New,
+    /// Exactly the object with this ETag (quotes removed), the version the
+    /// caller last saw: folder sync replacing a file it synced before
+    /// (ADR-043). Another object there fails the upload with
+    /// [`StorageError::AlreadyExists`], no object with
+    /// [`StorageError::NotFound`]; nothing is sent then. Between the check
+    /// and the write another client can still change the object, as for
+    /// [`Self::New`] (no `If-Match`: no shipped profile has conditional
+    /// writes established, ADR-029).
+    Replace { e_tag: String },
+}
+
+/// How [`S3Store::upload_with`] stores a file, beyond its content.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UploadOptions {
+    pub destination: Destination,
+    /// The file's modification time (milliseconds since the Unix epoch),
+    /// stored as [`MTIME_METADATA`] so another computer's folder sync can
+    /// give the downloaded file the same time (ADR-043).
+    pub mtime_ms: Option<i64>,
+}
+
 impl S3Store {
     /// Uploads `path` to `bucket/key` (the key exactly as given; single PUT
     /// or multipart per [`plan_upload`]), storing the file's SHA-256 with the
@@ -615,6 +647,29 @@ impl S3Store {
         bucket: &str,
         key: &str,
         path: &Path,
+        control: &Arc<TransferControl>,
+        progress: &mut (dyn FnMut(UploadProgress) + Send),
+    ) -> Result<UploadReport, UploadError> {
+        self.upload_with(
+            bucket,
+            key,
+            path,
+            &UploadOptions::default(),
+            control,
+            progress,
+        )
+        .await
+    }
+
+    /// [`Self::upload`] with `options`: what the destination may hold
+    /// ([`Destination`]) and the modification time to store. With the
+    /// default options it is exactly [`Self::upload`].
+    pub async fn upload_with(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        options: &UploadOptions,
         control: &Arc<TransferControl>,
         progress: &mut (dyn FnMut(UploadProgress) + Send),
     ) -> Result<UploadReport, UploadError> {
@@ -646,6 +701,7 @@ impl S3Store {
                 key,
                 path,
                 first,
+                options,
                 link.as_ref(),
                 control,
                 &mut reporter,
@@ -666,31 +722,33 @@ impl S3Store {
         key: &str,
         path: &Path,
         first: FirstPass,
+        options: &UploadOptions,
         link: Option<&JournalLink>,
         control: &Arc<TransferControl>,
         reporter: &mut Reporter<'_>,
     ) -> Result<UploadReport, UploadError> {
-        self.check_destination(bucket, key, control)
+        self.check_destination(bucket, key, &options.destination, control)
             .await
             .map_err(UploadError::nothing)?;
         let size = first.stamp.len;
         let (parts, version_id) = match first.plan {
             UploadPlan::Single => (
                 1,
-                self.put_single(bucket, key, path, &first, control, reporter)
+                self.put_single(bucket, key, path, &first, options, control, reporter)
                     .await?,
             ),
             UploadPlan::Multipart { part_size, parts } => (
                 parts,
                 self.put_multipart(
-                    bucket, key, path, &first, part_size, link, control, reporter,
+                    bucket, key, path, &first, part_size, options, link, control, reporter,
                 )
                 .await?,
             ),
         };
         reporter.report(UploadStage::Sending, size, true);
         reporter.report(UploadStage::Verifying, size, true);
-        self.verify_upload(bucket, key, version_id.as_deref(), size, &first.sha256)
+        let e_tag = self
+            .verify_upload(bucket, key, version_id.as_deref(), size, &first.sha256)
             .await
             .map_err(|error| UploadError {
                 error,
@@ -701,6 +759,7 @@ impl S3Store {
             sha256: first.sha256,
             parts,
             version_id,
+            e_tag,
         })
     }
 
@@ -738,13 +797,16 @@ impl S3Store {
     }
 
     /// Whether writes carry `If-None-Match: *`: only where the provider is
-    /// known to enforce it (ADR-029).
-    fn conditional_put(&self) -> bool {
-        self.account
-            .profile
-            .capabilities
-            .conditional_put
-            .established()
+    /// known to enforce it (ADR-029), and only for a new object (a
+    /// replacement expects one there).
+    fn conditional_put(&self, destination: &Destination) -> bool {
+        *destination == Destination::New
+            && self
+                .account
+                .profile
+                .capabilities
+                .conditional_put
+                .established()
     }
 
     /// Settings for requests that carry file data: no read timeout and no
@@ -830,21 +892,34 @@ impl S3Store {
         })
     }
 
-    /// Fails unless `bucket/key` is free. Cancellable.
+    /// Fails unless `bucket/key` holds what `destination` allows: nothing,
+    /// or exactly the expected object. Cancellable.
     async fn check_destination(
         &self,
         bucket: &str,
         key: &str,
+        destination: &Destination,
         control: &TransferControl,
     ) -> Result<(), StorageError> {
-        match control
+        let found = match control
             .unless_cancelled(self.head_object(bucket, key))
             .await
         {
-            None => Err(StorageError::Cancelled),
-            Some(Ok(None)) => Ok(()),
-            Some(Ok(Some(_))) => Err(StorageError::AlreadyExists(key.to_owned())),
-            Some(Err(e)) => Err(e),
+            None => return Err(StorageError::Cancelled),
+            Some(found) => found?,
+        };
+        match (destination, found) {
+            (Destination::New, None) => Ok(()),
+            (Destination::New, Some(_)) => Err(StorageError::AlreadyExists(key.to_owned())),
+            (Destination::Replace { e_tag }, Some(d)) if d.e_tag.as_deref() == Some(e_tag) => {
+                Ok(())
+            }
+            (Destination::Replace { .. }, Some(_)) => {
+                Err(StorageError::AlreadyExists(key.to_owned()))
+            }
+            (Destination::Replace { .. }, None) => Err(StorageError::NotFound(format!(
+                "{key}: the object to replace is gone"
+            ))),
         }
     }
 
@@ -982,12 +1057,14 @@ impl S3Store {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn put_single(
         &self,
         bucket: &str,
         key: &str,
         path: &Path,
         first: &FirstPass,
+        options: &UploadOptions,
         control: &Arc<TransferControl>,
         reporter: &mut Reporter<'_>,
     ) -> Result<Option<String>, UploadError> {
@@ -1029,14 +1106,14 @@ impl S3Store {
                 .await
                 .map_err(UploadError::nothing)?
         };
-        let conditional = self.conditional_put();
+        let conditional = self.conditional_put(&options.destination);
         let send = self
             .client
             .put_object()
             .bucket(bucket)
             .key(key)
             .content_length(i64::try_from(size).unwrap_or(i64::MAX))
-            .metadata(SHA256_METADATA, &first.sha256)
+            .set_metadata(Some(upload_metadata(&first.sha256, options.mtime_ms)))
             .set_if_none_match(conditional.then(|| "*".to_owned()))
             .body(body)
             .customize()
@@ -1075,6 +1152,7 @@ impl S3Store {
         path: &Path,
         first: &FirstPass,
         part_size: u64,
+        options: &UploadOptions,
         link: Option<&JournalLink>,
         control: &Arc<TransferControl>,
         reporter: &mut Reporter<'_>,
@@ -1087,7 +1165,7 @@ impl S3Store {
             .create_multipart_upload()
             .bucket(bucket)
             .key(key)
-            .metadata(SHA256_METADATA, &first.sha256)
+            .set_metadata(Some(upload_metadata(&first.sha256, options.mtime_ms)))
             .send()
             .await
             .map_err(|e| UploadError::nothing(classify("start multipart upload", e)))?;
@@ -1132,7 +1210,8 @@ impl S3Store {
                     bucket, key, &upload_id, path, first, part_size, control, reporter,
                 )
                 .await?;
-            self.check_destination(bucket, key, control).await?;
+            self.check_destination(bucket, key, &options.destination, control)
+                .await?;
             if !unchanged(path, first.stamp).await {
                 return Err(StorageError::FileChanged(path.display().to_string()));
             }
@@ -1160,7 +1239,7 @@ impl S3Store {
             }
         };
         // Past the commit point: not cancellable.
-        let conditional = self.conditional_put();
+        let conditional = self.conditional_put(&options.destination);
         let completed = self
             .client
             .complete_multipart_upload()
@@ -1360,7 +1439,7 @@ impl S3Store {
             .verify_upload(bucket, key, None, first.stamp.len, &first.sha256)
             .await
         {
-            Ok(()) => Ok(None),
+            Ok(_) => Ok(None),
             Err(StorageError::Integrity(_)) => Err(UploadError::nothing(
                 StorageError::AlreadyExists(key.to_owned()),
             )),
@@ -1371,6 +1450,8 @@ impl S3Store {
         }
     }
 
+    /// Returns the stored object's ETag (quotes removed), if the provider
+    /// sent one.
     async fn verify_upload(
         &self,
         bucket: &str,
@@ -1378,7 +1459,7 @@ impl S3Store {
         version_id: Option<&str>,
         size: u64,
         sha256: &str,
-    ) -> Result<(), StorageError> {
+    ) -> Result<Option<String>, StorageError> {
         let out = self
             .client
             .head_object()
@@ -1411,8 +1492,18 @@ impl S3Store {
                 "{key}: the stored SHA-256 metadata is missing or differs"
             )));
         }
-        Ok(())
+        Ok(out.e_tag().map(|e| e.trim_matches('"').to_owned()))
     }
+}
+
+/// The user metadata of an upload: the content's SHA-256, and the file's
+/// modification time if one is given.
+fn upload_metadata(sha256: &str, mtime_ms: Option<i64>) -> HashMap<String, String> {
+    let mut metadata = HashMap::from([(SHA256_METADATA.to_owned(), sha256.to_owned())]);
+    if let Some(ms) = mtime_ms {
+        metadata.insert(MTIME_METADATA.to_owned(), ms.to_string());
+    }
+    metadata
 }
 
 #[cfg(test)]

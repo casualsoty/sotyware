@@ -26,7 +26,7 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   bar (native moving, snapping and resizing kept); it opens at half your
   primary screen (at least 900 × 540), centred, then where you left it.
 - Built-in features: native Rust modules that can be enabled and disabled from
-  the dashboard (scheduled backups, automatic update checks); each
+  the dashboard (scheduled backups, automatic update checks, folder sync); each
   choice is saved locally (SQLite, in the app's data folder, private to the
   user).
 - **Cloud Storage** for S3-compatible buckets (Backblaze B2, Hetzner or any
@@ -56,7 +56,14 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   - **snapshots and backups** per bucket: what Backblaze's own snapshots are
     (made only in its web console; sotyware cannot manage them), and
     sotyware's backup snapshots of the bucket: details, back up now,
-    verify, delete one (after typing `delete`).
+    verify, delete one (after typing `delete`);
+  - **sync with a folder on this computer**: choose any folder on any
+    drive and work with the bucket's files in your file manager as
+    ordinary files; changes go both ways in the background (watched here,
+    checked in the bucket every 5 to 60 minutes); a file changed on both
+    sides is kept twice; files deleted in the bucket go to a sync trash in
+    the folder for 30 days; many deletions at once wait for your answer;
+    pause, move the folder or turn sync off without deleting anything.
 - **Backups**: jobs that keep an independent, verified, versioned copy of a
   bucket (or folder) in a second account, ideally at another provider:
   scheduled or manual runs that transfer only changes, verification, a
@@ -76,9 +83,10 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   2026-11-16; no update has been installed yet (moving from 0.1.0 to
   0.1.1 will be the first).
 
-It does not search file contents, download as ZIP, keep a trash of its own or
-permanently delete old object versions, and it does not copy objects larger
-than 5 GiB. Providers differ (versioning, link limits, key restrictions), so
+It does not search file contents, download as ZIP, keep a trash of its own in
+the bucket or permanently delete old object versions, and it does not copy objects larger
+than 5 GiB. Folder sync keeps every file on the computer (no online-only
+files) and has so far run only against local test servers on WSL2. Providers differ (versioning, link limits, key restrictions), so
 not every action behaves the same at every provider; file management,
 recovery and backups have so far been exercised only against local test
 servers, not at a real provider, and accounts and updates only in tests

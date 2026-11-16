@@ -1171,6 +1171,8 @@ impl AccountService {
                 if rec.deleted {
                     if local.get(key).is_some_and(|l| !l.deleted) {
                         self.accounts.remove(id)?;
+                        // Its folder sync is turned off here too (ADR-043).
+                        crate::folder_sync::account_removed(id);
                     }
                     continue;
                 }

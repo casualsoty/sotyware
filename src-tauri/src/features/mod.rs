@@ -11,6 +11,7 @@
 //! How to add a feature: docs/architecture/features.md.
 
 mod backup;
+mod folder_sync;
 mod preferences;
 mod registry;
 mod updates;
@@ -31,6 +32,7 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
     vec![
         Box::new(backup::BackupScheduler),
         Box::new(updates::UpdateCheck),
+        Box::new(folder_sync::FolderSync),
     ]
 }
 

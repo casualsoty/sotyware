@@ -24,6 +24,27 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 ## What works today
 
+**Folder sync** (2026-11-16, ADR-043, [folder-sync.md](architecture/folder-sync.md);
+[status](status/status.md#folder-sync-2026-11-16)): a storage account's
+bucket kept in step with a folder the user chose (any drive; native folder
+dialog opened by Rust; the page shows the path, never sends one), in both
+directions, in the background while the built-in feature `folder-sync`
+runs: file watcher (`notify`) plus a listing every 5–60 minutes (15 by
+default), a three-way comparison against the synced state
+(`folder-sync.sqlite3`; scans and listings in TEMP tables), live checks
+before every change (`S3Store::upload_with` replaces only the synced ETag),
+moves as server-side copies or local renames, conflicts kept twice
+(`name (conflicted copy …)`) and settled later, deletions into the sync
+trash (`.sotyware-sync/trash`, 30 days) or as delete markers behind the
+deletion guard, a marker in the folder (unplugged drive: wait; foreign
+folder: stop), moving the folder (verified copies) or starting fresh,
+turning off without deleting anything; the bucket's **Sync** tab, a sync
+glyph and summary in the sidebar, the local copy on Usage & costs.
+Uncommitted when written, WSL2 only: `test:headless` (Vitest 307, Rust 641 +
+29 ignored), recorder build 669, clippy (default and test-profile), the
+Sync tab seen in headless Edge through a mocked harness. Not run: any
+desktop driver, native Windows or macOS, a real provider.
+
 **Desktop UX, usage and costs, snapshots, automatic sync** (2026-11-15,
 committed on `main` after `310fd49` and pushed on 2026-11-16, where
 `ci.yml`, `macos.yml` and `isolation-guard.yml` passed at `5d68c0f`;
@@ -368,8 +389,8 @@ Full map: [repository-map.md](architecture/repository-map.md).
   `cancel_cloud_upload`, `retry_cloud_upload` and the 22 file-management
   commands of ADR-026, the five recovery commands of ADR-030, the three
   usage commands of ADR-041, the eleven backup commands of ADR-031/ADR-041,
-  the 20 account commands of ADR-032 and the six update commands of
-  ADR-033/ADR-036 (83 in all; listed in
+  the 20 account commands of ADR-032, the six update commands of
+  ADR-033/ADR-036 and the 16 folder sync commands of ADR-043 (99 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
@@ -378,7 +399,8 @@ Full map: [repository-map.md](architecture/repository-map.md).
   title bar's drag region, minimize, maximize and close (runtime capability
   `window-controls`, ADR-040). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored
-  credential or a local path, or accepts a local path.
+  credential or accepts a local path; only the folder sync commands return
+  one, the sync folder the user chose (ADR-043).
 - A new built-in feature is a module in `src-tauri/src/features/` plus one line
   in `builtin()`. Lifecycle code calls only `start_all`/`stop_all`.
   ([how to add one](architecture/features.md#adding-a-built-in-feature))

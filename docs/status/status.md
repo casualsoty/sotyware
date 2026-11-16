@@ -105,6 +105,7 @@ verified byte for byte; the object was deleted again by its version id
 | Storage usage by listing, history and 30-day cost estimates from price lists (ADR-041) — local test servers only | `cloud/usage.rs`, `cloud/pricing.rs`, `src-tauri/pricing/`, `src/CloudUsage.svelte` |
 | Snapshots & backups tab: Backblaze console snapshots explained; sotyware backup snapshots with details, back up, verify, typed deletion (ADR-041) | `src/CloudSnapshots.svelte`, `backup/mod.rs`, `backup/engine.rs` |
 | Automatic sync of an enrolled device on startup, focus and local changes, state in the sidebar (ADR-042) | `src/accountSync.svelte.ts`, `Sidebar.svelte` |
+| Folder sync (ADR-043): an account's bucket kept in step with a folder the user chose, in both directions, in the background (`folder-sync` feature): three-way comparison against the synced state (`folder-sync.sqlite3`), file watcher and periodic listing, live checks before every change, replacements only over the synced ETag (`S3Store::upload_with`), moves as server-side copies and local renames, conflicts kept twice and settled later, deletions into the sync trash or as delete markers behind the deletion guard, the folder's marker (unplugged drives wait, foreign folders stop), moving the folder (verified copies) or starting fresh, the Sync tab, the sidebar's indicator, the local copy on the Usage & costs tab — local test servers only ([validation](#folder-sync-2026-11-16)) | `src-tauri/src/folder_sync/`, `storage/folder_sync.rs`, `features/folder_sync.rs`, `cloud/s3/upload.rs`; `src/CloudSync.svelte`, `src/folderSync.ts`, `src/folderSyncModel.svelte.ts` ([folder-sync.md](../architecture/folder-sync.md)) |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -117,15 +118,15 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 Nothing else exists: no product features (only cloud storage: accounts,
 browsing, transfers and the file management of ADR-026, the operation
 journal of ADR-030, the backups of ADR-031, usage and cost estimates and the
-snapshots tab of ADR-041; the example feature was removed 2026-11-15), no
+snapshots tab of ADR-041, folder sync of ADR-043; the example feature was removed 2026-11-15), no
 settings, no persistence other than the feature choices, the cloud storage
 accounts and their favorites and recent items, the operation journal,
-the backup jobs, the account state, the update state, the window placement
-and the storage usage measurements, no overwriting
-uploads, ZIP downloads, permanent deletion of versions, trash of sotyware's
-own, content search, transfer queue UI or download history, no
-background (periodic) sync, no billing data from a provider, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 83 listed in
+the backup jobs, the account state, the update state, the window placement,
+the storage usage measurements and the folder syncs, no overwriting
+uploads (other than folder sync replacing the version it synced), ZIP downloads, permanent deletion of versions, content search, transfer queue UI or download history, no
+online-only (on-demand) files, selective folder sync, bandwidth limits or exclusion
+patterns, no background (periodic) sync of the sotyware account, no billing data from a provider, no custom Tauri events, no feature-management UI, no third-party
+plugins, and no custom command other than the 99 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -144,6 +145,45 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Folder sync (2026-11-16)
+
+Implemented on `main` after `404053c` (uncommitted while these lines were
+written, then committed with them), on WSL2 (Ubuntu 24.04, ext4, Rust
+1.99.1, Node 24.22.0); design:
+[folder-sync.md](../architecture/folder-sync.md), ADR-043.
+
+- `npm run test:headless` passed: every guard, Vitest **307** (19 new in
+  `CloudSync.test.ts`, 3 in `App.test.ts`, the bucket tabs test extended),
+  Rust **641 passed, 29 ignored** (74 new in `folder_sync` and
+  `storage::folder_sync`, 2 in `cloud::s3::upload`); the folder sync
+  tests passed 4 more times in a row (69 then 72 each); the recorder build
+  (`--features request-recorder --target-dir target/recorder`) **669
+  passed, 29 ignored**; `cargo fmt --check`, clippy with `-D warnings`
+  (default and `--features test-profile`), `npm run check` (0 errors, 0
+  warnings).
+- The end-to-end tests ran real folders on ext4 against the in-process
+  versioned S3 server and s3s-fs (list in
+  [testing.md](../development/testing.md#folder-sync)); the move to another
+  drive ran across file systems (`/dev/shm`, tmpfs). The case-clash test
+  returned early here (ext4 tells case apart); it runs where the file system
+  ignores case.
+- The Sync tab was looked at in Chromium (headless Edge on Windows 11, the
+  WebView2 engine) through a preview harness with mocked commands, not the
+  app binary: the intro, the confirmation, a busy sync with transfers and
+  a conflict, the deletion guard, at 1280 and 900 px, dark theme. Two
+  layout fixes came from it (a missing space, the guard's question moved
+  under the status).
+- Found and fixed by the tests while building it: a folder's subtree range
+  ended at `a/0` instead of `a0` (its subtree was never matched); a file
+  younger than two seconds was left for a later pass while the status said
+  Synced (the upload now waits for the file to settle).
+
+**Not run:** the release binary on any desktop (no desktop driver drives
+the Sync tab yet), native Windows (file locking, junctions, Explorer,
+NTFS case rules, `ReadDirectoryChangesW`, `GetDiskFreeSpaceExW`, the hidden
+attribute), macOS (FSEvents; compiled only by `macos.yml`), a real Linux
+desktop, a real provider (Backblaze, Hetzner), a sync of a large bucket.
 
 ### The Usage & costs tab in the Windows desktop test (2026-11-16)
 

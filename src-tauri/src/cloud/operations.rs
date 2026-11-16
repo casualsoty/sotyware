@@ -1986,6 +1986,8 @@ impl CloudOperations {
                     &id,
                 )
                 .await;
+            // A sync of this bucket lists it now (ADR-043).
+            crate::folder_sync::bucket_changed(&account);
             {
                 let mut inner = this.lock();
                 inner.slot = Slot::Free;

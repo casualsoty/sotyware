@@ -2465,3 +2465,118 @@ Status: Accepted (2026-11-15). Code: `src/accountSync.svelte.ts`,
   service (release builds today) only read the local status. A change made
   on one computer reaches another when that one starts, is focused, or
   changes something itself.
+
+## ADR-043: Folder sync keeps a chosen folder and a bucket in step by a three-way comparison, with guarded deletions and one background engine per sync
+
+Status: Accepted (2026-11-16). Code: `src-tauri/src/folder_sync/`,
+`src-tauri/src/storage/folder_sync.rs`, `src-tauri/src/features/folder_sync.rs`,
+`S3Store::upload_with` (`cloud/s3/upload.rs`), `src/CloudSync.svelte`,
+`src/folderSync.ts`, `src/folderSyncModel.svelte.ts`; details:
+[folder-sync.md](folder-sync.md).
+
+- **Context:** users want to work with a bucket's files as ordinary files on
+  their computer, in a folder they choose, in both directions and in the
+  background, as with Google Drive for desktop, Dropbox or OneDrive. Until
+  now sotyware transferred only files the user picked, never replaced an
+  object, ran no background work against a provider on its own, and its page
+  never received a local path.
+- **Decision:**
+  - **One sync** is one storage account's configured bucket (all of it; the
+    configuration has a prefix field, `""`, for a later selective sync) and
+    one folder the user chose in the native folder dialog Rust opens. Each
+    path has three states: the **synced state** (what both sides last agreed
+    on; persisted), the **local scan** and the **remote listing** (per
+    session). `folder_sync::model::decide` turns them into one decision per
+    path (the table is in [folder-sync.md](folder-sync.md#the-decision-for-one-path)).
+    Equal content (SHA-256) is recorded without a transfer; a change wins
+    over a deletion; a file changed on both sides is **kept twice**: this
+    computer's version keeps the name, the bucket's becomes
+    `name (conflicted copy YYYY-MM-DD HHMM).ext` on both sides, and the user
+    settles it later (keep this computer's, keep the other one, keep both).
+  - **Safety rules.** Every action checks the live file and the live object
+    right before it changes anything, so a decision taken on an older scan or
+    listing can only do less. A modified file replaces only the version that
+    was synced: `S3Store::upload_with` with `Destination::Replace { e_tag }`
+    refuses another object or none (the HEAD-then-write race of every
+    sotyware upload stays, ADR-021, ADR-029). Files deleted in the bucket
+    are moved to the **sync trash** (`.sotyware-sync/trash/<day>/` in the
+    sync folder, kept 30 days), never unlinked; deletions in the bucket add
+    delete markers where the bucket keeps versions. Nothing below a folder
+    that could not be read, and nothing from a listing that did not finish,
+    counts as deleted. The **deletion guard** holds the deletions of a pass
+    that are at least 1,000, or at least 50 and more than half of the synced
+    files, until the user answers (delete them, or restore them). A
+    **marker** (`.sotyware-sync/root.json`, naming the sync) must be in the
+    folder: a folder that is gone (a disconnected drive) makes the sync wait
+    and look again every 30 s; a folder without the marker (another disk at
+    the same place, an unmounted mount point) stops it until the user
+    chooses the folder again (which then syncs from scratch). A sync never
+    follows its account to another bucket or endpoint.
+  - **Background.** One async task per sync (`engine.rs`) runs while the new
+    built-in feature `folder-sync` runs (on by default). A pass runs at
+    start, after changes the file watcher reports (`notify`:
+    ReadDirectoryChangesW, inotify, FSEvents; 1.5 s after the last event, at
+    most 10 s), when the remote check is due (every 5, 15, 30 or 60 minutes,
+    15 by default: S3 has no change feed, so the bucket is listed), on "Sync
+    now", when a failed item's retry is due (30 s doubling to an hour), after
+    sotyware itself changed the bucket (an upload batch, a file operation or
+    a new folder of the same account nudges its sync), and every 30 s while
+    the folder is unavailable. These are sotyware's first timers against
+    remote state; each exists because nothing notifies, and each is bounded.
+    Full local scans happen at start, after a watcher overflow and when the
+    folder comes back; watcher events otherwise lead to scans of the named
+    paths only.
+  - **Paths reach the page.** The page receives the chosen folder's path, to
+    show it before confirming and on the Sync tab: an exception to "no
+    command returns a local path" (ADR-020, ADR-022), limited to the folder
+    the user chose for sync. The page still never sends a path: a choice is
+    a token kept in Rust, a sync an id. "Open folder" calls
+    `tauri_plugin_opener::open_path` from Rust (the official plugin's
+    function; the plugin is not registered and the page gets no `opener:`
+    permission).
+  - **Moving a sync folder:** "move" (into an empty folder only: renamed on
+    one drive; between drives every file copied, read back and compared by
+    SHA-256 before any original is removed; the synced state stays valid)
+    or "start fresh" (the old folder is left as it is; the new one is merged
+    with the bucket; nothing is deleted on either side because of the
+    switch). Turning sync off forgets the configuration and the synced
+    state and removes the marker; no file or object is deleted.
+  - **Persistence:** `folder-sync.sqlite3` (configurations as JSON, the
+    synced state, per-path issues, the last 500 activity items per sync),
+    SQL in `storage/folder_sync.rs` only. The local scan and the remote
+    listing live in TEMP tables, so planning streams through one SQL query in
+    path order and a large bucket is never held in memory.
+  - **Dependencies:** `notify` 8 (desktop targets; new in the lock:
+    `notify`, `notify-types`, `inotify`, `inotify-sys`, `kqueue`,
+    `kqueue-sys`, `objc2-core-services`), `tauri-plugin-opener` 2 (new:
+    `tauri-plugin-opener`, `open`, `is-wsl`, `is-docker`), and direct
+    declarations of `rustix` (Unix: `statvfs` for free space, safe) and
+    `windows-sys` 0.61 (Windows: `GetDiskFreeSpaceExW`, and
+    `SetFileAttributesW` to hide `.sotyware-sync`), both already in the tree.
+    The two Windows calls are sotyware's first `unsafe` blocks, each with a
+    `SAFETY` comment.
+  - **16 commands** (99 in all), one `allow-<command>` permission each. The
+    live status reaches the page over a `Channel` per subscription
+    (`watch_folder_syncs`), not as an event.
+- **Alternatives considered:** a virtual file system or the platforms' cloud
+  file APIs (files online until opened): not for this first version, which
+  keeps every file available offline; the design leaves room for it (the
+  synced state could mark a file online-only). A two-way mirror without a
+  synced state: it cannot tell a deletion from a creation, so it either
+  loses deletions or brings deleted files back. Local scans without a
+  watcher: kept as the safety net, not the only source. "The bucket keeps
+  the name" for conflicts (Dropbox's way): it renames the user's file, which
+  fails on Windows while an editor holds it open and moves the work they are
+  doing.
+- **Consequences:** each remote check costs one listing request per 1,000
+  objects (for a large bucket a real request count; the interval is the
+  user's); a provider whose `HeadObject` sends no ETag cannot sync changed
+  files (the replacement is refused, the file reported); on a bucket without
+  versioning a file deleted or changed in the folder is deleted or replaced
+  in the bucket for good (said before the sync starts and on the tab); a
+  sync upload interrupted by a crash is listed under Interrupted work like
+  any upload (ADR-030), while the sync redoes it; a file system that ignores
+  case cannot hold two keys that differ only in case, and Windows cannot
+  hold names it refuses: those objects are reported as not synced. Tested
+  only against the in-process servers and the WSL2 file system; never at a
+  real provider, on native Windows or macOS, or on a real Linux desktop.

@@ -22,6 +22,8 @@ const ACCOUNTS_CMD = "list_cloud_accounts"; // the sidebar's storage accounts; t
 const BACKUPS_CMD = "list_backups"; // the Overview's backup summary; tested in Backup.test.ts
 const DECORATED_CMD = "plugin:window|is_decorated"; // whether the page draws its own title bar (ADR-040)
 const ACCOUNT_CMD = "account_status"; // automatic sync reads the account status (local); tested in accountSync.test.ts
+const SYNCS_CMD = "list_folder_syncs"; // folder sync's status for the sidebar (ADR-043); tested in CloudSync.test.ts
+const SYNCS_WATCH_CMD = "watch_folder_syncs"; // its live updates on a channel
 
 let calls: IpcCall[];
 let mode: unknown;
@@ -55,6 +57,9 @@ let accountList: Record<string, unknown>[];
  * answer of the mock, which keeps the native title bar). */
 let decorated: boolean | null;
 
+/** What `list_folder_syncs` answers (CloudSync.test.ts covers the tab). */
+let folderSyncs: Record<string, unknown>;
+
 /** The Rust side: answers the mode command with `mode`, the feature list with no
  * features (Features.test.ts covers them), the accounts, backups and update
  * status the shell reads, everything else with null. */
@@ -76,6 +81,10 @@ function backend(cmd: string): unknown {
       return mode;
     case DECORATED_CMD:
       return decorated;
+    case SYNCS_CMD:
+      return folderSyncs;
+    case SYNCS_WATCH_CMD:
+      return 1;
     default:
       return null;
   }
@@ -89,6 +98,7 @@ function sentCommands(): string[] {
 
 beforeEach(() => {
   calls = [];
+  folderSyncs = { seq: 1, running: true, storageError: null, syncs: [] };
   update = updateStatus();
   accountList = [];
   decorated = null;
@@ -145,7 +155,16 @@ function hideCalls(): IpcCall[] {
 describe("dashboard in tray mode", () => {
   it("asks Rust for the mode, the accounts, the backups, the update and account status once each, and nothing else", async () => {
     await render();
-    expect(sentCommands()).toEqual([ACCOUNT_CMD, BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, DECORATED_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([
+      ACCOUNT_CMD,
+      BACKUPS_CMD,
+      ACCOUNTS_CMD,
+      SYNCS_CMD,
+      MODE_CMD,
+      DECORATED_CMD,
+      UPDATE_CMD,
+      SYNCS_WATCH_CMD,
+    ]);
   });
 
   it("renders the heading, the tray hint and a plain button, no error", async () => {
@@ -246,7 +265,16 @@ describe("dashboard in dashboard-only mode", () => {
     // The page header holds the Hide button in tray mode, and nothing here.
     expect(root.querySelectorAll("main .page-header button")).toHaveLength(0);
     expect(root.textContent).not.toContain("from the system tray");
-    expect(sentCommands()).toEqual([ACCOUNT_CMD, BACKUPS_CMD, ACCOUNTS_CMD, MODE_CMD, DECORATED_CMD, UPDATE_CMD]);
+    expect(sentCommands()).toEqual([
+      ACCOUNT_CMD,
+      BACKUPS_CMD,
+      ACCOUNTS_CMD,
+      SYNCS_CMD,
+      MODE_CMD,
+      DECORATED_CMD,
+      UPDATE_CMD,
+      SYNCS_WATCH_CMD,
+    ]);
     expect(hideCalls()).toHaveLength(0);
   });
 });
@@ -576,6 +604,95 @@ describe("automatic sync of the sotyware account", () => {
     const link = [...root.querySelectorAll<HTMLAnchorElement>("aside a")].find((a) => a.textContent?.includes("Account"))!;
     expect(link.querySelector("[data-sync]")).toBeNull();
     expect(calls.some((c) => c.cmd === "account_sync")).toBe(false);
+  });
+});
+
+describe("folder sync in the sidebar (ADR-043)", () => {
+  function syncStatus(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "photos-1",
+      account: "photos",
+      bucket: "soty-photos",
+      path: "/home/me/Photos",
+      state: "synced",
+      message: null,
+      error: null,
+      paused: false,
+      intervalMinutes: 15,
+      versioning: "enabled",
+      watching: true,
+      files: 3,
+      bytes: 300,
+      folders: 1,
+      remoteFiles: 3,
+      remoteBytes: 300,
+      pendingUploads: 0,
+      pendingUploadBytes: 0,
+      pendingDownloads: 0,
+      pendingDownloadBytes: 0,
+      failed: 0,
+      skipped: 0,
+      conflicts: 0,
+      heldDeletions: null,
+      trashFiles: 0,
+      trashBytes: 0,
+      freeBytes: null,
+      diskFull: false,
+      lastSyncedMs: Date.now(),
+      lastCheckedMs: Date.now(),
+      nextCheckMs: null,
+      transfers: [],
+      migration: null,
+      activitySeq: 0,
+      ...over,
+    };
+  }
+
+  const PHOTOS = {
+    id: "photos",
+    label: "Photos",
+    provider: "backblaze-b2",
+    providerName: "Backblaze B2",
+    region: "eu-central-003",
+    endpoint: null,
+    endpointUrl: "https://s3.eu-central-003.backblazeb2.com",
+    bucket: "soty-photos",
+    configError: null,
+    lastCheck: null,
+  };
+
+  it("shows nothing without a sync", async () => {
+    accountList = [PHOTOS];
+    const root = await render();
+    expect(root.querySelector("[data-sidebar-folder-sync]")).toBeNull();
+    expect(root.querySelector("[data-sidebar-sync]")).toBeNull();
+  });
+
+  it("marks the synced account and says how every sync stands", async () => {
+    accountList = [PHOTOS];
+    folderSyncs = { seq: 2, running: true, storageError: null, syncs: [syncStatus()] };
+    const root = await render();
+    expect(root.querySelector("[data-sidebar-folder-sync]")?.textContent?.trim()).toBe("Folder up to date");
+    const glyph = root.querySelector('[data-sidebar-sync="photos"]');
+    expect(glyph?.getAttribute("title")).toBe("Folder sync: Synced");
+    expect(glyph?.classList.contains("success")).toBe(true);
+    expect(root.querySelector('[data-sidebar-account="photos"]')?.textContent).toContain("folder sync: Synced");
+  });
+
+  it("follows the live updates the channel brings", async () => {
+    accountList = [PHOTOS];
+    folderSyncs = { seq: 2, running: true, storageError: null, syncs: [syncStatus()] };
+    const root = await render();
+    const watch = calls.find((c) => c.cmd === SYNCS_WATCH_CMD)!;
+    const channel = (watch.payload as Record<string, unknown>)["onEvent"] as { onmessage: (m: unknown) => void };
+    channel.onmessage({ seq: 3, running: true, storageError: null, syncs: [syncStatus({ state: "error", message: "The key was refused." })] });
+    await settle();
+    expect(root.querySelector("[data-sidebar-folder-sync]")?.textContent?.trim()).toBe("A folder sync needs attention");
+    expect(root.querySelector('[data-sidebar-sync="photos"]')?.classList.contains("danger")).toBe(true);
+    // An older overview arriving late changes nothing.
+    channel.onmessage({ seq: 2, running: true, storageError: null, syncs: [syncStatus()] });
+    await settle();
+    expect(root.querySelector("[data-sidebar-folder-sync]")?.textContent?.trim()).toBe("A folder sync needs attention");
   });
 });
 

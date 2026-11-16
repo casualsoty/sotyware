@@ -18,9 +18,12 @@ use std::time::Duration;
 use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::backup::{BackupStore, RunRow};
+
+mod folder_sync;
 use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
 use crate::journal::{EntryRow, JournalStore, StepRow};
+pub use folder_sync::{IssueRow, SYNC_FILE_NAME, SqliteSyncStore};
 
 /// The database file inside the app's local data directory.
 pub const FILE_NAME: &str = "preferences.sqlite3";
@@ -868,6 +871,15 @@ impl crate::cloud::usage::UsageStore for SqliteUsageStore {
             .filter_map(|text| serde_json::from_str(text).ok())
             .collect())
     }
+}
+
+/// The folder sync store `run()` uses (ADR-043): [`SYNC_FILE_NAME`] in
+/// `dir`.
+pub fn open_sync_store(dir: tauri::Result<PathBuf>) -> Result<SqliteSyncStore, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    SqliteSyncStore::open(&dir.join(SYNC_FILE_NAME))
 }
 
 /// The operation journal (ADR-030), separate from the other databases so

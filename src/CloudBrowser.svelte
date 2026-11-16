@@ -21,7 +21,9 @@
   import CloudProperties from "./CloudProperties.svelte";
   import CloudSnapshots from "./CloudSnapshots.svelte";
   import CloudUpload from "./CloudUpload.svelte";
+  import CloudSync from "./CloudSync.svelte";
   import CloudUsage from "./CloudUsage.svelte";
+  import type { FolderSyncModel } from "./folderSyncModel.svelte";
   import {
     createFolder,
     listPlaces,
@@ -93,9 +95,11 @@
     onopenbackups?: (() => void) | undefined;
     /** Back to the account list with this account's edit form open. */
     onedit: () => void;
+    /** The live state of folder sync (ADR-043), for the Sync tab. */
+    folderSyncs?: FolderSyncModel | undefined;
   }
 
-  let { account, onclose, onedit, onopenbackups }: Props = $props();
+  let { account, onclose, onedit, onopenbackups, folderSyncs }: Props = $props();
 
   // Shortcut labels as this system writes them.
   const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
@@ -157,18 +161,20 @@
 
   let view = $state<"folder" | "search" | "deleted">("folder");
 
-  // The bucket view's tabs (ADR-041): the files, the bucket's usage and
-  // costs, and its snapshots and backups. The files stay mounted while
-  // another tab shows (a running upload or download goes on); the other
-  // panels are mounted the first time they are opened.
-  type BucketTab = "files" | "usage" | "snapshots";
-  const BUCKET_TABS: { id: BucketTab; title: string; icon: "folder" | "usage" | "snapshot" }[] = [
+  // The bucket view's tabs (ADR-041, ADR-043): the files, the bucket's
+  // usage and costs, its snapshots and backups, and its sync with a folder
+  // on this computer. The files stay mounted while another tab shows (a
+  // running upload or download goes on); the other panels are mounted the
+  // first time they are opened.
+  type BucketTab = "files" | "usage" | "snapshots" | "sync";
+  const BUCKET_TABS: { id: BucketTab; title: string; icon: "folder" | "usage" | "snapshot" | "sync" }[] = [
     { id: "files", title: "Files", icon: "folder" },
     { id: "usage", title: "Usage & costs", icon: "usage" },
     { id: "snapshots", title: "Snapshots & backups", icon: "snapshot" },
+    { id: "sync", title: "Sync", icon: "sync" },
   ];
   let tab = $state<BucketTab>("files");
-  let opened = $state<Record<BucketTab, boolean>>({ files: true, usage: false, snapshots: false });
+  let opened = $state<Record<BucketTab, boolean>>({ files: true, usage: false, snapshots: false, sync: false });
 
   function showTab(next: BucketTab): void {
     tab = next;
@@ -1512,13 +1518,19 @@
 
   <div role="tabpanel" id="bucket-panel-usage" aria-labelledby="bucket-tab-usage" class="bucket-panel" hidden={tab !== "usage"}>
     {#if opened.usage}
-      <CloudUsage {account} />
+      <CloudUsage {account} sync={folderSyncs?.of(account.id) ?? null} />
     {/if}
   </div>
 
   <div role="tabpanel" id="bucket-panel-snapshots" aria-labelledby="bucket-tab-snapshots" class="bucket-panel" hidden={tab !== "snapshots"}>
     {#if opened.snapshots}
       <CloudSnapshots {account} {onopenbackups} />
+    {/if}
+  </div>
+
+  <div role="tabpanel" id="bucket-panel-sync" aria-labelledby="bucket-tab-sync" class="bucket-panel" hidden={tab !== "sync"}>
+    {#if opened.sync}
+      <CloudSync {account} model={folderSyncs} {onedit} />
     {/if}
   </div>
 </section>

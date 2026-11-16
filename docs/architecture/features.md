@@ -10,13 +10,17 @@ The user's enable/disable choice is saved and survives restarts
 Third-party plugins, WASM and a management UI do not exist
 ([what is deferred](#deferred)).
 
-Today there are two features: `backup-scheduler` ("Scheduled backups",
+Today there are three features: `backup-scheduler` ("Scheduled backups",
 on by default, 2026-11-15, ADR-031), which starts and stops the backup
-scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)), and
+scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)),
 `update-check` ("Automatic update checks", on by default, 2026-11-15,
 ADR-033), which starts and stops the automatic update checks of
 `crate::updates` (one minute after startup, then daily; nothing when no
-update source is configured; see [updates.md](updates.md#flow)).
+update source is configured; see [updates.md](updates.md#flow)), and
+`folder-sync` ("Folder sync", on by default, 2026-11-16, ADR-043), which
+starts and stops the engines of `crate::folder_sync` (one per sync that is
+not paused; switched off, no sync runs and the syncs stay configured; see
+[folder-sync.md](folder-sync.md#lifecycle)).
 The `example` feature of sotyware 0.1.0, which did nothing visible, was
 removed on 2026-11-15: Settings › Features no longer lists it, and the
 desktop tests switch "Scheduled backups" instead (with no backup job it

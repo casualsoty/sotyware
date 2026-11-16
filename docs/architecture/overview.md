@@ -67,6 +67,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the two features (`backup.rs`, `updates.rs`). Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | Cloud storage | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id in the OS credential store (`OsCredentialStore`, ADR-017), and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. `dashboard.rs`: `CloudAccounts` (managed state) and the six account commands; `browser.rs`: `list_cloud_folder`; `download.rs`: `CloudDownloads` (managed state, one download at a time) and the three download commands, with the native save dialog opened from Rust (`tauri-plugin-dialog`); `upload.rs`: `CloudUploads` (managed state, one upload batch at a time in its own slot) and the three upload commands, with the native multi-file dialog opened from Rust; the browser's upload panel (`src/CloudUpload.svelte`) calls them. No other changes to objects are reachable ([ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust), [cloud-storage.md](cloud-storage.md#dashboard), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)). |
+| Folder sync | `src-tauri/src/folder_sync/`, `src-tauri/src/storage/folder_sync.rs`, `src-tauri/src/features/folder_sync.rs` | `FolderSyncs` (managed state): syncs of an account's bucket with a folder on this computer, in both directions, one background engine per sync while the `folder-sync` feature runs; three-way comparison against the synced state in `folder-sync.sqlite3`, file watcher (`notify`), periodic listing, live checks before every change, sync trash, deletion guard, conflicts kept twice; the 16 folder sync commands ([folder-sync.md](folder-sync.md), [ADR-043](decisions.md#adr-043-folder-sync-keeps-a-chosen-folder-and-a-bucket-in-step-by-a-three-way-comparison-with-guarded-deletions-and-one-background-engine-per-sync)). |
 | macOS menu bar | `src-tauri/src/app_menu.rs` | macOS only: the application, Edit and Window menus; its Quit calls `AppControl::quit` like the tray's, and the Edit menu is what gives the webview ⌘C/⌘V ([ADR-037](decisions.md#adr-037-macos-is-a-supported-build-target-keychain-a-menu-bar-separate-apple-silicon-and-intel-builds)). A Dock click (`RunEvent::Reopen`) shows the dashboard. |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`, the six cloud account commands, `list_cloud_folder`, the three download and the three upload commands), so each needs a permission. |
@@ -76,7 +77,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 83 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 99 custom commands
   and Tauri's window API. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -125,9 +126,16 @@ Boundaries that hold today:
   ([accounts.md](accounts.md)), and the five update commands of ADR-033:
   `update_status`, `check_for_update`, `install_update`, `cancel_update`,
   `postpone_update`, and `restart_after_update` (ADR-036;
-  [updates.md](updates.md)); none returns a
-  stored credential or a local path (a share link carries the access key
-  id, never the secret). The built-in calls are Tauri's window API:
+  [updates.md](updates.md)), and the 16 folder sync commands of ADR-043:
+  `list_folder_syncs`, `watch_folder_syncs`, `unwatch_folder_syncs`,
+  `choose_sync_folder`, `discard_sync_folder_choice`, `enable_folder_sync`,
+  `set_folder_sync_paused`, `sync_folder_now`, `retry_folder_sync`,
+  `set_folder_sync_interval`, `disable_folder_sync`, `change_sync_folder`,
+  `open_sync_folder`, `folder_sync_details`, `resolve_folder_sync_conflict`,
+  `answer_folder_sync_deletions` ([folder-sync.md](folder-sync.md#commands));
+  none returns a stored credential (a share link carries the access key
+  id, never the secret), none accepts a local path, and only the folder
+  sync commands return one: the sync folder the user chose, to show it. The built-in calls are Tauri's window API:
   `getCurrentWindow().hide()` (tray mode only), `setTheme()` (the theme
   chosen in Settings, ADR-035), `isDecorated()`, and on Windows only the
   title bar's `minimize()`, `toggleMaximize()`, `isMaximized()`, `close()`
@@ -153,8 +161,11 @@ Boundaries that hold today:
 - **Storage stays out of the registry.** `features::preferences` decides what a
   stored choice means; `storage.rs` is the only code that knows SQLite; the
   registry knows neither ([ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)).
-- **Little background work.** No threads, timers, polling or retries of
-  sotyware's own. Everything is driven by Tauri events and user actions.
+- **Little background work.** Besides the backup scheduler, the update
+  checks and the folder sync engines (each a built-in feature the user can
+  switch off; folder sync lists each synced bucket at its interval and
+  watches each sync folder, ADR-043), everything is driven by Tauri events
+  and user actions.
   `set_feature_enabled` (an `async` command)
   runs on Tauri's async runtime, off the event loop, and so does the
   preference save it makes. The cloud account and folder commands run their SQLite and
@@ -167,7 +178,10 @@ Boundaries that hold today:
   and a download of several items (each in its own slot; quitting cancels
   them, waiting at most 15 s and 10 s). The
   databases are read once, before the event loop starts.
-- **Network only on request, no sync, no settings.** Stored: each feature's
+- **Network only on request, except for the built-in features.** Folder
+  sync (ADR-043) sends requests on its own while a sync runs:
+  [folder-sync.md](folder-sync.md#transfers-and-requests). Otherwise:
+  stored: each feature's
   enabled choice (`preferences.sqlite3`), the storage accounts'
   configurations (`cloud-accounts.sqlite3`) and their favorites and recent
   items (`cloud-places.sqlite3`), all in the app's local data
@@ -205,6 +219,10 @@ Boundaries that hold today:
   [ADR-019](decisions.md#adr-019-read-only-bucket-browsing-is-one-command-with-cursors-kept-in-rust),
   [ADR-020](decisions.md#adr-020-single-file-downloads-go-through-a-save-dialog-opened-by-rust-one-at-a-time-with-progress-on-a-channel),
   [ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust)).
+  Folder sync (ADR-043) adds 16 `allow-…` permissions; its folder dialog is
+  opened by Rust too, and its commands return the chosen sync folder's
+  path to show it (never accept one); "Open folder" goes through the opener
+  plugin's Rust function, with no `opener:` permission.
 - Cloud account keys travel only from the page to Rust (`add_cloud_account`,
   `update_cloud_account`) and from Rust to the OS credential store and the
   request signer; no response, log line or error message contains one. In tray mode, `setup` adds the runtime capability `tray-mode`,

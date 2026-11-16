@@ -1037,6 +1037,53 @@ server only; no real provider was asked.
   changes something. No service exists in release builds, so nothing syncs
   there yet.
 
+## Folder sync (ADR-043)
+
+- **Tested only locally:** in-process test servers and the WSL2 file system
+  ([status](status.md#folder-sync-2026-11-16)); never at a real provider,
+  on native Windows or macOS, on a real Linux desktop, through the release
+  binary, or with a large bucket.
+- **Every file is kept on the computer;** there are no online-only
+  (on-demand) files, no selective sync of folders, no bandwidth limit and no
+  exclusion patterns of the user's own (the fixed exclusions: `desktop.ini`,
+  `Thumbs.db`, `.DS_Store`, Office `~$` and LibreOffice lock files,
+  sotyware's temporary files).
+- **One sync per bucket** (per storage account), of the whole bucket.
+- **Remote changes arrive at the interval** (5 to 60 minutes; S3 has no
+  change feed), or at once when made through sotyware on this computer, or
+  on "Sync now". Each check lists the whole bucket: one request per 1,000
+  objects (Backblaze bills listing calls above its daily free amount).
+- **Races:** between the check of an object and the write that replaces or
+  deletes it another client can still change it (as for every sotyware
+  upload, ADR-021, ADR-029); a file changed during the instant between the
+  last check and a download's move into place is replaced (milliseconds).
+- **Unversioned buckets:** a file deleted or changed in the sync folder is
+  deleted or replaced in the bucket for good (said before the sync starts).
+- **Names:** an object whose name this system cannot hold (Windows: `< > :
+  " \ | ? *`, trailing dots or spaces, reserved names; anywhere: control
+  characters, over 255 bytes per name) is not synced, nor a file whose name
+  cannot be a key; on a file system that ignores case, of two keys that
+  differ only in case one is not synced. HFS+ (old macOS volumes) normalises
+  Unicode names, which can make such a name look like a new file; APFS does
+  not.
+- **Links, junctions, devices, sockets and pipes** in the folder are not
+  synced (reported).
+- **A provider without ETags on `HeadObject`** (s3s-fs) cannot sync changed
+  files: the replacement is refused and reported.
+- **Moves** are recognised for files up to 5 GiB with the same content
+  (here) or the same ETag and size (in the bucket); larger or changed ones
+  are uploaded or downloaded again and the old one deleted.
+- **After a crash** an interrupted sync upload is listed under Interrupted
+  work like any upload (ADR-030); the sync redoes it, and the entry can be
+  dismissed.
+- **Watching:** on Linux each folder takes an inotify watch; a folder too
+  large for the system's watch limit is synced without watching (changes
+  found at each check). Network folders may report changes late or not at
+  all.
+- **The sync trash** is a hidden folder in the sync folder; it uses the
+  sync folder's drive and is emptied after 30 days, not when the drive is
+  full.
+
 ## Dashboard (ADR-035)
 
 - **The theme is per webview profile:** it lives in the webview's

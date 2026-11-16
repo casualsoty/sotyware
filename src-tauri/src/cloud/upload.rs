@@ -1195,6 +1195,7 @@ impl CloudUploads {
             },
             files,
         };
+        let changed_account = target.account.clone();
         let retry: Vec<(PathBuf, Option<String>)> = entries
             .into_iter()
             .filter(|e| e.file.retryable)
@@ -1224,6 +1225,8 @@ impl CloudUploads {
             }
         }
         self.freed.notify_all();
+        // A sync of this bucket lists it now (ADR-043).
+        crate::folder_sync::bucket_changed(&changed_account);
         // Only now: the page may start the next batch as soon as it reads
         // this, and the slot is free.
         emitter.emit(EventBody::Finished { summary });

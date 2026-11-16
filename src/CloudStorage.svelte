@@ -3,6 +3,7 @@
   import CloudAccountForm from "./CloudAccountForm.svelte";
   import CloudBrowser from "./CloudBrowser.svelte";
   import CloudRecovery from "./CloudRecovery.svelte";
+  import type { FolderSyncModel } from "./folderSyncModel.svelte";
   import Icon from "./Icon.svelte";
   import {
     checkAccount,
@@ -38,6 +39,8 @@
     /** Changes when the accounts may have changed elsewhere (a sync):
      * the list is read again. */
     generation?: number;
+    /** The live state of folder sync (ADR-043), for the bucket's Sync tab. */
+    folderSyncs?: FolderSyncModel | undefined;
   }
 
   let {
@@ -48,6 +51,7 @@
     onopenbackups,
     onlocalchange,
     generation = 0,
+    folderSyncs,
   }: Props = $props();
 
   // A sync applied other devices' changes: read the list again (not on
@@ -198,7 +202,7 @@
 
 {#if browsed}
   {#key browsed.id}
-    <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} {onopenbackups} />
+    <CloudBrowser account={browsed} onclose={closeBrowser} onedit={() => editFromBrowser(browsed.id)} {onopenbackups} {folderSyncs} />
   {/key}
 {:else}
   <div class="page">

@@ -25,6 +25,10 @@
     showBrand?: boolean;
     /** The sotyware account's sync state, when there is one to tell. */
     syncStatus?: { tone: "success" | "warning"; text: string } | null;
+    /** Every folder sync together (ADR-043), when there is one. */
+    folderSync?: { tone: "success" | "warning" | "danger" | "info"; text: string } | null;
+    /** Synced accounts: the state of each one's folder sync. */
+    syncedAccounts?: Record<string, { tone: string; label: string }>;
   }
 
   let {
@@ -38,6 +42,8 @@
     onclose,
     showBrand = true,
     syncStatus = null,
+    folderSync = null,
+    syncedAccounts = {},
   }: Props = $props();
 
   const MAIN: { id: Section; title: string; icon: IconName; key: string }[] = [
@@ -107,10 +113,20 @@
             onclick={(e) => openAccount(e, a.id)}
             ><span class="dot {tone}" aria-hidden="true"></span><span class="label">{a.label}</span><span
               class="visually-hidden">, {a.providerName ?? a.provider}</span
-            ></a
+            >{#if syncedAccounts[a.id]}{@const sync = syncedAccounts[a.id]}<span
+                class="synced {sync?.tone}"
+                title="Folder sync: {sync?.label}"
+                aria-hidden="true"
+                data-sidebar-sync={a.id}><Icon name="sync" size={12} /></span
+              ><span class="visually-hidden">, folder sync: {sync?.label}</span>{/if}</a
           >
         {/each}
       </nav>
+    {/if}
+    {#if folderSync}
+      <p class="folder-sync {folderSync.tone}" data-sidebar-folder-sync>
+        <span class="fs-icon" aria-hidden="true"><Icon name="sync" size={13} /></span>{folderSync.text}
+      </p>
     {/if}
     <button
       type="button"
@@ -226,6 +242,63 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: var(--weight-regular);
+  }
+
+  /* A synced account: the folder sync's state as the glyph's colour. */
+  .synced {
+    display: inline-flex;
+    flex: none;
+    margin-left: auto;
+    color: var(--text-subtle);
+  }
+
+  .synced.success {
+    color: var(--success);
+  }
+
+  .synced.info {
+    color: var(--accent);
+  }
+
+  .synced.warning {
+    color: var(--warning);
+  }
+
+  .synced.danger {
+    color: var(--danger);
+  }
+
+  /* Every folder sync together (ADR-043). A paragraph: WebKitGTK leaves a
+     flex item span's text out of the accessibility tree. */
+  .folder-sync {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 0;
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .fs-icon {
+    display: inline-flex;
+    color: var(--text-subtle);
+  }
+
+  .folder-sync.success .fs-icon {
+    color: var(--success);
+  }
+
+  .folder-sync.info .fs-icon {
+    color: var(--accent);
+  }
+
+  .folder-sync.warning .fs-icon {
+    color: var(--warning);
+  }
+
+  .folder-sync.danger .fs-icon {
+    color: var(--danger);
   }
 
   .none {

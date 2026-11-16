@@ -51,7 +51,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   measured by listing, with cost estimates from versioned price lists, and a
   bucket's snapshots and backups in Cloud Storage, including deleting one
   sotyware backup snapshot (ADR-041); automatic sync of an enrolled device on
-  events (ADR-042). No other product features exist yet. Current milestone and status:
+  events (ADR-042); folder sync: an account's bucket kept in step with a
+  folder the user chose, in both directions, in the background (ADR-043;
+  tested against local test servers only). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -80,6 +82,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | enrolled device | a computer whose sealed copy of the account key is stored at the service (unlocked with the recovery key or approved by another enrolled device) |
 | provider capability | one behaviour a provider may or may not have (conditional writes, delete markers, …) with its evidence: documented, verified at the provider, assumed from Amazon S3, or unknown (ADR-029) |
 | test profile | a directory a desktop test creates for one run; a test-profile build (Cargo feature `test-profile`) refuses to start without one and keeps its databases, webview data and credentials (own namespace) inside it (ADR-027) |
+| sync / sync folder (folder sync) | one storage account's bucket kept in step with one folder on this computer, in both directions, in the background (`SyncConfig`, ADR-043) / that folder, chosen by the user, marked by `.sotyware-sync/root.json`; not the vault sync of the sotyware account |
+| synced state | per path, what the sync folder and the bucket last agreed on (local stamp, SHA-256, ETag); the base of folder sync's three-way comparison |
+| sync trash / deletion guard | `.sotyware-sync/trash/<day>/`: files folder sync removed here because they were deleted in the bucket, kept 30 days / the rule that holds a pass's deletions for the user's answer when they are many (≥ 1,000, or ≥ 50 and more than half of the synced files) |
 | update manifest / version floor | `sotyware-update.json`, the minisign-signed description of a release (version, channel, per-platform installer URL, signature and SHA-256) / the highest version a verified manifest ever offered this installation; anything lower is refused as a replay (ADR-033) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
@@ -126,6 +131,9 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; already in the tree; also dev-only for `hook_assumptions.rs`) | `1`, `1` | 1.11.3, 1.4.3 |
 | `tauri-plugin-updater` (desktop targets only, no default features, `rustls-tls`: rustls without a provider, sotyware passes its ring-based TLS configuration; driven from Rust only, ADR-033) | `2` | 2.14.1 |
 | `minisign-verify` (the update manifest's signature, ADR-033; already in the tree through the updater) | `0.3` | 0.3.0 |
+| `notify` (desktop targets only, no default features but `macos_fsevent`: folder sync's file watcher, ADR-043; adds `notify-types`, `inotify`, `inotify-sys`, `kqueue`, `kqueue-sys`, `objc2-core-services`) | `8` | 8.2.2 |
+| `tauri-plugin-opener` (desktop targets only: folder sync's "Open folder" through its `open_path`, called from Rust; not registered, no `opener:` permission, ADR-043; adds `open`, `is-wsl`, `is-docker`) | `2` | 2.7.3 |
+| `rustix` (Unix only, `fs`, `std`: folder sync's free space, `statvfs`; already in the tree) / `windows-sys` (Windows only, `Win32_Storage_FileSystem`: free space and the hidden attribute; already in the tree) | `1` / `0.61` | 1.1.6 / 0.61.2 |
 | `semver` (update versions and the version floor, ADR-033; already in the tree through Tauri) | `1` | 1.0.28 |
 | `minisign` (dev only: signs test manifests and packages with keys generated in the tests) and `tauri` feature `test` (dev only: the mock runtime that drives the updater plugin in tests) | `0.7`, `2` | 0.7.9, 2.12.5 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
@@ -324,6 +332,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   (`scripts/check-release-binary.mjs`, `beforeBundleCommand`)
   ([ADR-024](docs/architecture/decisions.md#adr-024-an-opt-in-request-recorder-observes-the-apps-own-s3-requests-through-an-sdk-interceptor-compiled-only-into-a-test-build),
   [cloud-storage.md](docs/architecture/cloud-storage.md#request-recorder)).
+- **Folder sync** (ADR-043, [folder-sync.md](docs/architecture/folder-sync.md)):
+  `src-tauri/src/folder_sync/` (`model.rs` pure rules: paths and names,
+  exclusions, the decision table, conflict names, deletion guard, retries;
+  `scan.rs`: walk, stamps, hashes, marker, `.sotyware-sync` staging and
+  trash, free space; `engine.rs`: one task per sync, passes, listing,
+  planning, actions with live checks; `watch.rs`: `notify`; `migrate.rs`:
+  moving a sync folder; `mod.rs`: `FolderSyncs` managed state, live status,
+  16 commands), `src-tauri/src/storage/folder_sync.rs`
+  (`folder-sync.sqlite3`, TEMP scan tables, the planning query), the
+  built-in feature `folder-sync`, `S3Store::upload_with`
+  (`Destination::Replace` of the synced ETag, stored modification time);
+  page `src/CloudSync.svelte` (the bucket's Sync tab), the sidebar's
+  indicator through `src/folderSyncModel.svelte.ts`.
 - **macOS menu bar** (ADR-037): `src-tauri/src/app_menu.rs` (Quit ⌘Q
   through `AppControl::quit`, Edit for the webview's clipboard keys,
   Window); `RunEvent::Reopen` (Dock click) shows the dashboard; credentials
@@ -369,10 +390,18 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   the 20 account commands of ADR-032 (`account_status`, `account_register`, `account_verify`, `account_sign_in`, `account_sign_out`, `account_set_up_sync`, `account_check_recovery_key`, `account_unlock`, `account_request_approval`, `account_approval_status`, `account_enrollments`, `account_answer_enrollment`, `account_devices`, `account_revoke_device`, `account_rotate_keys`, `account_sync`, `account_resolve_conflict`, `account_change_password`, `account_reset_password`, `account_delete`)
   and the six update commands of ADR-033/ADR-036 (`update_status`,
   `check_for_update`, `install_update`, `cancel_update`, `postpone_update`,
-  `restart_after_update`)
+  `restart_after_update`) and the 16 folder sync commands of ADR-043
+  (`list_folder_syncs`, `watch_folder_syncs`, `unwatch_folder_syncs`,
+  `choose_sync_folder`, `discard_sync_folder_choice`, `enable_folder_sync`,
+  `set_folder_sync_paused`, `sync_folder_now`, `retry_folder_sync`,
+  `set_folder_sync_interval`, `disable_folder_sync`, `change_sync_folder`,
+  `open_sync_folder`, `folder_sync_details`,
+  `resolve_folder_sync_conflict`, `answer_folder_sync_deletions`; the only
+  commands that return a local path: the sync folder the user chose, to
+  show it)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts` and `src/updates.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts` and `src/folderSync.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`), `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
   ADR-035) and `isDecorated()` (`core:window:allow-is-decorated`), and on
@@ -400,18 +429,22 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
-placement and the storage usage measurements, no settings, autostart,
+placement, the storage usage measurements and the folder syncs with their
+synced state, no settings, autostart,
 third-party plugin system, feature-management UI, a deployed account service, production email delivery, XEmbed
-tray fallback, overwriting uploads, parallel uploads, ZIP downloads,
+tray fallback, overwriting uploads (other than folder sync replacing the
+version it synced), parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of
-sotyware's own, content search, transfer queue UI or download history,
+sotyware's own in the bucket, content search, transfer queue UI or download history,
+online-only (on-demand) files, selective folder sync, sync bandwidth limits or
+exclusion patterns,
 credential
 import or any credential fallback outside the OS store, restic
 integration, encrypted backups, backup notifications, billing data from a
 provider (no API offers it; costs are estimates), management of Backblaze's
 console snapshots (no API), Windows 11 Snap Layouts on the page's maximize
-button, custom event, background (periodic) sync, or custom command besides
-the 83 listed above. Never describe these as existing.
+button, custom event, background (periodic) sync of the sotyware account, or custom command besides
+the 99 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -522,6 +555,8 @@ Every coding agent must:
    `CloudUploads`, `CloudOperations`, `BulkDownloads`, `CloudPlaces`,
    `CloudDrops`, `Journal`/`JournalLink` (operation journal), `Backups` and
    the backup `model`/`engine`, `AccountService`, `account::crypto`,
+   `FolderSyncs`, `folder_sync::model`/`engine`/`scan` and
+   `Destination`/`UploadOptions` (folder sync),
    `Updates`/`release_resources` (updates), `WindowStates`/`window_state`
    and `title_bar` (placement and Windows chrome), `StorageUsage`/`usage`
    and `pricing` (usage and estimates), the frontend shell and design

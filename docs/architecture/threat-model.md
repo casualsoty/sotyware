@@ -30,8 +30,10 @@ and the [journal](../status/journal.md), not here.
 1. **Webview ↔ Rust.** The page is treated as less trusted than Rust: it
    reaches Rust only through the declared commands, each with its own
    permission in `capabilities/default.json`; it never receives a credential,
-   a token, a key or a local path, and never sends a local path (dialogs are
-   opened by Rust). CSP allows no remote content.
+   a token or a key, never sends a local path (dialogs are opened by Rust),
+   and receives one kind of local path only: the folder the user chose for
+   folder sync, to show it (ADR-043; a compromised page learns where that
+   folder is, and still cannot name another). CSP allows no remote content.
 2. **sotyware ↔ storage provider.** HTTPS (rustls with ring and the OS root
    store); SigV4 request signing; the provider is trusted to store bytes but
    its answers are verified (sizes, SHA-256, ETags where meaningful).

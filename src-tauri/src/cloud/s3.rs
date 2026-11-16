@@ -61,10 +61,17 @@ pub use manage::{
 #[cfg(test)]
 mod hook_assumptions;
 
-pub use upload::{AbortOutcome, RemoteOutcome, UploadError, UploadProgress, UploadStage};
+pub use upload::{
+    AbortOutcome, Destination, RemoteOutcome, UploadError, UploadOptions, UploadProgress,
+    UploadStage,
+};
 
 /// User metadata key holding the hex SHA-256 of the object's content.
 pub const SHA256_METADATA: &str = "sotyware-sha256";
+
+/// User metadata key holding the uploaded file's modification time, in
+/// milliseconds since the Unix epoch (folder sync, ADR-043).
+pub const MTIME_METADATA: &str = "sotyware-mtime";
 
 /// Suffix of the temporary file a download is written to.
 const PARTIAL_SUFFIX: &str = ".sotyware-partial";
@@ -143,7 +150,8 @@ pub enum StorageError {
     Integrity(String),
     /// The local file changed while it was being uploaded.
     FileChanged(String),
-    /// An upload's destination key already holds an object; nothing was
+    /// An upload's destination key already holds an object (for a
+    /// replacement: another object than the one expected); nothing was
     /// overwritten.
     AlreadyExists(String),
     /// The file is larger than the provider accepts.
@@ -366,6 +374,8 @@ pub struct ObjectDetails {
     /// The SHA-256 sotyware stored at upload, if it uploaded the object.
     pub sha256: Option<String>,
     pub version_id: Option<String>,
+    /// Quotes removed.
+    pub e_tag: Option<String>,
 }
 
 /// What an upload did.
@@ -378,6 +388,9 @@ pub struct UploadReport {
     /// The version created, on a versioned bucket. Deleting this exact version
     /// removes the upload completely (a plain delete only hides it there).
     pub version_id: Option<String>,
+    /// The stored object's ETag as the verification read it (quotes
+    /// removed).
+    pub e_tag: Option<String>,
 }
 
 /// How a download was verified. Three levels, never merged: a transfer
@@ -401,6 +414,13 @@ pub struct DownloadReport {
     pub size: u64,
     pub sha256: String,
     pub verification: Verification,
+    /// The ETag of the object whose bytes were received (quotes removed).
+    pub e_tag: Option<String>,
+    /// When the provider stored it, in milliseconds since the Unix epoch.
+    pub modified_ms: Option<i64>,
+    /// The file's own modification time stored with it ([`MTIME_METADATA`]),
+    /// if it has one.
+    pub mtime_ms: Option<i64>,
 }
 
 /// What a completed download can claim, from what the provider announced
@@ -1183,6 +1203,7 @@ impl S3Store {
                     .unwrap_or(0),
                 sha256: out.metadata().and_then(|m| m.get(SHA256_METADATA)).cloned(),
                 version_id: out.version_id().map(str::to_owned),
+                e_tag: out.e_tag().map(|e| e.trim_matches('"').to_owned()),
             })),
             Err(e) => match classify("head object", e) {
                 StorageError::NotFound(_) => Ok(None),
@@ -1352,6 +1373,12 @@ impl S3Store {
             .map_err(|e| classify("download", e))?;
         let expected_sha = out.metadata().and_then(|m| m.get(SHA256_METADATA)).cloned();
         let expected_size = out.content_length().and_then(|s| u64::try_from(s).ok());
+        let e_tag = out.e_tag().map(|e| e.trim_matches('"').to_owned());
+        let modified_ms = out.last_modified().and_then(|t| t.to_millis().ok());
+        let mtime_ms = out
+            .metadata()
+            .and_then(|m| m.get(MTIME_METADATA))
+            .and_then(|v| v.parse::<i64>().ok());
         let mut body = out.body;
         let mut hasher = Sha256::new();
         let mut size = 0u64;
@@ -1400,6 +1427,9 @@ impl S3Store {
             size,
             sha256,
             verification,
+            e_tag,
+            modified_ms,
+            mtime_ms,
         })
     }
 

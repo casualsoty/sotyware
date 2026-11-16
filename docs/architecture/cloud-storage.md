@@ -104,6 +104,14 @@ core logic would not change.
 `src-tauri/src/cloud/s3/upload.rs`; decision and rejected alternatives:
 [ADR-021](decisions.md#adr-021-uploads-have-one-commit-point-re-hash-what-they-send-verify-by-head-and-time-out-on-stalls-not-on-duration).
 Called once per file by upload batches ([Uploading files](#uploading-files)).
+Folder sync calls `S3Store::upload_with` (ADR-043), the same upload with two
+options: `Destination::Replace { e_tag }` (step 4 then requires exactly the
+object with that ETag, the version it synced: another object there fails
+with `AlreadyExists`, none with `NotFound`, before any data is sent, and
+no `If-None-Match` is sent) and the file's modification time, stored as
+`x-amz-meta-sotyware-mtime`. With the default options it is exactly
+`upload`. `UploadReport` and `DownloadReport` now also carry the object's
+ETag (and a download its `Last-Modified` and stored time).
 
 1. **Checks** without a request: bucket configured for the account, key 1 to
    1,024 bytes; a transfer already cancelled stops here. Then a slot in the
@@ -1300,11 +1308,12 @@ What the records mean, and what they do not:
 
 ## Not built (deliberately)
 
-No overwriting uploads, parallel uploads, upload or download history,
+No overwriting uploads from the browser (folder sync replaces only the
+version it synced, [folder-sync.md](folder-sync.md)), parallel uploads, upload or download history,
 transfer queue UI, ZIP downloads, multipart copies above 5 GiB, permanent
 deletion of versions from the app, a trash of sotyware's own, merging
 folders on conflict, previews of PDF, SVG or HTML, content search, custom
-event or feature; no synchronisation, folder watching, restic
+event or feature; no synchronisation other than folder sync (ADR-043), no restic
 integration, client-side encryption of objects or backups, public ACLs or
 bucket permission changes, virtual filesystem, retrying queue, parallel
 parts within one file, resumable uploads, credential import from

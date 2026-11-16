@@ -809,10 +809,12 @@ pub async fn create_cloud_folder(
     prefix: String,
     name: String,
 ) -> Result<FolderEntry, CommandError> {
-    logged(
-        "create a folder",
-        create_folder(Arc::clone(&accounts), id, bucket, prefix, name).await,
-    )
+    let created = create_folder(Arc::clone(&accounts), id.clone(), bucket, prefix, name).await;
+    if created.is_ok() {
+        // A sync of this bucket lists it now (ADR-043).
+        crate::folder_sync::bucket_changed(&id);
+    }
+    logged("create a folder", created)
 }
 
 /// A file's properties (`HeadObject`). Allowed by
