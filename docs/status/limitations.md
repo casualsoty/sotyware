@@ -1039,10 +1039,12 @@ server only; no real provider was asked.
 
 ## Folder sync (ADR-043)
 
-- **Tested only locally:** in-process test servers and the WSL2 file system
-  ([status](status.md#folder-sync-2026-11-16)); never at a real provider,
-  on native Windows or macOS, on a real Linux desktop, through the release
-  binary, or with a large bucket.
+- **Tested only headless, against test servers:** in-process test servers,
+  on the WSL2 file system ([status](status.md#folder-sync-2026-11-16)) and
+  on GitHub's Ubuntu, Windows and macOS runners
+  ([runs](status.md#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16));
+  never at a real provider, through the release binary on any desktop
+  (Windows, macOS or a real Linux desktop), or with a large bucket.
 - **Every file is kept on the computer;** there are no online-only
   (on-demand) files, no selective sync of folders, no bandwidth limit and no
   exclusion patterns of the user's own (the fixed exclusions: `desktop.ini`,
@@ -1080,13 +1082,14 @@ server only; no real provider was asked.
   are both here are both synced, but a second spelling from the bucket is
   not brought down.
   Checked on WSL2 (ext4 with case ignored by force, and NTFS through
-  `/mnt/c`), not on native Windows or macOS.
+  `/mnt/c`) and by the tests on GitHub's Windows and macOS runners, not
+  through the app on a desktop.
 - **Links, junctions, devices, sockets and pipes** in the folder are not
   synced (reported), nor anything in the bucket under a link's name: those
   keys stay in the bucket, and a synced folder replaced by a link keeps its
   objects there until the link is gone (then the folder counts as
-  deleted here). Checked with symbolic links on WSL2 only, not with Windows
-  junctions.
+  deleted here). Checked with symbolic links on WSL2 and on GitHub's Ubuntu
+  and macOS runners, not with Windows junctions.
 - **A provider without ETags on `HeadObject`** (s3s-fs) cannot sync changed
   files: the replacement is refused and reported.
 - **Moves** are recognised for files up to 5 GiB with the same content

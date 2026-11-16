@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-16 (the Usage & costs tab in the Windows desktop test, `windows-cloud-ui.ps1 -Mode usage`: 41/41 on native Windows 11 through UI Automation, and a build without the cost table's fix fails exactly its three layout checks: [details](#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-16 (folder sync, ADR-043, which failed `macos.yml` on Apple Silicon at `b67d6a6`, and its two fixes, one spelling per name where the file system ignores case and nothing synced through a link, pushed as `d3a301c`, where `ci.yml` and `macos.yml` passed on Ubuntu 22.04, Windows and both Macs; headless and against test servers only: [details](#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Windows desktop test, `windows-cloud-ui.ps1 -Mode usage`: 41/41 on native Windows 11 through UI Automation, and a build without the cost table's fix fails exactly its three layout checks: [details](#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -146,6 +146,48 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `d3a301c`: folder sync passes on macOS (2026-11-16)
+
+`main` was pushed as a fast-forward from `b67d6a6` to `d3a301c`: the
+[case fix](#folder-sync-where-the-file-system-ignores-case-2026-11-16)
+(`2c51283`) and the [link fix](#folder-sync-never-goes-through-a-link-2026-11-16)
+(`d3a301c`); no tag, no release. The push started `ci.yml` and
+`macos.yml` for `d3a301c`, and **both passed** at the first attempt.
+
+- **`macos.yml`** run 43923048012: `macOS tests (aarch64)` (macos-15-arm64
+  20261104.0514.1), 7 min 40 s, with an older Cargo cache entry (partial
+  match; the failed job at `b67d6a6` saved none), and `macOS tests
+  (x86_64)` (macos-15 20260824.0482.1), 10 min 22 s (cache full match).
+  On each: Vitest 307/307 and `cargo test` **641 passed, 0 failed**, 29
+  ignored, with all 82 folder sync tests: among them
+  `names_differing_only_in_case_are_not_both_brought_here`, the test that
+  failed on Apple Silicon at `b67d6a6`; the four tests that force case to
+  be ignored; the spelling test (it checks that the probe agrees with the
+  file system; which of the two checks the probe chose is not printed);
+  the link fix's three tests; and the running engine's watcher test
+  (FSEvents).
+  Then the Keychain round trip passed. `macOS package` was skipped
+  (`package` is false on a push).
+- **`ci.yml`** run 43923047843: `headless (ubuntu-22.04)` (20261111.360.2),
+  5 min 45 s: Vitest 307/307, `cargo test` 651 passed and the recorder
+  build 679 passed (29 ignored and 82 folder sync tests in each).
+  `headless (windows-latest)` (windows-2025-vs2026 20261103.298.1),
+  6 min 50 s: PowerShell helpers 20/20, Vitest 307/307, `cargo test`
+  **629 passed, 0 failed**, 29 ignored, with the 75 folder sync tests that
+  are not Unix only, among them the case test, the forced-case tests, and
+  the spelling test, which on Windows requires the probe to choose the
+  canonical path (`fs::canonicalize`, `GetFinalPathNameByHandleW`) and
+  passed. `account service (ubuntu-22.04)`, 25 s: 25 tests. The Ubuntu and
+  Windows Cargo caches matched fully.
+
+One run each. The failure at `b67d6a6` depended on timing, so one pass on
+Apple Silicon is weaker evidence than the reproduction on WSL2 (3 of 5
+failed before the fix, 20 of 20 passed after).
+
+Not shown: the release binary on any desktop (no driver covers the Sync
+tab), Windows junctions (the link tests are Unix only), a real provider,
+`release.yml`.
+
 ### Folder sync never goes through a link (2026-11-16)
 
 Found while fixing [case](#folder-sync-where-the-file-system-ignores-case-2026-11-16):
@@ -178,7 +220,9 @@ folder sync tests 3 more times (82 each), the recorder build **679 passed,
 `--features test-profile`).
 
 **Not run:** Windows junctions (the same `is_symlink` test the walk uses,
-not exercised there), macOS.
+not exercised there). The link tests passed on GitHub's Ubuntu and macOS
+runners after the push
+([runs at `d3a301c`](#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)).
 
 ### Folder sync where the file system ignores case (2026-11-16)
 
@@ -231,8 +275,9 @@ these lines):
   --check`, clippy with `-D warnings` (default and `--features
   test-profile`).
 
-**Not run:** native Windows and macOS (the hosted runs after the next push
-are the first), a real provider.
+**Not run:** a real provider. Native Windows and macOS: only the tests, on
+GitHub's runners after the push, where they passed
+([runs at `d3a301c`](#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)).
 
 ### Folder sync (2026-11-16)
 
