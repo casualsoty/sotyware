@@ -1692,9 +1692,10 @@ cd src-tauri && TMPDIR=/mnt/c/dev/sotyware-casetest cargo test --lib -- folder_s
   hashing with its stamp, the marker and the folder states, the trash
   (never replacing, old days removed), inspecting a chosen folder, exact
   spellings (the canonical path and the folder listings agree on this file
-  system; a path through a link to a folder is not spelled as stored) and
-  the case probe (it agrees with the file system and leaves nothing; on
-  Windows it trusts the canonical path).
+  system; a path through a link to a folder is not spelled as stored), the
+  case probe (it agrees with the file system and leaves nothing; on
+  Windows it trusts the canonical path) and nothing looked at through a
+  link (Unix).
 - `storage/folder_sync.rs`: the schema on disk and the TEMP tables per
   session, only differing paths as candidates (paged), an unfinished
   listing never dropping entries, a folder marker never cleared by an
@@ -1739,7 +1740,10 @@ cd src-tauri && TMPDIR=/mnt/c/dev/sotyware-casetest cargo test --lib -- folder_s
   runners, `/mnt/c` on WSL2) and with case ignored by force on any file
   system (two keys of one name come down once, a folder spelled otherwise
   here keeps its spelling, renaming only the case is a server-side copy,
-  deleting the file here deletes its own spelling and frees the name).
+  deleting the file here deletes its own spelling and frees the name);
+  links (Unix): keys under a link's name never written through it, and a
+  synced folder replaced by a link left alone on both sides, the sync in
+  step each time.
 - `cloud/s3/upload/tests.rs`: a replacement only over the expected ETag
   (another ETag or none refused with only a `HeadObject`; the time stored);
   refused where `HeadObject` sends no ETag (s3s-fs).

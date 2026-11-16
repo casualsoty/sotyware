@@ -258,16 +258,20 @@ impl Case {
 }
 
 /// One path as it is now: `Ok(None)` when it does not exist (or is
-/// ignored), `Err` with the reason it is not synced. Where `case` is
-/// ignored, a path that exists only under another spelling (`report.txt`
-/// for `Report.txt`) is not there: the scan never records one file under
-/// two names.
+/// ignored), `Err` with the reason it is not synced. A path inside a link
+/// is not in the sync folder (the walk never follows one), and where
+/// `case` is ignored, a path that exists only under another spelling
+/// (`report.txt` for `Report.txt`) is not there: the scan never records
+/// one file under two names.
 pub fn look(
     root: &Path,
     rel: &str,
     prefix: &str,
     case: Case,
 ) -> io::Result<Result<Option<Local>, String>> {
+    if through_link(root, rel)? {
+        return Ok(Ok(None));
+    }
     let found = match classify(&join(root, rel), rel, prefix) {
         Ok(Kind::File(l) | Kind::Folder(l)) => Ok(Some(l)),
         Ok(Kind::Ignore) => return Ok(Ok(None)),
@@ -279,6 +283,21 @@ pub fn look(
         return Ok(Ok(None));
     }
     Ok(found)
+}
+
+/// Whether a folder on the way from the sync folder to `rel` is a link or
+/// a junction (`rel` itself may be one). Sync never looks, writes, moves or
+/// removes anything through one: what is behind it is outside the folder.
+pub fn through_link(root: &Path, rel: &str) -> io::Result<bool> {
+    for folder in model::parents(rel) {
+        match fs::symlink_metadata(join(root, folder)) {
+            Ok(m) if m.file_type().is_symlink() => return Ok(true),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(false)
 }
 
 /// Whether something exists at `rel`, spelled exactly so (where `case` is
@@ -982,6 +1001,34 @@ mod tests {
                 );
                 assert!(spelled_exactly(&root, "Link", how).unwrap(), "{how:?}");
             }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nothing_is_looked_at_through_a_link() {
+        let t = TempDir::new("sync-through-link");
+        let root = t.path("root");
+        let outside = t.path("outside");
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::create_dir_all(outside.join("deep")).unwrap();
+        fs::write(outside.join("deep/x.txt"), b"x").unwrap();
+        fs::write(root.join("real/y.txt"), b"y").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(through_link(&root, "link/deep/x.txt").unwrap());
+        assert!(through_link(&root, "link/x.txt").unwrap());
+        assert!(!through_link(&root, "link").unwrap(), "the link itself");
+        assert!(!through_link(&root, "real/y.txt").unwrap());
+        assert!(!through_link(&root, "missing/a/b.txt").unwrap());
+        for case in [Case::Sensitive, Case::IgnoredListed, Case::IgnoredCanonical] {
+            assert_eq!(look(&root, "link/deep/x.txt", "", case).unwrap(), Ok(None));
+            assert!(look(&root, "link", "", case).unwrap().is_err(), "reported");
+            assert!(
+                look(&root, "real/y.txt", "", case)
+                    .unwrap()
+                    .unwrap()
+                    .is_some()
+            );
         }
     }
 

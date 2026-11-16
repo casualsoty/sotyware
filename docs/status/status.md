@@ -146,6 +146,40 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Folder sync never goes through a link (2026-11-16)
+
+Found while fixing [case](#folder-sync-where-the-file-system-ignores-case-2026-11-16):
+a link (or junction) in the sync folder was skipped and reported, but the
+bucket's keys under its name were still planned. A key `link/x.txt` was
+downloaded through the link into the folder it points to, outside the sync
+folder (never replacing a file there), and the sync never came into step
+("Some changes wait"); a synced folder replaced by a link received the
+bucket's new files behind the link the same way. Nothing was deleted in the
+bucket (the check before a deletion saw the files through the link).
+
+**Fix** ([folder-sync.md](../architecture/folder-sync.md#safety)): planning
+leaves out everything inside a path skipped here and a bucket path that
+something skipped here holds (a link, a device); every look at one path,
+download, local move, move to the sync trash and folder creation or removal
+first checks that no folder on its way is a link; the watcher no longer
+follows links (`notify` follows them by default on Linux).
+
+**Runs** (WSL2, ext4, symbolic links; uncommitted after `2c51283`, then
+committed with these lines): two new end-to-end tests pass, the sync in
+step each time: keys under a link's name (on the code before the fix it
+failed, the files written behind the link) and a synced folder replaced by
+a link (on the code before the fix the same scenario wrote the bucket's new
+file behind the link and stayed at "Some changes wait"); without the
+planning rule, the write checks alone, both tests stay at "Some changes
+wait". A scan unit test covers looks through a link. `npm run
+test:headless` passed (Vitest 307, Rust **651 passed, 29 ignored**), the
+folder sync tests 3 more times (82 each), the recorder build **679 passed,
+29 ignored**, `cargo fmt --check`, clippy with `-D warnings` (default and
+`--features test-profile`).
+
+**Not run:** Windows junctions (the same `is_symlink` test the walk uses,
+not exercised there), macOS.
+
 ### Folder sync where the file system ignores case (2026-11-16)
 
 Folder sync was committed as `b67d6a6` and pushed to `main` the same day.

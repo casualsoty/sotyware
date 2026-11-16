@@ -33,7 +33,10 @@ impl Watcher {
             Ok(event) => on_event(&base, &control, &event),
             Err(_) => control.mark_full(),
         };
-        let mut inner = match notify::recommended_watcher(handler) {
+        // Links are not followed (as by the walk): what is behind one is
+        // outside the folder.
+        let config = notify::Config::default().with_follow_symlinks(false);
+        let mut inner = match RecommendedWatcher::new(handler, config) {
             Ok(w) => w,
             Err(e) => {
                 eprintln!("sotyware: cannot watch a sync folder for changes: {e}");

@@ -901,12 +901,15 @@ impl Known {
 
     /// Whether `t` is left out of planning: below a folder that could not
     /// be read, a spelling (or below one) that would share a file with
-    /// another where the file system ignores case, or only on a side where
-    /// it is not synced.
+    /// another where the file system ignores case, inside something here
+    /// that is not synced (a link: what is behind it is outside the
+    /// folder), held here by something not synced (a link, a device) or
+    /// only on a side where it is not synced.
     fn excluded(&self, t: &Triple, unknown: &[String], aliased: &HashSet<String>) -> bool {
         below(&t.path, unknown)
             || within(&t.path, aliased)
-            || (t.remote.is_none() && self.skipped_here.contains(&t.path))
+            || model::parents(&t.path).any(|p| self.skipped_here.contains(p))
+            || ((t.remote.is_none() || t.local.is_none()) && self.skipped_here.contains(&t.path))
             || (t.local.is_none() && self.skipped_there.contains(&t.path))
     }
 }
@@ -1963,6 +1966,11 @@ async fn place(
     let staged_c = staged.to_path_buf();
     let (root, r, case) = (ctx.root.clone(), rel.to_owned(), ctx.case);
     let outcome = blocking(move || -> std::io::Result<Placed> {
+        // Never through a link: what is behind it is outside the folder.
+        if scan::through_link(&root, &r)? {
+            let _ = std::fs::remove_file(&staged_c);
+            return Ok(Placed::Changed);
+        }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -2132,9 +2140,16 @@ async fn try_local_move(
         mtime_ns: source.mtime_ns,
         file_id: source.file_id,
     };
-    let (root, old, case) = (ctx.root.clone(), source.path.clone(), ctx.case);
+    let (root, old, new, case) = (
+        ctx.root.clone(),
+        source.path.clone(),
+        rel.to_owned(),
+        ctx.case,
+    );
     let moved = blocking(move || -> std::io::Result<Option<Stamp>> {
-        if scan::stamp(&from)? != Some(expected)
+        if scan::through_link(&root, &old)?
+            || scan::through_link(&root, &new)?
+            || scan::stamp(&from)? != Some(expected)
             || to.symlink_metadata().is_ok()
             || !scan::spelled_exactly(&root, &old, case)?
         {
@@ -2619,7 +2634,8 @@ async fn delete_local(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
     };
     let (root, r, case) = (ctx.root.clone(), rel.to_owned(), ctx.case);
     let moved = blocking(move || -> std::io::Result<Option<PathBuf>> {
-        if scan::stamp(&scan::join(&root, &r))? != Some(expected)
+        if scan::through_link(&root, &r)?
+            || scan::stamp(&scan::join(&root, &r))? != Some(expected)
             || !scan::spelled_exactly(&root, &r, case)?
         {
             return Ok(None);
@@ -2658,7 +2674,11 @@ async fn make_local_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> 
         return Ok(Done::Waiting);
     }
     let path = scan::join(&ctx.root, &rel);
+    let (root, r) = (ctx.root.clone(), rel.clone());
     let made = blocking(move || -> std::io::Result<bool> {
+        if scan::through_link(&root, &r)? {
+            return Ok(false);
+        }
         match path.symlink_metadata() {
             Ok(m) if m.is_dir() => Ok(true),
             Ok(_) => Ok(false),
@@ -2772,8 +2792,12 @@ async fn remove_remote_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failur
 async fn remove_local_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
     let rel = t.path.clone();
     let path = scan::join(&ctx.root, &rel);
+    let (root, r) = (ctx.root.clone(), rel.clone());
     // Only an empty folder goes; anything still in it is synced first.
     let removed = blocking(move || -> std::io::Result<bool> {
+        if scan::through_link(&root, &r)? {
+            return Ok(false);
+        }
         match std::fs::read_dir(&path) {
             Ok(mut d) => {
                 if d.next().is_some() {

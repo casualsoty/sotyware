@@ -1790,3 +1790,69 @@ async fn where_case_is_ignored_deleting_the_file_here_deletes_its_own_spelling()
     assert_eq!(files["Report.txt"], b"theirs");
     assert!(d.details().skipped.is_empty(), "{:?}", d.details().skipped);
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_is_written_or_deleted_through_a_link_in_the_sync_folder() {
+    let e = env("sync-link-parent").await;
+    let mut d = e.enable("root").await;
+    let outside = e.dir.path("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, d.path("link")).unwrap();
+    // Keys under the link's name (a folder on another computer).
+    e.put_with_sha("link/x.txt", b"x");
+    e.put_with_sha("link/sub/y.txt", b"y");
+    for _ in 0..3 {
+        let s = d.settle().await;
+        assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+        assert!(
+            fs::read_dir(&outside).unwrap().next().is_none(),
+            "nothing is written through the link"
+        );
+    }
+    assert_eq!(e.objects().len(), 2, "both objects stay");
+    assert_eq!(e.versions("link/x.txt"), 1, "no delete marker");
+    assert_eq!(e.versions("link/sub/y.txt"), 1, "no delete marker");
+    let skipped = d.details().skipped;
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s.path == "link" && s.side == "local"),
+        "{skipped:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_synced_folder_replaced_by_a_link_is_left_alone() {
+    let e = env("sync-link-replaced").await;
+    let mut d = e.enable("root").await;
+    d.write("photos/a.jpg", b"a");
+    d.write("photos/b.jpg", b"b");
+    d.settle().await;
+    assert_eq!(e.objects().len(), 2);
+    // The folder moved elsewhere and a link left in its place; the bucket
+    // gains a file in that folder.
+    let elsewhere = e.dir.path("elsewhere");
+    fs::rename(d.path("photos"), &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, d.path("photos")).unwrap();
+    e.put_with_sha("photos/c.jpg", b"c");
+    for _ in 0..2 {
+        let s = d.settle().await;
+        assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    }
+    assert_eq!(e.objects().len(), 3, "nothing deleted in the bucket");
+    assert_eq!(e.versions("photos/a.jpg"), 1);
+    assert_eq!(e.versions("photos/b.jpg"), 1);
+    let mut there: Vec<String> = fs::read_dir(&elsewhere)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    there.sort();
+    assert_eq!(
+        there,
+        ["a.jpg", "b.jpg"],
+        "nothing written or removed behind the link"
+    );
+}

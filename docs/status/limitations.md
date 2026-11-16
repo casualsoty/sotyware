@@ -1082,7 +1082,11 @@ server only; no real provider was asked.
   Checked on WSL2 (ext4 with case ignored by force, and NTFS through
   `/mnt/c`), not on native Windows or macOS.
 - **Links, junctions, devices, sockets and pipes** in the folder are not
-  synced (reported).
+  synced (reported), nor anything in the bucket under a link's name: those
+  keys stay in the bucket, and a synced folder replaced by a link keeps its
+  objects there until the link is gone (then the folder counts as
+  deleted here). Checked with symbolic links on WSL2 only, not with Windows
+  junctions.
 - **A provider without ETags on `HeadObject`** (s3s-fs) cannot sync changed
   files: the replacement is refused and reported.
 - **Moves** are recognised for files up to 5 GiB with the same content

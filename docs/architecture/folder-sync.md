@@ -90,7 +90,10 @@ whose ETag and size are those of a synced object gone from the bucket
 3. **Local scan.** All of it after a start, a watcher overflow, a returned
    folder or "Sync now"; otherwise only the paths the watcher named (and a
    folder that appeared with them). Links, junctions, devices, sockets and
-   pipes are skipped and reported; so are names that cannot be object keys
+   pipes are skipped and reported, and nothing inside a link is synced from
+   either side: the bucket's keys under a link's name (a folder on another
+   computer) stay in the bucket, and a synced folder replaced by a link is
+   left as it is on both sides. So are names that cannot be object keys
    (not Unicode, control characters, keys over 1,024 bytes) or that this
    system refuses (Windows: `< > : " \ | ? *`, trailing dots and spaces,
    `CON`, `NUL`, `COM1`, …). A folder that cannot be read is **unknown**:
@@ -150,6 +153,11 @@ it is uploaded fails that upload (`FileChanged`) and is decided again.
   provider fault), a folder emptied by another program.
 - **Unknown is never gone:** an unreadable folder, an unfinished listing, a
   missing sync folder.
+- **Never through a link.** What is behind a link or junction is outside
+  the sync folder: the walk and the watcher do not follow one, and every
+  look at one path, download, local move, move to the sync trash and
+  folder creation or removal first checks that no folder on its way is a
+  link (`scan::through_link`).
 - **One sync per bucket, no overlapping folders,** and a sync never follows
   its account to another bucket or endpoint (its synced state would not
   fit).
