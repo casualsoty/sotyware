@@ -22,7 +22,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{open_database, sql_error};
 use crate::features::StoreError;
-use crate::folder_sync::model::{Local, Remote, Synced, Triple};
+use crate::folder_sync::model::{self, Local, Remote, Synced, Triple};
 
 /// The database file inside the app's local data directory.
 pub const SYNC_FILE_NAME: &str = "folder-sync.sqlite3";
@@ -71,6 +71,7 @@ const SESSION_TABLES: &str = "
     CREATE TEMP TABLE IF NOT EXISTS local_scan (
         sync_id TEXT NOT NULL,
         path TEXT NOT NULL,
+        fold TEXT NOT NULL,
         dir INTEGER NOT NULL,
         size INTEGER NOT NULL,
         mtime_ns INTEGER,
@@ -78,9 +79,11 @@ const SESSION_TABLES: &str = "
         generation INTEGER NOT NULL,
         PRIMARY KEY (sync_id, path)
     ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS temp.local_scan_fold ON local_scan (sync_id, fold);
     CREATE TEMP TABLE IF NOT EXISTS remote_scan (
         sync_id TEXT NOT NULL,
         path TEXT NOT NULL,
+        fold TEXT NOT NULL,
         dir INTEGER NOT NULL,
         marker INTEGER NOT NULL,
         size INTEGER NOT NULL,
@@ -89,6 +92,7 @@ const SESSION_TABLES: &str = "
         generation INTEGER NOT NULL,
         PRIMARY KEY (sync_id, path)
     ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS temp.remote_scan_fold ON remote_scan (sync_id, fold);
     CREATE TEMP TABLE IF NOT EXISTS scan_state (
         sync_id TEXT PRIMARY KEY NOT NULL,
         local_gen INTEGER NOT NULL DEFAULT 0,
@@ -379,8 +383,9 @@ impl SqliteSyncStore {
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO temp.local_scan (sync_id, path, dir, size, mtime_ns, file_id, generation)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    "INSERT INTO temp.local_scan (sync_id, path, dir, size, mtime_ns, file_id,
+                         generation, fold)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                      ON CONFLICT (sync_id, path) DO UPDATE SET dir = excluded.dir,
                          size = excluded.size, mtime_ns = excluded.mtime_ns,
                          file_id = excluded.file_id, generation = excluded.generation",
@@ -394,7 +399,8 @@ impl SqliteSyncStore {
                     size_i64(l.size),
                     l.mtime_ns,
                     i64_of(l.file_id),
-                    generation
+                    generation,
+                    model::fold(&l.path)
                 ])
                 .map_err(sql_error("cannot record the local scan"))?;
             }
@@ -529,8 +535,8 @@ impl SqliteSyncStore {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO temp.remote_scan (sync_id, path, dir, marker, size, etag,
-                         modified_ms, generation)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                         modified_ms, generation, fold)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                      ON CONFLICT (sync_id, path) DO UPDATE SET
                          dir = excluded.dir,
                          marker = CASE WHEN temp.remote_scan.generation = excluded.generation
@@ -550,7 +556,8 @@ impl SqliteSyncStore {
                     size_i64(r.size),
                     r.etag,
                     r.modified_ms,
-                    generation
+                    generation,
+                    model::fold(&r.path)
                 ])
                 .map_err(sql_error("cannot record the remote listing"))?;
             }
@@ -784,6 +791,66 @@ impl SqliteSyncStore {
             rows.filter_map(Result::transpose).collect()
         };
         read().map_err(sql_error("cannot plan the sync"))
+    }
+
+    /// For a file system that ignores case: the listed paths that would
+    /// land on a file or folder spelled differently, each with the spelling
+    /// that keeps the name, in path order, at most `limit`, without the
+    /// paths inside another one listed. A spelling here keeps its name
+    /// (whatever the bucket has); of spellings only in the bucket, the
+    /// synced one, else the first in byte order. A path here exactly as
+    /// listed is never one of them.
+    pub fn aliased(&mut self, id: &str, limit: usize) -> Result<Vec<(String, String)>, StoreError> {
+        let read = || -> rusqlite::Result<Vec<(String, String)>> {
+            let mut stmt = self.conn.prepare(
+                "SELECT r.path, COALESCE(
+                     (SELECT l.path FROM temp.local_scan l
+                      WHERE l.sync_id = ?1 AND l.fold = r.fold ORDER BY l.path LIMIT 1),
+                     (SELECT r2.path FROM temp.remote_scan r2
+                      WHERE r2.sync_id = ?1 AND r2.fold = r.fold
+                      ORDER BY NOT EXISTS (SELECT 1 FROM synced s
+                                  WHERE s.sync_id = ?1 AND s.path = r2.path),
+                          r2.path
+                      LIMIT 1)) AS winner
+                 FROM temp.remote_scan r
+                 WHERE r.sync_id = ?1
+                     AND NOT EXISTS (SELECT 1 FROM temp.local_scan l
+                         WHERE l.sync_id = ?1 AND l.path = r.path)
+                     AND (EXISTS (SELECT 1 FROM temp.local_scan l
+                             WHERE l.sync_id = ?1 AND l.fold = r.fold)
+                         OR EXISTS (SELECT 1 FROM temp.remote_scan r2
+                             WHERE r2.sync_id = ?1 AND r2.fold = r.fold AND r2.path <> r.path))
+                     AND winner <> r.path
+                 ORDER BY r.path
+                 LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![id, i64::try_from(limit).unwrap_or(i64::MAX)], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?;
+            rows.collect()
+        };
+        let all = read().map_err(sql_error("cannot plan the sync"))?;
+        // A folder left out takes its contents with it: list only it (in
+        // path order a folder comes before everything inside it).
+        let mut kept = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for (path, winner) in all {
+            let mut up = path.as_str();
+            let mut inside = false;
+            while let Some(i) = up.rfind('/') {
+                up = &up[..i];
+                if kept.contains(up) {
+                    inside = true;
+                    break;
+                }
+            }
+            if !inside {
+                kept.insert(path.clone());
+                out.push((path, winner));
+            }
+        }
+        Ok(out)
     }
 
     // -------------------------------------------------------------- issues
@@ -1103,6 +1170,90 @@ mod tests {
         let from = s.moved_from_there("a", "e2", 5).unwrap();
         assert_eq!(from.len(), 1);
         assert_eq!(from[0].path, "kept");
+    }
+
+    #[test]
+    fn spellings_that_would_share_a_file_are_found() {
+        let mut s = SqliteSyncStore::in_memory().unwrap();
+        let dir = |p: &str| Remote {
+            path: p.into(),
+            dir: true,
+            ..Remote::default()
+        };
+        let g = s.local_begin("a").unwrap();
+        s.put_local(
+            "a",
+            &[
+                file("docs/b.txt", 1, 1),
+                Local {
+                    path: "docs".into(),
+                    dir: true,
+                    ..Local::default()
+                },
+                file("Mine.txt", 1, 1),
+                Local {
+                    path: "docs-old".into(),
+                    dir: true,
+                    ..Local::default()
+                },
+                // A folder that tells case apart (Windows can mark one):
+                // both spellings are here, so both stay.
+                Local {
+                    path: "cs".into(),
+                    dir: true,
+                    ..Local::default()
+                },
+                file("cs/a.txt", 1, 1),
+                file("cs/A.txt", 1, 1),
+            ],
+            g,
+        )
+        .unwrap();
+        s.put_synced("a", &synced("notes.txt", 1, 1, "e10"), 0)
+            .unwrap();
+        let rg = s.remote_begin("a").unwrap();
+        s.put_remote(
+            "a",
+            &[
+                // Two keys, neither here nor synced: the first in byte
+                // order wins.
+                object("Report.txt", 1, "e1"),
+                object("report.txt", 1, "e2"),
+                // The folder here is "docs": "Docs" and all inside it lose,
+                // listed once (also past "Docs-old", between them in order).
+                dir("Docs"),
+                object("Docs/a.txt", 1, "e3"),
+                object("Docs/b.txt", 1, "e4"),
+                object("Docs/sub/c.txt", 1, "e5"),
+                dir("Docs-old"),
+                dir("docs"),
+                object("docs/b.txt", 1, "e6"),
+                // The spelling here wins over the bucket's other one.
+                object("MINE.txt", 1, "e7"),
+                object("Mine.txt", 1, "e8"),
+                // Neither here: the synced one wins.
+                object("Notes.txt", 1, "e9"),
+                object("notes.txt", 1, "e10"),
+                dir("cs"),
+                object("cs/a.txt", 1, "e11"),
+                object("cs/A.txt", 1, "e12"),
+                object("unique.txt", 1, "e13"),
+            ],
+            rg,
+        )
+        .unwrap();
+        s.remote_end("a", rg).unwrap();
+        assert_eq!(
+            s.aliased("a", 100).unwrap(),
+            [
+                ("Docs".to_owned(), "docs".to_owned()),
+                ("Docs-old".to_owned(), "docs-old".to_owned()),
+                ("MINE.txt".to_owned(), "Mine.txt".to_owned()),
+                ("Notes.txt".to_owned(), "notes.txt".to_owned()),
+                ("report.txt".to_owned(), "Report.txt".to_owned()),
+            ]
+        );
+        assert!(s.aliased("other", 100).unwrap().is_empty());
     }
 
     #[test]

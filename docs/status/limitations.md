@@ -1062,10 +1062,25 @@ server only; no real provider was asked.
 - **Names:** an object whose name this system cannot hold (Windows: `< > :
   " \ | ? *`, trailing dots or spaces, reserved names; anywhere: control
   characters, over 255 bytes per name) is not synced, nor a file whose name
-  cannot be a key; on a file system that ignores case, of two keys that
-  differ only in case one is not synced. HFS+ (old macOS volumes) normalises
+  cannot be a key. HFS+ (old macOS volumes) normalises
   Unicode names, which can make such a name look like a new file; APFS does
   not.
+- **Case** ([how](../architecture/folder-sync.md#names-that-differ-only-in-case)):
+  on a file system that ignores case (Windows, macOS, FAT and exFAT drives),
+  of keys that differ only in case one is synced (the spelling here, else
+  the synced one, else the first in byte order), the others and everything
+  inside them stay in the bucket, listed as not synced. Renaming only the
+  case of a file over 5 GiB uploads it again and leaves the old key in the
+  bucket. Case is compared by Unicode lower case, which is close to but not
+  exactly NTFS's or APFS's rules, and Unicode normalisation is not compared:
+  a name that APFS takes as the same in another normalisation is not left
+  out, and a file inside a folder so spelled lands in the folder here (then
+  uploaded under its spelling here). In a folder Windows marks
+  case-sensitive inside a sync folder that ignores case, two spellings that
+  are both here are both synced, but a second spelling from the bucket is
+  not brought down.
+  Checked on WSL2 (ext4 with case ignored by force, and NTFS through
+  `/mnt/c`), not on native Windows or macOS.
 - **Links, junctions, devices, sockets and pipes** in the folder are not
   synced (reported).
 - **A provider without ETags on `HeadObject`** (s3s-fs) cannot sync changed

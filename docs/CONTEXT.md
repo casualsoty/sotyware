@@ -40,10 +40,16 @@ deletion guard, a marker in the folder (unplugged drive: wait; foreign
 folder: stop), moving the folder (verified copies) or starting fresh,
 turning off without deleting anything; the bucket's **Sync** tab, a sync
 glyph and summary in the sidebar, the local copy on Usage & costs.
-Uncommitted when written, WSL2 only: `test:headless` (Vitest 307, Rust 641 +
-29 ignored), recorder build 669, clippy (default and test-profile), the
-Sync tab seen in headless Edge through a mocked harness. Not run: any
-desktop driver, native Windows or macOS, a real provider.
+Committed as `b67d6a6` and pushed: `ci.yml` passed (Ubuntu, Windows),
+`macos.yml` failed on Apple Silicon only, two keys differing only in case
+coming down as two files; fixed since (one spelling per name where the file
+system ignores case, exact spellings in every check; reproduced and fixed on
+WSL2 through `/mnt/c`;
+[status](status/status.md#folder-sync-where-the-file-system-ignores-case-2026-11-16)).
+WSL2: `test:headless` (Vitest 307, Rust 648 + 29 ignored), recorder build
+676, clippy (default and test-profile), the Sync tab seen in headless Edge
+through a mocked harness. Not run: any desktop driver, native Windows or
+macOS, a real provider.
 
 **Desktop UX, usage and costs, snapshots, automatic sync** (2026-11-15,
 committed on `main` after `310fd49` and pushed on 2026-11-16, where

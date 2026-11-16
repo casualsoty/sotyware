@@ -574,6 +574,8 @@ pub(crate) struct Shared {
     seq: AtomicU64,
     #[cfg(test)]
     pub free_space_override: Mutex<Option<u64>>,
+    #[cfg(test)]
+    pub case_override_value: Mutex<Option<scan::Case>>,
 }
 
 impl Shared {
@@ -658,6 +660,22 @@ impl Shared {
 
     pub fn transfer_end(&self, id: &str, key: u64) {
         self.update(id, |s| s.transfers.retain(|t| t.key != key));
+    }
+
+    /// How the sync folder's file system treats case, when a test decides
+    /// it (`None`: the file system is probed).
+    pub fn case_override(&self) -> Option<scan::Case> {
+        #[cfg(test)]
+        {
+            *self
+                .case_override_value
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
     }
 
     /// Free space on the drive of `path` (tests can pretend).
@@ -768,6 +786,8 @@ impl FolderSyncs {
                 seq: AtomicU64::new(1),
                 #[cfg(test)]
                 free_space_override: Mutex::new(None),
+                #[cfg(test)]
+                case_override_value: Mutex::new(None),
             }),
             engines: Mutex::new(Engines {
                 running: HashMap::new(),

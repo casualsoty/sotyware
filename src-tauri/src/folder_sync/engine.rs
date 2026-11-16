@@ -69,6 +69,8 @@ const FATAL_RECHECK: Duration = Duration::from_secs(600);
 const DISK_RESERVE: u64 = 256 * 1024 * 1024;
 /// Paths named by the watcher before a full scan is cheaper.
 pub(super) const DIRTY_MAX: usize = 5000;
+/// Spellings left out at most per pass (each excludes its subtree).
+const ALIASED_MAX: usize = 10_000;
 
 /// Why a pass stopped before its end.
 #[derive(Debug)]
@@ -93,6 +95,10 @@ pub(super) struct LoopState {
     pub purged: bool,
     /// Whether to watch the folder (tests that drive passes by hand do not).
     pub watch: bool,
+    /// How the sync folder's file system treats case (Windows and macOS
+    /// ignore it by default): probed once the folder is there, again after
+    /// it was gone (another volume may be mounted at its place).
+    pub case: Option<scan::Case>,
     #[cfg(desktop)]
     pub watcher: Option<super::watch::Watcher>,
 }
@@ -107,6 +113,7 @@ impl LoopState {
             retry_at: None,
             purged: false,
             watch: true,
+            case: None,
             #[cfg(desktop)]
             watcher: None,
         }
@@ -183,6 +190,7 @@ pub(super) async fn step(
         RootState::Missing => {
             st.drop_watcher();
             st.full_local = true;
+            st.case = None;
             shared.update(id, |s| {
                 s.state = SyncState::Unavailable;
                 s.message = Some(
@@ -197,6 +205,7 @@ pub(super) async fn step(
         RootState::Foreign(reason) => {
             st.drop_watcher();
             st.full_local = true;
+            st.case = None;
             shared.update(id, |s| {
                 s.state = SyncState::Error;
                 s.message = Some(format!(
@@ -207,6 +216,13 @@ pub(super) async fn step(
             });
             return Some(FATAL_RECHECK);
         }
+    }
+    if st.case.is_none() {
+        let root = root.clone();
+        st.case = Some(match shared.case_override() {
+            Some(forced) => forced,
+            None => blocking(move || scan::probe_case(&root)).await,
+        });
     }
     if !st.purged {
         st.purged = true;
@@ -286,6 +302,7 @@ pub(super) async fn pass(
 ) -> Result<(), Stop> {
     let id = config.id.as_str();
     let root = PathBuf::from(&config.path);
+    let case = st.case.unwrap_or(scan::Case::Sensitive);
     let store = connect(shared, config).await?;
     if control.stopped() {
         return Err(Stop::Stopped);
@@ -300,7 +317,7 @@ pub(super) async fn pass(
         st.unknown = full_scan(shared, config, control).await?;
         st.full_local = false;
     } else if !dirty.is_empty() {
-        targeted_scan(shared, config, &dirty, &mut st.unknown).await?;
+        targeted_scan(shared, config, &dirty, &mut st.unknown, case).await?;
     }
     // ---- remote side
     let complete = shared
@@ -334,6 +351,7 @@ pub(super) async fn pass(
         config: config.clone(),
         root,
         store,
+        case,
         claimed: Mutex::new(HashSet::new()),
         disk_full: AtomicBool::new(false),
         retry_at: Mutex::new(None),
@@ -347,6 +365,32 @@ pub(super) async fn pass(
     }
     finish_status(&ctx, clean).await;
     Ok(())
+}
+
+/// Where the sync folder's file system ignores case, the bucket's paths
+/// that would land on a file or folder spelled differently (one of two keys
+/// differing only in case, or a key under `Docs/` while the folder is
+/// `docs`): never planned, so two keys never share one file. Recorded as
+/// not synced (`skipped-case`), replacing the previous list.
+async fn aliased_paths(shared: &Arc<Shared>, id: &str) -> Result<HashSet<String>, Stop> {
+    let id = id.to_owned();
+    shared
+        .db(move |s| {
+            let aliased = s.aliased(&id, ALIASED_MAX)?;
+            s.remove_issues(&id, "skipped-case")?;
+            for (path, winner) in &aliased {
+                let data = serde_json::to_string(&SkippedItem {
+                    reason: format!(
+                        "in the bucket: its name differs only in capitalisation from {winner}, which this computer's file system cannot tell apart"
+                    ),
+                })
+                .unwrap_or_default();
+                s.put_issue(&id, "skipped-case", path, &data, now_ms())?;
+            }
+            Ok(aliased.into_iter().map(|(path, _)| path).collect())
+        })
+        .await
+        .map_err(Stop::Fatal)
 }
 
 /// The account's store, after checking the account still has this sync's
@@ -446,6 +490,7 @@ async fn targeted_scan(
     config: &SyncConfig,
     dirty: &[String],
     unknown: &mut Vec<String>,
+    case: scan::Case,
 ) -> Result<(), Stop> {
     let (id, root, prefix) = (
         config.id.clone(),
@@ -476,7 +521,7 @@ async fn targeted_scan(
             if !done.insert(target.clone()) {
                 continue;
             }
-            match scan::look(&root, &target, &prefix) {
+            match scan::look(&root, &target, &prefix, case) {
                 Ok(Ok(Some(l))) if l.dir => {
                     sh.with_store(|s| s.set_local(&id, &target, None))
                         .map_err(|e| e.message)?;
@@ -696,6 +741,9 @@ pub(super) struct Ctx {
     pub config: SyncConfig,
     pub root: PathBuf,
     pub store: Arc<S3Store>,
+    /// How the sync folder's file system treats case: where it is ignored,
+    /// a path exists only where it is spelled exactly so.
+    case: scan::Case,
     /// Synced paths a move already took as its source.
     claimed: Mutex<HashSet<String>>,
     /// A download found the drive full: the other downloads wait.
@@ -795,6 +843,23 @@ fn below(path: &str, folders: &[String]) -> bool {
         .any(|u| u.is_empty() || path == *u || path.starts_with(&format!("{u}/")))
 }
 
+/// Whether `path` is in `set` or inside a folder in it.
+fn within(path: &str, set: &HashSet<String>) -> bool {
+    if set.is_empty() {
+        return false;
+    }
+    let mut p = path;
+    loop {
+        if set.contains(p) {
+            return true;
+        }
+        match p.rfind('/') {
+            Some(i) => p = &p[..i],
+            None => return false,
+        }
+    }
+}
+
 /// What the issues say about paths, for one planning cycle.
 struct Known {
     /// Failed paths and when they may be tried again.
@@ -835,9 +900,12 @@ impl Known {
     }
 
     /// Whether `t` is left out of planning: below a folder that could not
-    /// be read, or only on a side where it is not synced.
-    fn excluded(&self, t: &Triple, unknown: &[String]) -> bool {
+    /// be read, a spelling (or below one) that would share a file with
+    /// another where the file system ignores case, or only on a side where
+    /// it is not synced.
+    fn excluded(&self, t: &Triple, unknown: &[String], aliased: &HashSet<String>) -> bool {
         below(&t.path, unknown)
+            || within(&t.path, aliased)
             || (t.remote.is_none() && self.skipped_here.contains(&t.path))
             || (t.local.is_none() && self.skipped_there.contains(&t.path))
     }
@@ -850,13 +918,21 @@ async fn reconcile(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<bool, Stop> {
     let mut failed_any = false;
     let mut held_any = false;
     for _ in 0..MAX_CYCLES {
+        // One spelling per name where the file system ignores case; again
+        // each cycle, as a deletion can free a name for another spelling.
+        let aliased = if ctx.case.ignored() {
+            aliased_paths(&ctx.shared, ctx.id()).await?
+        } else {
+            HashSet::new()
+        };
+        let aliased = &aliased;
         let issues = ctx.db(|s, id| s.issues(id)).await?;
         let mut known = Known::from(&issues);
         let now = now_ms();
         if let Some(h) = &known.held
             && h.restore
         {
-            restore_held(ctx, unknown).await?;
+            restore_held(ctx, unknown, aliased).await?;
             ctx.db(|s, id| s.remove_issue(id, "deletions", "")).await?;
             known.held = None;
         }
@@ -871,7 +947,7 @@ async fn reconcile(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<bool, Stop> {
             let Some(last) = chunk.last() else { break };
             after = last.path.clone();
             for t in &chunk {
-                if !known.excluded(t, unknown) {
+                if !known.excluded(t, unknown, aliased) {
                     pending.add(t, &model::decide(t));
                 }
             }
@@ -932,7 +1008,7 @@ async fn reconcile(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<bool, Stop> {
             after = last.path.clone();
             let mut work = Vec::new();
             for t in chunk {
-                if known.excluded(&t, unknown) {
+                if known.excluded(&t, unknown, aliased) {
                     continue;
                 }
                 if let Some(next) = known.waiting.get(&t.path)
@@ -989,7 +1065,11 @@ async fn reconcile(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<bool, Stop> {
 /// the guard held, so the next cycle copies it back to the side it was
 /// deleted from (download what was deleted here, upload what was deleted
 /// in the bucket).
-async fn restore_held(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<(), Stop> {
+async fn restore_held(
+    ctx: &Arc<Ctx>,
+    unknown: &[String],
+    aliased: &HashSet<String>,
+) -> Result<(), Stop> {
     let mut after = String::new();
     loop {
         let chunk = {
@@ -1000,7 +1080,11 @@ async fn restore_held(ctx: &Arc<Ctx>, unknown: &[String]) -> Result<(), Stop> {
         after = last.path.clone();
         let restore: Vec<String> = chunk
             .iter()
-            .filter(|t| !below(&t.path, unknown) && model::is_deletion(&model::decide(t)))
+            .filter(|t| {
+                !below(&t.path, unknown)
+                    && !within(&t.path, aliased)
+                    && model::is_deletion(&model::decide(t))
+            })
             .map(|t| t.path.clone())
             .collect();
         ctx.db(move |s, id| {
@@ -1368,10 +1452,39 @@ async fn refresh_remote(ctx: &Arc<Ctx>, rel: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Whether `rel` is here: not at all, under this exact spelling, or only
+/// under another one (a file system that ignores case).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Here {
+    No,
+    Exactly,
+    OtherSpelling,
+}
+
+async fn here(ctx: &Ctx, rel: &str) -> Result<Here, Failure> {
+    let (root, r, case) = (ctx.root.clone(), rel.to_owned(), ctx.case);
+    blocking(move || -> std::io::Result<Here> {
+        if !scan::exists(&root, &r, scan::Case::Sensitive)? {
+            return Ok(Here::No);
+        }
+        if !scan::spelled_exactly(&root, &r, case)? {
+            return Ok(Here::OtherSpelling);
+        }
+        Ok(Here::Exactly)
+    })
+    .await
+    .map_err(|e| io_failure(&e))
+}
+
 /// Records the local file at `rel` as it is now.
 async fn refresh_local(ctx: &Arc<Ctx>, rel: &str) -> Result<(), Failure> {
-    let (root, r, prefix) = (ctx.root.clone(), rel.to_owned(), ctx.config.prefix.clone());
-    let found = blocking(move || scan::look(&root, &r, &prefix))
+    let (root, r, prefix, case) = (
+        ctx.root.clone(),
+        rel.to_owned(),
+        ctx.config.prefix.clone(),
+        ctx.case,
+    );
+    let found = blocking(move || scan::look(&root, &r, &prefix, case))
         .await
         .map_err(|e| io_failure(&e))?;
     let row = found.ok().flatten();
@@ -1579,9 +1692,10 @@ async fn try_remote_move(ctx: &Arc<Ctx>, rel: &str, size: u64) -> Result<Option<
     {
         return Ok(None);
     }
-    // The old file must still be gone here.
-    let old = scan::join(&ctx.root, &source.path);
-    if blocking(move || old.symlink_metadata().is_ok()).await {
+    // The old file must still be gone here (another spelling of it is
+    // the move itself, where the file system ignores case).
+    let (root, old, case) = (ctx.root.clone(), source.path.clone(), ctx.case);
+    if blocking(move || scan::exists(&root, &old, case).unwrap_or(true)).await {
         return Ok(None);
     }
     let (from, to) = (ctx.key(&source.path, false), ctx.key(rel, false));
@@ -1847,11 +1961,17 @@ async fn place(
 ) -> Result<Done, Failure> {
     let target = scan::join(&ctx.root, rel);
     let staged_c = staged.to_path_buf();
+    let (root, r, case) = (ctx.root.clone(), rel.to_owned(), ctx.case);
     let outcome = blocking(move || -> std::io::Result<Placed> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let now = scan::stamp(&target).ok().flatten();
+        let mut now = scan::stamp(&target).ok().flatten();
+        // Where case is ignored, a file under another spelling is not the
+        // one to replace.
+        if expected.is_some() && now.is_some() && !scan::spelled_exactly(&root, &r, case)? {
+            now = None;
+        }
         match (expected, now) {
             (Some(e), Some(n)) if e == n => {
                 std::fs::rename(&staged_c, &target)?;
@@ -2012,8 +2132,12 @@ async fn try_local_move(
         mtime_ns: source.mtime_ns,
         file_id: source.file_id,
     };
+    let (root, old, case) = (ctx.root.clone(), source.path.clone(), ctx.case);
     let moved = blocking(move || -> std::io::Result<Option<Stamp>> {
-        if scan::stamp(&from)? != Some(expected) || to.symlink_metadata().is_ok() {
+        if scan::stamp(&from)? != Some(expected)
+            || to.symlink_metadata().is_ok()
+            || !scan::spelled_exactly(&root, &old, case)?
+        {
             return Ok(None);
         }
         if let Some(parent) = to.parent() {
@@ -2411,11 +2535,16 @@ async fn delete_remote(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
         return Ok(Done::Waiting);
     };
     let rel = t.path.as_str();
-    // Still gone here?
-    let path = scan::join(&ctx.root, rel);
-    if blocking(move || path.symlink_metadata().is_ok()).await {
-        refresh_local(ctx, rel).await?;
-        return Ok(Done::Changed);
+    // Still gone here? Under another spelling (a file system that ignores
+    // case) the object is left alone: it is never deleted while any
+    // spelling of the file is here.
+    match here(ctx, rel).await? {
+        Here::No => {}
+        Here::Exactly => {
+            refresh_local(ctx, rel).await?;
+            return Ok(Done::Changed);
+        }
+        Here::OtherSpelling => return Ok(Done::Waiting),
     }
     // Still the synced object there?
     let key = ctx.key(rel, false);
@@ -2488,9 +2617,11 @@ async fn delete_local(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
         mtime_ns: synced.mtime_ns,
         file_id: synced.file_id,
     };
-    let (root, r) = (ctx.root.clone(), rel.to_owned());
+    let (root, r, case) = (ctx.root.clone(), rel.to_owned(), ctx.case);
     let moved = blocking(move || -> std::io::Result<Option<PathBuf>> {
-        if scan::stamp(&scan::join(&root, &r))? != Some(expected) {
+        if scan::stamp(&scan::join(&root, &r))? != Some(expected)
+            || !scan::spelled_exactly(&root, &r, case)?
+        {
             return Ok(None);
         }
         scan::prepare_own_dir(&root)?;
@@ -2521,6 +2652,11 @@ async fn delete_local(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
 
 async fn make_local_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
     let rel = t.path.clone();
+    if here(ctx, &rel).await? == Here::OtherSpelling {
+        // A folder spelled otherwise is here: the next pass leaves this
+        // spelling out.
+        return Ok(Done::Waiting);
+    }
     let path = scan::join(&ctx.root, &rel);
     let made = blocking(move || -> std::io::Result<bool> {
         match path.symlink_metadata() {
@@ -2605,11 +2741,14 @@ async fn make_remote_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure>
 
 async fn remove_remote_folder(ctx: &Arc<Ctx>, t: &Triple) -> Result<Done, Failure> {
     let rel = t.path.clone();
-    // Gone here still?
-    let path = scan::join(&ctx.root, &rel);
-    if blocking(move || path.symlink_metadata().is_ok()).await {
-        refresh_local(ctx, &rel).await?;
-        return Ok(Done::Changed);
+    // Gone here still (in any spelling)?
+    match here(ctx, &rel).await? {
+        Here::No => {}
+        Here::Exactly => {
+            refresh_local(ctx, &rel).await?;
+            return Ok(Done::Changed);
+        }
+        Here::OtherSpelling => return Ok(Done::Waiting),
     }
     let r = rel.clone();
     if ctx.db(move |s, id| s.has_remote_children(id, &r)).await? {

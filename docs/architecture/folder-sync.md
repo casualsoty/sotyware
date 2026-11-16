@@ -171,6 +171,48 @@ same name. The Sync tab lists conflicts until the user settles them:
   the conflicted copy takes the original name (then uploaded as a change).
 - **Keep both:** the conflict is dismissed.
 
+## Names that differ only in case
+
+Windows and macOS (by default) keep the case of a name but ignore it when
+looking one up: `Report.txt` and `report.txt` are one file there and two
+keys in a bucket. When its engine starts, and again after the folder was
+gone, each sync probes its folder's file system: a file in `.sotyware-sync/`
+looked up under another spelling (`probe_case` in `scan.rs`). A FAT or
+exFAT drive on Linux ignores case too; ext4 and most Linux file systems do
+not, and there nothing below applies.
+
+Where case is ignored:
+
+- **One spelling per name.** Before each planning cycle the bucket's paths
+  are compared, folded to lower case (the TEMP scan tables keep each path's
+  fold), with the folder's and with each other. A key whose name the folder
+  holds under another spelling (`Docs/a.txt` while the folder is `docs`), or
+  whose name another key keeps (the synced spelling, else the first in byte
+  order), is not planned, nor anything inside it: it stays in the bucket as
+  it is and is listed as not synced ("differs only in capitalisation from
+  …"). A path the folder holds exactly as listed is never left out (a
+  folder Windows marks case-sensitive can hold both). When the name is free
+  again, the other spelling is decided in the next cycle: deleting
+  `report.txt` here deletes that key, then `Report.txt` comes down.
+- **Exact spellings in every check.** A look at one path, and the checks
+  before a change, ask for the path as spelled: the canonical path names
+  every segment as stored (`GetFinalPathNameByHandleW` on Windows,
+  `realpath` on macOS; one call), or, where the probe found that it does
+  not (Linux's `realpath` on such a volume), the folder listings do. A file
+  found only under another spelling is not the path: it is never recorded
+  under it, replaced, moved to the sync trash or renamed, and a deletion in
+  the bucket waits while any spelling of the file is here.
+- **Renaming only the case** here is a move like any other: the object is
+  copied to the new key and the old one deleted (up to 5 GiB; a larger file
+  is uploaded again, and the old key stays, listed as not synced).
+
+The fold is Unicode lower case (`str::to_lowercase`): close to, not exactly,
+NTFS's upcase table or APFS's rules; Unicode normalisation (NFC and NFD) is
+not folded. Where the two differ, a new file that would land on another
+spelling of its own name is still refused when it is placed and listed as
+not synced; one inside a folder spelled so is not
+([limitations](../status/limitations.md#folder-sync-adr-043)).
+
 ## The sync folder
 
 **Choosing.** Rust opens the native folder dialog and checks the folder:
@@ -249,7 +291,8 @@ once).
   (copy name, the bucket's version kept, state), `deletions` (the guard's
   question and answer).
 - `activity`: the last 500 operations per sync (JSON).
-- TEMP `local_scan`, `remote_scan`, `scan_state`: the session's trees.
+- TEMP `local_scan`, `remote_scan`, `scan_state`: the session's trees
+  (each path with its lower-case fold, for [case](#names-that-differ-only-in-case)).
 
 ## Status and the Sync tab
 
@@ -294,9 +337,10 @@ cancelled); resuming starts it with a full scan and a listing.
 ## Testing
 
 Unit tests: `model.rs` (decision table, names, exclusions, guard, retries,
-conflict names, dates), `scan.rs`, `migrate.rs`, `watch.rs`,
-`storage/folder_sync.rs` (the planning query, generations, unknown
-folders, subtrees). End to end (`folder_sync/tests.rs`, real folders against
+conflict names, dates, the case fold), `scan.rs` (with the exact spellings
+and the case probe), `migrate.rs`, `watch.rs`, `storage/folder_sync.rs`
+(the planning query, generations, unknown folders, subtrees, spellings that
+would share a file). End to end (`folder_sync/tests.rs`, real folders against
 the in-process versioned S3 server, s3s-fs for multipart): see
 [testing.md](../development/testing.md#folder-sync). Frontend:
 `src/CloudSync.test.ts`, `src/App.test.ts` (sidebar).

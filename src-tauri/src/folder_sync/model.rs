@@ -89,6 +89,14 @@ pub fn name_of(rel: &str) -> &str {
     rel.rsplit('/').next().unwrap_or(rel)
 }
 
+/// `rel` as a file system that ignores case sees it: two paths with the
+/// same fold are one file or folder there (Windows, macOS by default).
+/// Unicode lower case; neither Windows' upcase table nor APFS's folding is
+/// exactly this, and Unicode normalisation is not folded.
+pub fn fold(rel: &str) -> String {
+    rel.to_lowercase()
+}
+
 /// How deep `rel` is (`a` → 1, `a/b` → 2), for removing folders deepest
 /// first.
 pub fn depth(rel: &str) -> usize {
@@ -795,6 +803,14 @@ mod tests {
         assert_eq!(parent_of("a"), "");
         assert_eq!(name_of("a/b/c.txt"), "c.txt");
         assert_eq!(depth("a/b/c"), 3);
+    }
+
+    #[test]
+    fn folding_ignores_case_and_nothing_else() {
+        assert_eq!(fold("Docs/Report.TXT"), "docs/report.txt");
+        assert_eq!(fold("Größe/ÄÖÜ"), "größe/äöü");
+        assert_eq!(fold("Docs/Report.TXT"), fold("docs/report.txt"));
+        assert_ne!(fold("a b"), fold("a_b"));
     }
 
     #[test]

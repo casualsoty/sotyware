@@ -1668,3 +1668,125 @@ async fn names_differing_only_in_case_are_not_both_brought_here() {
     assert_eq!(e.objects().len(), 2, "both stay in the bucket");
     assert!(d.details().skipped.iter().any(|s| s.side == "remote"));
 }
+
+// Where the file system ignores case (Windows, macOS): forced here, so the
+// rules run on every system, whatever this file system does.
+
+fn ignore_case(d: &Drive) {
+    *d.shared().case_override_value.lock().unwrap() = Some(scan::Case::IgnoredListed);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn where_case_is_ignored_two_keys_differing_in_case_come_down_once() {
+    let e = env("sync-case-forced").await;
+    let mut d = e.enable("root").await;
+    ignore_case(&d);
+    e.put_with_sha("Report.txt", b"upper");
+    e.put_with_sha("report.txt", b"lower");
+    let s = d.settle().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    let files = d.files();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["Report.txt"]);
+    assert_eq!(files["Report.txt"], b"upper");
+    // Both stay in the bucket, each as it was.
+    assert_eq!(e.object("report.txt").unwrap(), b"lower");
+    assert_eq!(e.versions("report.txt"), 1);
+    assert_eq!(e.versions("Report.txt"), 1);
+    let skipped = d.details().skipped;
+    assert!(
+        skipped.iter().any(|s| s.path == "report.txt"
+            && s.side == "remote"
+            && s.reason.contains("Report.txt")),
+        "{skipped:?}"
+    );
+    // Stable: another pass changes nothing.
+    let mark = e.server.ops().len();
+    let s = d.run().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    assert_eq!(e.ops_since(mark), ["ListObjectsV2"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn where_case_is_ignored_a_folder_keeps_the_spelling_it_has_here() {
+    let e = env("sync-case-folder").await;
+    let mut d = e.enable("root").await;
+    ignore_case(&d);
+    d.write("docs/b.txt", b"b");
+    d.settle().await;
+    // Another client writes under "Docs/": here that is the folder "docs".
+    e.put_with_sha("Docs/a.txt", b"a");
+    e.put_with_sha("Docs/deep/c.txt", b"c");
+    let s = d.settle().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    assert_eq!(d.files().keys().collect::<Vec<_>>(), ["docs/b.txt"]);
+    let top: Vec<String> = fs::read_dir(d.path(""))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != model::OWN_FOLDER)
+        .collect();
+    assert_eq!(top, ["docs"], "no second spelling made here");
+    assert_eq!(e.object("Docs/a.txt").unwrap(), b"a", "left as it is");
+    assert_eq!(e.object("docs/b.txt").unwrap(), b"b");
+    let skipped = d.details().skipped;
+    assert!(
+        skipped
+            .iter()
+            .any(|s| s.path == "Docs" && s.side == "remote"),
+        "{skipped:?}"
+    );
+    assert!(
+        !skipped.iter().any(|s| s.path.starts_with("Docs/")),
+        "one entry for the folder: {skipped:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn where_case_is_ignored_a_rename_of_the_case_only_renames_the_object() {
+    let e = env("sync-case-rename").await;
+    let mut d = e.enable("root").await;
+    ignore_case(&d);
+    d.write("Report.txt", &bytes_of(5000, 3));
+    d.settle().await;
+    fs::rename(d.path("Report.txt"), d.path("report.txt")).unwrap();
+    let mark = e.server.ops().len();
+    let s = d.settle().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    let ops = e.ops_since(mark);
+    assert!(
+        !ops.contains(&"PutObject".to_owned()),
+        "copied, not sent: {ops:?}"
+    );
+    assert_eq!(
+        e.objects().keys().collect::<Vec<_>>(),
+        ["report.txt"],
+        "the old spelling is deleted (a delete marker)"
+    );
+    assert_eq!(e.object("report.txt").unwrap(), bytes_of(5000, 3));
+    assert_eq!(e.versions("Report.txt"), 2);
+    assert_eq!(d.files().keys().collect::<Vec<_>>(), ["report.txt"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn where_case_is_ignored_deleting_the_file_here_deletes_its_own_spelling() {
+    let e = env("sync-case-delete").await;
+    let mut d = e.enable("root").await;
+    ignore_case(&d);
+    d.write("report.txt", b"mine");
+    d.settle().await;
+    e.put_with_sha("Report.txt", b"theirs");
+    let s = d.settle().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    assert_eq!(d.files().keys().collect::<Vec<_>>(), ["report.txt"]);
+    // Deleted here: the object of that spelling is deleted, then the other
+    // spelling, no longer sharing the name, comes down in the same pass.
+    fs::remove_file(d.path("report.txt")).unwrap();
+    let s = d.run().await;
+    assert_eq!(s.state, SyncState::Synced, "{:?}", s.message);
+    assert_eq!(e.objects().keys().collect::<Vec<_>>(), ["Report.txt"]);
+    assert_eq!(e.versions("report.txt"), 2, "a delete marker");
+    let files = d.files();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["Report.txt"]);
+    assert_eq!(files["Report.txt"], b"theirs");
+    assert!(d.details().skipped.is_empty(), "{:?}", d.details().skipped);
+}

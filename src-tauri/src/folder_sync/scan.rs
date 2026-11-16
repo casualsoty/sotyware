@@ -235,16 +235,147 @@ pub fn walk(
     Ok(findings)
 }
 
+/// How the sync folder's file system treats the case of names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Case {
+    /// Names that differ in case are different names (Linux, mostly): a
+    /// path that exists is spelled as it exists.
+    Sensitive,
+    /// Case is ignored (Windows, macOS by default) and the canonical path
+    /// names every segment as stored (`GetFinalPathNameByHandleW`, macOS's
+    /// `realpath`): one call tells two spellings apart.
+    IgnoredCanonical,
+    /// Case is ignored and only a folder's listing tells two spellings
+    /// apart (Linux's `realpath` on a FAT, exFAT or case-folding volume).
+    IgnoredListed,
+}
+
+impl Case {
+    /// Whether two spellings can name one file or folder here.
+    pub fn ignored(self) -> bool {
+        self != Case::Sensitive
+    }
+}
+
 /// One path as it is now: `Ok(None)` when it does not exist (or is
-/// ignored), `Err` with the reason it is not synced.
-pub fn look(root: &Path, rel: &str, prefix: &str) -> io::Result<Result<Option<Local>, String>> {
-    match classify(&join(root, rel), rel, prefix) {
-        Ok(Kind::File(l) | Kind::Folder(l)) => Ok(Ok(Some(l))),
-        Ok(Kind::Ignore) => Ok(Ok(None)),
-        Ok(Kind::Skip(reason)) => Ok(Err(reason)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Ok(None)),
+/// ignored), `Err` with the reason it is not synced. Where `case` is
+/// ignored, a path that exists only under another spelling (`report.txt`
+/// for `Report.txt`) is not there: the scan never records one file under
+/// two names.
+pub fn look(
+    root: &Path,
+    rel: &str,
+    prefix: &str,
+    case: Case,
+) -> io::Result<Result<Option<Local>, String>> {
+    let found = match classify(&join(root, rel), rel, prefix) {
+        Ok(Kind::File(l) | Kind::Folder(l)) => Ok(Some(l)),
+        Ok(Kind::Ignore) => return Ok(Ok(None)),
+        Ok(Kind::Skip(reason)) => Err(reason),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Ok(None)),
+        Err(e) => return Err(e),
+    };
+    if !spelled_exactly(root, rel, case)? {
+        return Ok(Ok(None));
+    }
+    Ok(found)
+}
+
+/// Whether something exists at `rel`, spelled exactly so (where `case` is
+/// ignored, any spelling would be found otherwise).
+pub fn exists(root: &Path, rel: &str, case: Case) -> io::Result<bool> {
+    match fs::symlink_metadata(join(root, rel)) {
+        Ok(_) => spelled_exactly(root, rel, case),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Whether every segment of `rel`, a path that exists, is spelled as the
+/// file system stores it. A file system that ignores case opens
+/// `report.txt` for `Report.txt`; its canonical path or its listing tells
+/// them apart. A path through a link to a folder does not count (sync
+/// never follows one); a link itself is judged by its own name.
+pub fn spelled_exactly(root: &Path, rel: &str, case: Case) -> io::Result<bool> {
+    match case {
+        Case::Sensitive => Ok(true),
+        Case::IgnoredCanonical => {
+            let path = join(root, rel);
+            // A link resolves to its target's name: its own is listed.
+            if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+                return listed_exactly(root, rel);
+            }
+            match fs::canonicalize(&path) {
+                Ok(real) => {
+                    let mut stored = real.components().rev();
+                    Ok(rel.rsplit('/').all(|segment| {
+                        matches!(stored.next(), Some(std::path::Component::Normal(name))
+                            if name == std::ffi::OsStr::new(segment))
+                    }))
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+                // A volume that cannot name a handle's path lists folders.
+                Err(_) => listed_exactly(root, rel),
+            }
+        }
+        Case::IgnoredListed => listed_exactly(root, rel),
+    }
+}
+
+/// [`spelled_exactly`] by listing each segment's folder; every segment
+/// but the last must be a folder, not a link to one.
+fn listed_exactly(root: &Path, rel: &str) -> io::Result<bool> {
+    let mut dir = root.to_path_buf();
+    let mut segments = rel.split('/').peekable();
+    while let Some(segment) = segments.next() {
+        let name = std::ffi::OsStr::new(segment);
+        let last = segments.peek().is_none();
+        let found = match fs::read_dir(&dir) {
+            Ok(entries) => entries.flatten().any(|e| {
+                e.file_name() == name && (last || e.file_type().is_ok_and(|t| t.is_dir()))
+            }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            Err(e) => return Err(e),
+        };
+        if !found {
+            return Ok(false);
+        }
+        dir.push(segment);
+    }
+    Ok(true)
+}
+
+/// How the file system holding `root` treats case: a probe file in
+/// sotyware's own folder, looked up and canonicalised under another
+/// spelling. Where the probe cannot be made, the platform's default is
+/// assumed (Windows and macOS ignore case unless set up otherwise), with
+/// listings, which every file system answers as stored.
+pub fn probe_case(root: &Path) -> Case {
+    let default = if cfg!(any(windows, target_os = "macos")) {
+        Case::IgnoredListed
+    } else {
+        Case::Sensitive
+    };
+    let Ok(own) = prepare_own_dir(root) else {
+        return default;
+    };
+    let name = format!("case-probe-{}", std::process::id());
+    let probe = own.join(&name);
+    if fs::write(&probe, b"").is_err() {
+        return default;
+    }
+    let other = own.join(name.to_uppercase());
+    let case = if other.symlink_metadata().is_err() {
+        Case::Sensitive
+    } else if fs::canonicalize(&other)
+        .is_ok_and(|real| real.file_name() == Some(std::ffi::OsStr::new(&name)))
+    {
+        Case::IgnoredCanonical
+    } else {
+        Case::IgnoredListed
+    };
+    let _ = fs::remove_file(&probe);
+    case
 }
 
 /// The stamp of the file at `path` now, `None` if it is not there.
@@ -789,6 +920,69 @@ mod tests {
         );
         assert_eq!(stamp.size, 3 << 20);
         assert_eq!(Some(stamp), super::stamp(&p).unwrap());
+    }
+
+    #[test]
+    fn spellings_are_checked_as_the_file_system_stores_them() {
+        let t = TempDir::new("sync-spelling");
+        let root = t.path("root");
+        fs::create_dir_all(root.join("Docs")).unwrap();
+        fs::write(root.join("Docs/Report.txt"), b"x").unwrap();
+        // The probe agrees with what this file system does and leaves
+        // nothing behind.
+        let case = probe_case(&root);
+        assert_eq!(case.ignored(), root.join("docs/report.txt").exists());
+        if cfg!(windows) {
+            // NTFS: the final path names every segment as stored.
+            assert_eq!(case, Case::IgnoredCanonical);
+        }
+        assert_eq!(
+            fs::read_dir(own_dir(&root))
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().contains("probe"))
+                .count(),
+            0,
+            "the probe is removed"
+        );
+        // Both ways agree, whatever this file system does with another
+        // spelling (the canonical path only where the probe trusts it).
+        let mut ways = vec![Case::IgnoredListed];
+        if case != Case::IgnoredListed {
+            ways.push(Case::IgnoredCanonical);
+        }
+        for how in ways {
+            assert!(
+                spelled_exactly(&root, "Docs/Report.txt", how).unwrap(),
+                "{how:?}"
+            );
+            assert!(exists(&root, "Docs/Report.txt", how).unwrap(), "{how:?}");
+            for other in ["docs/Report.txt", "Docs/report.txt", "Docs/missing.txt"] {
+                assert!(!exists(&root, other, how).unwrap(), "{other} {how:?}");
+            }
+            let found = look(&root, "Docs/Report.txt", "", how).unwrap().unwrap();
+            assert_eq!(found.map(|l| l.size), Some(1), "{how:?}");
+            assert_eq!(
+                look(&root, "docs/report.txt", "", how).unwrap(),
+                Ok(None),
+                "{how:?}"
+            );
+        }
+        assert!(exists(&root, "Docs/Report.txt", Case::Sensitive).unwrap());
+        assert!(!exists(&root, "Docs/other.txt", Case::Sensitive).unwrap());
+        // Through a link to a folder a path is not spelled as stored; a
+        // link is judged by its own name.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("Docs"), root.join("Link")).unwrap();
+            for how in [Case::IgnoredListed, Case::IgnoredCanonical] {
+                assert!(
+                    !spelled_exactly(&root, "Link/Report.txt", how).unwrap(),
+                    "{how:?}"
+                );
+                assert!(spelled_exactly(&root, "Link", how).unwrap(), "{how:?}");
+            }
+        }
     }
 
     #[test]

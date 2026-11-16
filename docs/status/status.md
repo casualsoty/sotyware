@@ -146,6 +146,60 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Folder sync where the file system ignores case (2026-11-16)
+
+Folder sync was committed as `b67d6a6` and pushed to `main` the same day.
+Hosted runs there: `ci.yml` (run 43819562078) passed: Ubuntu 22.04 Rust 641
+passed, 29 ignored, recorder build 669; the account service; Windows Rust
+622 passed, 29 ignored. `macos.yml` (run 43819562083) failed: Intel passed
+(631), Apple Silicon failed one test,
+`names_differing_only_in_case_are_not_both_brought_here` (two files where
+one was expected), so the package job was skipped.
+
+**Cause.** The bucket held `Report.txt` and `report.txt`; both downloads
+ran at once. On a file system that ignores case the second one's target
+existed (the first file), its placement stopped, and the follow-up look at
+`report.txt` found `Report.txt` and recorded it as `report.txt`: a file here
+and an object never synced, with different content, became a conflict, and
+both spellings ended up as files. Windows and the Intel Mac passed by
+timing.
+
+**Fix** ([folder-sync.md](../architecture/folder-sync.md#names-that-differ-only-in-case)):
+the engine probes each sync folder's file system for case; where case is
+ignored, each planning cycle leaves out the bucket's spellings of a name the
+folder already holds otherwise (and everything inside them), or of a name
+another key keeps, and lists them as not synced; every check before a change
+asks for the exact spelling (the canonical path on Windows and macOS, the
+folder listings elsewhere), so a file is never recorded, replaced, moved to
+the sync trash or deleted under another spelling.
+
+**Runs** (WSL2, Ubuntu 24.04, uncommitted on `b67d6a6`, then committed with
+these lines):
+
+- The macOS failure **reproduced on WSL2**: with `TMPDIR` on `/mnt/c` (NTFS
+  through WSL's drvfs, which ignores case; Linux's `realpath` there returns
+  the spelling it was given, so the probe chose folder listings), the
+  committed test failed 3 of 5 runs with the hosted assertion (`left: 2,
+  right: 1`); with the fix it passed **20 of 20**. All folder sync tests
+  there: 78 passed, 1 failed, the running engine's watcher test (drvfs over
+  9p delivers no inotify events; unrelated to case).
+- New tests: case handling forced on ext4 (two keys of one name come down
+  once and stay stable; a folder spelled otherwise here keeps its spelling
+  and the bucket's spelling is listed once; renaming only the case is a
+  server-side copy; deleting the file here deletes its own spelling, then
+  the other comes down in the same pass), the exact-spelling checks and the
+  probe, and the store's query (the spelling here wins, else the synced
+  one, else the first in byte order; a folder that tells case apart keeps
+  both).
+- `npm run test:headless` passed: every guard, Vitest 307, Rust **648
+  passed, 29 ignored**; the folder sync tests 5 more times in a row (79
+  each); the recorder build **676 passed, 29 ignored**; `cargo fmt
+  --check`, clippy with `-D warnings` (default and `--features
+  test-profile`).
+
+**Not run:** native Windows and macOS (the hosted runs after the next push
+are the first), a real provider.
+
 ### Folder sync (2026-11-16)
 
 Implemented on `main` after `404053c` (uncommitted while these lines were

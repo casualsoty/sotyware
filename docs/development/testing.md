@@ -1665,8 +1665,19 @@ headless, in `npm run test:headless`; nothing needs a display or a
 provider:
 
 ```bash
-cd src-tauri && cargo test --lib folder_sync storage::folder_sync replacement
+cd src-tauri && cargo test --lib -- folder_sync replacement
 npm run test:frontend -- src/CloudSync.test.ts src/App.test.ts src/CloudBrowser.test.ts
+```
+
+On WSL2 the same tests run on a file system that ignores case when their
+temporary folders are on `/mnt/c` (NTFS through drvfs; there the case probe
+falls back to folder listings, as Linux's `realpath` keeps the spelling it
+is given). The running engine's watcher test fails there: drvfs delivers no
+inotify events.
+
+```bash
+mkdir -p /mnt/c/dev/sotyware-casetest
+cd src-tauri && TMPDIR=/mnt/c/dev/sotyware-casetest cargo test --lib -- folder_sync
 ```
 
 - `folder_sync/model.rs`: every row of the decision table (new, unchanged,
@@ -1674,17 +1685,25 @@ npm run test:frontend -- src/CloudSync.test.ts src/App.test.ts src/CloudBrowser.
   folders, a file against a folder), keys ↔ relative paths (prefixes, own
   folder, empty segments), Windows and Unix name rules on every system,
   long keys, exclusions, the deletion guard's thresholds, retry and offline
-  delays, conflict copy names, UTC dates and trash ages, intervals.
+  delays, conflict copy names, UTC dates and trash ages, intervals, the
+  case fold.
 - `folder_sync/scan.rs`: the walk (own folder and system files left out),
   links never followed, an unreadable folder reported as unknown (Unix),
   hashing with its stamp, the marker and the folder states, the trash
-  (never replacing, old days removed), inspecting a chosen folder.
+  (never replacing, old days removed), inspecting a chosen folder, exact
+  spellings (the canonical path and the folder listings agree on this file
+  system; a path through a link to a folder is not spelled as stored) and
+  the case probe (it agrees with the file system and leaves nothing; on
+  Windows it trusts the canonical path).
 - `storage/folder_sync.rs`: the schema on disk and the TEMP tables per
   session, only differing paths as candidates (paged), an unfinished
   listing never dropping entries, a folder marker never cleared by an
   implied folder, a full scan keeping what is below an unreadable folder,
   subtrees by range (never by `LIKE`), move sources, removing one sync
-  only, bounded activity, counts.
+  only, bounded activity, counts, spellings that would share a file where
+  case is ignored (the spelling here wins, else the synced one, else the
+  first in byte order; a folder's contents listed once; two spellings both
+  here both kept).
 - `folder_sync/migrate.rs`: a verified copy (content and time, never over a
   file); `watch.rs`: relative paths.
 - `folder_sync/tests.rs`, end to end with real folders against the
@@ -1715,8 +1734,12 @@ npm run test:frontend -- src/CloudSync.test.ts src/App.test.ts src/CloudBrowser.
   watcher and a nudge; moving a folder (one drive: nothing sent again;
   another drive: `/dev/shm` where it is another file system, else copying
   forced: hashed, not sent); starting fresh; re-linking a folder that lost
-  its marker; removing the account; names differing only in case (only
-  where the file system ignores case: Windows and macOS runners).
+  its marker; removing the account; names differing only in case on the
+  file system as it is (where it ignores case: the Windows and macOS
+  runners, `/mnt/c` on WSL2) and with case ignored by force on any file
+  system (two keys of one name come down once, a folder spelled otherwise
+  here keeps its spelling, renaming only the case is a server-side copy,
+  deleting the file here deletes its own spelling and frees the name).
 - `cloud/s3/upload/tests.rs`: a replacement only over the expected ETag
   (another ETag or none refused with only a `HeadObject`; the time stored);
   refused where `HeadObject` sends no ETag (s3s-fs).
@@ -1731,7 +1754,7 @@ npm run test:frontend -- src/CloudSync.test.ts src/App.test.ts src/CloudBrowser.
 
 Not run: the release binary on a desktop (no driver exercises the Sync tab
 yet), native Windows or macOS (Windows file locking, junctions, Explorer,
-NTFS case-insensitivity), a real provider.
+NTFS and APFS case rules other than through `/mnt/c`), a real provider.
 
 ## Update tests
 
