@@ -596,4 +596,22 @@ fn the_page_receives_this_shape() {
         serde_json::json!({ "task": "usage-1", "seq": 1, "type": "progress",
             "progress": { "phase": "versions", "entries": 3, "bytes": 9, "requests": 1 } })
     );
+    // The last event's fields as `parseUsageEvent` reads them (camelCase):
+    // with `save_error` the page dropped every finished event and kept
+    // showing the progress line (found by `cloud-ui.sh usage`, 2026-11-16).
+    let event = UsageEvent {
+        task: "usage-1".into(),
+        seq: u64::MAX,
+        body: UsageEventBody::Finished {
+            measurement: None,
+            error: None,
+            cancelled: false,
+            save_error: Some("disk full".into()),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({ "task": "usage-1", "seq": u64::MAX, "type": "finished",
+            "measurement": null, "error": null, "cancelled": false, "saveError": "disk full" })
+    );
 }

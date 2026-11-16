@@ -597,7 +597,11 @@ pub struct UsageEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum UsageEventBody {
     Progress {
         progress: Progress,
