@@ -159,6 +159,16 @@ across each limit by a millisecond. WSL2 (Ubuntu 24.04) only: `cargo fmt
 the VM, where it takes effect only after the binary is rebuilt and the
 service restarted ([server-setup.md step 12](../development/server-setup.md#12-updating-the-service)).
 
+### A multi-account test on a slow Windows runner (2026-11-17)
+
+`ci.yml` at `61d8f45` (run 44022679781) failed on Windows only:
+`several_accounts_work_at_the_same_time_and_stay_separate` stopped with
+"upload part 2: no progress for 2 s". The test checks that two accounts'
+uploads stay separate, not timeouts, but used the 2 s stall limit of the
+timeout tests; with two transfers on a busy runner a part went quiet that
+long. The accounts of the multi-account tests now get 30 s. Test code
+only; WSL2 `cargo test --lib cloud::tests::` 15 passed.
+
 ### The privacy notice in the app, no legal review (2026-11-17)
 
 The maintainer decided that no lawyer reads the privacy notice, and that

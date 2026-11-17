@@ -355,12 +355,20 @@ async fn a_missing_local_file_is_a_local_error() {
     assert!(matches!(e, StorageError::Io(_)), "{e:?}");
 }
 
+/// Accounts for the tests of several accounts at once. None of them checks
+/// stall or read timeouts, so they get generous ones: two transfers sharing
+/// a busy runner's CPU went 2 s without progress on Windows CI (61d8f45)
+/// and failed `several_accounts_work_at_the_same_time_and_stay_separate`.
 fn accounts_for(servers: &[(&str, &TestServer)]) -> (Accounts, Arc<MemoryCredentialStore>) {
     let keys = Arc::new(MemoryCredentialStore::default());
     let accounts = Accounts::load(
         Box::<MemoryAccountStore>::default(),
         Arc::clone(&keys) as Arc<dyn CredentialStore>,
-        test_options(),
+        ClientOptions {
+            read_timeout: Duration::from_secs(30),
+            stall_timeout: Duration::from_secs(30),
+            ..test_options()
+        },
     )
     .unwrap();
     for (id, server) in servers {
