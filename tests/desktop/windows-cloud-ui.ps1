@@ -5,7 +5,7 @@
 # docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
 # usage (PowerShell, from the repository root on a Windows path):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle|files|usage] [-Exe <path>] [-ExpectSha256 <hex>]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-cloud-ui.ps1 [-Mode local|b2|browse|b2-browse|download|b2-download|upload|b2-upload|b2-lifecycle|files|usage|sync|account] [-Exe <path>] [-ExpectSha256 <hex>]
 #   b2-upload also takes -Rehearse (local server) or -ConfirmB2Upload upload-ui-validation (Backblaze)
 #   b2-lifecycle takes -Scenario multipart|cancel|retry|leave|quit and -Rehearse or -ConfirmB2Lifecycle lifecycle-ui-validation
 #   (or -Scenario settle, only with -Rehearse -RecordRequests)
@@ -34,6 +34,27 @@
 #   costs and Snapshots & backups tabs may reach past its section or the
 #   page's scroll area (<main>), by UI Automation bounding rectangles.
 #   Contacts no provider.
+# -Mode sync: folder sync (ADR-043) against the in-process versioned server
+#   of the Rust tests (cargo test ... serve_sync_for_ui -- --ignored; one
+#   versioned bucket with two files; made-up key), which plays a second
+#   computer on the same bucket (put, delete) and fails if a real version
+#   was ever deleted for good: the folder is chosen in the native Windows
+#   folder dialog, the first pass brings the bucket down, a new local file
+#   goes up, a file added elsewhere comes down, a local rename moves the
+#   object, a file deleted elsewhere goes to the sync trash, a file changed
+#   on both sides is kept twice; then sotyware is ended (Stop-Process: in
+#   tray mode closing only hides) and started again, the startup connection
+#   check (ADR-046) must reach the server with no click and the sync go on;
+#   turning sync off must change nothing on either side. The sync folder is
+#   a new folder under %TEMP%, removed afterwards. Contacts no provider.
+# -Mode account: the feedback, bug report and privacy notice pages (ADR-049;
+#   a test-profile build records them in opened-pages.txt in its profile
+#   instead of opening a browser) and sign-up, verification, sync set-up
+#   with the recovery key and deletion against a local account service:
+#   this checkout's server\target\release\sotyware-server.exe (built if
+#   needed), loopback only, its own database under %TEMP%, no mail relay (the
+#   code is read from its outbox). The service's database is read with
+#   Node's built-in node:sqlite. Contacts nothing outside this computer.
 # -Mode download: downloads through the native Windows save dialog (the common
 #   item dialog: Cancel, File name + Save, the "Confirm Save As" question for
 #   an existing file; its controls are not in the UI Automation tree, so they
@@ -175,7 +196,7 @@
 # or b2 credentials missing, 3 (upload, b2-lifecycle quit) no interactive
 # desktop: nothing was run.
 param(
-  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle", "files", "usage")][string]$Mode = "local",
+  [ValidateSet("local", "b2", "browse", "b2-browse", "download", "b2-download", "upload", "b2-upload", "b2-lifecycle", "files", "usage", "sync", "account")][string]$Mode = "local",
   [string]$Exe = (Join-Path $PSScriptRoot "..\..\src-tauri\target\test-profile\release\sotyware.exe"),
   [string]$ProfileParent = (Join-Path $PSScriptRoot "..\..\src-tauri\target\desktop-test-profiles"),
   [string]$Region = "eu-central-003",
@@ -566,7 +587,7 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # Replacing the key only stores it (no request); made-up values.
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Endpoint = ""
-} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files" -or $Mode -eq "usage") {
+} elseif ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up -or $Mode -eq "files" -or $Mode -eq "usage" -or $Mode -eq "sync") {
   # The made-up keys of serve_listing_for_ui / serve_objects_for_ui /
   # serve_uploads_for_ui (src-tauri/src/cloud/test_server.rs),
   # serve_files_for_ui (test_server/files_ui.rs) and serve_usage_for_ui
@@ -575,6 +596,8 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
     $Key1 = "e2eFilesKey00000000001"; $Secret1 = "e2e-Files-Secret-0123456789"; $Bucket = "files-versioned"; $Helper = "files_ui::serve_files_for_ui"
   } elseif ($Mode -eq "usage") {
     $Key1 = "e2eUsageKey00000000001"; $Secret1 = "e2e-Usage-Secret-0123456789"; $Bucket = "usage-versioned"; $Helper = "usage_ui::serve_usage_for_ui"
+  } elseif ($Mode -eq "sync") {
+    $Key1 = "e2eSyncKey000000000001"; $Secret1 = "e2e-Sync-Secret-0123456789"; $Bucket = "sync-versioned"; $Helper = "sync_ui::serve_sync_for_ui"
   } elseif ($Mode -eq "browse") {
     $Key1 = "e2eBrowseKey0000000001"; $Secret1 = "e2e-Browse-Secret-0123456789"; $Bucket = "browse-bucket"; $Helper = "serve_listing_for_ui"
   } elseif ($Mode -eq "upload" -or $IsB2Up) {
@@ -613,6 +636,8 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   # usage: what a measurement of the seeded bucket must find (the server's
   # own figures, which a Rust unit test checks against the measurement).
   if ($Mode -eq "usage") { $UsageExpected = Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json }
+  # sync: the folder the app syncs, new and empty.
+  if ($Mode -eq "sync") { $SyncDir = Join-Path $env:TEMP "sotyware-sync-$run"; New-Item -ItemType Directory $SyncDir | Out-Null }
   if ($Mode -eq "download" -or $Mode -eq "upload" -or $IsB2Up) {
     # download: the objects to download; upload: the seeded objects.
     $script:objects = @{}; foreach ($o in (Get-Content "$SrvFile.json" -Raw -Encoding UTF8 | ConvertFrom-Json)) { $script:objects[[string]$o.key] = $o }
@@ -628,6 +653,28 @@ if ($Mode -eq "b2-browse" -or $Mode -eq "b2-download") {
   $Key1 = "e2eKeyIdOne000000000001"; $Secret1 = "e2e-Secret-One-0123456789abcdef"
   $Key2 = "e2eKeyIdTwo000000000002"; $Secret2 = "e2e-Secret-Two-fedcba9876543210"
   $Bucket = "soty-photos"; $Endpoint = "http://127.0.0.1:9"
+}
+# account: a local account service (this checkout's server binary), loopback
+# only, its own database, no mail relay; the app reaches it through
+# SOTYWARE_ACCOUNT_SERVER, which only debug and test-profile builds read.
+if ($Mode -eq "account") {
+  $AccSrvDir = (Resolve-Path (Join-Path $PSScriptRoot "..\..\server")).Path
+  "account service: cargo build --release --locked in $AccSrvDir"
+  $accBuild = Start-Process cargo -ArgumentList "build", "--quiet", "--release", "--locked" -WorkingDirectory $AccSrvDir -NoNewWindow -PassThru -Wait
+  if ($accBuild.ExitCode -ne 0) { "ABORT: the account service did not build"; exit 2 }
+  $AccBin = Join-Path $AccSrvDir "target\release\sotyware-server.exe"
+  $accListen = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); $accListen.Start(); $AccPort = $accListen.LocalEndpoint.Port; $accListen.Stop()
+  $AccDb = Join-Path $env:TEMP "sotyware-account-server-$run.sqlite3"
+  $AccOut = Join-Path $env:TEMP "sotyware-account-server-$run.log"
+  $env:SOTYWARE_SERVER_DB = $AccDb; $env:SOTYWARE_SERVER_ADDR = "127.0.0.1:$AccPort"
+  Remove-Item Env:SOTYWARE_SMTP_HOST -EA SilentlyContinue
+  $accSrv = Start-Process $AccBin -ArgumentList "serve" -NoNewWindow -PassThru -RedirectStandardOutput $AccOut -RedirectStandardError "$AccOut.err"
+  $null = $accSrv.Handle
+  Remove-Item Env:SOTYWARE_SERVER_DB, Env:SOTYWARE_SERVER_ADDR
+  $accUp = WaitFor { try { (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$AccPort/healthz" -TimeoutSec 2).StatusCode -eq 200 } catch { $false } } 30
+  if (-not $accUp) { "ABORT: the account service did not start"; Get-Content "$AccOut.err" -Tail 20 -EA SilentlyContinue; Stop-Process -Id $accSrv.Id -EA SilentlyContinue; exit 2 }
+  "account service: http://127.0.0.1:$AccPort (database $AccDb)"
+  $env:SOTYWARE_ACCOUNT_SERVER = "http://127.0.0.1:$AccPort"
 }
 # Set after the helper server started, so only the app (started from here)
 # records; a later cargo test child ignores them (no recorder in test builds
@@ -1353,6 +1400,61 @@ function TrayQuit {
   $true
 }
 function DashVisible { $d = Dash; ($null -ne $d) -and [CloudUiW]::IsWindowVisible((Hwnd $d)) }
+# ---- the native Windows folder dialog (IFileOpenDialog, pick folders) ----
+# Used by the files and sync modes.
+# Rust opens it (tauri-plugin-dialog / rfd); the page never sees a path.
+# Its Folder box is the classic Edit 1148 and Select Folder is button 1
+# (found by control id, as for the open and save dialogs). A full path
+# typed there and Select Folder choose that folder; if the dialog only
+# goes into it, a second Select Folder with the box empty chooses the
+# folder shown. Every result is checked on disk or at the server.
+# The Folder box: the open dialog's File name edit (1148) where present;
+# else the first Edit inside a ComboBox, else the first Edit with an id
+# (the dialog's children are printed once when none is found).
+function FolderBox($dlg) {
+  $h = OpenNameBox $dlg; if ($h) { return $h }
+  foreach ($id in @(1152, 1001)) { $c = [CloudUiW]::ChildById((Hwnd $dlg), $id, "Edit"); if ($c -ne [IntPtr]::Zero) { return $c } }
+  $null
+}
+$script:dumped = $false
+function FolderDlg([string]$title) {
+  $d = DialogNamed $title
+  if (-not $d) { return $null }
+  if (FolderBox $d) { return $d }
+  if (-not $script:dumped) { $script:dumped = $true; Write-Host "  folder dialog '$title' without a known Folder box; children: $(([CloudUiW]::Children((Hwnd $d)) | Select-Object -First 60) -join ' ; ')" }
+  $null
+}
+function CancelFolderDlg([string]$title) {
+  $script:fdlg = $null
+  if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
+    Write-Host "  no folder dialog '$title' with a Folder box"
+    $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
+    return $false
+  }
+  CancelDialog $script:fdlg
+  WaitFor { $null -eq (DialogNamed $title) } 10
+}
+function ChooseFolder([string]$title, [string]$path) {
+  $script:fdlg = $null
+  if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
+    Write-Host "  no folder dialog '$title' with a Folder box"
+    $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
+    return $false
+  }
+  $dlg = $script:fdlg; $box = FolderBox $dlg; $sel = DialogButton $dlg 1
+  if (-not $sel) { Write-Host "  folder dialog: no Select Folder button"; CancelDialog $dlg; return $false }
+  # The box can exist a moment before the dialog stops resetting it:
+  # set it again until it keeps the path.
+  if (-not (WaitFor { if ([CloudUiW]::GetText($box) -ne $path) { [CloudUiW]::SetText($box, $path); Start-Sleep -Milliseconds 300 }; [CloudUiW]::GetText($box) -eq $path } 8)) { Write-Host "  folder dialog: Folder box says '$([CloudUiW]::GetText($box))'"; CancelDialog $dlg; return $false }
+  [void][CloudUiW]::Click($sel)
+  if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
+  Write-Host "  folder dialog: still open after Select Folder (shows '$(DialogFolder $dlg)'); pressing it again with the box empty"
+  $box = FolderBox $dlg
+  if ($box) { [CloudUiW]::SetText($box, "") }
+  [void][CloudUiW]::Click((DialogButton $dlg 1))
+  if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
+  Write-Host "  folder dialog: still open; cancelled"; CancelDialog $dlg; $false
+}
 # Starts the app and opens the bucket's root in the browser.
 # Refuses while one still runs: that start would only hand over and exit.
 function LaunchToBucket {
@@ -1573,7 +1675,7 @@ try {
   $rawText = [System.Text.Encoding]::UTF8.GetString($raw)
   Check "account database has no key id or secret" (($rawText -notlike "*$Secret1*") -and ($rawText -notlike "*$Key1*"))
 
-  $expect = if ($Mode -eq "local") { "Network error" } else { "Connected" }
+  $expect = if ($Mode -eq "local" -or $Mode -eq "account") { "Network error" } else { "Connected" }
   $st = RunCheck
   Check "Check connection: $expect" ($st -eq $expect) "$st | $(PageText)"
 
@@ -1619,6 +1721,242 @@ try {
     $ok = (Press "Back to accounts") -and (WaitFor { $null -ne (Named "Open bucket" $CT::Button) } 15)
     $ok = $ok -and (Press "Open bucket") -and (WaitFor { $t = PageText; ($t -like "*Root of the bucket*") -and ($t -notlike "*Loading*") } 60)
     Check "Back to accounts, then Open bucket again starts at the bucket's root" ($ok -and ((TableRows) -contains "sotyware-it | Folder | $([char]0x2014)")) (PageText)
+  } elseif ($Mode -eq "sync") {
+   try {
+    # ---- folder sync (ADR-043) and the startup check (ADR-046) ----
+    # The server plays a second computer (put, delete); SyState reads what
+    # it really stores. Local files are read and written with .NET.
+    function SyCtl([string[]]$cmds) {
+      $tmp = "$SrvFile.ctl.tmp"
+      [System.IO.File]::WriteAllText($tmp, (($cmds -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+      [System.IO.File]::Move($tmp, "$SrvFile.ctl")
+      WaitFor { -not (Test-Path -LiteralPath "$SrvFile.ctl") } 30
+    }
+    function SyState {
+      $f = "$SrvFile.state.json"
+      if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f }
+      if (-not (SyCtl @("dump")) -or -not (WaitFor { Test-Path -LiteralPath $f } 10)) { throw "the sync server did not answer dump" }
+      $j = [System.IO.File]::ReadAllText($f, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+      Remove-Item -LiteralPath $f
+      $j
+    }
+    # key -> SHA-256 of every current object.
+    function SyRemote {
+      $d = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+      $j = SyState
+      foreach ($pr in $j.keys.PSObject.Properties) { if ($null -ne $pr.Value.current) { $d[$pr.Name] = [string]$pr.Value.current.sha256 } }
+      $d
+    }
+    function SyHeads { $o = (SyState).operations; if ($o.PSObject.Properties.Name -contains "HeadBucket") { [int]$o.HeadBucket } else { 0 } }
+    # relative path (with /) -> SHA-256 of every file in the sync folder, without .sotyware-sync.
+    function SyLocal {
+      $d = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+      $root = [System.IO.Path]::GetFullPath($SyncDir).TrimEnd('\') + '\'
+      foreach ($f in [System.IO.Directory]::GetFiles($SyncDir, "*", [System.IO.SearchOption]::AllDirectories)) {
+        $rel = $f.Substring($root.Length).Replace('\', '/')
+        if ($rel.StartsWith(".sotyware-sync/")) { continue }
+        # sotyware may move the file (into place, into the sync trash)
+        # between the listing and the hash: skip it, the next poll sees it.
+        $h = Get-FileHash -Algorithm SHA256 -LiteralPath $f -EA SilentlyContinue
+        if ($h) { $d[$rel] = $h.Hash.ToLowerInvariant() }
+      }
+      $d
+    }
+    function SyShow($d) { (@($d.Keys | Sort-Object) | ForEach-Object { "$_=$($d[$_].Substring(0, 8))" }) -join " " }
+    function SyText([string]$t) { $b = [System.Text.Encoding]::UTF8.GetBytes($t); $h = [System.Security.Cryptography.SHA256]::Create(); try { -join ($h.ComputeHash($b) | ForEach-Object { $_.ToString("x2") }) } finally { $h.Dispose() } }
+    function SyWrite([string]$rel, [string]$t) {
+      $f = Join-Path $SyncDir ($rel.Replace('/', '\'))
+      $dir = [System.IO.Path]::GetDirectoryName($f)
+      if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
+      [System.IO.File]::WriteAllText($f, $t, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    # Waits for $pred, pressing Sync now every 10 s so a change made at the
+    # server does not wait for the listing interval (5 minutes at least).
+    function SyUntil([scriptblock]$pred, [double]$timeout = 90) {
+      $end = (Get-Date).AddSeconds($timeout)
+      while ((Get-Date) -lt $end) {
+        if (& $pred) { return $true }
+        $null = Press "Sync now"
+        $null = WaitFor $pred 10
+      }
+      [bool](& $pred)
+    }
+    function SyTab { (UsageTab "Sync") -and (WaitFor { (Btn "Choose folder$([char]0x2026)") -or (Btn "Turn sync off$([char]0x2026)") } 20) }
+    $ok = $ok -and (WaitFor { (PageText) -like "*welcome.txt*" } 30)
+    Check "sync: Open bucket lists the seeded files" $ok (PageText)
+    $ok = (SyTab) -and (Btn "Choose folder$([char]0x2026)")
+    Check "sync: the Sync tab offers Choose folder... for a bucket that is not synced" $ok (PageText)
+    $ok = (Press "Choose folder$([char]0x2026)") -and (ChooseFolder "Choose the folder to sync with $Bucket" $SyncDir)
+    Check "sync: the native folder dialog chooses the empty sync folder" $ok
+    $ok = WaitFor { $t = PageText; $t.Contains("Sync this folder?") -and $t.Contains($SyncDir) } 20
+    Check "sync: the page asks to confirm, showing the chosen folder and that it is empty" ($ok -and (PageText).Contains("Empty")) (PageText)
+    $ok = (Press "Start sync") -and (WaitFor { Btn "Turn sync off$([char]0x2026)" } 30)
+    Check "sync: Start sync: the tab shows the running sync" $ok (PageText)
+    Check "sync: the folder is marked as a sync folder (.sotyware-sync\root.json)" (WaitFor { Test-Path -LiteralPath (Join-Path $SyncDir ".sotyware-sync\root.json") } 30)
+
+    $syWelcome = SyText "welcome from the bucket`n"; $syPlan = SyText "the plan, written elsewhere`n"
+    $ok = SyUntil { $syLoc = SyLocal; $syLoc.Count -eq 2 -and $syLoc["welcome.txt"] -eq $syWelcome -and $syLoc["docs/plan.txt"] -eq $syPlan }
+    Check "sync: the first pass brings both seeded files down, docs/plan.txt into its folder, byte for byte" $ok (SyShow (SyLocal))
+
+    SyWrite "notes.txt" "written on this computer`n"; $syNotes = SyText "written on this computer`n"
+    $ok = SyUntil { (SyRemote)["notes.txt"] -eq $syNotes }
+    Check "sync: a file created in the folder appears in the bucket with the same content" $ok (SyShow (SyRemote))
+
+    $null = SyCtl @("put from-elsewhere.txt added on another computer"); $syElse = SyText "added on another computer`n"
+    $ok = SyUntil { (SyLocal)["from-elsewhere.txt"] -eq $syElse }
+    Check "sync: a file added to the bucket elsewhere comes down after Sync now" $ok (SyShow (SyLocal))
+
+    [System.IO.File]::Move((Join-Path $SyncDir "notes.txt"), (Join-Path $SyncDir "renamed.txt"))
+    $ok = SyUntil { $syRem = SyRemote; $syRem["renamed.txt"] -eq $syNotes -and -not $syRem.ContainsKey("notes.txt") }
+    $syK = (SyState).keys
+    $syOld = $syK.PSObject.Properties["notes.txt"]
+    Check "sync: renaming a file in the folder renames it in the bucket (old name a delete marker, not removed)" ($ok -and $syOld -and [int]$syOld.Value.markers -ge 1 -and [int]$syOld.Value.versions -ge 1) (SyShow (SyRemote))
+
+    $null = SyCtl @("delete welcome.txt")
+    $ok = SyUntil { -not (SyLocal).ContainsKey("welcome.txt") }
+    # The move into the trash may still be finishing: wait for it.
+    $script:syTrashed = @()
+    $null = WaitFor { $script:syTrashed = @(Get-ChildItem -LiteralPath (Join-Path $SyncDir ".sotyware-sync\trash") -Recurse -File -Filter "welcome.txt" -EA SilentlyContinue); $script:syTrashed.Count -eq 1 } 15
+    $syTrashed = $script:syTrashed
+    $trashOk = $syTrashed.Count -eq 1 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $syTrashed[0].FullName).Hash.ToLowerInvariant() -eq $syWelcome
+    Check "sync: a file deleted in the bucket elsewhere leaves the folder and is kept in .sotyware-sync\trash\<day>\" ($ok -and $trashOk) "$(SyShow (SyLocal)) trash: $(@($syTrashed | ForEach-Object { $_.FullName }) -join '|')"
+
+    $null = SyCtl @("put docs/plan.txt edited elsewhere"); SyWrite "docs/plan.txt" "edited here`n"
+    $syHere = SyText "edited here`n"; $syThere = SyText "edited elsewhere`n"
+    $ok = SyUntil {
+      $syLoc = SyLocal; $syRem = SyRemote
+      $syNames = @($syLoc.Keys) + @($syRem.Keys)
+      $syCopies = @($syNames | Where-Object { $_.StartsWith("docs/plan (conflicted copy") })
+      $syAll = @($syLoc.Values) + @($syRem.Values)
+      $syCopies.Count -gt 0 -and ($syAll -contains $syHere) -and ($syAll -contains $syThere)
+    } 120
+    Check "sync: a file changed on both sides is kept twice: both contents survive, one under a 'plan (conflicted copy ...)' name" $ok "local: $(SyShow (SyLocal)) | bucket: $(SyShow (SyRemote))"
+
+    # ---- end sotyware and start it again ----
+    # In tray mode closing only hides, and the tray Quit would move the
+    # mouse: the process is ended, as a crash or a shutdown would.
+    $syHeadsBefore = SyHeads
+    Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
+    $ended = WaitFor { (Procs).Count -eq 0 } 20
+    Clear-TestProfileAck $Prof
+    $p = Start-Process $Exe -PassThru; $null = $p.Handle
+    Verified $p "restart" | Out-Host
+    Check "sync: sotyware ended and started again in the same profile" ($ended -and (WaitFor { $null -ne (Dash) } 20))
+    $ok = WaitFor { (SyHeads) -gt $syHeadsBefore } 60
+    Check "sync: at startup the connection check reaches the bucket with no click (ADR-046)" $ok "HeadBucket before $syHeadsBefore, now $(SyHeads)"
+    $ok = (WaitFor { Link "Cloud Storage" } 15) -and (WaitFor { (PageText).Contains("Connected") } 30)
+    Check "sync: Cloud Storage shows the account Connected after the startup check" $ok (PageText)
+    SyWrite "after-restart.txt" "after the restart`n"; $syAfter = SyText "after the restart`n"
+    $ok = WaitFor { (SyRemote)["after-restart.txt"] -eq $syAfter } 120
+    Check "sync: after the restart the sync goes on by itself: a new local file goes up with no click" $ok (SyShow (SyRemote))
+
+    # ---- turning sync off deletes nothing ----
+    $ok = (Press "Open bucket") -and (WaitFor { (PageText).Contains("Root of the bucket") } 30) -and (SyTab) -and (Btn "Turn sync off$([char]0x2026)")
+    Check "sync: the Sync tab shows the sync after the restart" $ok (PageText)
+    $syL = SyShow (SyLocal); $syR = SyShow (SyRemote)
+    $ok = (Press "Turn sync off$([char]0x2026)") -and (WaitFor { Btn "Turn sync off" } 10) -and (Press "Turn sync off") -and (WaitFor { Btn "Choose folder$([char]0x2026)" } 30)
+    Check "sync: Turn sync off: the tab offers Choose folder... again" $ok (PageText)
+    Start-Sleep -Seconds 3
+    Check "sync: turning sync off changed nothing in the folder or the bucket" ((SyShow (SyLocal)) -eq $syL -and (SyShow (SyRemote)) -eq $syR) "local: $(SyShow (SyLocal)) | bucket: $(SyShow (SyRemote))"
+    $null = UsageTab "Files"
+   } catch {
+    Check "sync steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+   }
+  } elseif ($Mode -eq "account") {
+   try {
+    Check "account: Open bucket: the network error (nobody listens; this mode is about the account)" ($ok -and (PageText) -like "*The provider could not be reached*") (PageText)
+    $AcOpened = Join-Path $Prof.Root "opened-pages.txt"
+    $AcRepo = "https://github.com/casualsoty/sotyware"
+    $AcEmail = "e2e-$run@example.org"; $AcPassword = "e2e passphrase long enough"
+    $script:redact += , @($AcPassword, "<password>")
+    function AcOpened { if (Test-Path -LiteralPath $AcOpened) { @([System.IO.File]::ReadAllLines($AcOpened) | Where-Object { $_.Trim() }) } else { @() } }
+    # The service's own database, read with Node's built-in node:sqlite.
+    function AcRows {
+      $js = "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1],{readOnly:true});" +
+        "console.log(JSON.stringify(d.prepare('SELECT email, verified, recovery_wrap IS NOT NULL AS wrap, vault IS NOT NULL AS vault FROM accounts ORDER BY email').all()))"
+      $out = & node --no-warnings -e $js $AccDb 2>$null
+      # PowerShell 5.1 emits a parsed JSON array as one object (an empty one
+      # read as a row of blanks): iterate it explicitly.
+      $acParsed = ($out -join "") | ConvertFrom-Json
+      @(foreach ($acRow in @($acParsed)) { "$($acRow.email) $($acRow.verified) $($acRow.wrap) $($acRow.vault)" }) -join "|"
+    }
+    function AcVault {
+      $js = "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1],{readOnly:true});" +
+        "const r=d.prepare('SELECT vault FROM accounts WHERE email = ?').get(process.argv[2]);console.log(r&&r.vault?r.vault:'')"
+      (& node --no-warnings -e $js $AccDb $AcEmail 2>$null) -join ""
+    }
+    function AcCode {
+      $env:SOTYWARE_SERVER_DB = $AccDb
+      try { $mails = (& $AccBin outbox 2>$null) -join "`n" } finally { Remove-Item Env:SOTYWARE_SERVER_DB -EA SilentlyContinue }
+      $codes = @()
+      foreach ($m in ($mails -split "`n---")) { if ($m.Contains("To: $AcEmail")) { $codes += @([regex]::Matches($m, 'Your verification code is (\d+)\.') | ForEach-Object { $_.Groups[1].Value }) } }
+      if ($codes.Count -gt 0) { $codes[-1] } else { $null }
+    }
+    # The account form's mode buttons (Sign in, Create account, Forgot
+    # password) carry aria-pressed: UI Automation offers them as toggle
+    # buttons, without Invoke. The first of that name is the mode button
+    # (the form's submit button comes after it).
+    function AcMode([string]$name) {
+      $d = Dash; if (-not $d) { return $false }
+      $b = @($d.FindAll($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $CT::Button), (PCN $name))))[0]
+      if (-not $b) { Write-Host "  no mode button '$name'"; return $false }
+      try { $b.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
+      try { $b.GetCurrentPattern($Toggle).Toggle(); $true } catch { Write-Host "  mode button '$name': $($_.Exception.Message)"; $false }
+    }
+    function AcKey { $m = [regex]::Match((PageText), '(?<![0-9A-Z-])([0-9A-Z]{4}(?:-[0-9A-Z]{4}){7,})(?![0-9A-Z-])'); if ($m.Success) { $m.Groups[1].Value } else { $null } }
+
+    # ---- the GitHub pages (ADR-049) ----
+    $ok = (WaitFor { Link "Settings" } 10) -and (WaitFor { UsageTab "About & updates" } 10) -and (WaitFor { Btn "Send feedback" } 10)
+    Check "account: Settings > About & updates shows the feedback buttons" $ok (PageText)
+    Check "account: no page was opened before a click" ((AcOpened).Count -eq 0) ((AcOpened) -join " ")
+    $ok = (Press "Send feedback") -and (WaitFor { (AcOpened).Count -eq 1 } 10)
+    $ok = $ok -and (Press "Report a bug") -and (WaitFor { (AcOpened).Count -eq 2 } 10)
+    $ok = $ok -and (Press "Privacy notice") -and (WaitFor { (AcOpened).Count -eq 3 } 10)
+    $pages = AcOpened
+    Check "account: Send feedback opens the feedback form" ($ok -and $pages[0] -eq "$AcRepo/issues/new?template=feedback.yml") ($pages -join " ")
+    Check "account: Report a bug opens the bug form with the version and 'Windows, <arch>' filled in, nothing else" ($pages.Count -ge 2 -and $pages[1] -cmatch ('^' + [regex]::Escape("$AcRepo/issues/new?template=bug_report.yml&version=") + '\d+\.\d+\.\d+&os=Windows%2C%20[a-z0-9_]+$')) ($pages -join " ")
+    Check "account: Privacy notice opens the notice on main" ($pages.Count -ge 3 -and $pages[2] -eq "$AcRepo/blob/main/docs/user/privacy.md") ($pages -join " ")
+
+    # ---- sign-up ----
+    $ok = (WaitFor { Link "Account" } 10) -and (WaitFor { Btn "Create account" } 15)
+    Check "account: the Account page offers Create account (the service is configured)" $ok (PageText)
+    Check "account: the age line is shown only when creating an account" (-not (PageText).Contains("at least 16"))
+    $ok = (AcMode "Create account") -and (WaitFor { (PageText).Contains("at least 16") } 10)
+    Check "account: Create account names the minimum age of 16 and links the privacy notice" ($ok -and (Btn "Privacy notice")) (PageText)
+    $ok = (Press "Privacy notice") -and (WaitFor { (AcOpened).Count -eq 4 } 10)
+    Check "account: the sign-up form's Privacy notice opens the notice, and sends nothing to the service" ($ok -and (AcOpened)[3] -eq "$AcRepo/blob/main/docs/user/privacy.md" -and (AcRows) -eq "") "$((AcOpened) -join ' ') / $(AcRows)"
+    # The form's submit button comes after the mode button of the same name:
+    # Press takes the last one.
+    $ok = (Fill "Email" $AcEmail) -and (Fill "Password" $AcPassword) -and (Press "Create account") -and (WaitFor { (PageText).Contains("If this address can be registered") } 30)
+    Check "account: register: the page asks for the code from the email" $ok (PageText)
+    Check "account: the service stored the account, not yet verified" ((AcRows) -eq "$AcEmail 0 0 0") (AcRows)
+    $script:acCode = $null
+    $null = WaitFor { $script:acCode = AcCode; $null -ne $script:acCode } 15
+    Check "account: the verification code is in the service's outbox" ($null -ne $script:acCode)
+    $ok = $script:acCode -and (Fill "Code from the email" $script:acCode) -and (Press "Verify and sign in") -and (WaitFor { (PageText).Contains("Signed in as") -and (Btn "Set up sync") } 60)
+    Check "account: verify and sign in: signed in, sync not set up yet" $ok (PageText)
+    Check "account: the service marks the address verified" ((AcRows) -eq "$AcEmail 1 0 0") (AcRows)
+    $script:acKey = $null
+    $ok = (Press "Set up sync") -and (WaitFor { $script:acKey = AcKey; $null -ne $script:acKey } 60)
+    Check "account: Set up sync shows the recovery key once" $ok
+    if ($script:acKey) { $script:redact += , @($script:acKey, "<recovery-key>") }
+    $ok = $ok -and (Fill "Type it again to confirm you saved it" $script:acKey) -and (Press "I saved it") -and (WaitFor { $null -eq (AcKey) -and (PageText).Contains("Last sync") } 60)
+    Check "account: typing the key again hides it; the page shows the synced state" $ok (PageText)
+    Check "account: the service holds the recovery wrap and an encrypted vault" ((AcRows) -eq "$AcEmail 1 1 1") (AcRows)
+    $acV = AcVault
+    Check "account: the vault at the service holds no recovery key, password or address in clear" ($acV.Length -gt 0 -and -not $acV.Contains("$script:acKey") -and -not $acV.Contains($AcPassword) -and -not $acV.Contains($AcEmail))
+
+    # ---- delete ----
+    $ok = (Press "Delete account$([char]0x2026)") -and (WaitFor { (Fields) -contains "Password" } 10) -and (Fill "Password" $AcPassword) -and (Press "Delete account") -and (WaitFor { (PageText).Contains("The sotyware account was deleted") } 60)
+    Check "account: Delete account with the password: the page says it was deleted" $ok (PageText)
+    Check "account: the service no longer has the account" ((AcRows) -eq "") (AcRows)
+    Check "account: the page offers sign-in and Create account again" (WaitFor { Btn "Create account" } 15)
+    # The common steps below start inside the account's bucket.
+    $null = (WaitFor { Link "Cloud Storage" } 15)
+    if (-not (WaitFor { Btn "Back to accounts" } 5)) { $null = (Press "Open bucket") -and (WaitFor { (PageText).Contains("Root of the bucket") } 60) }
+   } catch {
+    Check "account steps ran without a script error" $false "$($_.Exception.Message) at line $($_.InvocationInfo.ScriptLineNumber)"
+   }
   } elseif ($Mode -eq "files") {
    try {
     $ok = $ok -and (WaitFor { (PageText) -like "*photos-backup*" } 30)
@@ -1710,60 +2048,6 @@ try {
     Check "preview: a PNG is shown as an image" ($ok -and (WaitFor { $null -ne (Named "Preview of pixel.png" $CT::Image) } 20))
     $null = Press "Close"
     Recover
-    # ---- the native Windows folder dialog (IFileOpenDialog, pick folders) ----
-    # Rust opens it (tauri-plugin-dialog / rfd); the page never sees a path.
-    # Its Folder box is the classic Edit 1148 and Select Folder is button 1
-    # (found by control id, as for the open and save dialogs). A full path
-    # typed there and Select Folder choose that folder; if the dialog only
-    # goes into it, a second Select Folder with the box empty chooses the
-    # folder shown. Every result is checked on disk or at the server.
-    # The Folder box: the open dialog's File name edit (1148) where present;
-    # else the first Edit inside a ComboBox, else the first Edit with an id
-    # (the dialog's children are printed once when none is found).
-    function FolderBox($dlg) {
-      $h = OpenNameBox $dlg; if ($h) { return $h }
-      foreach ($id in @(1152, 1001)) { $c = [CloudUiW]::ChildById((Hwnd $dlg), $id, "Edit"); if ($c -ne [IntPtr]::Zero) { return $c } }
-      $null
-    }
-    $script:dumped = $false
-    function FolderDlg([string]$title) {
-      $d = DialogNamed $title
-      if (-not $d) { return $null }
-      if (FolderBox $d) { return $d }
-      if (-not $script:dumped) { $script:dumped = $true; Write-Host "  folder dialog '$title' without a known Folder box; children: $(([CloudUiW]::Children((Hwnd $d)) | Select-Object -First 60) -join ' ; ')" }
-      $null
-    }
-    function CancelFolderDlg([string]$title) {
-      $script:fdlg = $null
-      if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
-        Write-Host "  no folder dialog '$title' with a Folder box"
-        $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
-        return $false
-      }
-      CancelDialog $script:fdlg
-      WaitFor { $null -eq (DialogNamed $title) } 10
-    }
-    function ChooseFolder([string]$title, [string]$path) {
-      $script:fdlg = $null
-      if (-not (WaitFor { $script:fdlg = FolderDlg $title; $null -ne $script:fdlg } 20)) {
-        Write-Host "  no folder dialog '$title' with a Folder box"
-        $any = DialogNamed $title; if ($any) { CancelDialog $any; $null = WaitFor { $null -eq (DialogNamed $title) } 10 }
-        return $false
-      }
-      $dlg = $script:fdlg; $box = FolderBox $dlg; $sel = DialogButton $dlg 1
-      if (-not $sel) { Write-Host "  folder dialog: no Select Folder button"; CancelDialog $dlg; return $false }
-      # The box can exist a moment before the dialog stops resetting it:
-      # set it again until it keeps the path.
-      if (-not (WaitFor { if ([CloudUiW]::GetText($box) -ne $path) { [CloudUiW]::SetText($box, $path); Start-Sleep -Milliseconds 300 }; [CloudUiW]::GetText($box) -eq $path } 8)) { Write-Host "  folder dialog: Folder box says '$([CloudUiW]::GetText($box))'"; CancelDialog $dlg; return $false }
-      [void][CloudUiW]::Click($sel)
-      if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
-      Write-Host "  folder dialog: still open after Select Folder (shows '$(DialogFolder $dlg)'); pressing it again with the box empty"
-      $box = FolderBox $dlg
-      if ($box) { [CloudUiW]::SetText($box, "") }
-      [void][CloudUiW]::Click((DialogButton $dlg 1))
-      if (WaitFor { $null -eq (DialogNamed $title) } 6) { return $true }
-      Write-Host "  folder dialog: still open; cancelled"; CancelDialog $dlg; $false
-    }
     function WriteUtf8([string]$path, [string]$body) {
       $dir = [System.IO.Path]::GetDirectoryName($path)
       if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
@@ -2733,7 +3017,18 @@ try {
     BrowseCleanup
     Remove-Item $ManFile -EA SilentlyContinue
   }
-  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage") {
+  if ($Mode -eq "account" -and $accSrv) {
+    Stop-Process -Id $accSrv.Id -EA SilentlyContinue; $null = $accSrv.WaitForExit(10000)
+    Remove-Item Env:SOTYWARE_ACCOUNT_SERVER -EA SilentlyContinue
+    $accLog = "$(Get-Content $AccOut -Raw -EA SilentlyContinue)$(Get-Content "$AccOut.err" -Raw -EA SilentlyContinue)"
+    Check "account: the account service logged no error" ($accLog -notmatch '(?i)panicked|error') $accLog
+    Remove-Item $AccDb, "$AccDb-wal", "$AccDb-shm", $AccOut, "$AccOut.err" -EA SilentlyContinue
+  }
+  if ($Mode -eq "sync" -and $SyncDir -and (Test-Path -LiteralPath $SyncDir)) {
+    [System.IO.Directory]::Delete($SyncDir, $true)
+    Check "sync: the sync folder removed ($SyncDir)" (-not (Test-Path -LiteralPath $SyncDir))
+  }
+  if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage" -or $Mode -eq "sync") {
     # Removing the endpoint file stops the helper (and with it its temporary bucket).
     Remove-Item $SrvFile, "$SrvFile.json", "$SrvFile.state.json", "$SrvFile.ctl" -EA SilentlyContinue
     if (-not $srv.WaitForExit(30000)) { Stop-Process -Id $srv.Id -EA SilentlyContinue }
@@ -2760,7 +3055,7 @@ try {
     Check "b2-download: local files removed (downloaded file, generated original, both folders; no .sotyware-partial)" ($partials.Count -eq 0 -and -not (Test-Path $Out) -and -not (Test-Path $SrcDir))
   }
 }
-if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage") {
+if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB2Up -and $Rehearse) -or $Mode -eq "files" -or $Mode -eq "usage" -or $Mode -eq "sync") {
   $srvLog = (Get-Content $SrvOut -Raw -Encoding UTF8 -EA SilentlyContinue)
   $ops = [regex]::Match("$srvLog", 'operations: [^\r\n]*').Value
   if ($Mode -eq "b2-upload") {
@@ -2802,7 +3097,7 @@ if ($Mode -eq "browse" -or $Mode -eq "download" -or $Mode -eq "upload" -or ($IsB
     Check "rehearsal: the app sent $want" $okOps $ops
   }
   if ($Mode -eq "upload") { [regex]::Matches("$srvLog", '(?m)^(cleanup:|left at the end)[^\r\n]*') | ForEach-Object { "  $($_.Value)" } }
-  $what = if ($Mode -eq "files") { "only file-manager requests, and no real version was deleted for good" } elseif ($Mode -eq "usage") { "only listings and the check, and the bucket is unchanged" } elseif ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
+  $what = if ($Mode -eq "files") { "only file-manager requests, and no real version was deleted for good" } elseif ($Mode -eq "sync") { "only folder sync's requests and the check, and no real version was deleted for good" } elseif ($Mode -eq "usage") { "only listings and the check, and the bucket is unchanged" } elseif ($Mode -eq "upload" -or $IsB2Up) { "only listing, reads and upload requests" } else { "only reads and the check" }
   Check "${Mode}: the test server saw $what ($ops)" (($srv.ExitCode -eq 0) -and ("$srvLog" -match 'test result: ok\. 1 passed')) "$srvLog $(Get-Content "$SrvOut.err" -Tail 15 -EA SilentlyContinue)"
   Remove-Item $SrvOut, "$SrvOut.err" -EA SilentlyContinue
 }

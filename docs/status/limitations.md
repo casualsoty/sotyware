@@ -1080,8 +1080,10 @@ server only; no real provider was asked.
   on the WSL2 file system ([status](status.md#folder-sync-2026-11-16)) and
   on GitHub's Ubuntu, Windows and macOS runners
   ([runs](status.md#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16));
-  never at a real provider, through the release binary on any desktop
-  (Windows, macOS or a real Linux desktop), or with a large bucket.
+  never at a real provider, on macOS or a real Linux desktop, or with a
+  large bucket. In the app it ran only through the desktop tests against a
+  local server, on the WSL2 virtual display and native Windows 11
+  ([status](status.md#desktop-tests-for-folder-sync-sign-up-and-the-github-pages-2026-11-17)).
 - **Every file is kept on the computer;** there are no online-only
   (on-demand) files, no selective sync of folders, no bandwidth limit and no
   exclusion patterns of the user's own (the fixed exclusions: `desktop.ini`,

@@ -2,7 +2,7 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage <binary>   (run by cloud-ui.sh, which
+usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage|sync|account <binary>   (run by cloud-ui.sh, which
 sets up Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
@@ -29,6 +29,12 @@ Phases:
          history, and at three window sizes nothing on the Usage & costs
          and Snapshots & backups tabs past its section or the page's scroll
          area (cloud_ui_usage.py)
+  sync   folder sync (ADR-043) against the in-memory versioned server of
+         serve_sync_for_ui, through the native GTK folder dialog, with a
+         restart for the startup connection check (cloud_ui_sync.py)
+  account the GitHub pages (feedback, bug report, privacy notice; ADR-049)
+         and sign-up, sync set-up and deletion against a local account
+         service, the sotyware-server binary (cloud_ui_account.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -112,7 +118,7 @@ def windows_of(pid):
 
 
 NAMES = {" ": "space", "-": "minus", ":": "colon", "/": "slash", ".": "period", "_": "underscore",
-         "+": "plus", "=": "equal"}
+         "+": "plus", "=": "equal", "@": "at"}
 SHIFT = X.XKeysymToKeycode(dpy, X.XStringToKeysym(b"Shift_L"))
 
 
@@ -270,6 +276,13 @@ elif PHASE == "usage":
     ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
     with open(os.environ["SOTYWARE_UI_MANIFEST"], encoding="utf-8") as mf:
         EXPECTED = json.load(mf)
+elif PHASE == "sync":
+    # The made-up key of serve_sync_for_ui (src-tauri/src/cloud/test_server/sync_ui.rs).
+    KEY1, SECRET1 = "e2eSyncKey000000000001", "e2e-Sync-Secret-0123456789"
+    KEY2, SECRET2 = "", ""
+    BUCKET, REGION = "sync-versioned", "eu-central-003"
+    ENDPOINT = os.environ["SOTYWARE_UI_ENDPOINT"]
+    CONTROL = os.environ["SOTYWARE_UI_CONTROL"]
 elif PHASE == "browse":
     # The made-up key of serve_listing_for_ui (src-tauri/src/cloud/test_server.rs).
     KEY1, SECRET1 = "e2eBrowseKey0000000001", "e2e-Browse-Secret-0123456789"
@@ -1109,6 +1122,17 @@ try:
         except (Exception, SystemExit) as e:  # noqa: BLE001
             import traceback
             check("the usage phase ran to its end", False, f"{type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    elif PHASE in ("sync", "account"):
+        # As for files: a phase that stops early is a failure.
+        try:
+            exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"cloud_ui_{PHASE}.py"),
+                      encoding="utf-8").read())
+            check(f"the {PHASE} phase ran to its end", True)
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            import traceback
+            check(f"the {PHASE} phase ran to its end", False, f"{type(e).__name__}: {e}")
             traceback.print_exc()
 
     elif PHASE == "upload":

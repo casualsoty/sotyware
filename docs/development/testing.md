@@ -1756,9 +1756,11 @@ cd src-tauri && TMPDIR=/mnt/c/dev/sotyware-casetest cargo test --lib -- folder_s
   glyph and summary, live updates, late overviews ignored);
   `CloudBrowser.test.ts` (the fourth tab mounted only when chosen).
 
-Not run: the release binary on a desktop (no driver exercises the Sync tab
-yet), native Windows or macOS (Windows file locking, junctions, Explorer,
-NTFS and APFS case rules other than through `/mnt/c`), a real provider.
+On a desktop, the release binary's Sync tab is driven by the `sync` phase
+of the [Cloud Storage UI end-to-end test](#cloud-storage-ui-end-to-end-test)
+(Linux `cloud-ui.sh sync`, Windows `windows-cloud-ui.ps1 -Mode sync`),
+against a local server only. Not run: macOS, Windows junctions and file
+locking, Explorer, APFS case rules, a real provider.
 
 ## Update tests
 
@@ -1853,6 +1855,8 @@ sotyware's output. Account ids and labels are new for every run
 | Windows `-Mode b2-download` | **Connected** for the read-only key | one real download through the dashboard and the native save dialog, [described above](#downloading-through-the-windows-dashboard-at-backblaze) |
 | Windows `-Mode b2-upload` | **Connected** for the upload key (`b2-upload.xml`) | one real upload batch through the dashboard and the native multi-file dialog, [described above](#uploads-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs the same steps against the local s3s-fs server |
 | Windows `-Mode b2-lifecycle -Scenario <scenario>` | **Connected** for the upload key (`b2-upload.xml`) | one upload lifecycle scenario (multipart, cancel, retry, leave, quit) through the dashboard with the release settings, [described above](#upload-lifecycle-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs it against the local s3s-fs server |
+| Linux `sync`, Windows `-Mode sync` | — (Windows: **Connected**) | folder sync (ADR-043) against the in-memory versioned server of `serve_sync_for_ui` (`src-tauri/src/cloud/test_server/sync_ui.rs`, one versioned bucket seeded with `welcome.txt` and `docs/plan.txt`, made-up key), which plays a second computer on the same bucket through its `.ctl` file (`put <key> <text>`, `delete <key>`) and answers `dump` with every key's current SHA-256, versions and delete markers and the app's operations. Through the bucket's **Sync** tab: Choose folder… in the **native folder dialog** (GTK: as in `files`; Windows: the pick-folders dialog, Folder box and Select Folder by control id) → the confirmation names the empty folder → Start sync → `.sotyware-sync/root.json`; the first pass brings both files down byte for byte; a file written into the folder reaches the bucket; a file put at the server comes down (Sync now pressed every 10 s, so nothing waits for the 5-minute listing); a local rename becomes a rename in the bucket (the old key a delete marker, its version kept); a file deleted at the server leaves the folder and lands in `.sotyware-sync/trash/<day>/` with its content; a file changed on both sides is kept twice (both contents survive, one under `plan (conflicted copy …)`); then sotyware is ended and started again in the same profile (Linux: the window's close, which quits in dashboard-only mode; Windows: `Stop-Process`, as closing only hides in tray mode and the tray Quit would move the mouse), the **startup connection check** (ADR-046) must reach the server with no click (its `HeadBucket` count grows; folder sync sends none) and the account show Connected, and a file written after the restart must reach the bucket with no click; Turn sync off… changes nothing in the folder or the bucket. Every step is checked on disk and at the server. The server fails the phase if a real version was ever removed by id, the app sent a request folder sync and the check do not send, or no transfer reached it. The phase is in `cloud_ui_sync.py`, run by `cloud_ui.py` |
+| Linux `account`, Windows `-Mode account` | — (Windows: **Network error**: this mode's storage account points nowhere) | the GitHub pages of ADR-049 and the sotyware account. A test-profile build never starts a browser: `open_github_page` appends the address to `opened-pages.txt` in the run's profile, which the driver reads. Settings › About & updates: nothing recorded before a click; **Send feedback** → exactly the feedback form's URL; **Report a bug** → the bug form with `version=<x.y.z>&os=Linux%2C%20<arch>` (Windows: `Windows%2C%20<arch>`) and nothing else; **Privacy notice** → the notice on `main`. Then sign-up against a local account service, this checkout's `server/target/release/sotyware-server` (built by the script if needed; loopback, a free port, its own database in the run's folder, no mail relay, so mails stay in its outbox), reached through `SOTYWARE_ACCOUNT_SERVER`, which only debug and test-profile builds read: the age line only in Create account; its Privacy notice link records the notice and sends nothing; register (the service's database: the address, not verified); the code read with `sotyware-server outbox`; Verify and sign in (verified); Set up sync → the recovery key shown once, typed again, I saved it → the synced state (the service holds the recovery wrap and a vault containing neither the key, the password nor the address); Delete account… with the password → gone from the service. The service's database is read directly (Linux: Python's `sqlite3`; Windows: Node's built-in `node:sqlite`); the phase fails if the service logged an error or the password or recovery key reached sotyware's output. The phase is in `cloud_ui_account.py`, run by `cloud_ui.py` |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -1860,8 +1864,8 @@ folder." with the network error and Try again; in `b2` it is pressed at the
 root once and must show a listing or Access denied (the test key is limited
 to `sotyware-it/`), then ← Back to accounts.
 
-**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [download] [upload] [files] [usage] [b2] [b2-browse]`,
-default `local hang browse download upload files usage`): Xvfb + openbox and a private `dbus-run-session`, a real
+**Linux** (`tests/desktop/cloud-ui.sh [local] [hang] [browse] [download] [upload] [files] [usage] [sync] [account] [b2] [b2-browse]`,
+default `local hang browse download upload files usage sync account`): Xvfb + openbox and a private `dbus-run-session`, a real
 `gnome-keyring-daemon --unlock` with a throwaway login keyring in a
 throwaway HOME under `/tmp/sotyware-cloud-ui.XXXXXX` (removed at the end,
 keyring included; never your own keyrings or display). It needs what

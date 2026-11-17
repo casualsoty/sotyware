@@ -54,8 +54,12 @@ Both pushed: at `d3a301c`, `ci.yml` and `macos.yml` passed on Ubuntu
 [runs](status/status.md#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)).
 WSL2: `test:headless` (Vitest 307, Rust 651 + 29 ignored), recorder build
 679, clippy (default and test-profile), the Sync tab seen in headless Edge
-through a mocked harness. Not run: any desktop driver (the app itself on
-any desktop), Windows junctions, a real provider.
+through a mocked harness. Since 2026-11-17 the desktop tests drive it in
+the app (`cloud-ui.sh sync`, `windows-cloud-ui.ps1 -Mode sync`, with a
+restart for the startup check; local server only; WSL2 virtual display
+and native Windows 11;
+[status](status/status.md#desktop-tests-for-folder-sync-sign-up-and-the-github-pages-2026-11-17)).
+Not run: Windows junctions, a real provider, macOS.
 
 **Desktop UX, usage and costs, snapshots, automatic sync** (2026-11-15,
 committed on `main` after `310fd49` and pushed on 2026-11-16, where

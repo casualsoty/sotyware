@@ -76,7 +76,28 @@ pub async fn open_github_page(page: GithubPage) -> Result<(), String> {
     open_in_browser(&url)
 }
 
-#[cfg(desktop)]
+/// A test-profile build (ADR-027) never starts a browser: a desktop test
+/// cannot see or close one, and it would reach GitHub. It appends the
+/// address to `opened-pages.txt` in the run's profile, where the driver
+/// reads it.
+#[cfg(feature = "test-profile")]
+fn open_in_browser(url: &str) -> Result<(), String> {
+    use std::io::Write;
+    let profile = crate::test_profile::from_env(std::env::var_os(crate::test_profile::ENV))
+        .map_err(|e| format!("the test profile is not usable: {e}"))?;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(profile.root().join(OPENED_PAGES))
+        .and_then(|mut f| writeln!(f, "{url}"))
+        .map_err(|e| format!("the page could not be recorded: {e}"))
+}
+
+/// Where a test-profile build records the pages it would open.
+#[cfg(feature = "test-profile")]
+const OPENED_PAGES: &str = "opened-pages.txt";
+
+#[cfg(all(desktop, not(feature = "test-profile")))]
 fn open_in_browser(url: &str) -> Result<(), String> {
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| {
         eprintln!("sotyware: failed to open the browser: {e}");
@@ -84,7 +105,7 @@ fn open_in_browser(url: &str) -> Result<(), String> {
     })
 }
 
-#[cfg(not(desktop))]
+#[cfg(all(not(desktop), not(feature = "test-profile")))]
 fn open_in_browser(_: &str) -> Result<(), String> {
     Err("opening a browser is not available here".to_owned())
 }

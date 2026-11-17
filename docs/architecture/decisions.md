@@ -2817,3 +2817,7 @@ the privacy notice). Code: `src-tauri/src/github_page.rs`,
   permission (`allow-open-github-page`). A template file renamed in
   `.github/ISSUE_TEMPLATE/`, or the notice moved, breaks a button; unit
   tests read all three. Showing the notice needs a browser and GitHub.
+  A test-profile build (ADR-027) never starts a browser: it appends the
+  address to `opened-pages.txt` in the run's profile, so the desktop
+  tests (`cloud-ui.sh account`, `windows-cloud-ui.ps1 -Mode account`)
+  check the exact URLs without reaching GitHub.

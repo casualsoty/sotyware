@@ -5,8 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage b2 b2-browse
-#        (default: local hang browse download upload files usage)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage sync account b2 b2-browse
+#        (default: local hang browse download upload files usage sync account)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/test-profile/release/sotyware;
 #                            a test-profile build is required, ADR-027)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
@@ -43,6 +43,18 @@
 #        window sizes nothing on the Usage & costs and Snapshots & backups
 #        tabs reaching past its section or the page's scroll area;
 #        contacts no provider.
+# sync:  folder sync (ADR-043) against the in-memory versioned server of the
+#        Rust tests (serve_sync_for_ui), which plays a second computer on the
+#        same bucket and fails if a real version was ever deleted for good:
+#        the GTK folder dialog, both directions, rename, deletion into the
+#        sync trash, a conflict, a restart (the startup connection check of
+#        ADR-046) and turning sync off; contacts no provider.
+# account: the feedback, bug report and privacy notice pages (ADR-049; a
+#        test-profile build records them instead of opening a browser) and
+#        sign-up, verification, sync set-up and deletion against a local
+#        account service (server/target/release/sotyware-server, built if
+#        missing, own database, no mail relay: the code is read from its
+#        outbox); contacts nothing outside this computer.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -65,7 +77,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage sync account)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/test-profile/release/sotyware}")
@@ -93,7 +105,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse|download|upload|files|usage) ;;
+      local|hang|browse|download|upload|files|usage|sync|account) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -115,7 +127,7 @@ BIN=$SOTYWARE_CLOUD_UI_BIN GK_BIN=$SOTYWARE_CLOUD_UI_GK
 ORIG_HOME=$HOME
 # Short: Unix socket paths must stay under 108 bytes.
 WORK=$(mktemp -d /tmp/sotyware-cloud-ui.XXXXXX) || exit 3
-XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" SNI_PID="" BROWSE_RUN="" rc=0
+XVFB_PID="" WM_PID="" SS_PID="" SRV_PID="" SNI_PID="" ACC_PID="" BROWSE_RUN="" rc=0
 # Deletes exactly the versions of the kept browse dataset of this run, and
 # lists again; prints the result lines of the Rust test.
 b2_browse_cleanup() {
@@ -134,7 +146,7 @@ b2_browse_cleanup() {
 cleanup() {
   b2_browse_cleanup
   rm -f -- "$WORK/browse-endpoint"
-  for p in $SNI_PID $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
+  for p in $ACC_PID $SNI_PID $SS_PID $SRV_PID $WM_PID $XVFB_PID; do kill "$p" 2>/dev/null; done
   pkill -f -- "^$GK_BIN " 2>/dev/null
   # Only the folder this run created (throwaway HOME and keyring).
   case $WORK in /tmp/sotyware-cloud-ui.??????) rm -rf -- "$WORK" ;; esac
@@ -296,6 +308,55 @@ for phase in "${PHASES[@]}"; do
         echo "[FAIL] usage: the usage server failed:"; grep -E 'operations|panicked|sent more|changed|reached' "$WORK/usage-server.log" | tail -5; rc=1
       fi
       SRV_PID="" ;;
+    sync)
+      # Folder sync (ADR-043) against serve_sync_for_ui; it fails at the end
+      # if a real version was deleted for good or the app sent a request
+      # folder sync and the connection check do not send.
+      SRV_FILE=$WORK/sync-endpoint
+      (cd "$REPO/src-tauri" && HOME=$ORIG_HOME SOTYWARE_UI_SERVER_FILE=$SRV_FILE cargo test --quiet --lib \
+        cloud::test_server::sync_ui::serve_sync_for_ui -- --ignored --nocapture >"$WORK/sync-server.log" 2>&1) &
+      SRV_PID=$!
+      for _ in $(seq 1800); do [ -s "$SRV_FILE" ] && break; kill -0 "$SRV_PID" 2>/dev/null || break; sleep 0.2; done
+      [ -s "$SRV_FILE" ] || { echo "sync server did not start:"; cat "$WORK/sync-server.log"; exit 3; }
+      grep -E '^serving' "$WORK/sync-server.log" | sed 's/^/  /'
+      start_keyring
+      SOTYWARE_UI_ENDPOINT="$(cat "$SRV_FILE")" SOTYWARE_UI_CONTROL="$SRV_FILE" \
+        python3 "$H/cloud_ui.py" sync "$BIN" || rc=1
+      stop_keyring
+      rm -f -- "$SRV_FILE" "$SRV_FILE.state.json"
+      if wait "$SRV_PID"; then
+        echo "[PASS] sync: no real version was deleted for good; only folder sync's requests ($(grep -o 'operations: .*' "$WORK/sync-server.log"))"
+      else
+        echo "[FAIL] sync: the sync server failed:"; grep -E 'versions removed|panicked|unexpected|no sync' "$WORK/sync-server.log" | tail -5; rc=1
+      fi
+      SRV_PID="" ;;
+    account)
+      # A local account service: this repository's server binary, its own
+      # database in $WORK, loopback only, no mail relay (mails stay in its
+      # outbox, where the driver reads the code).
+      ACC_BIN=$REPO/server/target/release/sotyware-server
+      (cd "$REPO/server" && HOME=$ORIG_HOME cargo build --quiet --release --locked >"$WORK/account-build.log" 2>&1) \
+        || { echo "the account service did not build:"; tail -20 "$WORK/account-build.log"; exit 3; }
+      ACC_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+      ACC_DB=$WORK/account-server.sqlite3
+      env -u SOTYWARE_SMTP_HOST SOTYWARE_SERVER_DB="$ACC_DB" SOTYWARE_SERVER_ADDR="127.0.0.1:$ACC_PORT" \
+        "$ACC_BIN" serve >"$WORK/account-server.log" 2>&1 & ACC_PID=$!
+      for _ in $(seq 100); do
+        python3 -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$ACC_PORT/healthz', timeout=1)" 2>/dev/null && break
+        kill -0 "$ACC_PID" 2>/dev/null || break; sleep 0.2
+      done
+      kill -0 "$ACC_PID" 2>/dev/null || { echo "account service did not start:"; cat "$WORK/account-server.log"; exit 3; }
+      sed 's/^/  /' "$WORK/account-server.log"
+      start_keyring
+      SOTYWARE_ACCOUNT_SERVER="http://127.0.0.1:$ACC_PORT" SOTYWARE_UI_ACCOUNT_SERVER_BIN="$ACC_BIN" \
+        SOTYWARE_UI_ACCOUNT_SERVER_DB="$ACC_DB" python3 "$H/cloud_ui.py" account "$BIN" || rc=1
+      stop_keyring
+      kill "$ACC_PID" 2>/dev/null; wait "$ACC_PID" 2>/dev/null; ACC_PID=""
+      if grep -qiE 'panicked|error' "$WORK/account-server.log"; then
+        echo "[FAIL] account: the account service logged an error:"; grep -iE 'panicked|error' "$WORK/account-server.log" | tail -5; rc=1
+      else
+        echo "[PASS] account: the account service logged no error"
+      fi ;;
     upload)
       SRV_FILE=$WORK/upload-endpoint
       record_setup upload
