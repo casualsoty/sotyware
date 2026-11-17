@@ -5002,7 +5002,7 @@ dependencies = [
 
 [[package]]
 name = "sotyware"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "apple-native-keyring-store",
  "aws-sdk-s3",

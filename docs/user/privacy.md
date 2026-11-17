@@ -1,19 +1,5 @@
 # Privacy notice
 
-> **Draft of 2026-11-17, not published.** Written from the service's code
-> (`server/src/db.rs`, `server/src/api.rs`, `server/src/mail.rs`) and its
-> deployment (ADR-045, ADR-047). It is a gate before any release offers
-> sotyware accounts ([roadmap](../status/roadmap.md)). The maintainer's
-> answers of 2026-11-17 filled the points that were open, and the
-> contact address `privacy@sotyware.com` works since that day (received
-> and answered by the maintainer). The maintainer decided on 2026-11-17
-> that no lawyer reads it. The app links to it from the account sign-up
-> form and from Settings › About & updates (ADR-049). One step is left:
-> the date below is the day `v0.1.2`, the first release offering
-> accounts, is published; set it in the commit that raises the version.
-> Brevo's and Backblaze's locations and certifications were taken from
-> their own pages on 2026-11-17. This draft is not legal advice.
-
 This notice explains what sotyware, the desktop app, and the optional
 sotyware account service at `https://accounts.sotyware.com` do with
 information about you.
@@ -175,4 +161,5 @@ We publish every change in this file in the sotyware repository
 that affect what we collect, why, or who receives it are announced in the
 release notes at least 30 days before they apply.
 
-Last changed: **[open: the day `v0.1.2` is published]**.
+Last changed: 2026-11-17, with sotyware 0.1.2, the first version that
+offers sotyware accounts.
