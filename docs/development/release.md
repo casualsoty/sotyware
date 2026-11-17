@@ -1,7 +1,8 @@
 # Release builds, signing and installer testing
 
-sotyware is released on GitHub Releases: `v0.1.0` on 2026-11-15 and
-`v0.1.1` on 2026-11-16 ([status](../status/status.md#release-011-2026-11-16)).
+sotyware is released on GitHub Releases: `v0.1.0` on 2026-11-15,
+`v0.1.1` on 2026-11-16 ([status](../status/status.md#release-011-2026-11-16))
+and `v0.1.2` on 2026-11-17 ([status](../status/status.md#release-012-2026-11-17)).
 This page says what a release may claim, how its binaries are built, what
 signing needs, and how its installers must be tested before anyone is told
 to install them. Nothing here has been done for a release unless
@@ -11,7 +12,7 @@ to install them. Nothing here has been done for a release unless
 
 | Platform | Code and builds | Release support |
 | --- | --- | --- |
-| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the releases' only target**; `v0.1.0` (2026-11-15) and `v0.1.1` (2026-11-16) were published before their installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do; the maintainer runs `v0.1.0` on their personal Windows 11 and reports it working ([status](../status/status.md#v010-installed-by-the-maintainer-2026-11-15)) |
+| Windows 11 | built and tested (automated desktop tests on 25H2, headless CI) | **the releases' only target**; `v0.1.0` (2026-11-15), `v0.1.1` (2026-11-16) and `v0.1.2` (2026-11-17) were published before their installers went through the [installation test](#installation-test-plan-disposable-windows-11), which is still to do; the maintainer runs `v0.1.0` on their personal Windows 11 and reports it working ([status](../status/status.md#v010-installed-by-the-maintainer-2026-11-15)) |
 | Windows 10 | the same binary; never run | **not validated, not claimed.** Do not list it as supported |
 | Linux (X11, Wayland; GNOME, KDE, XFCE, …) | builds; tested only on WSL2 and virtual displays (Xvfb + openbox, stub tray host) | **not validated on a real desktop.** Releases carry the AppImage, deb and rpm for testing, labelled as such in the release notes |
 | macOS (Apple Silicon, Intel) | builds and tests only on GitHub's hosted macOS runners ([macos.md](macos.md)); never run on a Mac a person used | **not validated.** Releases carry Mac packages only when they are signed and notarized; none can be until a Developer ID certificate exists |

@@ -9,8 +9,11 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.1, **released on 2026-11-16** as `v0.1.1`
-([status](status/status.md#release-011-2026-11-16)), after `v0.1.0` on 2026-11-15
+TypeScript. Version 0.1.2, **released on 2026-11-17** as `v0.1.2`, the
+first release offering sotyware accounts
+([status](status/status.md#release-012-2026-11-17)), after `v0.1.1` on
+2026-11-16 ([status](status/status.md#release-011-2026-11-16)) and `v0.1.0`
+on 2026-11-15
 ([status](status/status.md#first-release-v010-2026-11-15)). Code and builds target
 Windows, Linux and macOS (Apple Silicon and Intel; macOS built and tested
 only on GitHub's runners, ADR-037); the **releases target Windows 11
@@ -365,8 +368,10 @@ update server exist), all tested headless against in-process servers only.
   `PRODUCTION_SERVER` (test-profile builds have none). Its database is
   backed up hourly, encrypted with age, to a Backblaze B2 bucket with
   Object Lock (30 days) and a healthchecks.io monitor (ADR-047; first
-  upload and restore check on 2026-11-17). No release includes it yet; a
-  privacy notice and an external review are still open.
+  upload and restore check on 2026-11-17). **`v0.1.2` (2026-11-17) is
+  the first release that offers accounts**, with the
+  [privacy notice](user/privacy.md) in effect; an external review is still
+  open ([status](status/status.md#release-012-2026-11-17)).
 - **Updates** (2026-11-15, ADR-033; source since ADR-036: the latest
   GitHub release, see above; [updates.md](architecture/updates.md)):
   a minisign-signed `sotyware-update.json` is verified (signature, format,

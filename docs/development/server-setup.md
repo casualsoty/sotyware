@@ -518,9 +518,9 @@ Release builds talk only to the address compiled into them
 (`PRODUCTION_SERVER` in `src-tauri/src/account/mod.rs`); since 2026-11-17
 it is `https://accounts.sotyware.com` (ADR-045). Test-profile builds never
 use it: a desktop test reaches only a service its run names in
-`SOTYWARE_ACCOUNT_SERVER`. Before a release enables accounts for other
-people, [server.md](server.md#external-gates) still asks for a privacy
-notice and an external review.
+`SOTYWARE_ACCOUNT_SERVER`. `v0.1.2` (2026-11-17) is the first release
+that uses it; the privacy notice is in effect since then, and the external
+review [server.md](server.md#external-gates) asks for is still open.
 
 ## 14. If the VM is lost
 

@@ -75,14 +75,14 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   only ever stores ciphertext; a recovery key shown once, device approval,
   revocation and key rotation; an enrolled computer syncs at startup, when
   focused and after you change a storage account, and shows its sync state.
-  **Not available to users yet:** the service runs at
-  `accounts.sotyware.com` since 2026-11-17, but no release includes its
-  address yet (`v0.1.0` and `v0.1.1` have none).
+  The service runs at `accounts.sotyware.com` since 2026-11-17; `v0.1.2`
+  is the first release that uses it (`v0.1.0` and `v0.1.1` have none).
+  What it stores: the [privacy notice](docs/user/privacy.md).
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
-  backup. `v0.1.0` was published on 2026-11-15 and `v0.1.1` on
-  2026-11-16; the maintainer's own Windows 11 installation updated itself
-  from 0.1.0 to 0.1.1 this way.
+  backup. `v0.1.0` was published on 2026-11-15, `v0.1.1` on 2026-11-16
+  and `v0.1.2` on 2026-11-17; the maintainer's own Windows 11
+  installation updated itself from 0.1.0 to 0.1.1 this way.
 
 It does not search file contents, download as ZIP, keep a trash of its own in
 the bucket or permanently delete old object versions, and it does not copy objects larger
@@ -123,5 +123,5 @@ leaves the build machine's paths in the binary and is refused when bundling;
 | [docs/development/](docs/development/workflow.md) | [Setup](docs/development/setup.md), [commands](docs/development/workflow.md), [testing](docs/development/testing.md), [cross-platform rules](docs/development/cross-platform.md), [release builds, signing and installer testing](docs/development/release.md), [application icons](docs/development/icons.md) |
 | [docs/status/](docs/status/status.md) | [Status and validation matrix](docs/status/status.md), [known limitations](docs/status/limitations.md), [roadmap](docs/status/roadmap.md), [production-readiness journal](docs/status/journal.md) |
 | [docs/user/recovery.md](docs/user/recovery.md) | Recovering files from a backup, with or without sotyware |
-| [docs/user/privacy.md](docs/user/privacy.md) | Privacy notice for the app and the account service (draft, not yet published) |
+| [docs/user/privacy.md](docs/user/privacy.md) | Privacy notice for the app and the account service (in effect since 2026-11-17, `v0.1.2`) |
 | [AGENTS.md](AGENTS.md) | Conventions and rules for contributors and coding agents |

@@ -196,7 +196,7 @@ first upload and restore check that day). Still open:
   settled the same day (the maintainer responsible, contact
   `privacy@sotyware.com`, working since that day:
   [the privacy address](#the-privacy-address)), linked from the account
-  sign-up form; it takes effect, dated, the day `v0.1.2` is published.
+  sign-up form; in effect since 2026-11-17, with `v0.1.2`.
 
 ## Production deployment proposal (2026-11-15)
 
