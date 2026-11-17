@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Privacy question
+    url: https://github.com/casualsoty/sotyware/blob/main/docs/user/privacy.md
+    about: Questions about your information go to privacy@sotyware.com (see the privacy notice), not to a public issue.

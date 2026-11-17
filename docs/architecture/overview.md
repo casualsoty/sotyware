@@ -77,7 +77,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 99 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 100 custom commands
   and Tauri's window API. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -132,7 +132,11 @@ Boundaries that hold today:
   `set_folder_sync_paused`, `sync_folder_now`, `retry_folder_sync`,
   `set_folder_sync_interval`, `disable_folder_sync`, `change_sync_folder`,
   `open_sync_folder`, `folder_sync_details`, `resolve_folder_sync_conflict`,
-  `answer_folder_sync_deletions` ([folder-sync.md](folder-sync.md#commands));
+  `answer_folder_sync_deletions` ([folder-sync.md](folder-sync.md#commands)),
+  and `open_feedback_page` (ADR-049: Settings › About & updates' "Send
+  feedback" and "Report a bug" open a GitHub issue form in the browser;
+  the page names only which one, Rust builds the URL, a bug report
+  carries the version and the operating system);
   none returns a stored credential (a share link carries the access key
   id, never the secret), none accepts a local path, and only the folder
   sync commands return one: the sync folder the user chose, to show it. The built-in calls are Tauri's window API:

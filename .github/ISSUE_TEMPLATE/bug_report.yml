@@ -1,0 +1,51 @@
+# Opened by the app's "Report a bug" button (src-tauri/src/feedback.rs),
+# which fills `version` and `os` through the URL. Keep those ids.
+name: Bug report
+description: Something in sotyware does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are **public**. Do not paste storage keys, recovery keys, passwords, email addresses, bucket or file names you want to keep private.
+        For a security problem, do not open an issue: write to privacy@sotyware.com.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+  - type: input
+    id: version
+    attributes:
+      label: sotyware version
+      description: Settings › About & updates shows it.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: For example "Windows 11 24H2" or "Ubuntu 24.04, GNOME".
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Cloud Storage (accounts, browsing, transfers, file operations)
+        - Folder sync
+        - Backups
+        - sotyware account and sync
+        - Updates
+        - Window, tray or startup
+        - Something else

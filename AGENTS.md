@@ -133,7 +133,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `tauri-plugin-updater` (desktop targets only, no default features, `rustls-tls`: rustls without a provider, sotyware passes its ring-based TLS configuration; driven from Rust only, ADR-033) | `2` | 2.14.1 |
 | `minisign-verify` (the update manifest's signature, ADR-033; already in the tree through the updater) | `0.3` | 0.3.0 |
 | `notify` (desktop targets only, no default features but `macos_fsevent`: folder sync's file watcher, ADR-043; adds `notify-types`, `inotify`, `inotify-sys`, `kqueue`, `kqueue-sys`, `objc2-core-services`) | `8` | 8.2.2 |
-| `tauri-plugin-opener` (desktop targets only: folder sync's "Open folder" through its `open_path`, called from Rust; not registered, no `opener:` permission, ADR-043; adds `open`, `is-wsl`, `is-docker`) | `2` | 2.7.3 |
+| `tauri-plugin-opener` (desktop targets only: folder sync's "Open folder" through its `open_path` and the feedback buttons through its `open_url` (ADR-049), called from Rust; not registered, no `opener:` permission, ADR-043; adds `open`, `is-wsl`, `is-docker`) | `2` | 2.7.3 |
 | `rustix` (Unix only, `fs`, `std`: folder sync's free space, `statvfs`; already in the tree) / `windows-sys` (Windows only, `Win32_Storage_FileSystem`: free space and the hidden attribute; already in the tree) | `1` / `0.61` | 1.1.6 / 0.61.2 |
 | `semver` (update versions and the version floor, ADR-033; already in the tree through Tauri) | `1` | 1.0.28 |
 | `minisign` (dev only: signs test manifests and packages with keys generated in the tests) and `tauri` feature `test` (dev only: the mock runtime that drives the updater plugin in tests) | `0.7`, `2` | 0.7.9, 2.12.5 |
@@ -400,10 +400,11 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `open_sync_folder`, `folder_sync_details`,
   `resolve_folder_sync_conflict`, `answer_folder_sync_deletions`; the only
   commands that return a local path: the sync folder the user chose, to
-  show it)
+  show it) and `open_feedback_page` (ADR-049: opens a GitHub issue form
+  for feedback or a bug in the browser; the page sends only which one)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts` and `src/folderSync.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts`, `src/folderSync.ts` and `src/feedback.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`), `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
   ADR-035) and `isDecorated()` (`core:window:allow-is-decorated`), and on
@@ -456,7 +457,7 @@ integration, encrypted backups, backup notifications, billing data from a
 provider (no API offers it; costs are estimates), management of Backblaze's
 console snapshots (no API), Windows 11 Snap Layouts on the page's maximize
 button, custom event, background (periodic) sync of the sotyware account, or custom command besides
-the 99 listed above. Never describe these as existing.
+the 100 listed above. Never describe these as existing.
 
 ## Coding conventions
 

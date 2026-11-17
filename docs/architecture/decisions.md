@@ -2778,3 +2778,32 @@ Status: Accepted (2026-11-17). Code: `db::purge` in `server/src/db.rs`,
   purged (they end with their account). Backups keep purged rows until
   they age out (31 days). The periods are constants in `db.rs`; changing
   one means changing the privacy notice.
+
+## ADR-049: Feedback and bug reports open a GitHub issue form in the browser
+
+Status: Accepted (2026-11-17). Code: `src-tauri/src/feedback.rs`,
+`src/Feedback.svelte`, `src/feedback.ts`; forms in
+`.github/ISSUE_TEMPLATE/`.
+
+- **Context:** the maintainer asked for a feedback button and a bug report
+  button in the app. sotyware has no telemetry (privacy notice) and no
+  server of its own for messages besides the account service, which
+  should not take free text from people without an account. The
+  repository is public and already where bugs are tracked.
+- **Decision:** Settings › About & updates has **Send feedback** and
+  **Report a bug**. Each calls one new command, `open_feedback_page`,
+  with only `kind` (`feedback` or `bug`); Rust builds
+  `https://github.com/<RELEASE_REPOSITORY>/issues/new?template=…` and
+  opens it in the default browser through `tauri-plugin-opener`'s
+  `open_url`, called from Rust (the plugin stays unregistered, no
+  `opener:` permission), so the page can never make sotyware open an
+  address of its choosing. A bug report fills the form's `version`
+  (`CARGO_PKG_VERSION`) and `os` (system name and architecture) fields
+  through the URL, nothing else; the user writes and submits the issue
+  with their own GitHub account. The forms warn that issues are public
+  and send security and privacy matters to privacy@sotyware.com.
+- **Consequences:** reporting needs a GitHub account and is public; no
+  log or diagnostic data is attached (none is collected). The privacy
+  notice names the connection. One more command (100) and one more
+  permission (`allow-open-feedback-page`). A template file renamed in
+  `.github/ISSUE_TEMPLATE/` breaks the button; a unit test reads both.

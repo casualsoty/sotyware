@@ -1,5 +1,6 @@
 <script lang="ts">
   import Features from "./Features.svelte";
+  import Feedback from "./Feedback.svelte";
   import Icon, { type IconName } from "./Icon.svelte";
   import type { SettingsTab } from "./navigation";
   import { applyTheme, applyWindowTheme, loadTheme, saveTheme, THEME_CHOICES, type ThemeChoice } from "./theme";
@@ -7,7 +8,7 @@
   import type { UpdatesModel } from "./updatesModel.svelte";
 
   // Settings: appearance (this device only), the built-in features, and
-  // About & updates. Tabs down the left like a desktop settings window,
+  // About & updates (with the feedback buttons). Tabs down the left like a desktop settings window,
   // across the top in a narrow window.
 
   type OperatingMode = "tray" | "dashboard-only";
@@ -127,6 +128,7 @@
         <Features />
       {:else}
         <Updates model={updates} />
+        <Feedback />
       {/if}
     </div>
   </div>
