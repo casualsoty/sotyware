@@ -429,7 +429,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `https://accounts.sotyware.com`: one Google Cloud free-tier e2-micro VM
   in `us-east1`, Caddy with Let's Encrypt in front, Brevo as the relay;
   `server/ops/sotyware-backup` (ADR-047): hourly age-encrypted copies to a
-  Backblaze B2 bucket with Object Lock, not yet set up on the VM
+  Backblaze B2 bucket with Object Lock, running on the VM since
+  2026-11-17
   ([server.md](docs/development/server.md),
   [server-setup.md](docs/development/server-setup.md)).
 
@@ -440,7 +441,7 @@ storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
 placement, the storage usage measurements and the folder syncs with their
 synced state, no settings, autostart,
-third-party plugin system, feature-management UI, off-host backups of the account service running anywhere (the script exists, ADR-047, but is not set up on the VM), XEmbed
+third-party plugin system, feature-management UI, a second account service instance or failover, XEmbed
 tray fallback, overwriting uploads (other than folder sync replacing the
 version it synced), parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of

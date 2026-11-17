@@ -357,8 +357,11 @@ update server exist), all tested headless against in-process servers only.
   following [server-setup.md](development/server-setup.md): one Google
   Cloud free-tier e2-micro VM in `us-east1`, Caddy with Let's Encrypt,
   Brevo as the relay, at `https://accounts.sotyware.com`, which is now
-  `PRODUCTION_SERVER` (test-profile builds have none). No release includes
-  it yet; a privacy notice and an external review are still open.
+  `PRODUCTION_SERVER` (test-profile builds have none). Its database is
+  backed up hourly, encrypted with age, to a Backblaze B2 bucket with
+  Object Lock (30 days) and a healthchecks.io monitor (ADR-047; first
+  upload and restore check on 2026-11-17). No release includes it yet; a
+  privacy notice and an external review are still open.
 - **Updates** (2026-11-15, ADR-033; source since ADR-036: the latest
   GitHub release, see above; [updates.md](architecture/updates.md)):
   a minisign-signed `sotyware-update.json` is verified (signature, format,

@@ -156,12 +156,12 @@ authenticated by SPF, DKIM and DMARC, or a mail server on the same machine.
 
 Done on 2026-11-17 (ADR-045): hosting (a Google Cloud free-tier VM), the
 domain `sotyware.com` with a Let's Encrypt certificate for
-`accounts.sotyware.com`, an email provider (Brevo, SMTP). Designed the
-same day (ADR-047) but not yet set up on the VM: encrypted off-host
-backups in Backblaze B2. Still open:
+`accounts.sotyware.com`, an email provider (Brevo, SMTP), and the same
+day encrypted off-host backups in Backblaze B2 with a monitor (ADR-047;
+first upload and restore check that day). Still open:
 
-- Setting up those backups (the bucket, the key pair, the monitor) and
-  their first real upload and restore check.
+- A rebuild on a scratch VM by
+  [server-setup.md step 14](server-setup.md#14-if-the-vm-is-lost).
 - An external security review of the service and of the vault design.
 - A privacy notice (what the service stores; see the table above).
 
@@ -170,9 +170,8 @@ backups in Backblaze B2. Still open:
 What it would take to run the service for real, written before the
 deployment. The service was deployed on 2026-11-17 by following
 [server-setup.md](server-setup.md), on Google Cloud's free tier instead
-of a paid VM (ADR-045); off-host backups are designed (ADR-047) but not
-yet set up, and the privacy notice and the external review below are
-still open. Prices are rough orders of
+of a paid VM (ADR-045), with off-host backups in Backblaze B2 (ADR-047);
+the privacy notice and the external review below are still open. Prices are rough orders of
 magnitude to check when choosing; none was verified for this proposal.
 
 ### Is a separate database needed?

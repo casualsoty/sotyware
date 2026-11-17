@@ -86,10 +86,9 @@ Not started unless status.md says so. Scope and procedures:
    and check what the provider kept.
 4. Production account service: deployed on 2026-11-17 (ADR-045) and
    `PRODUCTION_SERVER` set. Still open before a release enables accounts
-   for other people: setting up the off-host backups of ADR-047
-   ([server-setup.md step 11](../development/server-setup.md#11-backups)),
-   their first upload and a restore check, then once a rebuild on a
-   scratch VM by [step 14](../development/server-setup.md#14-if-the-vm-is-lost), a
+   for other people: once, a rebuild on a scratch VM by
+   [server-setup.md step 14](../development/server-setup.md#14-if-the-vm-is-lost)
+   (the off-host backups of ADR-047 run since 2026-11-17), a
    privacy notice (data stored in the US, mail through Brevo), an external
    review of the service and the vault design.
 
