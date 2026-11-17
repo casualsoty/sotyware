@@ -75,8 +75,9 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   only ever stores ciphertext; a recovery key shown once, device approval,
   revocation and key rotation; an enrolled computer syncs at startup, when
   focused and after you change a storage account, and shows its sync state.
-  **Not available to users yet:** the service
-  (`server/`) is not deployed and release builds have none configured.
+  **Not available to users yet:** the service runs at
+  `accounts.sotyware.com` since 2026-11-17, but no release includes its
+  address yet (`v0.1.0` and `v0.1.1` have none).
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
   backup. `v0.1.0` was published on 2026-11-15 and `v0.1.1` on

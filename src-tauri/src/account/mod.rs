@@ -19,8 +19,8 @@
 //! Not synced: local paths, journal entries, running work, recent items,
 //! feature switches (per device).
 //!
-//! Without a configured service (every release build today: no production
-//! service exists) the Account page says so and nothing is sent.
+//! Without a configured service (a test-profile build whose run names
+//! none) the Account page says so and nothing is sent.
 
 pub mod client;
 pub mod crypto;
@@ -45,17 +45,20 @@ use client::{Http, HttpError};
 use crypto::{CryptoError, DeviceKey, SecretKey};
 use vault::{Doc, Record, TrustedDevice};
 
-/// The production account service. None exists yet (an external gate:
-/// hosting, TLS, email); release builds therefore have accounts disabled.
-pub const PRODUCTION_SERVER: Option<&str> = None;
+/// The production account service, deployed 2026-11-17
+/// (`docs/development/server-setup.md`). Release
+/// and development builds use it; test-profile builds never do.
+pub const PRODUCTION_SERVER: Option<&str> = Some("https://accounts.sotyware.com");
 
 /// Secret names in the OS credential store.
 const REFRESH: &str = "refresh-token";
 const DEVICE_KEY: &str = "device-key";
 const ACCOUNT_KEY: &str = "account-key";
 
-/// The service URL of this build: [`PRODUCTION_SERVER`], or in development
-/// and test-profile builds `SOTYWARE_ACCOUNT_SERVER`.
+/// The service URL of this build: in development and test-profile builds
+/// `SOTYWARE_ACCOUNT_SERVER` if set; otherwise [`PRODUCTION_SERVER`],
+/// except in a test-profile build, which has none: a desktop test reaches
+/// only a service its run names, never the users' accounts (ADR-027).
 pub fn configured_server() -> Option<String> {
     #[cfg(any(debug_assertions, feature = "test-profile"))]
     if let Ok(v) = std::env::var("SOTYWARE_ACCOUNT_SERVER")
@@ -63,7 +66,11 @@ pub fn configured_server() -> Option<String> {
     {
         return Some(v);
     }
-    PRODUCTION_SERVER.map(str::to_owned)
+    if cfg!(feature = "test-profile") {
+        None
+    } else {
+        PRODUCTION_SERVER.map(str::to_owned)
+    }
 }
 
 /// Where the local, non-secret state lives (`storage::SqliteAccountState`).

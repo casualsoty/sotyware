@@ -174,7 +174,7 @@ into the folder shown, and file management (ADR-026; audited 2026-11-14
 and driven on the Linux virtual display and the native Windows 11 desktop
 against local servers only, never at a real provider); the operation
 journal and recovery view (ADR-030), backups (ADR-031), optional accounts
-with end-to-end encrypted sync (ADR-032; service not deployed) and signed
+with end-to-end encrypted sync (ADR-032; service deployed 2026-11-17, ADR-045) and signed
 updates (ADR-033; switched off in release builds until a release key and
 update server exist), all tested headless against in-process servers only.
 **No overwrite or other product features exist**. Desktop tests run only a
@@ -347,13 +347,16 @@ update server exist), all tested headless against in-process servers only.
   retyped to confirm) and sealed to each enrolled device's X25519 key; a
   password never unlocks it; new computers unlock with the recovery key
   or an approval with matching fingerprints; three-way merge with
-  conflict copies; rollback refused; revoke + atomic key rotation. Release
-  builds have no service configured (`PRODUCTION_SERVER = None`). Tested
+  conflict copies; rollback refused; revoke + atomic key rotation. Tested
   end to end with the service in process and several device profiles.
   Since 2026-11-16 the service sends its mail through any SMTP relay
-  (ADR-044; tested against an in-process SMTP server only, no relay
-  configured); a first deployment is described step by step in
-  [server-setup.md](development/server-setup.md), not yet followed.
+  (ADR-044). **Deployed on 2026-11-17** (ADR-045,
+  [status](status/status.md#account-service-deployed-2026-11-17)) by
+  following [server-setup.md](development/server-setup.md): one Google
+  Cloud free-tier e2-micro VM in `us-east1`, Caddy with Let's Encrypt,
+  Brevo as the relay, at `https://accounts.sotyware.com`, which is now
+  `PRODUCTION_SERVER` (test-profile builds have none). No release includes
+  it yet; a privacy notice and an external review are still open.
 - **Updates** (2026-11-15, ADR-033; source since ADR-036: the latest
   GitHub release, see above; [updates.md](architecture/updates.md)):
   a minisign-signed `sotyware-update.json` is verified (signature, format,

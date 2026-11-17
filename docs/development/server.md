@@ -48,7 +48,10 @@ The service has no secret of its own: no signing key, no encryption key.
 Tokens are random and stored as SHA-256 hashes; passwords as Argon2id
 (19 MiB, 2 passes, 1 lane).
 
-## Deploying (outline; not done)
+## Deploying (outline)
+
+Done once, on 2026-11-17, by following [server-setup.md](server-setup.md)
+(ADR-045); the outline is the reasoning behind its steps.
 
 1. Run `sotyware-server serve` as an unprivileged user on `127.0.0.1`, with
    the database on a disk that is backed up (below).
@@ -143,18 +146,21 @@ authenticated by SPF, DKIM and DMARC, or a mail server on the same machine.
 
 ## External gates
 
-- Hosting (a VM or container host), a domain and its TLS certificate.
-- An email provider (SMTP or API) for verification, reset and notices.
+Done on 2026-11-17 (ADR-045): hosting (a Google Cloud free-tier VM), the
+domain `sotyware.com` with a Let's Encrypt certificate for
+`accounts.sotyware.com`, an email provider (Brevo, SMTP). Still open:
+
 - Off-host storage for the service's backups, and their schedule.
 - An external security review of the service and of the vault design.
 - A privacy notice (what the service stores; see the table above).
 
 ## Production deployment proposal (2026-11-15)
 
-What it would take to run the service for real. **Nothing below has been
-set up**: no host, domain, certificate, email provider or backup bucket
-exists, and release builds have no service URL (`PRODUCTION_SERVER` is
-`None` in `src-tauri/src/account/mod.rs`). Prices are rough orders of
+What it would take to run the service for real, written before the
+deployment. The service was deployed on 2026-11-17 by following
+[server-setup.md](server-setup.md), on Google Cloud's free tier instead
+of a paid VM (ADR-045); off-host backups, the privacy notice and the
+external review below are still open. Prices are rough orders of
 magnitude to check when choosing; none was verified for this proposal.
 
 ### Is a separate database needed?

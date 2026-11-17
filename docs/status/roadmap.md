@@ -84,10 +84,12 @@ Not started unless status.md says so. Scope and procedures:
    Backblaze console; the same at Hetzner when an account exists.
 3. Delete a sotyware snapshot at a real destination (a throwaway backup)
    and check what the provider kept.
-4. Production account service: the decisions and resources in
-   [server.md](../development/server.md#production-deployment-proposal-2026-11-15),
-   following [server-setup.md](../development/server-setup.md) (mail
-   delivery exists since 2026-11-16, ADR-044), then `PRODUCTION_SERVER`.
+4. Production account service: deployed on 2026-11-17 (ADR-045) and
+   `PRODUCTION_SERVER` set. Still open before a release enables accounts
+   for other people: off-host copies of the service's backups
+   ([server.md](../development/server.md#backups-of-the-service)), a
+   privacy notice (data stored in the US, mail through Brevo), an external
+   review of the service and the vault design.
 
 ## macOS (after ADR-037)
 

@@ -458,5 +458,19 @@ async fn without_a_configured_service_nothing_is_sent() {
     let e = svc.register(EMAIL, PW).await.unwrap_err();
     assert_eq!(e.kind, ErrorKind::InvalidConfiguration);
     assert!(e.message.contains("not available in this build"));
-    assert_eq!(PRODUCTION_SERVER, None, "no production service exists yet");
+}
+
+#[test]
+fn the_production_service_is_an_https_url_the_client_accepts() {
+    let url = PRODUCTION_SERVER.expect("release builds have a service");
+    assert_eq!(client::check_url(url).as_deref(), Ok(url));
+    assert!(url.starts_with("https://"));
+}
+
+#[cfg(feature = "test-profile")]
+#[test]
+fn a_test_profile_build_never_uses_the_production_service() {
+    if std::env::var_os("SOTYWARE_ACCOUNT_SERVER").is_none() {
+        assert_eq!(configured_server(), None);
+    }
 }

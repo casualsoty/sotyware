@@ -2627,3 +2627,36 @@ configuring a relay stays one.
   Tested only against an SMTP server in the test process, without TLS or
   authentication; the first real check is `send-test-mail` against the
   chosen provider.
+
+## ADR-045: The account service runs on one free Google Cloud VM, and builds from `main` use it
+
+Status: Accepted (2026-11-17). Code: `PRODUCTION_SERVER` and
+`configured_server` in `src-tauri/src/account/mod.rs`; operations:
+[server-setup.md](../development/server-setup.md).
+
+- **Context:** the service (ADR-032) could send mail since ADR-044 but ran
+  nowhere, and release builds had no service (`PRODUCTION_SERVER = None`).
+  The maintainer wanted it running at no recurring cost besides the
+  domain. Oracle Cloud's Always Free tier, the first choice, had no
+  capacity for either free shape in its EU home region on 2026-11-17.
+- **Decision:**
+  - **Hosting:** one Google Cloud free-tier e2-micro (2 shared vCPUs,
+    1 GB, 30 GB standard disk) in `us-east1`, Ubuntu 24.04, the service
+    under systemd as an unprivileged user, Caddy in front for HTTPS with
+    Let's Encrypt and HSTS, Brevo's free plan as the SMTP relay, the domain
+    `sotyware.com`. The e2-micro cannot compile the service, so it is
+    built in WSL (the same Ubuntu and architecture) and copied.
+  - **`PRODUCTION_SERVER` is `https://accounts.sotyware.com`.** Release
+    and development builds use it; development builds can still point
+    `SOTYWARE_ACCOUNT_SERVER` elsewhere.
+  - **Test-profile builds never use it.** Without `SOTYWARE_ACCOUNT_SERVER`
+    a test-profile build has no service, so a desktop test cannot reach
+    the users' accounts (the rule of ADR-027 for their data).
+- **Consequences:** account data (email, device names, encrypted vaults)
+  are stored in the US; the privacy notice must say so. One VM, no
+  redundancy or monitoring; its backups stay on it until off-host copies
+  exist. The VM's address is ephemeral: recreating the VM means a new DNS
+  record and a new authorised IP at Brevo. Free-plan limits: 300 mails a
+  day, about 1 GB of outgoing traffic a month. `v0.1.0` and `v0.1.1` have
+  no service; the next release will be the first to offer accounts, so a
+  privacy notice and an external review remain gates before it.

@@ -781,12 +781,20 @@ server only; no real provider was asked.
 
 ## Account service (ADR-032)
 
-- **Not deployed; no mail relay configured.** Mail delivery through SMTP
-  exists (ADR-044) but was tested only against an SMTP server in the test
-  process, never through a real provider or over TLS; without a relay codes
-  and notices stay in the outbox. A real deployment needs hosting, TLS, an
-  email provider and off-host backups (external gates,
-  [server.md](../development/server.md), [server-setup.md](../development/server-setup.md)).
+- **One free VM, no redundancy** (ADR-045): a Google Cloud e2-micro (1 GB
+  of memory, 1 GB swap) in `us-east1`, so account data are stored in the
+  US. No monitoring or alerting; if the VM stops, nobody can sign in or
+  sync (local storage accounts, backups and folder syncs keep working).
+- **Backups only on the VM** (if the hourly timer of
+  [server-setup.md](../development/server-setup.md#11-backups) is set up):
+  losing the VM loses them; copying them off the host is not set up.
+- **The VM's address is ephemeral:** recreating the VM changes it, and the
+  DNS record and Brevo's authorised IPs must then follow by hand.
+- **Free-plan limits:** Brevo sends at most 300 mails a day; Google's free
+  tier includes about 1 GB of outgoing traffic a month.
+- **Mail delivery** through Brevo over STARTTLS with authentication was
+  checked with `send-test-mail` from the VM on 2026-11-17; the retry and
+  drop paths were tested only against an SMTP server in the test process.
 - **Mail is at least once, not exactly once:** a mail being sent when the
   service stops is sent again at the next start; one not accepted within a
   day is dropped (logged by row id).
@@ -804,10 +812,12 @@ server only; no real provider was asked.
 
 ## Accounts on the desktop (ADR-032)
 
-- **Not usable in release builds yet:** no production service exists, so
-  `PRODUCTION_SERVER` is `None` and the Account page says accounts are not
-  available. Development and test-profile builds can point
-  `SOTYWARE_ACCOUNT_SERVER` at a service.
+- **Not usable in released versions yet:** `v0.1.0` and `v0.1.1` have no
+  service configured, so their Account page says accounts are not
+  available. Builds from `main` use `https://accounts.sotyware.com`
+  (ADR-045); a test-profile build uses none unless
+  `SOTYWARE_ACCOUNT_SERVER` names one, and development builds can point
+  that variable at another service.
 - **No background sync:** changes reach another computer when it syncs
   (sign-in, unlock, approval, key operations, "Sync now").
 - **A fresh device cannot detect a rolled-back vault** (it has never seen a

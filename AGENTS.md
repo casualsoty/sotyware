@@ -37,8 +37,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   destination with verification, retention, restore and a standalone
   recovery tool (ADR-031), and an optional sotyware account with
   end-to-end encrypted sync of storage accounts and backup jobs (ADR-032;
-  the service exists in `server/` but is not deployed: release builds have
-  no service configured), and signed application updates from GitHub
+  the service runs at `https://accounts.sotyware.com` since 2026-11-17,
+  ADR-045, and builds from `main` use it; no release includes it yet),
+  and signed application updates from GitHub
   Releases of this public repository, `casualsoty/sotyware` (ADR-033,
   ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
   signing key only in the protected `release` environment; the release key
@@ -127,7 +128,7 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `serde_json` (already in the tree through Tauri; backup manifests and job configurations, ADR-031, and the recorder) | `1` | 1.0.154 |
 | Vault cryptography (ADR-032, RustCrypto): `chacha20poly1305` (XChaCha20-Poly1305; `alloc`, `getrandom`), `crypto_box` (X25519 sealed boxes; `seal`, `salsa20`, `getrandom`), `hkdf` (already in the tree), `zeroize`, `base64` (already in the tree) | `0.10`, `0.9`, `0.12`, `1`, `0.23` | 0.10.1, 0.9.1, 0.12.4, 1.9.1, 0.23.1 |
 | Account service client (ADR-032): `reqwest` (already in the tree through Tauri; `json`, `rustls-no-provider`: the TLS config is built with ring, never aws-lc-rs), `rustls` (`ring`, `std`, `tls12`), `rustls-native-certs` (both already in the tree) | `0.13`, `0.23`, `0.8` | 0.13.5, 0.23.46, 0.8.5 |
-| `sotyware-server` (path `../server`) and `axum` (dev only: the end-to-end account tests run the service in process) | path, `0.8` | 0.1.0, 0.8.9 |
+| `sotyware-server` (path `../server`) and `axum` (dev only: the end-to-end account tests run the service in process; it brings the service's `lettre` tree into the desktop lock file, ADR-044) | path, `0.8` | 0.1.0, 0.8.9 |
 | `aws-smithy-runtime-api`, `aws-smithy-types` (optional, only with the off-by-default feature `request-recorder`, ADR-024; already in the tree; also dev-only for `hook_assumptions.rs`) | `1`, `1` | 1.11.3, 1.4.3 |
 | `tauri-plugin-updater` (desktop targets only, no default features, `rustls-tls`: rustls without a provider, sotyware passes its ring-based TLS configuration; driven from Rust only, ADR-033) | `2` | 2.14.1 |
 | `minisign-verify` (the update manifest's signature, ADR-033; already in the tree through the updater) | `0.3` | 0.3.0 |
@@ -274,7 +275,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   HTTPS to the service (loopback HTTP only for development); `mod.rs`:
   `AccountService`, 20 commands); secrets in the OS store through
   `cloud::keyring::OsSecretStore` (entries `sotyware-account/<name>`),
-  local state in `account.sqlite3`; `PRODUCTION_SERVER` is `None`;
+  local state in `account.sqlite3`; `PRODUCTION_SERVER` is
+  `https://accounts.sotyware.com` (ADR-045; test-profile builds have none);
   `SOTYWARE_ACCOUNT_SERVER` only in debug and test-profile builds; page
   `src/Account.svelte`.
   **Updates** (ADR-033, ADR-036, ADR-039, [updates.md](docs/architecture/updates.md)):
@@ -423,8 +425,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   events, `/healthz`), `main.rs` (`serve`, `backup`, `restore`, `send-test-mail`, `outbox`),
   `mail.rs` (ADR-044: the outbox delivered through an SMTP relay set by
   `SOTYWARE_SMTP_*`, retried, never logging an address; without a relay
-  mails stay in the outbox). No relay, host or TLS certificate is set up
-  anywhere: hosting, the domain and the email provider are external gates
+  mails stay in the outbox). Deployed 2026-11-17 (ADR-045) at
+  `https://accounts.sotyware.com`: one Google Cloud free-tier e2-micro VM
+  in `us-east1`, Caddy with Let's Encrypt in front, Brevo as the relay
   ([server.md](docs/development/server.md),
   [server-setup.md](docs/development/server-setup.md)).
 
@@ -435,7 +438,7 @@ storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
 placement, the storage usage measurements and the folder syncs with their
 synced state, no settings, autostart,
-third-party plugin system, feature-management UI, a deployed account service, a configured mail relay, XEmbed
+third-party plugin system, feature-management UI, off-host backups of the account service, XEmbed
 tray fallback, overwriting uploads (other than folder sync replacing the
 version it synced), parallel uploads, ZIP downloads,
 multipart copies above 5 GiB, permanent deletion of versions, a trash of

@@ -4,8 +4,11 @@ Status: design accepted 2026-11-15
 ([ADR-032](decisions.md#adr-032-sotyware-accounts-are-a-separate-service-synced-configuration-is-end-to-end-encrypted-with-a-recovery-key-and-device-keys)).
 The service (`server/`) and the desktop client (`src-tauri/src/account/`,
 Account page) are implemented and tested locally (end to end, the service in
-process, several device profiles); nothing is deployed and release builds
-have no service configured. Details in [status.md](../status/status.md) and
+process, several device profiles). The service runs at
+`https://accounts.sotyware.com` since 2026-11-17 (ADR-045), the
+`PRODUCTION_SERVER` of builds from `main`; `v0.1.0` and `v0.1.1` have no
+service configured, and test-profile builds have none unless
+`SOTYWARE_ACCOUNT_SERVER` names one. Details in [status.md](../status/status.md) and
 the [journal](../status/journal.md). Threats: [threat-model.md](threat-model.md).
 Operating the service: [server.md](../development/server.md).
 
@@ -146,8 +149,8 @@ fails, Rust records why (`lastSyncError`), the sidebar's Account item shows
 it (a dot and its tooltip: synced N minutes ago, not synced and why,
 waiting for unlock, conflicts to review), and every storage account keeps
 working locally. After a sync the shell reads the storage accounts again.
-Release builds have no service configured, so they only read the local
-status.
+A build without a configured service (`v0.1.0`, `v0.1.1`, a test-profile
+build whose run names none) only reads the local status.
 
 **Password change / reset:** change needs the old password and revokes other
 sessions; reset (`/v1/password/reset/request` → always `202`, code by mail;
