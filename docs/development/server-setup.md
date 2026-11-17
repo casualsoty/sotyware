@@ -456,7 +456,8 @@ shows the bucket's answer) and the monitor reports it.
 
 Do this once now, then monthly (a calendar reminder). In the bucket's
 *Browse Files*, download the newest `server/server-….sqlite3.age` into
-WSL, then:
+WSL (Backblaze's console names the download after its folder too:
+`server_server-<time>.sqlite3.age`), then:
 
 ```bash
 mkdir -m 700 ~/sotyware-drill && nano ~/sotyware-drill/identity.txt
@@ -466,7 +467,7 @@ Paste the private key from 11.2 (the whole `AGE-SECRET-KEY-…` line) and
 save. Decrypt:
 
 ```bash
-age -d -i ~/sotyware-drill/identity.txt -o ~/sotyware-drill/server.sqlite3 ~/Downloads/server-<time>.sqlite3.age
+age -d -i ~/sotyware-drill/identity.txt -o ~/sotyware-drill/server.sqlite3 ~/Downloads/server_server-<time>.sqlite3.age
 ```
 
 Then, in the repository:
@@ -480,7 +481,7 @@ can open it. Delete the folder and the download afterwards; they hold the
 private key, email addresses and password hashes:
 
 ```bash
-rm -rf ~/sotyware-drill ~/Downloads/server-*.sqlite3.age
+rm -rf ~/sotyware-drill ~/Downloads/*server-*.sqlite3.age
 ```
 
 ## 12. Updating the service
