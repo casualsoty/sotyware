@@ -146,6 +146,24 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### The single-instance driver checks one window snapshot (2026-11-17)
+
+`tests/desktop/single_instance.py` (run by `run.sh` and `virtual.sh`)
+waited for "one dashboard, mapped" by walking the windows twice in one
+check and indexing the second walk with the first walk's count. While
+sotyware starts, GTK creates the dashboard's X window, destroys it about
+10 ms later and creates the one that stays: an X event trace of single
+launches on a private Xvfb with openbox showed create, a short-lived
+helper window, destroy and create within about 15 ms, about 0.2 s after
+the start, the same with the autoclicker's library probe switched off. A
+check that straddled that gap raised `IndexError` and ended the driver:
+three runs in a row on the virtual display with the autoclicker build
+failed that way at different launches (9 relaunch, 11 unusable
+`XDG_RUNTIME_DIR`, 19 database cannot be opened), after one pass earlier
+that day. The nine waits now judge one snapshot (`one_dashboard_shown`);
+the checks are unchanged. WSL2 virtual display with the autoclicker build:
+139/0/0, three runs in a row.
+
 ### Retention purges in the account service (2026-11-17)
 
 ADR-048: `db::purge` runs at the service's start and every hour, in one

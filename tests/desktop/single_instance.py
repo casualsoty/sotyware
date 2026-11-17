@@ -174,6 +174,16 @@ def viewable(w):
     return attrs(w).map_state == IS_VIEWABLE
 
 
+def one_dashboard_shown(pid):
+    """`pid` has exactly one dashboard and it is mapped, judged on one
+    snapshot: while sotyware starts, GTK destroys its first dashboard
+    window and creates another (create, destroy, create within about 15 ms,
+    traced on 2026-11-17), so two walks in a row can disagree, and indexing
+    the second with what the first counted failed."""
+    ws = dashboards(pid)
+    return len(ws) == 1 and viewable(ws[0])
+
+
 def iconic(w):
     return prop_long(w, A_WM_STATE) == ICONIC_STATE
 
@@ -610,7 +620,7 @@ check("0 refused launches created nothing in either profile",
 proc = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 verified(proc, "1 first launch")
 alive = lambda: proc.poll() is None
-ok = wait_for(lambda: len(dashboards(proc.pid)) == 1 and viewable(dashboards(proc.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(proc.pid), 20)
 check("1 first launch: process running and dashboard visible", ok and alive())
 win = dashboards(proc.pid)[0]
 ok = wait_for(lambda: len(tray_registrations()) == 1, 10)
@@ -719,7 +729,7 @@ check("9 tray Quit: no sotyware process left", wait_for(lambda: not sotyware_pid
 
 open(REG, "w").close()
 again = verified(subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "9 relaunch")
-ok = wait_for(lambda: len(dashboards(again.pid)) == 1 and viewable(dashboards(again.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(again.pid), 20)
 check("relaunch after Quit: starts as a new primary instance", ok and again.poll() is None)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("relaunch after Quit: one tray item registered", registered,
@@ -769,7 +779,7 @@ os.mkdir(read_only_parent, 0o500)
 missing_dir = os.path.join(read_only_parent, "runtime")
 odd = verified(subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "11 unusable XDG_RUNTIME_DIR")
-ok = wait_for(lambda: len(dashboards(odd.pid)) == 1 and viewable(dashboards(odd.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(odd.pid), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("11 unusable XDG_RUNTIME_DIR: starts with one tray item", ok and registered and odd.poll() is None,
       f"running={odd.poll() is None} registrations={len(tray_registrations())}")
@@ -790,7 +800,7 @@ if not (ok and registered and code == 0):
 open(REG, "w").close()
 tm, tm_log = launch("12 tray mode")
 verified(tm, "12 tray mode")
-ok = wait_for(lambda: len(dashboards(tm.pid)) == 1 and viewable(dashboards(tm.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(tm.pid), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("12 tray mode: starts with dashboard and one tray item", ok and registered and tm.poll() is None,
       f"registrations={len(tray_registrations())}")
@@ -873,7 +883,7 @@ stop_watcher()
 open(REG, "w").close()
 do, do_log = launch("13 dashboard-only")
 verified(do, "13 dashboard-only")
-ok = wait_for(lambda: len(dashboards(do.pid)) == 1 and viewable(dashboards(do.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(do.pid), 20)
 check("13 dashboard-only: process running and dashboard visible", ok and do.poll() is None)
 do_win = dashboards(do.pid)[0] if ok else None
 page = wait_for(lambda: page_ready(do.pid), 20)
@@ -940,7 +950,7 @@ if code != 0:
 open(REG, "w").close()
 back, back_log = launch("14 relaunch with watcher")
 verified(back, "14 relaunch with watcher")
-ok = wait_for(lambda: len(dashboards(back.pid)) == 1 and viewable(dashboards(back.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(back.pid), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("14 relaunch with watcher: tray mode with one tray item", ok and registered and back.poll() is None
       and DASHBOARD_ONLY_LOG not in read_log(back_log), f"registrations={len(tray_registrations())}")
@@ -965,7 +975,7 @@ start_watcher("--no-host")
 open(REG, "w").close()
 nh, nh_log = launch("15 no host")
 verified(nh, "15 no host")
-ok = wait_for(lambda: len(dashboards(nh.pid)) == 1 and viewable(dashboards(nh.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(nh.pid), 20)
 nh_out = log_after_mode(nh_log)
 check("15 no host: dashboard-only mode, dashboard visible",
       ok and nh.poll() is None and DASHBOARD_ONLY_LOG in nh_out and "(no StatusNotifierHost)" in nh_out,
@@ -1009,7 +1019,7 @@ def start_tray_instance(label, env=None):
     open(REG, "w").close()
     p, log = launch(label, env)
     verified(p, label)
-    up = wait_for(lambda: len(dashboards(p.pid)) == 1 and viewable(dashboards(p.pid)[0]), 20)
+    up = wait_for(lambda: one_dashboard_shown(p.pid), 20)
     registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
     page = up and registered and wait_for(lambda: page_ready(p.pid), 20) and wait_for(
         lambda: switched_feature(p.pid)[0] is not None, 10)
@@ -1126,7 +1136,7 @@ os.mkdir(nobus_runtime, 0o700)
 nobus_env["XDG_RUNTIME_DIR"] = nobus_runtime
 nb, nb_log = launch("16 no session bus", env=nobus_env)
 verified(nb, "16 no session bus")
-ok = wait_for(lambda: len(dashboards(nb.pid)) == 1 and viewable(dashboards(nb.pid)[0]), 20)
+ok = wait_for(lambda: one_dashboard_shown(nb.pid), 20)
 nb_out = log_after_mode(nb_log)
 check("16 no session bus: dashboard-only mode, dashboard visible",
       ok and nb.poll() is None and DASHBOARD_ONLY_LOG in nb_out and "(no D-Bus session bus)" in nb_out,
