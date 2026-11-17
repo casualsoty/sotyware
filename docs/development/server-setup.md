@@ -481,8 +481,15 @@ can open it. Delete the folder and the download afterwards; they hold the
 private key, email addresses and password hashes:
 
 ```bash
-rm -rf ~/sotyware-drill ~/Downloads/*server-*.sqlite3.age
+rm -rf ~/sotyware-drill
 ```
+
+```bash
+rm -f ~/Downloads/server_server-*.sqlite3.age
+```
+
+Two commands, because zsh cancels a whole command when a pattern matches
+nothing, so one line could leave the private key behind.
 
 ## 12. Updating the service
 
