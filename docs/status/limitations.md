@@ -792,9 +792,15 @@ server only; no real provider was asked.
   of memory, 1 GB swap) in `us-east1`, so account data are stored in the
   US. No monitoring or alerting; if the VM stops, nobody can sign in or
   sync (local storage accounts, backups and folder syncs keep working).
-- **Backups only on the VM** (if the hourly timer of
-  [server-setup.md](../development/server-setup.md#11-backups) is set up):
-  losing the VM loses them; copying them off the host is not set up.
+- **Off-host backups designed, not yet set up** (ADR-047, 2026-11-17):
+  until the maintainer follows
+  [server-setup.md step 11](../development/server-setup.md#11-backups),
+  any copies are on the VM only and a lost VM loses them. Once set up:
+  up to an hour of changes can be lost; the upload script has run only
+  against a local stand-in, not at Backblaze; losing the age private key
+  makes every backup unreadable; deleted accounts stay in backups for up
+  to 31 days; the restore is a manual procedure (step 14), not rehearsed
+  on a new VM.
 - **The VM's address is ephemeral:** recreating the VM changes it, and the
   DNS record and Brevo's authorised IPs must then follow by hand.
 - **Free-plan limits:** Brevo sends at most 300 mails a day; Google's free

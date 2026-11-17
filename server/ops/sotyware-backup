@@ -1,0 +1,100 @@
+#!/bin/bash
+# sotyware-backup: one backup of the account service's database (ADR-047).
+#
+# Takes an online backup with `sotyware-server backup`, encrypts it with age
+# to a public key whose private half never lives on this host, uploads it to
+# an S3-compatible bucket (Backblaze B2 with Object Lock) with a write-only
+# key, checks the provider's ETag against the file's MD5, prunes local copies
+# and pings a dead-man's-switch monitor. Run hourly by sotyware-backup.timer.
+# Setup and restore: docs/development/server-setup.md (step 11).
+#
+# Configuration (environment; the unit reads /etc/sotyware/backup.env):
+#   SOTYWARE_SERVER_DB            live database (required)
+#   SOTYWARE_BACKUP_S3_ENDPOINT   e.g. https://s3.eu-central-003.backblazeb2.com
+#   SOTYWARE_BACKUP_S3_REGION     e.g. eu-central-003
+#   SOTYWARE_BACKUP_BUCKET        bucket name
+#   SOTYWARE_BACKUP_KEY_ID        application key id (write-only)
+#   SOTYWARE_BACKUP_KEY           application key
+#   SOTYWARE_BACKUP_AGE_RECIPIENT age public key (age1…)
+#   SOTYWARE_BACKUP_PING_URL      optional monitor URL; "/fail" is appended on failure
+#   SOTYWARE_BACKUP_DIR           local copies (default /var/lib/sotyware/backups)
+#   SOTYWARE_BACKUP_LOCAL_DAYS    local copies kept (default 7)
+#   SOTYWARE_BACKUP_PREFIX        key prefix in the bucket (default server)
+#   SOTYWARE_SERVER_BIN           default /usr/local/bin/sotyware-server
+# Secrets are never passed on a command line: curl reads the key from stdin.
+
+set -uo pipefail
+umask 077
+
+ping_monitor() {
+    [ -n "${SOTYWARE_BACKUP_PING_URL:-}" ] || return 0
+    curl -fsS -m 10 --retry 3 -o /dev/null "${SOTYWARE_BACKUP_PING_URL}$1" ||
+        echo "sotyware-backup: could not reach the monitor" >&2
+}
+
+fail() {
+    echo "sotyware-backup: $*" >&2
+    [ -n "${work:-}" ] && rm -rf -- "$work"
+    ping_monitor /fail
+    exit 1
+}
+
+for name in SOTYWARE_SERVER_DB SOTYWARE_BACKUP_S3_ENDPOINT SOTYWARE_BACKUP_S3_REGION \
+    SOTYWARE_BACKUP_BUCKET SOTYWARE_BACKUP_KEY_ID SOTYWARE_BACKUP_KEY \
+    SOTYWARE_BACKUP_AGE_RECIPIENT; do
+    [ -n "${!name:-}" ] || fail "$name is not set"
+done
+case "$SOTYWARE_BACKUP_KEY_ID$SOTYWARE_BACKUP_KEY" in
+*'"'* | *\\* | *[[:space:]]*) fail "the key id or key contains a quote, backslash or space" ;;
+esac
+case "$SOTYWARE_BACKUP_S3_ENDPOINT" in
+https://*) ;;
+http://127.0.0.1:* | http://localhost:*) ;; # local tests only
+*) fail "SOTYWARE_BACKUP_S3_ENDPOINT must be an https:// URL" ;;
+esac
+
+dir=${SOTYWARE_BACKUP_DIR:-/var/lib/sotyware/backups}
+keep_days=${SOTYWARE_BACKUP_LOCAL_DAYS:-7}
+server=${SOTYWARE_SERVER_BIN:-/usr/local/bin/sotyware-server}
+prefix=${SOTYWARE_BACKUP_PREFIX:-server}
+endpoint=${SOTYWARE_BACKUP_S3_ENDPOINT%/}
+
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+name="server-$ts.sqlite3"
+plain="$dir/$name"
+key="$prefix/$name.age"
+work=$(mktemp -d "$dir/.upload-XXXXXX") || fail "cannot create a work folder in $dir"
+enc="$work/$name.age"
+
+"$server" backup "$plain" >/dev/null || fail "the database backup failed"
+age -r "$SOTYWARE_BACKUP_AGE_RECIPIENT" -o "$enc" "$plain" || fail "encryption failed"
+
+sha256=$(sha256sum <"$enc" | cut -d' ' -f1)
+md5_hex=$(md5sum <"$enc" | cut -d' ' -f1)
+md5_b64=$(openssl dgst -md5 -binary "$enc" | base64)
+[ -n "$sha256" ] && [ -n "$md5_hex" ] && [ -n "$md5_b64" ] || fail "cannot hash the encrypted copy"
+
+# Content-MD5 is required by S3 Object Lock buckets; x-amz-content-sha256 is
+# signed, so the provider rejects a body that changed on the way.
+status=$(printf 'user = "%s:%s"\n' "$SOTYWARE_BACKUP_KEY_ID" "$SOTYWARE_BACKUP_KEY" |
+    curl -sS -K - -m 300 --retry 3 \
+        --aws-sigv4 "aws:amz:$SOTYWARE_BACKUP_S3_REGION:s3" \
+        -H "x-amz-content-sha256: $sha256" \
+        -H "Content-MD5: $md5_b64" \
+        -H "Content-Type: application/octet-stream" \
+        -T "$enc" -D "$work/headers" -o "$work/body" -w '%{http_code}' \
+        "$endpoint/$SOTYWARE_BACKUP_BUCKET/$key") || fail "the upload of $key did not complete"
+if [ "$status" != 200 ]; then
+    fail "the bucket answered $status to the upload of $key: $(head -c 500 "$work/body")"
+fi
+etag=$(grep -i '^etag:' "$work/headers" | tail -n 1 | cut -d: -f2- | tr -d ' "\r')
+[ "$etag" = "$md5_hex" ] || fail "the stored copy's ETag ($etag) is not the MD5 of $key ($md5_hex)"
+
+rm -rf -- "$work"
+work=
+find "$dir" -maxdepth 1 -name 'server-*.sqlite3' -mtime +"$keep_days" -delete ||
+    echo "sotyware-backup: could not prune old local copies" >&2
+find "$dir" -maxdepth 1 -name '.upload-*' -mmin +120 -exec rm -rf -- {} + 2>/dev/null
+
+echo "sotyware-backup: uploaded $key ($(stat -c %s "$plain") bytes before encryption)"
+ping_monitor ""

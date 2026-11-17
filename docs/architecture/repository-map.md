@@ -92,6 +92,7 @@ Where things are. Generated and ignored paths are listed in
 │   ├── src/api.rs            The /v1 HTTP API (axum): accounts, sessions, devices, enrollments, recovery wrap, vault, audit events, health
 │   ├── src/db.rs             SQLite schema (append-only MIGRATIONS), queries, online backup and checked restore
 │   ├── src/security.rs       Argon2id, random tokens/codes/ids, SHA-256 storage of secrets, constant-time comparison, rate limits, lockout
+│   ├── ops/sotyware-backup   Hourly backup script for the VM (ADR-047): online backup, age encryption, SigV4 PUT to Backblaze B2 through curl, ETag check, local pruning, monitor ping; ops/sotyware-backup.service and .timer: its systemd units
 │   ├── tests/api.rs          The API over HTTP in process (fresh database, controllable clock)
 │   └── tests/mail.rs         Mail delivery against an SMTP server in the test process (sent, retried, dropped; a registration code by mail)
 ├── scripts/

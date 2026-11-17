@@ -3,7 +3,8 @@
 A deployment of `server/` (ADR-032) for a maintainer starting without a
 domain, with free plans where they exist: a domain from a registrar,
 **Brevo** for mail (SMTP, ADR-044), a **Google Cloud free-tier e2-micro**
-VM, **Caddy** for HTTPS (ADR-045). Background and the reasons for each
+VM, **Caddy** for HTTPS (ADR-045), encrypted backups in **Backblaze B2**
+(ADR-047). Background and the reasons for each
 setting: [server.md](server.md).
 
 The maintainer followed this guide on 2026-11-17 for
@@ -25,6 +26,8 @@ request a certificate for someone else's domain.
 | Mail from `no-reply@example.com` | Brevo free plan (300 mails a day) | free |
 | Service at `https://accounts.example.com` | Google Cloud e2-micro VM in a US free-tier region | free within the free tier |
 | HTTPS certificate | Let's Encrypt, through Caddy | free |
+| Encrypted hourly backups, kept 30 days | a Backblaze B2 bucket with Object Lock (step 11) | free within B2's 10 GB |
+| An email when backups stop | healthchecks.io free plan (step 11) | free |
 
 The free tier's VM is in the US, so the account data (email, device
 names, encrypted vaults) are stored there; the privacy notice must say so.
@@ -332,47 +335,153 @@ the session; the WSL2 used on 2026-11-17 had none running.
 
 ## 11. Backups
 
-Hourly online backups kept 30 days on the VM:
+Every hour the VM takes an online backup of the database, encrypts it
+with [age](https://age-encryption.org) to a public key whose private half
+is only with you, and uploads it to a **Backblaze B2** bucket that the VM
+can add to but never delete from; a monitor emails you when an hour passes
+without a successful upload. Copies stay 30 days at Backblaze and 7 days
+on the VM. Why each piece: ADR-047 and
+[server.md](server.md#backups-of-the-service). If the VM is lost, follow
+[step 14](#14-if-the-vm-is-lost).
+
+### 11.1 The bucket
+
+In Backblaze's web console, preferably under a Backblaze account that
+holds nothing else (the storage accounts you test sotyware with stay
+apart):
+
+1. *Buckets* → *Create a Bucket*: a unique name such as
+   `sotyware-service-backups`, **Private**, **Default Encryption:
+   Enable**, **Object Lock: Enable** (it can be enabled only here). The
+   bucket's region is where the backups are stored; the privacy notice
+   must name it.
+2. On the new bucket, *Object Lock* (or *File Lock*) → default retention
+   **Compliance**, **30 days**. Nobody, you included, can delete or
+   change a backup during its first 30 days, so a stolen VM key cannot
+   destroy them.
+3. *Lifecycle Settings* → *Use custom lifecycle rules*: file name prefix
+   `server/`, **days from uploading to hiding 31**, **days from hiding to
+   deleting 1**. This removes copies once their lock has ended.
+4. Note the bucket's **Endpoint** shown on the bucket list, for example
+   `s3.eu-central-003.backblazeb2.com`; the region is the part after
+   `s3.` (`eu-central-003`).
+5. *Application Keys* → *Add a New Application Key*: name
+   `sotyware-backup-writer`, **only this bucket**, type of access **Write
+   Only**, no file name prefix, no duration. Copy the **keyID** and the
+   **applicationKey**; the key is shown once.
+
+### 11.2 The encryption key (in WSL, never on the VM)
 
 ```bash
-sudo nano /etc/systemd/system/sotyware-backup.service
+sudo apt install -y age
+```
+
+```bash
+age-keygen -o ~/sotyware-backup-identity.txt
+```
+
+The command prints the public key (`Public key: age1…`), which goes to
+the VM. The file holds the private key, which decrypts every backup:
+**without it the backups are useless, and with it anyone who gets the
+bucket's contents can read them.** Store its contents in your password
+manager and on paper, then remove the file from WSL:
+
+```bash
+rm ~/sotyware-backup-identity.txt
+```
+
+### 11.3 The monitor
+
+At [healthchecks.io](https://healthchecks.io) (free plan): *Add Check*,
+name `sotyware backups`, **period 1 hour**, **grace 1 hour**, email
+notifications to you. Copy its ping URL (`https://hc-ping.com/…`).
+Without a monitor nobody notices when backups stop; the setting is
+optional for the script but not for this guide.
+
+### 11.4 Install on the VM
+
+From WSL, copy the script and the two units:
+
+```bash
+scp server/ops/sotyware-backup server/ops/sotyware-backup.service server/ops/sotyware-backup.timer <user>@<VM IP>:
+```
+
+On the VM:
+
+```bash
+sudo apt install -y age
+```
+
+```bash
+sudo install -m 755 ~/sotyware-backup /usr/local/bin/sotyware-backup && sudo install -m 644 ~/sotyware-backup.service ~/sotyware-backup.timer /etc/systemd/system/ && rm ~/sotyware-backup ~/sotyware-backup.service ~/sotyware-backup.timer
+```
+
+The settings file, readable by root only:
+
+```bash
+sudo install -m 600 /dev/null /etc/sotyware/backup.env && sudo nano /etc/sotyware/backup.env
 ```
 
 ```ini
-[Unit]
-Description=sotyware account service backup
+SOTYWARE_BACKUP_S3_ENDPOINT=https://s3.<region>.backblazeb2.com
+SOTYWARE_BACKUP_S3_REGION=<region>
+SOTYWARE_BACKUP_BUCKET=<bucket name>
+SOTYWARE_BACKUP_KEY_ID=<keyID from 11.1>
+SOTYWARE_BACKUP_KEY=<applicationKey from 11.1>
+SOTYWARE_BACKUP_AGE_RECIPIENT=<age1… from 11.2>
+SOTYWARE_BACKUP_PING_URL=<ping URL from 11.3>
+```
 
-[Service]
-Type=oneshot
-User=sotyware
-Environment=SOTYWARE_SERVER_DB=/var/lib/sotyware/server.sqlite3
-ExecStart=/bin/sh -c '/usr/local/bin/sotyware-server backup /var/lib/sotyware/backups/server-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).sqlite3 && find /var/lib/sotyware/backups -name "server-*.sqlite3" -mtime +30 -delete'
+Keep a copy of these lines in your password manager too: rebuilding the
+VM (step 14) needs them, and the key cannot be shown again.
+
+If the first draft of this step is installed (a timer that kept copies
+on the VM only), the new unit files have just replaced it. Start the
+timer and run one backup now:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now sotyware-backup.timer && sudo systemctl start sotyware-backup.service
 ```
 
 ```bash
-sudo nano /etc/systemd/system/sotyware-backup.timer
+journalctl -u sotyware-backup -n 5 --no-pager
 ```
 
-```ini
-[Unit]
-Description=Hourly sotyware account service backup
+The last line must read `sotyware-backup: uploaded server/server-….sqlite3.age (… bytes before encryption)`;
+the file appears under *Browse Files* in the bucket, and the check at
+healthchecks.io turns green. A failure names its cause (a refused key
+shows the bucket's answer) and the monitor reports it.
 
-[Timer]
-OnCalendar=hourly
-Persistent=true
+### 11.5 Check that a backup can be restored
 
-[Install]
-WantedBy=timers.target
-```
+Do this once now, then monthly (a calendar reminder). In the bucket's
+*Browse Files*, download the newest `server/server-….sqlite3.age` into
+WSL, then:
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now sotyware-backup.timer && sudo systemctl start sotyware-backup.service && sudo ls -l /var/lib/sotyware/backups
+mkdir -m 700 ~/sotyware-drill && nano ~/sotyware-drill/identity.txt
 ```
 
-These copies are on the same VM; a lost VM loses them too. Copying them
-off the host (for example to a separate Backblaze bucket with a
-write-only key) is the next step, described in
-[server.md](server.md#backups-of-the-service).
+Paste the private key from 11.2 (the whole `AGE-SECRET-KEY-…` line) and
+save. Decrypt:
+
+```bash
+age -d -i ~/sotyware-drill/identity.txt -o ~/sotyware-drill/server.sqlite3 ~/Downloads/server-<time>.sqlite3.age
+```
+
+Then, in the repository:
+
+```bash
+SOTYWARE_SERVER_DB=$HOME/sotyware-drill/restored.sqlite3 server/target/release/sotyware-server restore $HOME/sotyware-drill/server.sqlite3
+```
+
+`restored …` means the copy passed its integrity check and the service
+can open it. Delete the folder and the download afterwards; they hold the
+private key, email addresses and password hashes:
+
+```bash
+rm -rf ~/sotyware-drill ~/Downloads/server-*.sqlite3.age
+```
 
 ## 12. Updating the service
 
@@ -388,6 +497,9 @@ On the VM:
 sudo install -m 755 ~/sotyware-server /usr/local/bin/sotyware-server && rm ~/sotyware-server && sudo systemctl restart sotyware-server
 ```
 
+When `server/ops/` changed, copy and install its files again as in
+step 11.4 (without the settings file).
+
 ## 13. Connect release builds
 
 Release builds talk only to the address compiled into them
@@ -397,3 +509,42 @@ use it: a desktop test reaches only a service its run names in
 `SOTYWARE_ACCOUNT_SERVER`. Before a release enables accounts for other
 people, [server.md](server.md#external-gates) still asks for a privacy
 notice and an external review.
+
+## 14. If the VM is lost
+
+What survives: the backups at Backblaze (at most an hour old), and on
+every enrolled computer its synced storage accounts and backup jobs.
+Accounts registered after the last backup must register again; vault
+changes after it come back when each device syncs.
+
+1. Create a new VM and set it up by steps 4 to 9 (step 6 also creates
+   `/var/lib/sotyware/backups`). Point the `accounts` DNS record at the
+   new address (step 5) and replace the old address with it among Brevo's
+   authorised IPs (step 2).
+2. Download and decrypt the newest backup in WSL as in step 11.5 (without
+   the `restore` command), then copy it to the VM:
+
+   ```bash
+   scp ~/sotyware-drill/server.sqlite3 <user>@<VM IP>:restore.sqlite3
+   ```
+
+3. On the VM, restore it with the service stopped:
+
+   ```bash
+   sudo install -o sotyware -g sotyware -m 600 ~/restore.sqlite3 /var/lib/sotyware/restore.sqlite3 && rm ~/restore.sqlite3
+   ```
+
+   ```bash
+   sudo systemctl stop sotyware-server && sudo -u sotyware env SOTYWARE_SERVER_DB=/var/lib/sotyware/server.sqlite3 /usr/local/bin/sotyware-server restore /var/lib/sotyware/restore.sqlite3 && sudo systemctl start sotyware-server
+   ```
+
+   ```bash
+   sudo rm /var/lib/sotyware/restore.sqlite3
+   ```
+
+4. Check `https://accounts.example.com/healthz` and sign in from the
+   desktop app with an existing account.
+5. Set up step 11.4 again (same bucket, key, recipient and monitor; the
+   values are in your password manager if you kept `backup.env` there,
+   otherwise create a new key in 11.1). Delete the decrypted copy in WSL
+   (`rm -rf ~/sotyware-drill`).

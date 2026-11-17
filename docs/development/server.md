@@ -77,8 +77,16 @@ SOTYWARE_SERVER_DB=/var/lib/sotyware/server.sqlite3 sotyware-server backup /back
 ```
 
 The command refuses to overwrite a file and checks the copy's integrity.
-Schedule it (hourly suggested), copy the files off the host (another
-provider; encrypted at rest there), and keep them for 30 days.
+
+**Off the host (ADR-047):** `server/ops/sotyware-backup`, run hourly by
+`sotyware-backup.timer`, takes that backup, encrypts it with age to a
+public key whose private half is only with the maintainer, uploads it to a
+Backblaze B2 bucket with a Write Only key (one SigV4 `PUT` through curl,
+ETag checked against the MD5), keeps local copies 7 days and pings a
+healthchecks.io monitor (`/fail` on any error). The bucket's Object Lock
+(Compliance, 30 days) and lifecycle rule (31 days) keep every copy for 30
+days whatever happens to the VM. Setup, the monthly restore check and the
+procedure for a lost VM: [server-setup.md](server-setup.md#11-backups).
 
 Restore (service stopped):
 
@@ -101,7 +109,7 @@ restored one). Accounts registered after the backup must register again.
 | Data | Kept until |
 | --- | --- |
 | Account (email, password hash), devices, sessions, enrollments, recovery wrap, device wraps, vault | the account is deleted (`DELETE /v1/account`): removed immediately from the live database (`secure_delete` overwrites the pages) |
-| The same in service backups | the backups age out (30 days suggested) |
+| The same in service backups | the backups age out: 7 days on the VM, 31 days in the backup bucket (ADR-047) |
 | Audit events (event name, account id, device id, time) | kept after deletion with the account id only (pseudonymous); purge them with the backups' retention |
 | Expired or revoked sessions | pruned a day after their refresh token expires |
 | Verification and reset codes (hashed) | deleted on use or expiry |
@@ -148,9 +156,12 @@ authenticated by SPF, DKIM and DMARC, or a mail server on the same machine.
 
 Done on 2026-11-17 (ADR-045): hosting (a Google Cloud free-tier VM), the
 domain `sotyware.com` with a Let's Encrypt certificate for
-`accounts.sotyware.com`, an email provider (Brevo, SMTP). Still open:
+`accounts.sotyware.com`, an email provider (Brevo, SMTP). Designed the
+same day (ADR-047) but not yet set up on the VM: encrypted off-host
+backups in Backblaze B2. Still open:
 
-- Off-host storage for the service's backups, and their schedule.
+- Setting up those backups (the bucket, the key pair, the monitor) and
+  their first real upload and restore check.
 - An external security review of the service and of the vault design.
 - A privacy notice (what the service stores; see the table above).
 
@@ -159,8 +170,9 @@ domain `sotyware.com` with a Let's Encrypt certificate for
 What it would take to run the service for real, written before the
 deployment. The service was deployed on 2026-11-17 by following
 [server-setup.md](server-setup.md), on Google Cloud's free tier instead
-of a paid VM (ADR-045); off-host backups, the privacy notice and the
-external review below are still open. Prices are rough orders of
+of a paid VM (ADR-045); off-host backups are designed (ADR-047) but not
+yet set up, and the privacy notice and the external review below are
+still open. Prices are rough orders of
 magnitude to check when choosing; none was verified for this proposal.
 
 ### Is a separate database needed?

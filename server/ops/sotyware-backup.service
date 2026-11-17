@@ -1,0 +1,19 @@
+# Installed as /etc/systemd/system/sotyware-backup.service (ADR-047,
+# docs/development/server-setup.md step 11). Started hourly by the timer.
+[Unit]
+Description=sotyware account service backup (encrypted, off the host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sotyware
+Group=sotyware
+Environment=SOTYWARE_SERVER_DB=/var/lib/sotyware/server.sqlite3
+EnvironmentFile=/etc/sotyware/backup.env
+ExecStart=/usr/local/bin/sotyware-backup
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/sotyware

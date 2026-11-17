@@ -2690,3 +2690,54 @@ Status: Accepted (2026-11-17). Code: `src/startupChecks.svelte.ts`,
   sends one or two requests per account to its provider (a few class B/C
   transactions at Backblaze). Accounts added later in the session, or
   arriving through vault sync, are still checked by the button.
+
+## ADR-047: The account service's backups are encrypted with age and kept 30 days in a Backblaze B2 bucket the VM cannot delete from
+
+Status: Accepted (2026-11-17). Code: `server/ops/sotyware-backup` and its
+systemd units; operations: [server-setup.md](../development/server-setup.md#11-backups),
+[step 14](../development/server-setup.md#14-if-the-vm-is-lost).
+
+- **Context:** the service's SQLite database is its only state (ADR-032).
+  The hourly online backups of ADR-045's setup stayed on the VM, so losing
+  the VM, its disk or the Google account would lose every account, device
+  wrap and recovery wrap. Enrolled devices keep their vault contents
+  locally, but not the accounts.
+- **Decision:**
+  - **Another provider.** Copies go to a Backblaze B2 bucket (S3 API),
+    preferably under a Backblaze account of its own, not to Google Cloud
+    Storage: a Google billing problem or suspension would take the VM and
+    a bucket there together.
+  - **Encrypted on the VM with age** to a public key; the private key is
+    only with the maintainer (password manager and paper). The bucket and
+    Backblaze see ciphertext only, although the database holds email
+    addresses and password hashes. Losing the private key makes the
+    backups useless; that is accepted as the price of keeping it off the
+    VM.
+  - **The VM cannot destroy them:** a Write Only key limited to the
+    bucket, Object Lock in Compliance mode for 30 days as the bucket's
+    default, and a lifecycle rule that removes copies after 31 days. A
+    stolen key can add files or hide them, but no copy disappears before
+    it is 30 days old.
+  - **No new dependency in the service:** a shell script run hourly by a
+    systemd timer: `sotyware-server backup` (online backup with integrity
+    check), `age -r`, then one SigV4 `PUT` with curl's `--aws-sigv4` (in
+    Ubuntu 24.04's curl 8.5) with a signed `x-amz-content-sha256` and a
+    `Content-MD5` (Object Lock buckets require one); the stored ETag must
+    equal the file's MD5. The key reaches curl on stdin, never on a
+    command line. `age` is the only package added on the VM. rclone or
+    the AWS CLI would do the same with a larger footprint; code in the
+    service would put backup credentials into its process.
+  - **A dead-man's switch:** each successful run pings a healthchecks.io
+    check (period and grace 1 hour); failures ping its `/fail` URL. Missed
+    pings mail the maintainer, which also covers a VM that stopped.
+  - **Local copies** (unencrypted, beside the live database) are kept 7
+    days for quick restores of a damaged database without downloading.
+  - **Restores are practised:** a monthly decrypt and `restore` into a
+    scratch file in WSL, and a written procedure for a lost VM.
+- **Consequences:** at most about an hour of changes is lost (accounts
+  registered since, vault writes until devices sync again). A deleted
+  account remains in backups for up to 31 days; the privacy notice must
+  say so and name the bucket's region. The script is tested against a
+  local stand-in that verifies SigV4 independently, not yet at Backblaze;
+  the first run on the VM is its first real upload. Cost: within B2's free
+  10 GB (720 copies of a database of a few MB).
