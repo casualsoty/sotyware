@@ -425,7 +425,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   events, `/healthz`), `main.rs` (`serve`, `backup`, `restore`, `send-test-mail`, `outbox`),
   `mail.rs` (ADR-044: the outbox delivered through an SMTP relay set by
   `SOTYWARE_SMTP_*`, retried, never logging an address; without a relay
-  mails stay in the outbox). Deployed 2026-11-17 (ADR-045) at
+  mails stay in the outbox), `db::purge` run hourly by `run_purge`
+  (ADR-048: sessions, codes, never-verified accounts after 7 days, audit
+  events after 365 days or 31 days after deletion). Deployed 2026-11-17 (ADR-045) at
   `https://accounts.sotyware.com`: one Google Cloud free-tier e2-micro VM
   in `us-east1`, Caddy with Let's Encrypt in front, Brevo as the relay;
   `server/ops/sotyware-backup` (ADR-047): hourly age-encrypted copies to a

@@ -583,13 +583,69 @@ pub fn revoke_account_sessions(
     .map(drop)
 }
 
-/// Removes sessions that can no longer be used (expired or revoked a day
-/// ago); keeps the table small.
-pub fn prune_sessions(c: &Connection, now: i64) -> rusqlite::Result<usize> {
-    c.execute(
+const DAY_MS: i64 = 24 * 3_600_000;
+/// Sessions are removed a day after their refresh token expired.
+pub const SESSION_GRACE_MS: i64 = DAY_MS;
+/// An account whose address was not verified within this time is removed
+/// (ADR-048); a verification code still valid keeps it.
+pub const UNVERIFIED_KEEP_MS: i64 = 7 * DAY_MS;
+/// Security log events are kept this long (ADR-048).
+pub const AUDIT_KEEP_MS: i64 = 365 * DAY_MS;
+/// The events of a deleted account are kept until its last event is this
+/// old: as long as the account itself stays in the backups (ADR-047).
+pub const DELETED_AUDIT_KEEP_MS: i64 = 31 * DAY_MS;
+
+/// What one `purge` removed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Purged {
+    pub sessions: usize,
+    pub codes: usize,
+    pub unverified_accounts: usize,
+    pub audit_events: usize,
+}
+
+impl Purged {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Removes what the retention rules no longer allow to keep (ADR-048):
+/// sessions a day after they expired, expired codes, accounts never
+/// verified within `UNVERIFIED_KEEP_MS`, security log events older than
+/// `AUDIT_KEEP_MS`, and a deleted account's events once its last one is
+/// older than `DELETED_AUDIT_KEEP_MS`. One transaction.
+pub fn purge(c: &Connection, now: i64) -> rusqlite::Result<Purged> {
+    let tx = c.unchecked_transaction()?;
+    let sessions = tx.execute(
         "DELETE FROM sessions WHERE refresh_expires_ms < ?1",
-        [now - 24 * 3_600_000],
-    )
+        [now - SESSION_GRACE_MS],
+    )?;
+    let codes = tx.execute("DELETE FROM codes WHERE expires_ms < ?1", [now])?;
+    // Expired codes are gone now, so any code left is valid and keeps its
+    // account (someone registering again near the limit gets a new code).
+    let unverified_accounts = tx.execute(
+        "DELETE FROM accounts WHERE verified = 0 AND created_ms < ?1
+         AND email NOT IN (SELECT email FROM codes WHERE purpose = 'verify')",
+        [now - UNVERIFIED_KEEP_MS],
+    )?;
+    let old = tx.execute("DELETE FROM audit WHERE at_ms < ?1", [now - AUDIT_KEEP_MS])?;
+    let deleted = tx.execute(
+        "DELETE FROM audit WHERE account_id IN (
+             SELECT account_id FROM audit
+             WHERE account_id IS NOT NULL
+               AND account_id NOT IN (SELECT id FROM accounts)
+             GROUP BY account_id
+             HAVING max(at_ms) < ?1)",
+        [now - DELETED_AUDIT_KEEP_MS],
+    )?;
+    tx.commit()?;
+    Ok(Purged {
+        sessions,
+        codes,
+        unverified_accounts,
+        audit_events: old + deleted,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

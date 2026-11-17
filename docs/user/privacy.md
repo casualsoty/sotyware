@@ -112,8 +112,8 @@ We do not sell or share information about you with anyone else.
 | Expired or revoked sessions | a day after they expire |
 | Verification and reset codes | used, or 15 minutes |
 | Emails waiting to be sent | accepted by Brevo, or at most one day of failed attempts |
-| The security log | **[open: today it is kept with no time limit, also after your account is deleted, under the account's random ID only. Decide a period and implement the purge, or state that it is kept.]** |
-| An account whose address was never verified | **[open: today it is kept until someone deletes it. Decide a period and implement the purge, or state that it is kept.]** |
+| The security log | 365 days. After you delete your account, its events stay under the account's random ID only, without your email address, until the last one is 31 days old, then they are removed |
+| An account whose address was never verified | 7 days after registration (longer only while a verification code we just sent is still valid) |
 
 Deleting your account does not change anything on your computers: your
 storage accounts and backup jobs keep working there.

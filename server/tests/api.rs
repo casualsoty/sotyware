@@ -1212,3 +1212,178 @@ async fn requests_are_rate_limited_per_address() {
         .await;
     assert_eq!(st, StatusCode::ACCEPTED, "another address is not affected");
 }
+
+const DAY: i64 = 24 * 3_600_000;
+
+fn count(s: &Server, sql: &str) -> i64 {
+    s.state
+        .db
+        .lock()
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_account_never_verified_is_removed_after_seven_days() {
+    let s = server("purge-unverified");
+    let register = |email: &'static str| {
+        s.call(
+            "POST",
+            "/v1/accounts",
+            None,
+            Some(json!({ "email": email, "password": PW })),
+        )
+    };
+    register("late@example.org").await;
+    register("again@example.org").await;
+    s.register_verified("kept@example.org", PW).await;
+
+    // Within seven days nothing goes, not even after the code expired.
+    s.clock
+        .fetch_add(db::UNVERIFIED_KEEP_MS - 1, Ordering::SeqCst);
+    let p = sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!((p.unverified_accounts, p.codes), (0, 2));
+    // Registering again near the limit sends a new code, which keeps the
+    // account past it while the code is valid.
+    register("again@example.org").await;
+    s.clock.fetch_add(2, Ordering::SeqCst);
+    let p = sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(p.unverified_accounts, 1);
+    {
+        let c = s.state.db.lock().unwrap();
+        assert!(
+            db::account_by_email(&c, "late@example.org")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::account_by_email(&c, "again@example.org")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            db::account_by_email(&c, "kept@example.org")
+                .unwrap()
+                .is_some()
+        );
+    }
+    // The new code still verifies it.
+    let code = s.last_code("again@example.org");
+    let (st, _) = s
+        .call(
+            "POST",
+            "/v1/accounts/verify",
+            None,
+            Some(json!({ "email": "again@example.org", "code": code, "password": PW })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    // A removed address can register afresh.
+    register("late@example.org").await;
+    assert!(
+        db::account_by_email(&s.state.db.lock().unwrap(), "late@example.org")
+            .unwrap()
+            .is_some()
+    );
+    // A verified account is never removed by age.
+    s.clock.fetch_add(400 * DAY, Ordering::SeqCst);
+    sotyware_server::purge_now(&s.state).await.unwrap();
+    let c = s.state.db.lock().unwrap();
+    assert!(
+        db::account_by_email(&c, "kept@example.org")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db::account_by_email(&c, "again@example.org")
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn expired_sessions_are_removed_a_day_after_they_expire() {
+    let s = server("purge-sessions");
+    s.register_verified("s@example.org", PW).await;
+    s.sign_in("s@example.org", PW, "desktop", KEY_A).await;
+    let refresh = s.state.config.refresh_ttl_ms;
+    s.clock
+        .fetch_add(refresh + db::SESSION_GRACE_MS - 1, Ordering::SeqCst);
+    sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(count(&s, "SELECT count(*) FROM sessions"), 1);
+    s.clock.fetch_add(2, Ordering::SeqCst);
+    let p = sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(p.sessions, 1);
+    assert_eq!(count(&s, "SELECT count(*) FROM sessions"), 0);
+    // The account and its device stay.
+    assert_eq!(count(&s, "SELECT count(*) FROM devices"), 1);
+}
+
+#[tokio::test]
+async fn security_log_events_are_kept_a_year_and_a_deleted_accounts_for_31_days() {
+    let s = server("purge-audit");
+    let t0 = s.clock.load(Ordering::SeqCst);
+    s.register_verified("live@example.org", PW).await;
+    s.register_verified("gone@example.org", PW).await;
+    let live = s.sign_in("live@example.org", PW, "desktop", KEY_A).await;
+    let gone = s.sign_in("gone@example.org", PW, "desktop", KEY_B).await;
+    let live_id = db::account_by_email(&s.state.db.lock().unwrap(), "live@example.org")
+        .unwrap()
+        .unwrap()
+        .id;
+    let events = |id: &str| {
+        let c = s.state.db.lock().unwrap();
+        c.query_row(
+            "SELECT count(*) FROM audit WHERE account_id = ?1",
+            [id],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    let gone_id = db::account_by_email(&s.state.db.lock().unwrap(), "gone@example.org")
+        .unwrap()
+        .unwrap()
+        .id;
+
+    // The deleted account's events stay 31 days after its last one.
+    let (st, _) = s
+        .call(
+            "DELETE",
+            "/v1/account",
+            Some(&tok(&gone, "accessToken")),
+            Some(json!({ "password": PW })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let gone_events = events(&gone_id);
+    assert!(gone_events >= 4, "register, verified, sign-in, deleted");
+    s.clock
+        .store(t0 + db::DELETED_AUDIT_KEEP_MS, Ordering::SeqCst);
+    sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(events(&gone_id), gone_events);
+    s.clock
+        .store(t0 + db::DELETED_AUDIT_KEEP_MS + 1, Ordering::SeqCst);
+    let p = sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(p.audit_events, usize::try_from(gone_events).unwrap());
+    assert_eq!(events(&gone_id), 0);
+
+    // A live account's events stay a year, then each goes on its own.
+    let before = events(&live_id);
+    assert!(before >= 3, "register, verified, sign-in");
+    s.call("POST", "/v1/sessions", None, Some(json!({ "email": "live@example.org", "password": PW, "device": { "name": "laptop", "platform": "linux", "publicKey": KEY_B } }))).await;
+    let recent = events(&live_id) - before;
+    assert!(recent >= 1);
+    s.clock.store(t0 + db::AUDIT_KEEP_MS, Ordering::SeqCst);
+    sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(events(&live_id), before + recent);
+    s.clock.store(t0 + db::AUDIT_KEEP_MS + 1, Ordering::SeqCst);
+    sotyware_server::purge_now(&s.state).await.unwrap();
+    assert_eq!(events(&live_id), recent);
+    drop(live);
+    assert!(
+        db::account_by_id(&s.state.db.lock().unwrap(), &live_id)
+            .unwrap()
+            .is_some()
+    );
+}

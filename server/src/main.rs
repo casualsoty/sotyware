@@ -107,6 +107,7 @@ fn serve(db_path: PathBuf) -> Result<(), String> {
     let state = AppState::new(conn, config);
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async move {
+        tokio::spawn(sotyware_server::run_purge(std::sync::Arc::clone(&state)));
         if let Some(mailer) = mailer {
             tokio::spawn(mail::run(std::sync::Arc::clone(&state), mailer));
         }

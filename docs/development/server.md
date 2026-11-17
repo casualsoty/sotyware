@@ -110,10 +110,15 @@ restored one). Accounts registered after the backup must register again.
 | --- | --- |
 | Account (email, password hash), devices, sessions, enrollments, recovery wrap, device wraps, vault | the account is deleted (`DELETE /v1/account`): removed immediately from the live database (`secure_delete` overwrites the pages) |
 | The same in service backups | the backups age out: 7 days on the VM, 31 days in the backup bucket (ADR-047) |
-| Audit events (event name, account id, device id, time) | kept after deletion with the account id only (pseudonymous); purge them with the backups' retention |
-| Expired or revoked sessions | pruned a day after their refresh token expires |
-| Verification and reset codes (hashed) | deleted on use or expiry |
+| Audit events (event name, account id, device id, time) | 365 days; after the account is deleted, with its account id only (pseudonymous), until its last event is 31 days old (ADR-048) |
+| Expired or revoked sessions | removed a day after their refresh token expires (ADR-048) |
+| Verification and reset codes (hashed) | deleted on use, or once expired (ADR-048) |
+| An account never verified | removed 7 days after registration, unless a verification code is still valid (ADR-048) |
 | Outbox (queued mails, with codes) | sent: deleted at once; a temporary failure: retried for at most a day; a permanent refusal or a day without success: deleted. Without a relay (development) they stay |
+
+The service applies these periods itself: `db::purge` runs at start and
+every hour (`run_purge`) in one transaction and logs counts only
+(`sotyware-server: purged 3 sessions, 1 codes, 0 unverified accounts, 12 audit events`).
 
 Nothing in the service can decrypt the vault or the wraps: deleting an
 account removes ciphertext only. Devices keep their local configuration.

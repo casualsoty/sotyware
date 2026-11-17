@@ -820,12 +820,10 @@ server only; no real provider was asked.
   recovery key); the wrap is useless without the 256-bit recovery key.
 - **Metadata is visible to the operator:** email, device names and
   platforms, sync times and vault size.
-- **Two things are never removed** (found while drafting the privacy
-  notice, 2026-11-17): the `audit` table keeps every event (name, time,
-  account and device ids) with no time limit, also after the account is
-  deleted; an account whose address is never verified stays until someone
-  deletes it. The privacy notice needs a retention period for both, or
-  must say they are kept ([privacy.md](../user/privacy.md)).
+- **Retention is applied hourly** (ADR-048): a row can outlive its
+  period by up to an hour, and purged rows stay in the backups until they
+  age out (31 days). Expired enrollments are not purged; they end with
+  their account. Tested only in process; never run on the VM.
 
 ## Accounts on the desktop (ADR-032)
 

@@ -109,3 +109,33 @@ impl AppState {
         e.1 = now + security::lockout_ms(e.0);
     }
 }
+
+/// How often the service applies its retention rules (`db::purge`).
+pub const PURGE_EVERY: std::time::Duration = std::time::Duration::from_secs(3_600);
+
+/// Applies the retention rules once (ADR-048).
+pub async fn purge_now(state: &Arc<AppState>) -> Result<db::Purged, String> {
+    let state = Arc::clone(state);
+    tokio::task::spawn_blocking(move || {
+        let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+        db::purge(&conn, (state.clock)()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The retention task: purges at start, then every `PURGE_EVERY`, until the
+/// runtime stops. Logs counts only, never an address or an id.
+pub async fn run_purge(state: Arc<AppState>) {
+    loop {
+        match purge_now(&state).await {
+            Ok(p) if !p.is_empty() => eprintln!(
+                "sotyware-server: purged {} sessions, {} codes, {} unverified accounts, {} audit events",
+                p.sessions, p.codes, p.unverified_accounts, p.audit_events
+            ),
+            Ok(_) => {}
+            Err(e) => eprintln!("sotyware-server: cannot purge: {e}"),
+        }
+        tokio::time::sleep(PURGE_EVERY).await;
+    }
+}

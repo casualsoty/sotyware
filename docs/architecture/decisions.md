@@ -2741,3 +2741,40 @@ systemd units; operations: [server-setup.md](../development/server-setup.md#11-b
   local stand-in that verifies SigV4 independently, not yet at Backblaze;
   the first run on the VM is its first real upload. Cost: within B2's free
   10 GB (720 copies of a database of a few MB).
+
+## ADR-048: The account service purges by retention period every hour
+
+Status: Accepted (2026-11-17). Code: `db::purge` in `server/src/db.rs`,
+`run_purge` in `server/src/lib.rs`, started by `serve`; tests in
+`server/tests/api.rs`; details:
+[server.md](../development/server.md#data-retention-and-deletion).
+
+- **Context:** drafting the privacy notice ([privacy.md](../user/privacy.md))
+  found that the service removed nothing by age: the `audit` table grew
+  forever, also after an account was deleted; an account whose address
+  was never verified stayed for good; expired codes stayed; and
+  `prune_sessions`, which server.md said ran, had no caller. A notice
+  cannot promise retention periods the service does not keep.
+- **Decision:** one task in the service, at start and then every hour,
+  runs one transaction:
+  - sessions a day after their refresh token expired (as documented);
+  - verification and reset codes once expired;
+  - accounts never verified, 7 days after they were created, unless a
+    verification code is still valid (registering again near the limit
+    sends a new one and keeps the account while it lasts); such an
+    account cannot sign in, so it holds no device, session or vault;
+  - security log events older than 365 days: long enough to answer a
+    user's or an investigator's question about the past year, and the
+    events the Account page shows go back that far;
+  - all events of a deleted account once its last event is 31 days old,
+    the time the account itself stays in the backups (ADR-047), so after
+    that nothing of it remains anywhere.
+  It logs counts only. An in-process task, like the mail delivery
+  (ADR-044), rather than a systemd timer: it needs no second program
+  holding the database and runs wherever the service runs.
+- **Consequences:** an address registered by someone else and never
+  verified is free again after at most 7 days (it could always be taken
+  over by registering again, ADR-032). Expired enrollments are not
+  purged (they end with their account). Backups keep purged rows until
+  they age out (31 days). The periods are constants in `db.rs`; changing
+  one means changing the privacy notice.
