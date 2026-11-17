@@ -169,8 +169,10 @@ first upload and restore check that day). Still open:
   [server-setup.md step 14](server-setup.md#14-if-the-vm-is-lost).
 - An external security review of the service and of the vault design.
 - A privacy notice (what the service stores; see the table above): drafted
-  on 2026-11-17 in [privacy.md](../user/privacy.md), with the points only
-  the maintainer can settle marked **[open]**; not yet published.
+  on 2026-11-17 in [privacy.md](../user/privacy.md), its open points
+  settled the same day (the maintainer responsible, contact
+  `privacy@sotyware.com`, which still has to be created); not yet
+  published.
 
 ## Production deployment proposal (2026-11-15)
 

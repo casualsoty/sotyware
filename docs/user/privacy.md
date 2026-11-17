@@ -3,16 +3,25 @@
 > **Draft of 2026-11-17, not published.** Written from the service's code
 > (`server/src/db.rs`, `server/src/api.rs`, `server/src/mail.rs`) and its
 > deployment (ADR-045, ADR-047). It is a gate before any release offers
-> sotyware accounts ([roadmap](../status/roadmap.md)). Before publishing,
-> the maintainer has to fill in every point marked **[open]** and decide
-> whether a lawyer should read it. This draft is not legal advice.
+> sotyware accounts ([roadmap](../status/roadmap.md)). The maintainer's
+> answers of 2026-11-17 filled the points that were open; still to do
+> before publishing: create the address `privacy@sotyware.com` and check
+> that mail to it arrives, set the date below, and decide whether a lawyer
+> should read it. The GDPR (Article 13) asks for the controller's
+> identity; the notice names the maintainer only by the name sotyware is
+> published under, which a lawyer should confirm is enough. Brevo's and
+> Backblaze's locations and certifications were taken from their own
+> pages on 2026-11-17. This draft is not legal advice.
 
 This notice explains what sotyware, the desktop app, and the optional
 sotyware account service at `https://accounts.sotyware.com` do with
 information about you.
 
-**Who is responsible:** **[open: the maintainer's name or legal entity,
-postal address, and a contact email address for privacy questions]**.
+**Who is responsible:** sotyware's maintainer, an individual who
+publishes sotyware as `casualsoty` on GitHub
+([casualsoty/sotyware](https://github.com/casualsoty/sotyware)). For any
+question about your information, or to use your rights, write to
+**privacy@sotyware.com**.
 
 ## In short
 
@@ -27,7 +36,8 @@ postal address, and a contact email address for privacy questions]**.
   systems you give your computers**, and **when** things happen in your
   account.
 - The service runs in the **United States** (Google Cloud), sends email
-  through **Brevo**, and keeps encrypted backups at **Backblaze**.
+  through **Brevo** (EU), and keeps encrypted backups at **Backblaze**
+  (EU, Netherlands).
 - You can **delete your account** from the app at any time.
 
 ## The app without an account
@@ -45,6 +55,7 @@ The app connects to other parties' servers only to do what you asked:
 | --- | --- | --- |
 | Your storage provider (Backblaze B2, Hetzner or another S3-compatible service) | when you browse, transfer, back up or sync files, and once at startup for each storage account, to check that it still connects | your IP address, your storage key's ID and the requests, under that provider's own privacy policy. sotyware sends these requests directly; they never pass through us |
 | GitHub (`github.com` and its download servers) | checks for updates, if the "update-check" feature is on, and downloads of an update you chose to install | your IP address and an ordinary download request, under GitHub's privacy policy. No identifier of your installation is sent |
+| GitHub, in your web browser | when you click **Send feedback** or **Report a bug** in Settings › About & updates | the app only opens a page in your browser to write a GitHub issue, with sotyware's version and your operating system (for example "Windows, x86_64") filled in for a bug. Nothing is sent until you submit the issue yourself, with your GitHub account; **issues are public**, so do not put personal information, storage keys or file names you want to keep private in them |
 
 ## The sotyware account service
 
@@ -69,9 +80,10 @@ one address may register, verify, sign in or refresh a session. They are
 not written to the database or to the service's logs. The web server in
 front of the service (Caddy) does not keep access logs.
 
-**Legal basis** **[open: confirm]**: performing the service you signed up
-for (account, sync, the emails it needs); our legitimate interest in
-keeping accounts secure (the security log, rate limits, lockouts).
+**Legal basis** (for the GDPR, Article 6(1)): performing the service you
+signed up for (point b: your account, sync and the emails it needs); our
+legitimate interest in keeping accounts secure and recoverable (point f:
+the security log, rate limits, lockouts and the database backups).
 
 ### Emails we send
 
@@ -90,16 +102,19 @@ Only these, and never marketing:
 | Service provider | What for | Where |
 | --- | --- | --- |
 | Google Cloud | the server that runs the service and its database | United States (`us-east1`, South Carolina) |
-| Brevo | delivering the emails above: it receives your address and the email's text, including any code | **[open: Brevo's processing location and data processing agreement]** |
-| Backblaze | storing hourly backups of the database, encrypted with a key that is not on the server | **[open: the backup bucket's region]** |
+| Brevo (Sendinblue SAS, France) | delivering the emails above: it receives your address and the email's text, including any code | the European Union, under Brevo's data processing agreement, which is part of its terms of use |
+| Backblaze (Backblaze, Inc., United States) | storing hourly backups of the database, encrypted with a key that is not on the server | the European Union (region `eu-central-003`, Amsterdam, Netherlands) |
 | Let's Encrypt | the service's HTTPS certificate (receives no information about you) | — |
 | healthchecks.io | a monitor that the hourly backup ran (receives no information about you) | — |
 
-**Transfers outside your country** **[open]**: the service runs in the
-United States. If you live in the European Economic Area, the United
-Kingdom or Switzerland, name the legal mechanism the transfer relies on
-(for example the EU–US Data Privacy Framework certification of Google
-and Backblaze, or standard contractual clauses).
+**Transfers outside the European Economic Area:** the service's server
+is in the United States, so your information is transferred there. The
+transfer relies on Google's certification under the EU–US Data Privacy
+Framework (with its UK Extension and the Swiss–US framework) and, should
+that end, on the standard contractual clauses in Google Cloud's data
+processing terms. The backups are stored in the European Union, but by
+Backblaze, a United States company that is certified under the same
+frameworks. Brevo processes your information in the European Union.
 
 We do not sell or share information about you with anyone else.
 
@@ -125,11 +140,16 @@ storage accounts and backup jobs keep working there.
 - **Change** your password, or reset it with a code sent to your email.
 - **Delete** your account on the Account page. This removes your account,
   devices and vault at once; backups expire as described above.
-- **[open: the rights that apply where the maintainer and users are,
-  for example access, rectification, erasure, restriction, portability
-  and objection under the GDPR, how to exercise them through the contact
-  address above, and the right to complain to a data protection
-  authority.]**
+- Under the GDPR, and similar laws where you live, you also have the
+  right to **access** the information we hold about you and get a copy
+  of it, to have it **corrected** or **erased**, to **restrict** or
+  **object to** its use, and to receive it in a portable form. Write to
+  **privacy@sotyware.com** from your account's email address (so that we
+  know the request is yours); we answer within one month. We cannot give
+  you your vault's contents: we cannot decrypt them, and your enrolled
+  devices already hold them.
+- You can **complain** to the data protection authority where you live
+  or work.
 
 ### Security
 
@@ -143,14 +163,15 @@ vault. Details: [accounts.md](../architecture/accounts.md).
 
 ## Children
 
-sotyware accounts are not meant for children **[open: minimum age, for
-example 16 in the EEA]**.
+You must be at least **16 years old** to create a sotyware account. If
+we learn that an account belongs to someone younger, we delete it. The
+app itself can be used without an account at any age.
 
 ## Changes to this notice
 
-We will publish changes in this file in the sotyware repository
-(`casualsoty/sotyware`) and mention important changes in the release
-notes. **[open: say whether account holders will be emailed about
-material changes.]**
+We publish every change in this file in the sotyware repository
+(`casualsoty/sotyware`), where its history shows what changed. Changes
+that affect what we collect, why, or who receives it are announced in the
+release notes at least 30 days before they apply.
 
 Last changed: **[open: the date it is published]**.
