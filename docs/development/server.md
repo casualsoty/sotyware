@@ -195,7 +195,8 @@ first upload and restore check that day). Still open:
   on 2026-11-17 in [privacy.md](../user/privacy.md), its open points
   settled the same day (the maintainer responsible, contact
   `privacy@sotyware.com`, working since that day:
-  [the privacy address](#the-privacy-address)); not yet published.
+  [the privacy address](#the-privacy-address)), linked from the account
+  sign-up form; it takes effect, dated, the day `v0.1.2` is published.
 
 ## Production deployment proposal (2026-11-15)
 

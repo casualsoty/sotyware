@@ -2779,11 +2779,13 @@ Status: Accepted (2026-11-17). Code: `db::purge` in `server/src/db.rs`,
   they age out (31 days). The periods are constants in `db.rs`; changing
   one means changing the privacy notice.
 
-## ADR-049: Feedback and bug reports open a GitHub issue form in the browser
+## ADR-049: Feedback, bug reports and the privacy notice open GitHub pages in the browser
 
-Status: Accepted (2026-11-17). Code: `src-tauri/src/feedback.rs`,
-`src/Feedback.svelte`, `src/feedback.ts`; forms in
-`.github/ISSUE_TEMPLATE/`.
+Status: Accepted (2026-11-17; amended the same day, before any release:
+the command `open_feedback_page` became `open_github_page` and gained
+the privacy notice). Code: `src-tauri/src/github_page.rs`,
+`src/Feedback.svelte`, `src/githubPage.ts`, the sign-up form in
+`src/Account.svelte`; forms in `.github/ISSUE_TEMPLATE/`.
 
 - **Context:** the maintainer asked for a feedback button and a bug report
   button in the app. sotyware has no telemetry (privacy notice) and no
@@ -2791,8 +2793,8 @@ Status: Accepted (2026-11-17). Code: `src-tauri/src/feedback.rs`,
   should not take free text from people without an account. The
   repository is public and already where bugs are tracked.
 - **Decision:** Settings › About & updates has **Send feedback** and
-  **Report a bug**. Each calls one new command, `open_feedback_page`,
-  with only `kind` (`feedback` or `bug`); Rust builds
+  **Report a bug**. Each calls one new command, `open_github_page`,
+  with only `page` (`feedback` or `bug`); Rust builds
   `https://github.com/<RELEASE_REPOSITORY>/issues/new?template=…` and
   opens it in the default browser through `tauri-plugin-opener`'s
   `open_url`, called from Rust (the plugin stays unregistered, no
@@ -2802,8 +2804,16 @@ Status: Accepted (2026-11-17). Code: `src-tauri/src/feedback.rs`,
   through the URL, nothing else; the user writes and submits the issue
   with their own GitHub account. The forms warn that issues are public
   and send security and privacy matters to privacy@sotyware.com.
+- **The privacy notice** is the third page (`privacy-notice`):
+  `docs/user/privacy.md` on `main`, so the app always shows the current
+  notice. The GDPR wants it given when data is collected, so the account
+  form's **Create account** mode links to it, with the minimum age, before
+  anything is sent; Settings › About & updates links to it beside the
+  feedback buttons. A web page of its own would need hosting that does
+  not exist; GitHub renders the Markdown.
 - **Consequences:** reporting needs a GitHub account and is public; no
   log or diagnostic data is attached (none is collected). The privacy
   notice names the connection. One more command (100) and one more
-  permission (`allow-open-feedback-page`). A template file renamed in
-  `.github/ISSUE_TEMPLATE/` breaks the button; a unit test reads both.
+  permission (`allow-open-github-page`). A template file renamed in
+  `.github/ISSUE_TEMPLATE/`, or the notice moved, breaks a button; unit
+  tests read all three. Showing the notice needs a browser and GitHub.

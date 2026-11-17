@@ -1,5 +1,6 @@
-// The feedback buttons (ADR-049) with Tauri's IPC mock playing
-// src-tauri/src/feedback.rs, which builds the URL and is tested there.
+// The feedback buttons and privacy notice link (ADR-049) with Tauri's IPC
+// mock playing src-tauri/src/github_page.rs, which builds the URLs and is
+// tested there.
 import { clearMocks, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -49,13 +50,15 @@ async function settle(): Promise<void> {
 }
 
 describe("feedback buttons", () => {
-  it("send only the kind of form, never an address", async () => {
+  it("send only which page to open, never an address", async () => {
     button("Send feedback").click();
     button("Report a bug").click();
+    button("Privacy notice").click();
     await settle();
     expect(sent).toEqual([
-      { cmd: "open_feedback_page", payload: { kind: "feedback" } },
-      { cmd: "open_feedback_page", payload: { kind: "bug" } },
+      { cmd: "open_github_page", payload: { page: "feedback" } },
+      { cmd: "open_github_page", payload: { page: "bug" } },
+      { cmd: "open_github_page", payload: { page: "privacy-notice" } },
     ]);
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });

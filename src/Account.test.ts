@@ -123,6 +123,16 @@ describe("the Account page", () => {
     expect(text(root)).toContain("it never unlocks your keys");
   });
 
+  it("names the minimum age and opens the privacy notice before an account is created", async () => {
+    const root = await render();
+    expect(root.querySelector("[data-account=privacy]")).toBeNull();
+    await click(root, "Create account");
+    expect(text(root.querySelector("[data-account=privacy]"))).toContain("at least 16");
+    await click(root, "Privacy notice");
+    expect(calls.filter((c) => c.cmd === "open_github_page").map((c) => c.payload)).toEqual([{ page: "privacy-notice" }]);
+    expect(calls.some((c) => c.cmd === "account_register")).toBe(false);
+  });
+
   it("creates an account, verifies the address and signs in", async () => {
     const root = await render();
     await click(root, "Create account");

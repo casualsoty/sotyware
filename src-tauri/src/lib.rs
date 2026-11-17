@@ -46,8 +46,8 @@ mod app_menu;
 pub(crate) mod backup;
 pub mod cloud;
 mod features;
-mod feedback;
 pub(crate) mod folder_sync;
+mod github_page;
 pub(crate) mod journal;
 mod storage;
 #[cfg(any(test, feature = "test-profile"))]
@@ -454,7 +454,7 @@ pub fn run() {
             folder_sync::folder_sync_details,
             folder_sync::resolve_folder_sync_conflict,
             folder_sync::answer_folder_sync_deletions,
-            feedback::open_feedback_page,
+            github_page::open_github_page,
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -1204,7 +1204,7 @@ mod tests {
                 "allow-folder-sync-details",
                 "allow-resolve-folder-sync-conflict",
                 "allow-answer-folder-sync-deletions",
-                "allow-open-feedback-page",
+                "allow-open-github-page",
                 "core:window:allow-set-theme",
                 "core:window:allow-is-decorated",
             ])

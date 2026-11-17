@@ -1,8 +1,9 @@
-//! Feedback and bug reports (ADR-049): the dashboard's "Send feedback" and
-//! "Report a bug" buttons open a new GitHub issue for this repository in the
-//! user's browser. The page sends only which of the two it wants; Rust builds
-//! the URL from fixed parts, so the page can never make sotyware open an
-//! address of its choosing. A bug report is prefilled with sotyware's version
+//! Pages of this repository on GitHub, opened in the user's browser
+//! (ADR-049): the dashboard's "Send feedback" and "Report a bug" buttons
+//! open a new issue form, and the privacy notice links open
+//! `docs/user/privacy.md`. The page sends only which page it wants; Rust
+//! builds the URL from fixed parts, so the page can never make sotyware
+//! open an address of its choosing. A bug report is prefilled with sotyware's version
 //! and the operating system's name and architecture, nothing that identifies
 //! the user or the installation. Nothing is sent: the user writes and submits
 //! the issue in the browser, with their own GitHub account.
@@ -11,17 +12,21 @@ use serde::Deserialize;
 
 use crate::updates::RELEASE_REPOSITORY;
 
-/// Which issue form to open (`.github/ISSUE_TEMPLATE/`).
+/// Which page to open: an issue form (`.github/ISSUE_TEMPLATE/`) or the
+/// privacy notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum FeedbackKind {
+pub enum GithubPage {
     Feedback,
     Bug,
+    PrivacyNotice,
 }
 
 /// The issue form's file name; must match `.github/ISSUE_TEMPLATE/`.
 const FEEDBACK_TEMPLATE: &str = "feedback.yml";
 const BUG_TEMPLATE: &str = "bug_report.yml";
+/// The privacy notice, as it is on `main` (always the current one).
+const PRIVACY_NOTICE: &str = "docs/user/privacy.md";
 
 /// The operating system as a person would name it, and the architecture.
 fn platform() -> String {
@@ -47,13 +52,15 @@ fn encode(value: &str) -> String {
     out
 }
 
-/// The new-issue page for `kind`. GitHub's issue forms fill a field from a
-/// query parameter named after its `id`.
-pub fn issue_url(kind: FeedbackKind, version: &str, platform: &str) -> String {
-    let base = format!("https://github.com/{RELEASE_REPOSITORY}/issues/new");
-    match kind {
-        FeedbackKind::Feedback => format!("{base}?template={FEEDBACK_TEMPLATE}"),
-        FeedbackKind::Bug => format!(
+/// The address of `page`. GitHub's issue forms fill a field from a query
+/// parameter named after its `id`.
+pub fn page_url(page: GithubPage, version: &str, platform: &str) -> String {
+    let repo = format!("https://github.com/{RELEASE_REPOSITORY}");
+    let base = format!("{repo}/issues/new");
+    match page {
+        GithubPage::PrivacyNotice => format!("{repo}/blob/main/{PRIVACY_NOTICE}"),
+        GithubPage::Feedback => format!("{base}?template={FEEDBACK_TEMPLATE}"),
+        GithubPage::Bug => format!(
             "{base}?template={BUG_TEMPLATE}&version={}&os={}",
             encode(version),
             encode(platform)
@@ -61,11 +68,11 @@ pub fn issue_url(kind: FeedbackKind, version: &str, platform: &str) -> String {
     }
 }
 
-/// Opens the new-issue page in the default browser. Allowed by
-/// `allow-open-feedback-page`.
+/// Opens `page` in the default browser. Allowed by
+/// `allow-open-github-page`.
 #[tauri::command]
-pub async fn open_feedback_page(kind: FeedbackKind) -> Result<(), String> {
-    let url = issue_url(kind, env!("CARGO_PKG_VERSION"), &platform());
+pub async fn open_github_page(page: GithubPage) -> Result<(), String> {
+    let url = page_url(page, env!("CARGO_PKG_VERSION"), &platform());
     open_in_browser(&url)
 }
 
@@ -89,7 +96,7 @@ mod tests {
     #[test]
     fn feedback_opens_the_feedback_form_with_nothing_filled_in() {
         assert_eq!(
-            issue_url(FeedbackKind::Feedback, "0.1.1", "Windows, x86_64"),
+            page_url(GithubPage::Feedback, "0.1.1", "Windows, x86_64"),
             "https://github.com/casualsoty/sotyware/issues/new?template=feedback.yml"
         );
     }
@@ -97,7 +104,7 @@ mod tests {
     #[test]
     fn a_bug_report_carries_only_the_version_and_the_platform() {
         assert_eq!(
-            issue_url(FeedbackKind::Bug, "0.1.1", "Windows, x86_64"),
+            page_url(GithubPage::Bug, "0.1.1", "Windows, x86_64"),
             "https://github.com/casualsoty/sotyware/issues/new?template=bug_report.yml\
              &version=0.1.1&os=Windows%2C%20x86_64"
         );
@@ -105,7 +112,7 @@ mod tests {
 
     #[test]
     fn values_cannot_add_parameters() {
-        let url = issue_url(FeedbackKind::Bug, "1.0&title=x", "a#b?c=d e");
+        let url = page_url(GithubPage::Bug, "1.0&title=x", "a#b?c=d e");
         assert!(
             url.ends_with("&version=1.0%26title%3Dx&os=a%23b%3Fc%3Dd%20e"),
             "{url}"
@@ -113,10 +120,30 @@ mod tests {
     }
 
     #[test]
-    fn the_page_names_one_of_two_kinds() {
-        let parse = |s: &str| serde_json::from_str::<FeedbackKind>(s);
-        assert_eq!(parse("\"feedback\"").unwrap(), FeedbackKind::Feedback);
-        assert_eq!(parse("\"bug\"").unwrap(), FeedbackKind::Bug);
+    fn the_privacy_notice_is_the_one_on_main() {
+        assert_eq!(
+            page_url(GithubPage::PrivacyNotice, "0.1.1", "Linux, x86_64"),
+            "https://github.com/casualsoty/sotyware/blob/main/docs/user/privacy.md"
+        );
+        let notice = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(PRIVACY_NOTICE);
+        assert!(
+            std::fs::read_to_string(notice)
+                .unwrap()
+                .starts_with("# Privacy notice")
+        );
+    }
+
+    #[test]
+    fn the_page_names_one_of_three_pages() {
+        let parse = |s: &str| serde_json::from_str::<GithubPage>(s);
+        assert_eq!(parse("\"feedback\"").unwrap(), GithubPage::Feedback);
+        assert_eq!(parse("\"bug\"").unwrap(), GithubPage::Bug);
+        assert_eq!(
+            parse("\"privacy-notice\"").unwrap(),
+            GithubPage::PrivacyNotice
+        );
         assert!(parse("\"https://example.com\"").is_err());
     }
 

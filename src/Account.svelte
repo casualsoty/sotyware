@@ -3,6 +3,7 @@
   import * as acc from "./account";
   import type { AccountStatus, DeviceInfo, EnrollmentInfo } from "./account";
   import { describeError } from "./cloudMessages";
+  import { openGithubPage } from "./githubPage";
 
   // The optional sotyware account (ADR-032): sign in on several computers
   // and find the same storage accounts and backup jobs everywhere. The
@@ -67,6 +68,16 @@
     pwCurrent = "";
     pwNew = "";
     deletePassword = "";
+  }
+
+  /** Opens the privacy notice in the browser (ADR-049); a failure is shown
+   * like any other, without touching the form. */
+  async function openPrivacyNotice(): Promise<void> {
+    try {
+      await openGithubPage("privacy-notice");
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
 
   const doRegister = (): Promise<void> =>
@@ -293,6 +304,12 @@
         {#if mode === "sign-in" || mode === "verify"}
           <label for="ac-device">Name of this computer</label>
           <input id="ac-device" type="text" bind:value={deviceName} required maxlength="64" />
+        {/if}
+        {#if mode === "register"}
+          <p class="hint" data-account="privacy">
+            You must be at least 16 to create an account. What the service stores and why:
+            <button type="button" class="link" onclick={() => void openPrivacyNotice()}>Privacy notice</button>
+          </p>
         {/if}
         <button type="submit" class="primary">
           {mode === "sign-in" ? "Sign in" : mode === "register" ? "Create account" : mode === "verify" ? "Verify and sign in" : code === "" ? "Send reset code" : "Set new password"}

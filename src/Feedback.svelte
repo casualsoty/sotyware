@@ -1,16 +1,17 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { openFeedbackPage, type FeedbackKind } from "./feedback";
+  import { openGithubPage, type GithubPage } from "./githubPage";
 
   // Settings › About & updates: two buttons that open a GitHub issue form in
-  // the browser. Nothing is sent from here; the user writes and submits it.
+  // the browser, and the privacy notice. Nothing is sent from here; the user
+  // writes and submits the issue.
 
   let error = $state<string | null>(null);
 
-  async function open(kind: FeedbackKind): Promise<void> {
+  async function open(page: GithubPage): Promise<void> {
     error = null;
     try {
-      await openFeedbackPage(kind);
+      await openGithubPage(page);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -27,6 +28,10 @@
     <button type="button" onclick={() => void open("feedback")}><Icon name="external" size={14} />Send feedback</button>
     <button type="button" onclick={() => void open("bug")}><Icon name="external" size={14} />Report a bug</button>
   </div>
+  <p class="muted small-text privacy">
+    sotyware collects nothing without an account.
+    <button type="button" class="link" onclick={() => void open("privacy-notice")}>Privacy notice</button>
+  </p>
   {#if error}
     <p class="error" role="alert">{error}</p>
   {/if}
@@ -39,6 +44,10 @@
 
   h2 {
     margin-bottom: var(--space-1);
+  }
+
+  .privacy {
+    margin-top: var(--space-4);
   }
 
   .actions {

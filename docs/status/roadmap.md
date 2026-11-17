@@ -91,7 +91,8 @@ Not started unless status.md says so. Scope and procedures:
    (the off-host backups of ADR-047 run since 2026-11-17), a
    privacy notice (data stored in the US, mail through Brevo; drafted in
    [privacy.md](../user/privacy.md), its open points settled 2026-11-17;
-   `privacy@sotyware.com` working; still to do: date and publish it), an external
+   `privacy@sotyware.com` working, linked from the app, no legal review
+   wanted; still to do: date it the day `v0.1.2` is published), an external
    review of the service and the vault design.
 
 ## macOS (after ADR-037)

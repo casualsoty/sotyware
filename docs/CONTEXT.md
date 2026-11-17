@@ -415,7 +415,7 @@ Full map: [repository-map.md](architecture/repository-map.md).
   usage commands of ADR-041, the eleven backup commands of ADR-031/ADR-041,
   the 20 account commands of ADR-032, the six update commands of
   ADR-033/ADR-036, the 16 folder sync commands of ADR-043 and
-  `open_feedback_page` of ADR-049 (100 in all; listed in
+  `open_github_page` of ADR-049 (100 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at

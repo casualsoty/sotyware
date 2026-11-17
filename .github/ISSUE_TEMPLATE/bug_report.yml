@@ -1,4 +1,4 @@
-# Opened by the app's "Report a bug" button (src-tauri/src/feedback.rs),
+# Opened by the app's "Report a bug" button (src-tauri/src/github_page.rs),
 # which fills `version` and `os` through the URL. Keep those ids.
 name: Bug report
 description: Something in sotyware does not work as it should.

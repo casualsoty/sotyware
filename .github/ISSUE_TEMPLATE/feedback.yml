@@ -1,4 +1,4 @@
-# Opened by the app's "Send feedback" button (src-tauri/src/feedback.rs).
+# Opened by the app's "Send feedback" button (src-tauri/src/github_page.rs).
 name: Feedback
 description: An idea, a wish or anything else you want to tell about sotyware.
 body:

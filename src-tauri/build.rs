@@ -104,7 +104,7 @@ fn main() {
             "folder_sync_details",
             "resolve_folder_sync_conflict",
             "answer_folder_sync_deletions",
-            "open_feedback_page",
+            "open_github_page",
         ]));
     if windows_msvc_target() {
         attributes = attributes

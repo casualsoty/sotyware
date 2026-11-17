@@ -133,10 +133,11 @@ Boundaries that hold today:
   `set_folder_sync_interval`, `disable_folder_sync`, `change_sync_folder`,
   `open_sync_folder`, `folder_sync_details`, `resolve_folder_sync_conflict`,
   `answer_folder_sync_deletions` ([folder-sync.md](folder-sync.md#commands)),
-  and `open_feedback_page` (ADR-049: Settings › About & updates' "Send
-  feedback" and "Report a bug" open a GitHub issue form in the browser;
-  the page names only which one, Rust builds the URL, a bug report
-  carries the version and the operating system);
+  and `open_github_page` (ADR-049: Settings › About & updates' "Send
+  feedback" and "Report a bug" open a GitHub issue form in the browser,
+  and the privacy notice links there and on the account sign-up form open
+  `docs/user/privacy.md`; the page names only which one, Rust builds the
+  URL, a bug report carries the version and the operating system);
   none returns a stored credential (a share link carries the access key
   id, never the secret), none accepts a local path, and only the folder
   sync commands return one: the sync folder the user chose, to show it. The built-in calls are Tauri's window API:
