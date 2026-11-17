@@ -23,7 +23,7 @@ Where things are. Generated and ignored paths are listed in
 │   ├── architecture/         How it works and why (this file, overview, frontend, lifecycle, features, cloud storage and providers, single instance, decisions, threat model, backup, accounts, updates)
 │   ├── development/          Setup, commands, testing, cross-platform rules, release builds, GitHub Releases and installer testing (release.md), macOS (macos.md), application icons (icons.md), the account service (server.md) and its first deployment step by step (server-setup.md)
 │   ├── status/               What is implemented and validated, limitations, roadmap, the production-readiness journal (journal.md)
-│   └── user/                 User guides: recovering files from a backup (recovery.md)
+│   └── user/                 User guides: recovering files from a backup (recovery.md), privacy notice (privacy.md, draft)
 ├── index.html                Vite HTML entry; mounts #app, loads src/main.ts
 ├── src/                      Frontend (Svelte 5 + TypeScript)
 │   ├── main.ts               Loads the styles, applies the saved theme before the first paint, mounts App into #app
