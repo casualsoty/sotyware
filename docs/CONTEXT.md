@@ -117,8 +117,9 @@ file can never hold a fixture's or a private key. **`v0.1.0` is
 published** (2026-11-15, run 43749158657: `publish` failed once on the
 password secret, then passed; GitHub's latest release, immutable,
 verified anonymously with the release key;
-[first release](status/status.md#first-release-v010-2026-11-15)); no
-update was ever installed. Every release setting exists since 2026-11-15: the
+[first release](status/status.md#first-release-v010-2026-11-15)); one
+update was installed through the app: the maintainer's Windows 11, 0.1.0
+to 0.1.1 ([status](status/status.md#the-first-update-through-the-app-010-to-011)). Every release setting exists since 2026-11-15: the
 release key (public half in `src-tauri/update-key.pub`, key id
 `3A6E8F2D58D68E0D`; private half and password in the `release`
 environment, created by hand that day like `macos-signing`;
@@ -376,7 +377,9 @@ update server exist), all tested headless against in-process servers only.
   release key's public half since 2026-11-15, so builds check GitHub's
   latest release, `v0.1.0` since that day and `v0.1.1` since 2026-11-16. Tested with test keys, a local server, the
   plugin on Tauri's mock runtime and a fixture signed by the real Tauri
-  CLI; **no update was ever installed**.
+  CLI; **one update installed for real**: the maintainer's Windows 11,
+  0.1.0 → 0.1.1 through Update now ([status](status/status.md#the-first-update-through-the-app-010-to-011)); never on
+  macOS or Linux.
 
 ## Repository at a glance
 

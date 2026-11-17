@@ -44,8 +44,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   ADR-036, ADR-039; published by `release.yml` with `GITHUB_TOKEN`, the
   signing key only in the protected `release` environment; the release key
   exists since 2026-11-15, its public half in `src-tauri/update-key.pub`,
-  and `v0.1.0` was published with it that day, `v0.1.1` on 2026-11-16; no
-  update was ever installed), in a
+  and `v0.1.0` was published with it that day, `v0.1.1` on 2026-11-16; the
+  maintainer's Windows 11 updated itself from 0.1.0 to 0.1.1 through
+  Update now, the one update installed so far), in a
   desktop shell with a sidebar, Settings and one design system (ADR-035),
   on Windows with the page's own title bar and everywhere a remembered window
   placement that starts at half the primary work area (ADR-040); storage usage

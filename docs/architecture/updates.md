@@ -10,8 +10,10 @@ where releases are published and who can sign:
 ([status](../status/status.md#first-release-v010-2026-11-15)), signed with
 the release key whose public half `src-tauri/update-key.pub` holds since
 that day; builds made from then on check GitHub's latest release, which
-is that one. **No update was ever installed:** that needs a later
-version. What was tested, and
+was that one, then `v0.1.1` (2026-11-16). **One update was installed
+for real:** the maintainer's Windows 11 went from 0.1.0 to 0.1.1 through
+Update now ([status](../status/status.md#the-first-update-through-the-app-010-to-011)); the
+in-place replacement on macOS and Linux never ran. What was tested, and
 where: [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15).
 How to publish: [release.md](../development/release.md#publishing-a-release).
 

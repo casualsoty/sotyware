@@ -81,8 +81,8 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
   backup. `v0.1.0` was published on 2026-11-15 and `v0.1.1` on
-  2026-11-16; no update has been installed yet (moving from 0.1.0 to
-  0.1.1 will be the first).
+  2026-11-16; the maintainer's own Windows 11 installation updated itself
+  from 0.1.0 to 0.1.1 this way.
 
 It does not search file contents, download as ZIP, keep a trash of its own in
 the bucket or permanently delete old object versions, and it does not copy objects larger

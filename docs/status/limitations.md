@@ -942,15 +942,16 @@ server only; no real provider was asked.
   before the promotion, and `latest.json` with its `.sig` after it.
   Addressing the release by its id from its creation on would close this
   ([status](status.md#release-rehearsal-readiness-2026-11-15)).
-- **No update was ever installed** (`release.yml` published `v0.1.0`,
-  the only release, on 2026-11-15;
-  [status](status.md#first-release-v010-2026-11-15)): download,
+- **Updates installed once, on Windows only** (the maintainer's Windows
+  11, 0.1.0 → 0.1.1 through Update now;
+  [status](status.md#the-first-update-through-the-app-010-to-011)); otherwise download,
   verification and refusal are tested against local servers (one behaving
   like GitHub's redirects) with the plugin on Tauri's mock runtime, and the
   release commands were rehearsed locally with the real Tauri CLI and a
   throwaway key; starting the Windows installer, the in-place replacement
-  on macOS and Linux, `request_restart` starting the new version and the
-  data surviving are not tested.
+  on macOS and Linux and `request_restart` starting the new version are
+  not tested; on Windows, the one real update ran the installer and
+  restarted, with the maintainer's data kept (as reported, not inspected).
 - **The first manifest a fresh installation sees sets its floor;** before
   that any validly signed, newer manifest is accepted. Manifests do not
   expire, so GitHub (or someone between it and the user, without the key)
