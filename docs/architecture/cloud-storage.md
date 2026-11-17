@@ -297,7 +297,10 @@ checked before the backend is called, and keeps the value inside Windows'
 
 **Removing an account never sends a request to the provider:** its buckets and
 objects stay (tested against the in-process S3 server). `Accounts::load` does
-not read credentials, so startup never opens an unlock prompt.
+not read credentials; the dashboard's startup connection check
+([ADR-046](decisions.md#adr-046-the-dashboard-checks-every-storage-accounts-connection-once-at-startup))
+does, so on a locked Linux keyring an unlock prompt can appear at startup
+(at most one: the check stops at a locked or unavailable store).
 
 ### Errors
 
@@ -568,6 +571,15 @@ The credentials are loaded on the blocking pool, the request runs on the async
 runtime with the client's timeouts (10 s connect, 60 s read, 3 attempts).
 Results are kept in memory per account until the account changes; a check
 that was running during a change does not record its result.
+
+**At startup** (ADR-046, `src/startupChecks.svelte.ts`) the shell runs
+`check_cloud_account` once for every account with no result, a bucket and
+usable settings, one after another, and stops at the first
+`credential-store-locked` or `credential-store-unavailable` result (the
+others need the same store; their button still works). A check that
+rejects is skipped silently. The Cloud Storage page shows the account
+being checked ("Checking connection…", button disabled) and merges each
+result unless the user's own check is newer. Not repeated on focus.
 
 **Against which providers this is verified:** the in-process S3 server (`s3s`)
 with an access hook that refuses chosen operations, so a key that is refused

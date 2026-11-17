@@ -2660,3 +2660,33 @@ Status: Accepted (2026-11-17). Code: `PRODUCTION_SERVER` and
   day, about 1 GB of outgoing traffic a month. `v0.1.0` and `v0.1.1` have
   no service; the next release will be the first to offer accounts, so a
   privacy notice and an external review remain gates before it.
+
+## ADR-046: The dashboard checks every storage account's connection once at startup
+
+Status: Accepted (2026-11-17). Code: `src/startupChecks.svelte.ts`,
+`src/App.svelte`, `src/CloudStorage.svelte` (`startupChecks`); details:
+[cloud-storage.md](cloud-storage.md#dashboard).
+
+- **Context:** check results live only in memory (ADR-018), so after every
+  start each account read "Not checked yet" until the user pressed
+  **Check connection** on each one. The maintainer asked for the check to
+  happen by itself.
+- **Decision:** when the dashboard starts, the shell runs the existing
+  `check_cloud_account` for every account that has no result yet, a
+  bucket and usable settings, one after another. No new command and no
+  change in Rust: the same `HeadBucket` (and a one-key listing only after
+  a refused HEAD), never a write. If a result says the credential store is
+  locked or unavailable, the remaining accounts are left unchecked, so a
+  locked Linux keyring asks at most once. A check that cannot run (the
+  account vanished, the database failed) is skipped without an alert. The
+  Cloud Storage page shows a running startup check like its own and
+  merges each result; a newer check the user started wins. It runs once
+  per dashboard start, not on focus or on a timer.
+- **Consequences:** startup now reads credentials, which
+  [cloud-storage.md](cloud-storage.md#operations-and-their-order) used to
+  rule out: on Linux with a locked keyring an unlock prompt can appear
+  when sotyware starts (also when it starts hidden in the tray, since the
+  page loads either way), and on macOS the Keychain may ask. Each start
+  sends one or two requests per account to its provider (a few class B/C
+  transactions at Backblaze). Accounts added later in the session, or
+  arriving through vault sync, are still checked by the button.

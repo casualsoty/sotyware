@@ -146,6 +146,22 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Connection check at startup (2026-11-17)
+
+Every storage account's connection is checked once when the dashboard
+starts (ADR-046, `src/startupChecks.svelte.ts`): unchecked accounts with a
+bucket and usable settings, one after another, stopping at a locked or
+unavailable credential store; the Cloud Storage page shows the running
+check and merges the results. Frontend only; Rust unchanged.
+
+- **Tested (WSL2, headless):** `npm run check`; Vitest 318 (11 new: the
+  model's unit tests and, through the shell, startup checks, the page
+  during a check, the stop at a locked store, a rejected check); the four
+  new page tests fail with the startup call removed; `npm run build`;
+  `test:headless` passed (Vitest 318, Rust 652 + 29 ignored, guards).
+- **Not run:** any desktop driver, a real keyring unlock prompt at
+  startup, a real provider, Windows or macOS.
+
 ### Account service deployed (2026-11-17)
 
 The maintainer followed [server-setup.md](../development/server-setup.md)

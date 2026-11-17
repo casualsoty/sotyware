@@ -8,6 +8,7 @@
   import { overallSummary, stateLabel } from "./folderSync";
   import { FolderSyncModel } from "./folderSyncModel.svelte";
   import { listAccounts, type AccountInfo } from "./cloud";
+  import { mergeCheck, StartupChecks } from "./startupChecks.svelte";
   import CloudStorage from "./CloudStorage.svelte";
   import { formatSize } from "./format";
   import Icon from "./Icon.svelte";
@@ -48,6 +49,8 @@
   const updates = new UpdatesModel();
   /** Syncs the optional sotyware account on its own (accountSync.svelte.ts). */
   const autoSync = new AutoSync();
+  /** The connection check of every storage account at startup. */
+  const startupChecks = new StartupChecks();
   /** Bumped after a sync, so Cloud Storage reads its list again. */
   let accountsGeneration = $state(0);
   const syncStatus = $derived(syncSummary(autoSync.status));
@@ -88,6 +91,16 @@
       accountsError = list.storageError;
     } catch (e) {
       accountsError = String(e);
+    }
+  }
+
+  /** Every storage account's connection is checked once at startup. */
+  async function checkAccountsAtStartup(): Promise<void> {
+    await loadAccounts();
+    if (accounts !== null) {
+      await startupChecks.run(accounts, (info) => {
+        accounts = mergeCheck(accounts ?? [], info);
+      });
     }
   }
 
@@ -182,7 +195,7 @@
   onMount(() => {
     void loadChrome();
     void loadMode();
-    void loadAccounts();
+    void checkAccountsAtStartup();
     void updates.load();
     void sync("startup");
     void folderSyncs.start();
@@ -316,6 +329,7 @@
         onlocalchange={() => void sync("change")}
         generation={accountsGeneration}
         {folderSyncs}
+        {startupChecks}
       />
     {:else if section === "backups"}
       <Backup />

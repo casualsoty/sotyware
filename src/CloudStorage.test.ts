@@ -148,8 +148,11 @@ function backend(cmd: string, payload: Record<string, unknown>): unknown {
       accounts = accounts.filter((a) => a.id !== payload["id"]);
       return null;
     case CHECK_CLOUD_ACCOUNT: {
+      // Rust records the result until the account changes.
       const current = accounts.find((a) => a.id === payload["id"]);
-      return { ...current, lastCheck: check("connected") };
+      const checked = { ...current, lastCheck: check("connected") } as AccountInfo;
+      accounts = accounts.map((a) => (a.id === checked.id ? checked : a));
+      return checked;
     }
     case "operating_mode":
       return "tray";
@@ -746,6 +749,82 @@ describe("connection check", () => {
     await click(item(root, "photos"), "Check connection");
     expect(alerts(root).join(" ")).toContain("Could not check Photos: This account no longer exists: no account 'photos'");
     expect(root.querySelector('li[data-account="photos"]')).toBeNull();
+  });
+});
+
+describe("startup connection check", () => {
+  /** Opens the Cloud Storage page through its sidebar link. */
+  async function openCloudStorage(root: HTMLElement): Promise<void> {
+    [...root.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Sections"] a')][1]?.click();
+    flushSync();
+    await settle();
+  }
+
+  it("checks every account once when the dashboard starts, without a click", async () => {
+    accounts = [account(), account({ id: "work", label: "Work", bucket: "soty-work" })];
+    const root = await render(App);
+    expect(sent(CHECK_CLOUD_ACCOUNT)).toEqual([{ id: "photos" }, { id: "work" }]);
+    await openCloudStorage(root);
+    expect(item(root, "photos").querySelector("[data-status]")?.textContent?.trim()).toBe("Connected");
+    expect(item(root, "work").querySelector("[data-status]")?.textContent?.trim()).toBe("Connected");
+    // Opening the page again does not check again.
+    await openCloudStorage(root);
+    expect(sent(CHECK_CLOUD_ACCOUNT)).toHaveLength(2);
+  });
+
+  it("shows a running startup check on the page and merges its result", async () => {
+    accounts = [account()];
+    const pending = deferred<unknown>();
+    overrides[CHECK_CLOUD_ACCOUNT] = () => pending.promise;
+    const root = await render(App);
+    await openCloudStorage(root);
+    expect(item(root, "photos").querySelector('[role="status"]')?.textContent).toBe("Checking connection…");
+    expect(button(item(root, "photos"), "Check connection").disabled).toBe(true);
+
+    pending.resolve({ ...account(), lastCheck: check("invalid-credentials", "wrong secret") });
+    await settle();
+    expect(item(root, "photos").querySelector("[data-status]")?.textContent?.trim()).toBe(CHECK_LABELS["invalid-credentials"]);
+    expect(text(item(root, "photos"))).toContain("Details: wrong secret");
+    expect(button(item(root, "photos"), "Check connection").disabled).toBe(false);
+    expect(alerts(root)).toEqual([]);
+  });
+
+  it("skips accounts that cannot be checked and stops when the credential store is locked", async () => {
+    accounts = [
+      account({ id: "a-none", label: "No bucket", bucket: null }),
+      account({ id: "b-broken", label: "Broken", configError: "bad region" }),
+      account({ id: "c-locked", label: "Locked" }),
+      account({ id: "d-later", label: "Later" }),
+    ];
+    overrides[CHECK_CLOUD_ACCOUNT] = (p) => ({
+      ...accounts.find((a) => a.id === p["id"]),
+      lastCheck: check("credential-store-locked", "the keyring is locked"),
+    });
+    const root = await render(App);
+    // One unlock prompt at most: the other accounts need the same store.
+    expect(sent(CHECK_CLOUD_ACCOUNT)).toEqual([{ id: "c-locked" }]);
+    await openCloudStorage(root);
+    expect(text(item(root, "d-later"))).toContain("Not checked yet");
+    expect(button(item(root, "d-later"), "Check connection").disabled).toBe(false);
+  });
+
+  it("keeps going after a check that could not run, without an alert", async () => {
+    accounts = [account(), account({ id: "work", label: "Work" })];
+    overrides[CHECK_CLOUD_ACCOUNT] = (p) =>
+      p["id"] === "photos"
+        ? Promise.reject({ kind: "storage", message: "database is locked" })
+        : { ...account({ id: "work", label: "Work" }), lastCheck: check("connected") };
+    const root = await render(App);
+    expect(sent(CHECK_CLOUD_ACCOUNT)).toEqual([{ id: "photos" }, { id: "work" }]);
+    await openCloudStorage(root);
+    expect(alerts(root)).toEqual([]);
+    expect(text(item(root, "photos"))).toContain("Not checked yet");
+  });
+
+  it("does not check when the page is used on its own (the shell runs the checks)", async () => {
+    accounts = [account()];
+    await render();
+    expect(sent(CHECK_CLOUD_ACCOUNT)).toEqual([]);
   });
 });
 

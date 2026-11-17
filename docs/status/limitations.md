@@ -372,7 +372,14 @@ Design: [cloud-storage.md](../architecture/cloud-storage.md); providers:
   (or none, meaning any); the form edits exactly one, and saving an edited
   account replaces its bucket list with that one.
 - **Check results are not kept.** They live in memory until sotyware quits
-  or the account changes; after a restart every account is "Not checked yet".
+  or the account changes; after a restart every account is checked again
+  once (ADR-046), so it reads "Checking connection…" for a moment. After a
+  locked or unavailable credential store the other accounts stay "Not
+  checked yet" until checked by hand. Accounts added or synced in later are
+  not checked automatically.
+- **The startup check can ask to unlock the keyring** on Linux (once) and
+  the Keychain on macOS, also when sotyware starts hidden in the tray
+  (ADR-046). Not seen on a real desktop.
 - **One credential-store call at a time.** While an add, edit, removal or
   check waits for the credential store (for example an unlock prompt nobody
   answers), every other account call waits behind it: the window stays

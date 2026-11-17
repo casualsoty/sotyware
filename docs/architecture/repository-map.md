@@ -42,6 +42,7 @@ Where things are. Generated and ignored paths are listed in
 │   ├── Logo.svelte           sotyware's mark (sidebar and title bar)
 │   ├── accountSync.svelte.ts Automatic sync of an enrolled device at startup, on focus (15 min) and after local account changes, and the shell's sync summary (ADR-042); accountSync.test.ts its tests
 │   ├── CloudStorage.svelte   Cloud Storage section: account list, empty state, check, remove with confirmation
+│   ├── startupChecks.svelte.ts  The connection check of every storage account once at startup (ADR-046); startupChecks.test.ts its tests
 │   ├── CloudAccountForm.svelte  Add/edit form for one storage account (credential fields cleared after use)
 │   ├── CloudBrowser.svelte   Browser of one account's bucket: folders, files, breadcrumbs, Up, Refresh, Load more; Download per file; file manager (ADR-026): selection, context menu, selection bar, shortcuts, search, sort, filters, new folder, rename, favorites/recent, drop banner
 │   ├── CloudOperation.svelte Review dialog and progress panel of copy/move/rename/delete/restore plans

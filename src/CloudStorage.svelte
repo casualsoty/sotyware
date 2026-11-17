@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import CloudAccountForm from "./CloudAccountForm.svelte";
   import CloudBrowser from "./CloudBrowser.svelte";
   import CloudRecovery from "./CloudRecovery.svelte";
   import type { FolderSyncModel } from "./folderSyncModel.svelte";
+  import { mergeCheck, type StartupChecks } from "./startupChecks.svelte";
   import Icon from "./Icon.svelte";
   import {
     checkAccount,
@@ -41,6 +42,9 @@
     generation?: number;
     /** The live state of folder sync (ADR-043), for the bucket's Sync tab. */
     folderSyncs?: FolderSyncModel | undefined;
+    /** The connection checks the shell runs at startup: their results are
+     * merged into the list and the account being checked shows so. */
+    startupChecks?: StartupChecks | undefined;
   }
 
   let {
@@ -52,6 +56,7 @@
     onlocalchange,
     generation = 0,
     folderSyncs,
+    startupChecks,
   }: Props = $props();
 
   // A sync applied other devices' changes: read the list again (not on
@@ -75,6 +80,28 @@
   let checking = $state<Record<string, boolean>>({});
   let confirmingRemove = $state<string | null>(null);
   let removing = $state<string | null>(null);
+  /** Whether `id` is being checked, by its button or at startup. */
+  function isChecking(id: string): boolean {
+    return checking[id] === true || startupChecks?.current === id;
+  }
+
+  // Startup checks that finished: their results go into the list (one the
+  // user started meanwhile and that finished later wins).
+  $effect(() => {
+    const results = startupChecks?.results ?? {};
+    const list = untrack(() => accounts);
+    if (list === null) {
+      return;
+    }
+    let next = list;
+    for (const info of Object.values(results)) {
+      next = mergeCheck(next, info);
+    }
+    if (next.some((a, i) => a !== list[i])) {
+      accounts = next;
+    }
+  });
+
   const browsed = $derived(browsing === null ? null : (accounts?.find((a) => a.id === browsing) ?? null));
 
   function openBrowser(account: AccountInfo): void {
@@ -281,7 +308,7 @@
                     <span class="provider">{account.providerName ?? account.provider}</span>
                   </div>
                   <div class="status-line">
-                    {#if checking[account.id]}
+                    {#if isChecking(account.id)}
                       <span class="badge" role="status"><span class="spinner" aria-hidden="true"></span>Checking connection…</span>
                     {:else if account.lastCheck}
                       <span class="status badge {checkTone(account.lastCheck.status)}" data-status={account.lastCheck.status}>
@@ -306,7 +333,7 @@
                 {#if account.configError}
                   <p class="error">This account's settings cannot be used: {account.configError}</p>
                 {/if}
-                {#if account.lastCheck && !checking[account.id] && account.lastCheck.status !== "connected"}
+                {#if account.lastCheck && !isChecking(account.id) && account.lastCheck.status !== "connected"}
                   <p class="check-detail callout {checkTone(account.lastCheck.status)}">
                     {CHECK_HINTS[account.lastCheck.status]}
                     {#if account.lastCheck.message}<span class="detail">Details: {account.lastCheck.message}</span>{/if}
@@ -344,7 +371,7 @@
                     >
                       Open bucket
                     </button>
-                    <button type="button" disabled={checking[account.id] === true} onclick={() => check(account)}>
+                    <button type="button" disabled={isChecking(account.id)} onclick={() => check(account)}>
                       Check connection
                     </button>
                     <button type="button" class="ghost" onclick={() => openForm({ mode: "edit", id: account.id })}>Edit</button>

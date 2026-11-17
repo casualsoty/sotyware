@@ -220,7 +220,9 @@ update server exist), all tested headless against in-process servers only.
   in `cloud-accounts.sqlite3` (separate from the preferences). Editing without
   a new key never touches the credential store; a new key replaces the old one
   only once stored; removal asks first, never touches remote data, and keeps
-  the account if its key cannot be deleted. "Check connection": `HeadBucket`
+  the account if its key cannot be deleted. "Check connection" (also run
+  once for every account when the dashboard starts, stopping at a locked
+  credential store; ADR-046, 2026-11-17): `HeadBucket`
   on the account's bucket, a one-key `ListObjectsV2` only after a refused
   HEAD, never `ListBuckets` (a bucket-restricted Backblaze key is refused
   that); statuses connected / invalid credentials / access denied / bucket
