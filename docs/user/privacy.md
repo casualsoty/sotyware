@@ -4,10 +4,10 @@
 > (`server/src/db.rs`, `server/src/api.rs`, `server/src/mail.rs`) and its
 > deployment (ADR-045, ADR-047). It is a gate before any release offers
 > sotyware accounts ([roadmap](../status/roadmap.md)). The maintainer's
-> answers of 2026-11-17 filled the points that were open; still to do
-> before publishing: create the address `privacy@sotyware.com` and check
-> that mail to it arrives, set the date below, and decide whether a lawyer
-> should read it. The GDPR (Article 13) asks for the controller's
+> answers of 2026-11-17 filled the points that were open, and the
+> contact address `privacy@sotyware.com` works since that day (received
+> and answered by the maintainer). Still to do before publishing: set the
+> date below and decide whether a lawyer should read it. The GDPR (Article 13) asks for the controller's
 > identity; the notice names the maintainer only by the name sotyware is
 > published under, which a lawyer should confirm is enough. Brevo's and
 > Backblaze's locations and certifications were taken from their own

@@ -68,7 +68,11 @@ names, encrypted vaults) are stored there; the privacy notice must say so.
 authorised. A new address is refused with `525 5.7.1 Unauthorized IP
 address`, and Brevo mails you a link to authorise it; or add it under your
 account name → *Security* → *Authorised IPs*. Authorise your own address
-for step 3 and the VM's for step 7.
+for step 3 and the VM's for step 7. sotyware's own deployment has this
+blocking turned off since 2026-11-17, to let a mail client send as
+`privacy@sotyware.com` through Brevo
+([server.md](server.md#the-privacy-address)); the steps that authorise
+an address then change nothing.
 
 ## 3. Check mail from this computer first
 

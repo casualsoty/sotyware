@@ -800,7 +800,12 @@ server only; no real provider was asked.
   rehearsed on a scratch VM (only the decrypt and `restore` in WSL2); the
   restore check is monthly by the maintainer's reminder, not automatic.
 - **The VM's address is ephemeral:** recreating the VM changes it, and the
-  DNS record and Brevo's authorised IPs must then follow by hand.
+  DNS record must then follow by hand (Brevo's authorised IPs too, if
+  the blocking is turned on again).
+- **The service's SMTP key works from any address:** Brevo's IP blocking
+  is off since 2026-11-17 for the privacy address
+  ([server.md](../development/server.md#the-privacy-address)), so a leaked
+  key can send as sotyware.com until revoked.
 - **Free-plan limits:** Brevo sends at most 300 mails a day; Google's free
   tier includes about 1 GB of outgoing traffic a month.
 - **Mail delivery** through Brevo over STARTTLS with authentication was

@@ -157,6 +157,29 @@ Any relay that accepts SMTP submission works: a transactional email
 provider (Brevo, Resend, Mailgun, Amazon SES, …) with a sender domain
 authenticated by SPF, DKIM and DMARC, or a mail server on the same machine.
 
+### The privacy address
+
+`privacy@sotyware.com`, the contact the privacy notice and the issue
+forms name, is set up outside the service (2026-11-17, by the
+maintainer, nothing of it in this repository):
+
+- **Receiving:** ImprovMX (free plan) forwards it to the maintainer's
+  inbox; its two MX records are on `sotyware.com` in the domain's DNS
+  (Route 53). The domain has one SPF record, holding both
+  `include:spf.brevo.com` and `include:spf.improvmx.com`.
+- **Replying:** the maintainer's mail client sends as the address through
+  Brevo's SMTP relay with an SMTP key of its own, not the service's
+  `SOTYWARE_SMTP_PASSWORD`, so either can be revoked alone.
+- **Brevo's IP blocking is off.** The mail client's servers send from
+  addresses that cannot be listed in advance, so the account-wide
+  *Authorised IPs* restriction (step 2 of
+  [server-setup.md](server-setup.md#2-set-up-brevo-for-sending-mail)) was
+  turned off. The service's SMTP key is no longer bound to the VM's
+  address: whoever holds it can send as sotyware.com from anywhere until
+  it is revoked. Keep it only on the VM.
+- A first test mail landed in a spam folder (a new
+  sending address); not investigated further.
+
 ## External gates
 
 Done on 2026-11-17 (ADR-045): hosting (a Google Cloud free-tier VM), the
@@ -171,8 +194,8 @@ first upload and restore check that day). Still open:
 - A privacy notice (what the service stores; see the table above): drafted
   on 2026-11-17 in [privacy.md](../user/privacy.md), its open points
   settled the same day (the maintainer responsible, contact
-  `privacy@sotyware.com`, which still has to be created); not yet
-  published.
+  `privacy@sotyware.com`, working since that day:
+  [the privacy address](#the-privacy-address)); not yet published.
 
 ## Production deployment proposal (2026-11-15)
 
