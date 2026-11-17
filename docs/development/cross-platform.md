@@ -16,8 +16,11 @@ Mobile is not a target; the `#[cfg_attr(mobile, tauri::mobile_entry_point)]` on
   `tray::unavailable_reason()` (only Linux has tray errors that mean "no
   tray host"), the credential store backends in `cloud/keyring.rs` (one per
   OS), the macOS menu bar and Dock click (`app_menu.rs`, `RunEvent::Reopen`
-  in `lib.rs`), and `cfg!(windows)` for whether an installer finishes an
-  update (`updates.rs`). The rest of the code sees only the
+  in `lib.rs`), `cfg!(windows)` for whether an installer finishes an
+  update (`updates.rs`), and the autoclicker's input backends
+  (`automation/native.rs` picks `windows.rs` or `x11.rs`, none on macOS;
+  everything else in `automation/` is platform-independent and tested on
+  every platform through the mock backend). The rest of the code sees only the
   `OperatingMode`. Keep pure decisions in plain functions so every
   platform's tests check them (as `macos_kind` and `app_menu`'s
   `MenuAction` are tested on Linux too).
@@ -58,6 +61,7 @@ Unix socket; builds on a Mac only, one per architecture. Details:
 | Single-instance IPC | named mutex `<identifier>-sim` + hidden message window, `WM_COPYDATA` | D-Bus session bus name `<identifier>.SingleInstance` |
 | Focus on second launch | subject to foreground-lock rules; plugin calls `AllowSetForegroundWindow` | up to the window manager / compositor |
 | Build host | must build on Windows, from a Windows path | native or WSL2 |
+| Input automation (ADR-050) | `SendInput`, low-level hooks, `RegisterHotKey` on one input thread; physical pixels (per-monitor DPI aware v2); no input to elevated programs (UIPI) | X11 only: XTest, RECORD, `XGrabKey` (libraries loaded at runtime); refused on Wayland sessions; macOS: none ([automation.md](../architecture/automation.md#native-input)) |
 | Application manifest | Common Controls v6 manifest embedded by the linker into every binary, unit-test binaries included (`build.rs`, ADR-034); without it a test that builds a Tauri app does not start | none |
 
 `<identifier>` is `com.sotyware.desktop` from `src-tauri/tauri.conf.json`.

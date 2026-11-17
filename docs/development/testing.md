@@ -1762,6 +1762,76 @@ of the [Cloud Storage UI end-to-end test](#cloud-storage-ui-end-to-end-test)
 against a local server only. Not run: macOS, Windows junctions and file
 locking, Explorer, APFS case rules, a real provider.
 
+## Autoclicker tests
+
+The autoclicker and macros (ADR-050, [automation.md](../architecture/automation.md#testing)).
+Everything below except the three real-input tests runs in
+`npm run test:headless` and in CI, and never sends or records real input:
+the engines run on a mock backend and a fake clock.
+
+```bash
+cd src-tauri && cargo test --lib automation
+npm run test:frontend -- src/Autoclicker.test.ts src/automationFormat.test.ts src/App.test.ts src/navigation.test.ts
+```
+
+- `automation/clicker.rs`, `recorder.rs`, `player.rs`: the engines with
+  exact timing (`FakeClock` moves time only when an engine waits, and
+  pauses, resumes or stops a session at given times): interval and count
+  accuracy, endless runs and stops, pause and resume, random intervals,
+  double clicks, batches, positions and areas, the fail-safe corner,
+  sotyware's own window, time limits; the recorder's timing, sampling,
+  shortcut stripping, filters and pauses; playback timing, speed,
+  repetition, sections, jitter, placement (pointer, window, changed
+  monitors, off-screen points), target programs, pause points, released
+  keys and buttons.
+- `automation/model.rs`, `keys.rs`, `timing.rs`, `input.rs`: validation,
+  the JSON shapes (strict; no unknown action), the key table, shortcut
+  rules, conflicts, monitor mapping, fail-safe corners, the real clock's
+  wake-up on stop and pause, held-input release.
+- `automation/tests.rs`: the service with an in-memory store and the mock
+  backend (registration, conflicts, shortcut presses, sessions,
+  confirmations, recording to a macro, playback, library, profiles,
+  persistence, import/export, broken stores, the feature's stop, the
+  status shape); `storage/automation.rs` on real files.
+- `automation/windows.rs` (Windows only): coordinate normalisation and the
+  keyboard inputs built for `SendInput` (no input is sent).
+
+**X11, real input on a private display** (Linux, opt-in; needs `Xvfb`,
+libXtst and libXrandr). Starts its own Xvfb on an abstract socket (as
+`virtual.sh` does, since `/tmp/.X11-unix` is read-only under WSLg),
+creates a window there and sends, records and grabs only on that display:
+
+```bash
+cd src-tauri && cargo test --lib automation::x11 -- --ignored --test-threads=1
+```
+
+**The app, real input on a private display** (Linux, opt-in): the
+`autoclicker` phase of the [Linux desktop driver](#cloud-storage-ui-end-to-end-test)
+drives the test-profile build's Autoclicker page through AT-SPI and sends
+real input through XTest, but only on the script's own Xvfb display, into
+a window of the driver that records what it receives:
+
+```bash
+npm run build:test-profile && tests/desktop/cloud-ui.sh autoclicker
+```
+
+**Windows, real input on the real desktop** (opt-in, **moves the pointer
+and clicks**; run it only on a desktop nobody is using, never in CI). It
+clicks only into a topmost window it creates, checks that window is under
+each point first (else it fails without sending), sends keys only while
+that window has the keyboard (else it skips those checks and says so) and
+puts the pointer back:
+
+```powershell
+cd src-tauri; cargo test --lib automation::windows::desktop -- --ignored --test-threads=1
+```
+
+The frontend tests mount the page with Tauri's IPC mocks (a fake channel
+for `watch_automation`). The page was also looked at in Chromium, the
+engine of WebView2, through a throwaway Vite harness (the shell with IPC
+mocks answering sample data, headless Edge screenshots; not kept in the
+repository); that is not the app in WebView2.
+
 ## Update tests
 
 ```bash
@@ -1857,6 +1927,7 @@ sotyware's output. Account ids and labels are new for every run
 | Windows `-Mode b2-lifecycle -Scenario <scenario>` | **Connected** for the upload key (`b2-upload.xml`) | one upload lifecycle scenario (multipart, cancel, retry, leave, quit) through the dashboard with the release settings, [described above](#upload-lifecycle-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs it against the local s3s-fs server |
 | Linux `sync`, Windows `-Mode sync` | — (Windows: **Connected**) | folder sync (ADR-043) against the in-memory versioned server of `serve_sync_for_ui` (`src-tauri/src/cloud/test_server/sync_ui.rs`, one versioned bucket seeded with `welcome.txt` and `docs/plan.txt`, made-up key), which plays a second computer on the same bucket through its `.ctl` file (`put <key> <text>`, `delete <key>`) and answers `dump` with every key's current SHA-256, versions and delete markers and the app's operations. Through the bucket's **Sync** tab: Choose folder… in the **native folder dialog** (GTK: as in `files`; Windows: the pick-folders dialog, Folder box and Select Folder by control id) → the confirmation names the empty folder → Start sync → `.sotyware-sync/root.json`; the first pass brings both files down byte for byte; a file written into the folder reaches the bucket; a file put at the server comes down (Sync now pressed every 10 s, so nothing waits for the 5-minute listing); a local rename becomes a rename in the bucket (the old key a delete marker, its version kept); a file deleted at the server leaves the folder and lands in `.sotyware-sync/trash/<day>/` with its content; a file changed on both sides is kept twice (both contents survive, one under `plan (conflicted copy …)`); then sotyware is ended and started again in the same profile (Linux: the window's close, which quits in dashboard-only mode; Windows: `Stop-Process`, as closing only hides in tray mode and the tray Quit would move the mouse), the **startup connection check** (ADR-046) must reach the server with no click (its `HeadBucket` count grows; folder sync sends none) and the account show Connected, and a file written after the restart must reach the bucket with no click; Turn sync off… changes nothing in the folder or the bucket. Every step is checked on disk and at the server. The server fails the phase if a real version was ever removed by id, the app sent a request folder sync and the check do not send, or no transfer reached it. The phase is in `cloud_ui_sync.py`, run by `cloud_ui.py` |
 | Linux `account`, Windows `-Mode account` | — (Windows: **Network error**: this mode's storage account points nowhere) | the GitHub pages of ADR-049 and the sotyware account. A test-profile build never starts a browser: `open_github_page` appends the address to `opened-pages.txt` in the run's profile, which the driver reads. Settings › About & updates: nothing recorded before a click; **Send feedback** → exactly the feedback form's URL; **Report a bug** → the bug form with `version=<x.y.z>&os=Linux%2C%20<arch>` (Windows: `Windows%2C%20<arch>`) and nothing else; **Privacy notice** → the notice on `main`. Then sign-up against a local account service, this checkout's `server/target/release/sotyware-server` (built by the script if needed; loopback, a free port, its own database in the run's folder, no mail relay, so mails stay in its outbox), reached through `SOTYWARE_ACCOUNT_SERVER`, which only debug and test-profile builds read: the age line only in Create account; its Privacy notice link records the notice and sends nothing; register (the service's database: the address, not verified); the code read with `sotyware-server outbox`; Verify and sign in (verified); Set up sync → the recovery key shown once, typed again, I saved it → the synced state (the service holds the recovery wrap and a vault containing neither the key, the password nor the address); Delete account… with the password → gone from the service. The service's database is read directly (Linux: Python's `sqlite3`; Windows: Node's built-in `node:sqlite`); the phase fails if the service logged an error or the password or recovery key reached sotyware's output. The phase is in `cloud_ui_account.py`, run by `cloud_ui.py` |
+| Linux `autoclicker` | — | the autoclicker and macros (ADR-050) with **real input through XTest, on the script's private display only**, into a plain window of the driver that records every click and key it receives (no keyring, no server; the X11 backend works because the script unsets `WAYLAND_DISPLAY`): off by default (the driver can grab F6 and F8 itself; F6 does nothing); **Turn on** → the six suggested shortcuts registered (the driver can grab none of them); the Clicker tab's At a fixed position, X, Y, Stop after 25 clicks and 20 per second, typed as real keys → saved in the profile (`automation.sqlite3`, read directly); **Start autoclicker** → no click in the countdown's first 2 s, then exactly 25 left clicks at that position; from the test window F6 starts and stops it, F7 pauses (no click while paused) and resumes it, F8 (the emergency stop) stops it, the pointer pushed into a corner stops it; with the pointer on sotyware's own window every click is skipped and counted; F9 records two clicks and the key A typed into the test window, F10 stops, **Save macro** → the database holds both clicks where they were made and the key, nothing of F9 or F10; **Play** replays them into the test window; after every stop no button or key is held (`XQueryPointer`, `XQueryKeymap`); Settings › Features turns it off → the driver can grab all six shortcuts again and F6 does nothing. The phase is in `cloud_ui_autoclicker.py`, run by `cloud_ui.py` |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this

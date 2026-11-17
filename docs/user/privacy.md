@@ -31,7 +31,9 @@ question about your information, or to use your rights, write to
 
 sotyware runs on your computer. Your storage accounts' settings, the
 operation journal, backup jobs, folder syncs, preferences and window
-position are stored in files on your computer. Your storage keys are
+position are stored in files on your computer, and so are the
+autoclicker's profiles and the macros you record, including anything you
+type while recording one (in plain text). Your storage keys are
 stored in your operating system's credential store (Windows Credential
 Manager, the macOS login keychain or the Linux Secret Service). None of
 this is sent to us.
@@ -161,5 +163,7 @@ We publish every change in this file in the sotyware repository
 that affect what we collect, why, or who receives it are announced in the
 release notes at least 30 days before they apply.
 
-Last changed: 2026-11-17, with sotyware 0.1.2, the first version that
+Last changed: 2026-11-17, to list the autoclicker's profiles and macros
+among what stays on your computer (nothing new is collected or sent).
+Before that: 2026-11-17, with sotyware 0.1.2, the first version that
 offers sotyware accounts.

@@ -24,6 +24,8 @@ and the [journal](../status/journal.md), not here.
 | Session tokens | Refresh token in the OS credential store; access token in memory | Act as the user towards the account service |
 | Update signing key | Release maintainer's secret storage / CI secret (not in the repository) | Whoever holds it can ship code to every installation |
 | Local databases | App local data folder (`%LOCALAPPDATA%\com.sotyware.desktop`, `~/.local/share/com.sotyware.desktop`) | Configuration, favorites, journal, backup history; no secrets |
+| Recorded macros (ADR-050) | `automation.sqlite3` in the same folder; export files where the user saves them | Whatever the user typed while recording, in plain text (a password typed then is in the macro) |
+| Input automation (ADR-050) | The `autoclicker` feature's native backend, while it runs | Sends clicks and keys to any program the user's session can reach, and records the user's input while a recording runs |
 
 ## Trust boundaries
 
@@ -172,6 +174,33 @@ and the [journal](../status/journal.md), not here.
   no named pipes beyond the single-instance plugin, which only shows the
   dashboard).
 
+### Input automation misused or running away (ADR-050)
+
+- *Threats:* a macro or the autoclicker clicks or types where the user did
+  not mean (a wrong window, a runaway loop); a stopped session leaves a key
+  or button held; an imported macro file carries something harmful; the
+  recorder captures a password.
+- *Controls:* off by default; nothing starts unless the user starts it (a
+  click on the page, a shortcut while the feature runs), never after a
+  restart; one session at a time; the emergency stop shortcut, the
+  fail-safe corners and the page's Stop (sotyware's own window is never
+  clicked or typed into, so Stop always works); an endless run started
+  from the page without a registered emergency stop needs confirming;
+  every held key and button is released on every exit path, including a
+  panic; a macro's target program can stop playback before keys reach
+  another program. Macro files are data only: eight action kinds with
+  bounded values, unknown fields refused, imported shortcuts switched off;
+  nothing is ever executed. Power, Sleep and Wake keys cannot be recorded
+  or replayed. The recorder skips sotyware's own window and the shortcut
+  keys, and the Recorder tab warns that typed text is stored in plain
+  text. The page never sends or records input itself: only Rust does,
+  through the commands listed in the capability.
+- *Residual:* a macro does what it was recorded or edited to do, in
+  whatever program is in front (without a target program); macros are not
+  encrypted at rest; a process killed from outside cannot release a held
+  key (the user's next press of it does); on Windows, input to programs
+  running as administrator is blocked by the system, not by sotyware.
+
 ### Another user on the same computer
 
 - *Controls (2026-11-15):* the data folder is private to the user: on Linux
@@ -246,6 +275,9 @@ and the [journal](../status/journal.md), not here.
   `outbox` table until it is sent (seconds, at most a day while the relay
   refuses), so a database backup taken then contains it; codes expire after
   15 minutes.
+- The autoclicker (ADR-050) records input only during a recording the user
+  started, keeps macros and profiles on this computer and sends nothing
+  anywhere; macros leave the computer only in files the user exports.
 - An update check sends a plain GET with `User-Agent: sotyware/<version>`;
   GitHub (and its asset store) learns the IP address, the time and the
   version.
@@ -291,3 +323,6 @@ lock files of this commit:
 7. Backups are stored as plaintext objects (readable by anyone with read
    access to the backup bucket), chosen so they stay restorable with
    standard tools; use a private bucket with a dedicated key.
+8. Recorded macros keep typed text in plain text on this computer, and a
+   running macro acts on whatever program is in front unless it has a
+   target program (ADR-050).

@@ -10,7 +10,7 @@ The user's enable/disable choice is saved and survives restarts
 Third-party plugins, WASM and a management UI do not exist
 ([what is deferred](#deferred)).
 
-Today there are three features: `backup-scheduler` ("Scheduled backups",
+Today there are four features: `backup-scheduler` ("Scheduled backups",
 on by default, 2026-11-15, ADR-031), which starts and stops the backup
 scheduler of `crate::backup` (see [backup.md](backup.md#scheduling)),
 `update-check` ("Automatic update checks", on by default, 2026-11-15,
@@ -20,7 +20,13 @@ update source is configured; see [updates.md](updates.md#flow)), and
 `folder-sync` ("Folder sync", on by default, 2026-11-16, ADR-043), which
 starts and stops the engines of `crate::folder_sync` (one per sync that is
 not paused; switched off, no sync runs and the syncs stay configured; see
-[folder-sync.md](folder-sync.md#lifecycle)).
+[folder-sync.md](folder-sync.md#lifecycle)), and `autoclicker`
+("Autoclicker", **off by default**, 2026-11-17, ADR-050), which opens the
+input backend and registers the autoclicker's global shortcuts while it
+runs (switched off or at exit: any automation stops, held keys and buttons
+are released, the shortcuts are unregistered; it fails to start, with the
+reason as its error, where the system has no input backend; see
+[automation.md](automation.md#lifecycle)).
 The `example` feature of sotyware 0.1.0, which did nothing visible, was
 removed on 2026-11-15: Settings › Features no longer lists it, and the
 desktop tests switch "Scheduled backups" instead (with no backup job it
@@ -39,6 +45,7 @@ file ([Persistence](#persistence)); nothing is migrated or deleted.
 | `FeaturePreferences`, `PreferenceStore` | `features/preferences.rs` | The stored choices: decides at startup whether a feature runs (`enabled_at_startup`: stored choice, else the default) and saves each switch. `PreferenceStore` is the two-method storage trait |
 | `SqliteStore` | `storage.rs` | The `PreferenceStore` implementation: `preferences.sqlite3`, schema and migrations |
 | `list_features`, `set_feature_enabled` | `features/mod.rs` | The frontend's only access to features |
+| `Autoclicker` | `features/autoclicker.rs` | Starts and stops `automation::Automation` through `automation::LINK` (off by default; its `start` can fail with the system's reason) |
 | `BackupScheduler` | `features/backup.rs` | Starts and stops the backup scheduler through `backup::SCHEDULER_LINK`, set in `run()` before the event loop (without it, as in unit tests, start and stop do nothing) |
 | `src/features.ts`, `src/Features.svelte` | frontend | Typed command wrappers that validate responses; the Features list in Settings › Features (ADR-035) |
 

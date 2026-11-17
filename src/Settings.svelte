@@ -118,7 +118,7 @@
             </dd>
             <dt>Keyboard</dt>
             <dd>
-              <kbd>{mac ? "⌘" : "Ctrl"}</kbd> + <kbd>1</kbd>–<kbd>3</kbd> switch sections, <kbd>{mac ? "⌘" : "Ctrl"}</kbd> +
+              <kbd>{mac ? "⌘" : "Ctrl"}</kbd> + <kbd>1</kbd>–<kbd>4</kbd> switch sections, <kbd>{mac ? "⌘" : "Ctrl"}</kbd> +
               <kbd>,</kbd> opens Settings. In a bucket: <kbd>{mac ? "⌘" : "Ctrl"}</kbd> + <kbd>F</kbd> searches,
               <kbd>F2</kbd> renames, <kbd>{mac ? "⌘⌫" : "Delete"}</kbd> deletes after review.
             </dd>

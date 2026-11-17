@@ -64,10 +64,11 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | --- | --- | --- |
 | Binary entry point | `src-tauri/src/main.rs` | Calls `sotyware_lib::run()`. Nothing else. |
 | Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup` and picks the `OperatingMode`, turns window close into hide (tray mode) or exit (dashboard-only mode), adds the hide capability in tray mode only, serves the `operating_mode` command, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`select_mode`, `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
-| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the two features (`backup.rs`, `updates.rs`). Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
+| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the features (`backup.rs`, `updates.rs`, `folder_sync.rs`, `autoclicker.rs`). Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | Cloud storage | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id in the OS credential store (`OsCredentialStore`, ADR-017), and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. `dashboard.rs`: `CloudAccounts` (managed state) and the six account commands; `browser.rs`: `list_cloud_folder`; `download.rs`: `CloudDownloads` (managed state, one download at a time) and the three download commands, with the native save dialog opened from Rust (`tauri-plugin-dialog`); `upload.rs`: `CloudUploads` (managed state, one upload batch at a time in its own slot) and the three upload commands, with the native multi-file dialog opened from Rust; the browser's upload panel (`src/CloudUpload.svelte`) calls them. No other changes to objects are reachable ([ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust), [cloud-storage.md](cloud-storage.md#dashboard), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)). |
 | Folder sync | `src-tauri/src/folder_sync/`, `src-tauri/src/storage/folder_sync.rs`, `src-tauri/src/features/folder_sync.rs` | `FolderSyncs` (managed state): syncs of an account's bucket with a folder on this computer, in both directions, one background engine per sync while the `folder-sync` feature runs; three-way comparison against the synced state in `folder-sync.sqlite3`, file watcher (`notify`), periodic listing, live checks before every change, sync trash, deletion guard, conflicts kept twice; the 16 folder sync commands ([folder-sync.md](folder-sync.md), [ADR-043](decisions.md#adr-043-folder-sync-keeps-a-chosen-folder-and-a-bucket-in-step-by-a-three-way-comparison-with-guarded-deletions-and-one-background-engine-per-sync)). |
+| Autoclicker and macros | `src-tauri/src/automation/`, `src-tauri/src/storage/automation.rs`, `src-tauri/src/features/autoclicker.rs` | `Automation` (managed state): the autoclicker, recording and macro playback, one session at a time, global shortcuts, profiles and the macro library in `automation.sqlite3`, only while the built-in feature `autoclicker` (off by default) runs; native input through the `Backend` trait: Windows (`SendInput`, low-level hooks, `RegisterHotKey`), X11 (XTest, RECORD, `XGrabKey`); the 29 automation commands ([automation.md](automation.md), [ADR-050](decisions.md#adr-050-the-autoclicker-sends-and-records-input-in-rust-through-native-apis-one-session-at-a-time-behind-an-opt-in-feature)). |
 | macOS menu bar | `src-tauri/src/app_menu.rs` | macOS only: the application, Edit and Window menus; its Quit calls `AppControl::quit` like the tray's, and the Edit menu is what gives the webview ⌘C/⌘V ([ADR-037](decisions.md#adr-037-macos-is-a-supported-build-target-keychain-a-menu-bar-separate-apple-silicon-and-intel-builds)). A Dock click (`RunEvent::Reopen`) shows the dashboard. |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`, the six cloud account commands, `list_cloud_folder`, the three download and the three upload commands), so each needs a permission. |
@@ -77,7 +78,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 100 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 129 custom commands
   and Tauri's window API. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -137,7 +138,19 @@ Boundaries that hold today:
   feedback" and "Report a bug" open a GitHub issue form in the browser,
   and the privacy notice links there and on the account sign-up form open
   `docs/user/privacy.md`; the page names only which one, Rust builds the
-  URL, a bug report carries the version and the operating system);
+  URL, a bug report carries the version and the operating system), and
+  the 29 automation commands of ADR-050: `automation_status`,
+  `watch_automation`, `unwatch_automation`, `automation_config`,
+  `start_clicker`, `play_macro`, `start_recording`,
+  `set_automation_paused`, `stop_automation`, `save_recording`,
+  `discard_recording`, `list_macros`, `get_macro`, `create_macro`,
+  `save_macro`, `update_macro_info`, `duplicate_macro`, `delete_macro`,
+  `create_profile`, `save_profile`, `delete_profile`, `activate_profile`,
+  `set_default_profile`, `save_automation_settings`, `export_automation`,
+  `import_automation` (both through dialogs Rust opens),
+  `capture_cursor_position`, `capture_active_window`, `screen_layout`
+  (the page sends ids and documents; input is sent and recorded only by
+  Rust, [automation.md](automation.md#commands));
   none returns a stored credential (a share link carries the access key
   id, never the secret), none accepts a local path, and only the folder
   sync commands return one: the sync folder the user chose, to show it. The built-in calls are Tauri's window API:
@@ -169,7 +182,10 @@ Boundaries that hold today:
 - **Little background work.** Besides the backup scheduler, the update
   checks and the folder sync engines (each a built-in feature the user can
   switch off; folder sync lists each synced bucket at its interval and
-  watches each sync folder, ADR-043), everything is driven by Tauri events
+  watches each sync folder, ADR-043), and the autoclicker (ADR-050: off
+  by default; while on, one input thread waits for shortcut presses, and a
+  session's thread runs only while the user's autoclicker, recording or
+  macro runs), everything is driven by Tauri events
   and user actions.
   `set_feature_enabled` (an `async` command)
   runs on Tauri's async runtime, off the event loop, and so does the
@@ -185,7 +201,9 @@ Boundaries that hold today:
   databases are read once, before the event loop starts.
 - **Network only on request, except for the built-in features.** Folder
   sync (ADR-043) sends requests on its own while a sync runs:
-  [folder-sync.md](folder-sync.md#transfers-and-requests). Otherwise:
+  [folder-sync.md](folder-sync.md#transfers-and-requests). The autoclicker
+  (ADR-050) sends nothing over the network; its settings, profiles and
+  macros stay in `automation.sqlite3` unless the user exports them. Otherwise:
   stored: each feature's
   enabled choice (`preferences.sqlite3`), the storage accounts'
   configurations (`cloud-accounts.sqlite3`) and their favorites and recent

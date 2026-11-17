@@ -841,7 +841,7 @@ check("12 tray mode: checking it again starts it", on,
 # unchanged.
 links = [n for n, _ in page_links(tm.pid)] if page else []
 check("12 tray mode: the sidebar has the section links (no storage account yet)",
-      links == ["Overview", "Cloud Storage", "Backups", "Account", "Settings"], f"links={links}")
+      links == ["Overview", "Cloud Storage", "Backups", "Autoclicker", "Account", "Settings"], f"links={links}")
 to_cloud = page and click_link(tm.pid, "Cloud Storage") and wait_for(
     lambda: "No storage accounts yet" in page_text(tm.pid), 10)
 text = page_text(tm.pid) if page else ""

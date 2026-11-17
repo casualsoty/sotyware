@@ -43,6 +43,7 @@
 
 pub(crate) mod account;
 mod app_menu;
+pub(crate) mod automation;
 pub(crate) mod backup;
 pub mod cloud;
 mod features;
@@ -455,6 +456,35 @@ pub fn run() {
             folder_sync::resolve_folder_sync_conflict,
             folder_sync::answer_folder_sync_deletions,
             github_page::open_github_page,
+            automation::automation_status,
+            automation::watch_automation,
+            automation::unwatch_automation,
+            automation::automation_config,
+            automation::start_clicker,
+            automation::play_macro,
+            automation::start_recording,
+            automation::set_automation_paused,
+            automation::stop_automation,
+            automation::save_recording,
+            automation::discard_recording,
+            automation::list_macros,
+            automation::get_macro,
+            automation::create_macro,
+            automation::save_macro,
+            automation::update_macro_info,
+            automation::duplicate_macro,
+            automation::delete_macro,
+            automation::create_profile,
+            automation::save_profile,
+            automation::delete_profile,
+            automation::activate_profile,
+            automation::set_default_profile,
+            automation::save_automation_settings,
+            automation::export_automation,
+            automation::import_automation,
+            automation::capture_cursor_position,
+            automation::capture_active_window,
+            automation::screen_layout,
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -720,6 +750,14 @@ pub fn run() {
     app.manage(cloud::usage::StorageUsage::load(storage::open_usage_store(
         clone_dir(&data_dir),
     )));
+    // The autoclicker (ADR-050): its settings, profiles and macros in their
+    // own database; the `autoclicker` feature (off by default) opens the
+    // input backend and registers the shortcuts in `setup` through this
+    // link. Nothing sends or records input before that.
+    let automation =
+        automation::Automation::load(storage::open_automation_store(clone_dir(&data_dir)));
+    let _ = automation::LINK.set(Arc::clone(&automation));
+    app.manage(automation);
     // Where the dashboard was last (ADR-040): read now, applied in `setup`
     // before the window is first shown.
     app.manage(window_state::WindowStates::load(
@@ -743,6 +781,7 @@ pub fn run() {
             storage::WINDOW_STATE_FILE_NAME,
             storage::USAGE_FILE_NAME,
             storage::SYNC_FILE_NAME,
+            storage::AUTOMATION_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -775,6 +814,12 @@ pub fn run() {
 pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
         registry.stop_all();
+    }
+    // Any automation stops and every key and button it held is released
+    // (bounded wait, ADR-050); the `autoclicker` feature's stop above has
+    // done it if it ran.
+    if let Some(automation) = app.try_state::<Arc<automation::Automation>>() {
+        automation.shutdown();
     }
     if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
         prefs.close();
@@ -1099,12 +1144,12 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041, ADR-043, ADR-049); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041, ADR-043, ADR-049, ADR-050); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY), and the window controls on Windows only
         // (title_bar::CAPABILITY).
         assert_eq!(
             cap["permissions"],
-            serde_json::json!([
+            serde_json::Value::from(vec![
                 "allow-operating-mode",
                 "allow-list-features",
                 "allow-set-feature-enabled",
@@ -1205,6 +1250,35 @@ mod tests {
                 "allow-resolve-folder-sync-conflict",
                 "allow-answer-folder-sync-deletions",
                 "allow-open-github-page",
+                "allow-automation-status",
+                "allow-watch-automation",
+                "allow-unwatch-automation",
+                "allow-automation-config",
+                "allow-start-clicker",
+                "allow-play-macro",
+                "allow-start-recording",
+                "allow-set-automation-paused",
+                "allow-stop-automation",
+                "allow-save-recording",
+                "allow-discard-recording",
+                "allow-list-macros",
+                "allow-get-macro",
+                "allow-create-macro",
+                "allow-save-macro",
+                "allow-update-macro-info",
+                "allow-duplicate-macro",
+                "allow-delete-macro",
+                "allow-create-profile",
+                "allow-save-profile",
+                "allow-delete-profile",
+                "allow-activate-profile",
+                "allow-set-default-profile",
+                "allow-save-automation-settings",
+                "allow-export-automation",
+                "allow-import-automation",
+                "allow-capture-cursor-position",
+                "allow-capture-active-window",
+                "allow-screen-layout",
                 "core:window:allow-set-theme",
                 "core:window:allow-is-decorated",
             ])

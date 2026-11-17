@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Indicator } from "./automationModel.svelte";
   import type { AccountInfo } from "./cloud";
   import Icon, { type IconName } from "./Icon.svelte";
   import Logo from "./Logo.svelte";
@@ -29,6 +30,8 @@
     folderSync?: { tone: "success" | "warning" | "danger" | "info"; text: string } | null;
     /** Synced accounts: the state of each one's folder sync. */
     syncedAccounts?: Record<string, { tone: string; label: string }>;
+    /** What the autoclicker is doing, when it runs something (ADR-050). */
+    automation?: Indicator;
   }
 
   let {
@@ -44,12 +47,16 @@
     syncStatus = null,
     folderSync = null,
     syncedAccounts = {},
+    automation = null,
   }: Props = $props();
+
+  const AUTOMATION_LABELS = { recording: "recording", running: "running", paused: "paused" } as const;
 
   const MAIN: { id: Section; title: string; icon: IconName; key: string }[] = [
     { id: "overview", title: "Overview", icon: "overview", key: "1" },
     { id: "cloud-storage", title: "Cloud Storage", icon: "cloud", key: "2" },
     { id: "backups", title: "Backups", icon: "backup", key: "3" },
+    { id: "autoclicker", title: "Autoclicker", icon: "pointer", key: "4" },
   ];
 
   const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
@@ -85,7 +92,11 @@
         class="nav-item"
         aria-current={section === s.id && (s.id !== "cloud-storage" || browsing === null) ? "page" : undefined}
         title="{s.title} ({mod}{s.key})"
-        onclick={(e) => go(e, s.id)}><Icon name={s.icon} />{s.title}</a
+        onclick={(e) => go(e, s.id)}><Icon name={s.icon} /><span class="grow">{s.title}</span>{#if s.id === "autoclicker" && automation !== null}<span
+            class="automation {automation}"
+            data-sidebar-automation={automation}
+            aria-hidden="true"
+          ></span><span class="visually-hidden">, {AUTOMATION_LABELS[automation]}</span>{/if}</a
       >
     {/each}
   </nav>
@@ -325,6 +336,24 @@
   .grow {
     flex: 1;
     min-width: 0;
+  }
+
+  /* The autoclicker runs something: green, red while recording, amber
+     when paused (the text says which too). */
+  .automation {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--success);
+  }
+
+  .automation.recording {
+    background: var(--danger-solid);
+  }
+
+  .automation.paused {
+    background: var(--warning);
   }
 
   .bottom {

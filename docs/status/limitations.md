@@ -1145,6 +1145,73 @@ server only; no real provider was asked.
   sync folder's drive and is emptied after 30 days, not when the drive is
   full.
 
+## Autoclicker (ADR-050)
+
+- **Where it was tested** ([status](status.md#autoclicker-and-macros-2026-11-17)):
+  the engines, the service and the page headless (mock backend and fake
+  clock; Tauri's IPC mocks), on WSL2 and on native Windows 11 (Rust only
+  there); the X11 backend with real input on a private Xvfb display only;
+  the Windows backend type-checked, clippy-checked and unit-tested on
+  native Windows 11, but its real-input desktop test
+  (`automation::windows::desktop`) **has not been run** (it moves the
+  pointer; the maintainer runs it on an idle desktop). Never on a real
+  Linux desktop, never on macOS, never driven through the app's own window
+  by a desktop test.
+- **Platforms:** Windows and Linux on X11 only. **Wayland** sessions get
+  nothing (the system lets no application send or record other programs'
+  input; a portal-based backend would be a new decision); **macOS** has no
+  backend (CGEvent and an event tap need Accessibility permission and a
+  signed app). On those systems macros and profiles can still be edited,
+  imported and exported, and the feature fails to start with the reason.
+- **Windows' own rules:** input does not reach programs running as
+  administrator unless sotyware also runs as administrator (UIPI;
+  `SendInput` reports success anyway, so sotyware cannot tell), nor UAC
+  prompts, the lock screen or other secure desktops; recording does not
+  see input to those either. Games with anti-cheat may ignore or refuse
+  injected input.
+- **Timing** depends on the system's timer: on Windows a click lands within
+  about a millisecond of its time (high-resolution sleeps), but the system
+  may coalesce or delay input under load; rates above about 100 clicks per
+  second are often dropped by the receiving program. Recorded times have
+  millisecond precision.
+- **Positions** are physical pixels of the virtual desktop. Absolute
+  positions adapt to changed monitors by role and relative place (with
+  "Adapt to changed screens"), not by what is on them; a window-relative
+  macro needs the window it was recorded with to be active at the start.
+  Points between monitors of different sizes are moved onto the nearest
+  monitor.
+- **Keys** are physical keys (scan codes): a macro recorded on one layout
+  types what those keys type on the layout in use when it plays. Text
+  cannot be typed as text (no Unicode injection); keys outside the table
+  (some media and OEM keys) are left out of recordings and counted.
+  Shortcuts that would take a typing key alone are refused; F12 alone is
+  Windows' debugger key.
+- **The pointer is moved for clicks** at a position (it stays where the
+  last click left it); clicks "where the pointer is" never move it.
+- **The fail-safe corners** only work when the pointer can reach a corner
+  between two actions (fast clicking at a fixed position moves it back
+  every interval), and not at the exact spot the run itself clicks or
+  moves to (a position in a corner is clicked; pushing the pointer there
+  is then indistinguishable from the run's own move). A single push in the
+  instant between the last check and the run's next move is undone by
+  that move; a hand keeps pushing, a script moving the pointer once may
+  not. The emergency stop shortcut and the page's Stop always work.
+- **A process killed from outside** (Task Manager, a crash that is not a
+  Rust panic, power loss) cannot release a key or button a macro held;
+  pressing and releasing that key or button releases it. Nothing restarts
+  afterwards.
+- **Recordings hold typed text in plain text** in `automation.sqlite3` (not
+  encrypted at rest) and in exported files; they are not part of sync or
+  backups.
+- **One session at a time**; no scheduling (start at a time), no
+  conditions on screen content (pixel colours, images), no variables or
+  loops other than repetitions and one repeated section, no text typing
+  actions.
+- **Not implemented** although asked for "where feasible": starting
+  sotyware at login and starting it minimised (an app-wide lifecycle
+  change, listed under the roadmap's ideas), relative pointer movement
+  for games that read raw mouse deltas (moves are absolute).
+
 ## Dashboard (ADR-035)
 
 - **The theme is per webview profile:** it lives in the webview's

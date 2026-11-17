@@ -7,16 +7,17 @@ import { shellShortcut } from "./navigation";
 const none = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
 
 describe("shellShortcut", () => {
-  it("maps Ctrl or ⌘ with 1–3 and comma to sections", () => {
+  it("maps Ctrl or ⌘ with 1–4 and comma to sections", () => {
     expect(shellShortcut({ ...none, key: "1", ctrlKey: true })).toBe("overview");
     expect(shellShortcut({ ...none, key: "2", metaKey: true })).toBe("cloud-storage");
     expect(shellShortcut({ ...none, key: "3", ctrlKey: true })).toBe("backups");
+    expect(shellShortcut({ ...none, key: "4", ctrlKey: true })).toBe("autoclicker");
     expect(shellShortcut({ ...none, key: ",", metaKey: true })).toBe("settings");
   });
 
   it("leaves every other combination to the page", () => {
     expect(shellShortcut({ ...none, key: "1" })).toBeNull();
-    expect(shellShortcut({ ...none, key: "4", ctrlKey: true })).toBeNull();
+    expect(shellShortcut({ ...none, key: "5", ctrlKey: true })).toBeNull();
     expect(shellShortcut({ ...none, key: "1", ctrlKey: true, shiftKey: true })).toBeNull();
     expect(shellShortcut({ ...none, key: "1", ctrlKey: true, altKey: true })).toBeNull();
   });

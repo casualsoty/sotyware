@@ -164,8 +164,19 @@ aws-smithy-types = "1"
 windows-native-keyring-store = { version = "1", default-features = false }
 # Already in the tree through notify and tauri: folder sync's free space
 # check (`GetDiskFreeSpaceExW`) and hiding its own folder in a sync folder
-# (`SetFileAttributesW`), ADR-043.
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+# (`SetFileAttributesW`), ADR-043; the autoclicker's input backend
+# (`SendInput`, low-level hooks, `RegisterHotKey`, monitors, the active
+# window), ADR-050. Every feature listed is compiled in the tree already
+# (through tao, tray-icon and others).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree (through async-io and others): folder sync's free
@@ -204,6 +215,14 @@ zbus-secret-service-keyring-store = { version = "1", default-features = false, f
 # can name its error type and tell "no Secret Service" and "locked" apart
 # from other failures. No features are added.
 secret-service = { version = "5", default-features = false }
+# The autoclicker's X11 backend (ADR-050): already in the tree through tao
+# and wry; loads libX11, libXtst (XTEST, RECORD) and libXrandr at runtime
+# when the feature starts, so nothing new is linked.
+x11-dl = "2"
+# Already in the tree with these features (through async-io and others):
+# the X11 shortcut thread waits in `poll` on its X connection and a wake
+# pipe (ADR-050).
+rustix = { version = "1", default-features = false, features = ["event", "pipe"] }
 
 [patch.crates-io]
 # rfd 0.17.2 (through tauri-plugin-dialog) with one function changed: the

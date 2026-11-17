@@ -26,7 +26,8 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   bar (native moving, snapping and resizing kept); it opens at half your
   primary screen (at least 900 × 540), centred, then where you left it.
 - Built-in features: native Rust modules that can be enabled and disabled from
-  the dashboard (scheduled backups, automatic update checks, folder sync); each
+  the dashboard (scheduled backups, automatic update checks, folder sync, the
+  autoclicker); each
   choice is saved locally (SQLite, in the app's data folder, private to the
   user).
 - **Cloud Storage** for S3-compatible buckets (Backblaze B2, Hetzner or any
@@ -64,6 +65,14 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
     sides is kept twice; files deleted in the bucket go to a sync trash in
     the folder for 30 days; many deletions at once wait for your answer;
     pause, move the folder or turn sync off without deleting anything.
+- **Autoclicker and macros** (Windows, and Linux on X11; off until you turn
+  it on): click automatically at any speed and position, record your mouse
+  and keyboard into macros, edit them action by action, replay them with
+  repetitions, speed and positions that follow the pointer or the window,
+  keep a macro library and profiles, and run everything from global
+  shortcuts, with an emergency stop (F8), fail-safe screen corners and
+  every held key released when anything stops
+  ([docs/user/automation.md](docs/user/automation.md)).
 - **Backups**: jobs that keep an independent, verified, versioned copy of a
   bucket (or folder) in a second account, ideally at another provider:
   scheduled or manual runs that transfer only changes, verification, a

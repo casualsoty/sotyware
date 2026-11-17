@@ -10,6 +10,7 @@
 //! sees features only through the two commands below.
 //! How to add a feature: docs/architecture/features.md.
 
+mod autoclicker;
 mod backup;
 mod folder_sync;
 mod preferences;
@@ -33,6 +34,7 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
         Box::new(backup::BackupScheduler),
         Box::new(updates::UpdateCheck),
         Box::new(folder_sync::FolderSync),
+        Box::new(autoclicker::Autoclicker),
     ]
 }
 
@@ -59,10 +61,8 @@ pub struct FeatureMetadata {
 pub struct FeatureError(String);
 
 impl FeatureError {
-    /// How a feature reports a failed start or stop. Neither built-in
-    /// feature can fail today (both only switch work that lives elsewhere),
-    /// so outside the tests nothing calls it; it stays the trait's API.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// How a feature reports a failed start or stop (the autoclicker
+    /// fails to start where the system offers no input automation).
     pub fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }

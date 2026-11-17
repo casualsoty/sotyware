@@ -58,7 +58,14 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   sotyware backup snapshot (ADR-041); automatic sync of an enrolled device on
   events (ADR-042); folder sync: an account's bucket kept in step with a
   folder the user chose, in both directions, in the background (ADR-043;
-  tested against local test servers only). No other product features exist yet. Current milestone and status:
+  tested against local test servers only); and the autoclicker and macros
+  (ADR-050: automatic clicking, recording mouse and keyboard input into
+  macros, an editor, playback with repetitions and speed, a macro library,
+  profiles and global shortcuts, sent and recorded by Rust through native
+  APIs on Windows and Linux X11 only, while the built-in feature
+  `autoclicker` runs, which is off by default; X11 tested with real input
+  on a private Xvfb only, Windows unit-tested natively, its real-input test
+  not yet run). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
@@ -90,6 +97,11 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | sync / sync folder (folder sync) | one storage account's bucket kept in step with one folder on this computer, in both directions, in the background (`SyncConfig`, ADR-043) / that folder, chosen by the user, marked by `.sotyware-sync/root.json`; not the vault sync of the sotyware account |
 | synced state | per path, what the sync folder and the bucket last agreed on (local stamp, SHA-256, ETag); the base of folder sync's three-way comparison |
 | sync trash / deletion guard | `.sotyware-sync/trash/<day>/`: files folder sync removed here because they were deleted in the bucket, kept 30 days / the rule that holds a pass's deletions for the user's answer when they are many (≥ 1,000, or ≥ 50 and more than half of the synced files) |
+| autoclicker / session (automation) | the built-in feature `autoclicker` and its page (ADR-050) / the one thing that may run at a time: the clicker, a recording or a macro's playback |
+| macro / action | a recorded or written sequence of input with its timing and playback settings, stored as a versioned JSON document (`Macro`) / one step of it (`Action`: move, button, click, scroll, key, keys, wait, pause), done its delay after the previous one |
+| profile (automation) | a named set of the clicker's configuration, shortcuts and a macro to play (`Profile`); the default profile is the one sotyware starts with |
+| binding / emergency stop | a shortcut that can be switched off without forgetting its keys (`Binding`, a `Chord` like `Ctrl+Alt+KeyR`) / the binding shared by every profile that stops whatever runs and releases what it held |
+| input backend | the platform's implementation of `automation::input::Backend` (Windows: SendInput, low-level hooks, RegisterHotKey; X11: XTest, RECORD, XGrabKey) |
 | update manifest / version floor | `sotyware-update.json`, the minisign-signed description of a release (version, channel, per-platform installer URL, signature and SHA-256) / the highest version a verified manifest ever offered this installation; anything lower is refused as a replay (ADR-033) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
@@ -138,7 +150,8 @@ Declared ranges are in the manifests; resolved versions are from the lockfiles
 | `minisign-verify` (the update manifest's signature, ADR-033; already in the tree through the updater) | `0.3` | 0.3.0 |
 | `notify` (desktop targets only, no default features but `macos_fsevent`: folder sync's file watcher, ADR-043; adds `notify-types`, `inotify`, `inotify-sys`, `kqueue`, `kqueue-sys`, `objc2-core-services`) | `8` | 8.2.2 |
 | `tauri-plugin-opener` (desktop targets only: folder sync's "Open folder" through its `open_path` and the feedback buttons through its `open_url` (feedback, bug reports, privacy notice: ADR-049), called from Rust; not registered, no `opener:` permission, ADR-043; adds `open`, `is-wsl`, `is-docker`) | `2` | 2.7.3 |
-| `rustix` (Unix only, `fs`, `std`: folder sync's free space, `statvfs`; already in the tree) / `windows-sys` (Windows only, `Win32_Storage_FileSystem`: free space and the hidden attribute; already in the tree) | `1` / `0.61` | 1.1.6 / 0.61.2 |
+| `rustix` (Unix only, `fs`, `std`: folder sync's free space, `statvfs`; Linux only also `event`, `pipe`: the autoclicker's X11 shortcut thread, ADR-050; already in the tree with all four) / `windows-sys` (Windows only, `Win32_Storage_FileSystem`: free space and the hidden attribute; `Win32_Foundation`, `Win32_Graphics_Gdi`, `Win32_System_LibraryLoader`, `Win32_System_Threading`, `Win32_UI_Input_KeyboardAndMouse`, `Win32_UI_WindowsAndMessaging`: the autoclicker's input backend, ADR-050; every feature already compiled in the tree) | `1` / `0.61` | 1.1.6 / 0.61.2 |
+| `x11-dl` (Linux only: the autoclicker's X11 backend, ADR-050; loads libX11, libXtst, libXrandr at runtime; already in the tree through tao and wry) | `2` | 2.21.0 |
 | `semver` (update versions and the version floor, ADR-033; already in the tree through Tauri) | `1` | 1.0.28 |
 | `minisign` (dev only: signs test manifests and packages with keys generated in the tests) and `tauri` feature `test` (dev only: the mock runtime that drives the updater plugin in tests) | `0.7`, `2` | 0.7.9, 2.12.5 |
 | `keyring-core` (cloud account credentials, ADR-017) | `1` | 1.0.1 |
@@ -351,6 +364,21 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   (`Destination::Replace` of the synced ETag, stored modification time);
   page `src/CloudSync.svelte` (the bucket's Sync tab), the sidebar's
   indicator through `src/folderSyncModel.svelte.ts`.
+- **Autoclicker and macros** (ADR-050, [automation.md](docs/architecture/automation.md)):
+  `src-tauri/src/automation/` (`model.rs` pure rules: clicker
+  configuration, actions, macros, playback, profiles, settings, bindings
+  and conflicts, screen geometry, the export file; `keys.rs`: the key
+  table, `Key`, `Chord`; `timing.rs`: `Control`, `Clock`; `input.rs`: the
+  `Backend` trait, `Output` (held input released on every exit path, also
+  from a panic hook), `MockBackend`; `clicker.rs`, `recorder.rs`,
+  `player.rs`: the engines; `native.rs`, `windows.rs` (SendInput, low-level
+  hooks, RegisterHotKey on one input thread), `x11.rs` (XTest, RECORD,
+  XGrabKey; refused on Wayland); `mod.rs`: `Automation` managed state, one
+  session at a time, shortcut registration, the live status on a channel,
+  29 commands), `src-tauri/src/storage/automation.rs`
+  (`automation.sqlite3`), the built-in feature `autoclicker` (off by
+  default), page `src/Autoclicker.svelte` (its own JS chunk) with its tabs,
+  the sidebar's indicator through `src/automationModel.svelte.ts`.
 - **macOS menu bar** (ADR-037): `src-tauri/src/app_menu.rs` (Quit ⌘Q
   through `AppControl::quit`, Edit for the webview's clipboard keys,
   Window); `RunEvent::Reopen` (Dock click) shows the dashboard; credentials
@@ -366,7 +394,8 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `src/CloudFolderPicker.svelte`, `src/CloudProperties.svelte`,
   `src/CloudBulkDownload.svelte`, `src/CloudDeleted.svelte`,
   `src/CloudRecovery.svelte`, `src/Modal.svelte`, `src/Backup.svelte`,
-  `src/Account.svelte`, `src/Updates.svelte`;
+  `src/Account.svelte`, `src/Updates.svelte`, `src/Autoclicker.svelte` and
+  its tabs;
   pure list logic in `src/fileList.ts`). Its only
   access to Rust is the commands
   `operating_mode`, `list_features`, `set_feature_enabled`,
@@ -406,10 +435,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   commands that return a local path: the sync folder the user chose, to
   show it) and `open_github_page` (ADR-049: opens a GitHub issue form
   for feedback or a bug, or the privacy notice, in the browser; the page
-  sends only which one)
+  sends only which one) and the 29 automation commands of ADR-050
+  (`automation_status`, `watch_automation`, `unwatch_automation`,
+  `automation_config`, `start_clicker`, `play_macro`, `start_recording`,
+  `set_automation_paused`, `stop_automation`, `save_recording`,
+  `discard_recording`, `list_macros`, `get_macro`, `create_macro`,
+  `save_macro`, `update_macro_info`, `duplicate_macro`, `delete_macro`,
+  `create_profile`, `save_profile`, `delete_profile`, `activate_profile`,
+  `set_default_profile`, `save_automation_settings`, `export_automation`,
+  `import_automation` (dialogs opened by Rust), `capture_cursor_position`,
+  `capture_active_window`, `screen_layout`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts`, `src/folderSync.ts` and `src/githubPage.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts`, `src/folderSync.ts`, `src/githubPage.ts` and `src/automation.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`), `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
   ADR-035) and `isDecorated()` (`core:window:allow-is-decorated`), and on
@@ -447,8 +485,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
 persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
-placement, the storage usage measurements and the folder syncs with their
-synced state, no settings, autostart,
+placement, the storage usage measurements, the folder syncs with their
+synced state and the autoclicker's settings, profiles and macros, no
+settings, autostart,
 third-party plugin system, feature-management UI, a second account service instance or failover, XEmbed
 tray fallback, overwriting uploads (other than folder sync replacing the
 version it synced), parallel uploads, ZIP downloads,
@@ -461,8 +500,11 @@ import or any credential fallback outside the OS store, restic
 integration, encrypted backups, backup notifications, billing data from a
 provider (no API offers it; costs are estimates), management of Backblaze's
 console snapshots (no API), Windows 11 Snap Layouts on the page's maximize
-button, custom event, background (periodic) sync of the sotyware account, or custom command besides
-the 100 listed above. Never describe these as existing.
+button, custom event, background (periodic) sync of the sotyware account, an
+input backend for macOS or Wayland, typing text as text, scheduled or
+conditional automation (screen content, variables), relative mouse movement
+for games, or custom command besides
+the 129 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -574,7 +616,9 @@ Every coding agent must:
    `CloudDrops`, `Journal`/`JournalLink` (operation journal), `Backups` and
    the backup `model`/`engine`, `AccountService`, `account::crypto`,
    `FolderSyncs`, `folder_sync::model`/`engine`/`scan` and
-   `Destination`/`UploadOptions` (folder sync),
+   `Destination`/`UploadOptions` (folder sync), `Automation`, the
+   `Backend` trait and `Output`, the automation `model`, `keys` and engines
+   (`clicker`, `recorder`, `player`) and `Clock`/`Control` (autoclicker),
    `Updates`/`release_resources` (updates), `WindowStates`/`window_state`
    and `title_bar` (placement and Windows chrome), `StorageUsage`/`usage`
    and `pricing` (usage and estimates), the frontend shell and design

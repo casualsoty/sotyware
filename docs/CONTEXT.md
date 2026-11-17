@@ -27,6 +27,34 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 ## What works today
 
+**Autoclicker and macros** (2026-11-17, ADR-050,
+[automation.md](architecture/automation.md), [user guide](user/automation.md);
+[status](status/status.md#autoclicker-and-macros-2026-11-17)): the
+**Autoclicker** section clicks automatically (buttons, single or double,
+1 ms to 24 h intervals with optional randomness, at the pointer, fixed
+positions, lists or areas, limits, batches), records mouse and keyboard
+input into **macros** with their timing (filters, sampling, never
+sotyware's own window or the stop shortcut), edits them (timeline,
+preview without input, paged action table, bulk changes), plays them
+(repetitions, speed, jitter, sections, pointer- or window-relative
+positions, screens mapped, target program checks, pause points), keeps a
+library (folders, favourites, per-macro shortcuts, import/export as
+versioned JSON) and **profiles**, all from **global shortcuts**
+(suggested F6 toggle, F7 pause, **F8 emergency stop**, F9/F10 recording,
+Shift+F11 play). Rust sends and records all input through native APIs
+(Windows: SendInput, low-level hooks, RegisterHotKey; Linux X11: XTest,
+RECORD, XGrabKey; refused on Wayland; none on macOS), one session at a
+time, only while the built-in feature `autoclicker` runs (**off by
+default**); every held key and button is released on stop, pause, end,
+error, quit and panic; fail-safe corners; sotyware's own window is never
+clicked. `automation.sqlite3`; 29 commands; the page is its own JS chunk.
+Tested headless (engines on a mock backend and a fake clock), the X11
+backend with real input on a private Xvfb, the app through its page with
+real input on the private display of `cloud-ui.sh autoclicker` (whose
+first runs found and fixed WebKitGTK field names and two fail-safe
+defects), the Windows build natively (unit tests, clippy); the Windows
+real-input test was not run.
+
 **Folder sync** (2026-11-16, ADR-043, [folder-sync.md](architecture/folder-sync.md);
 [status](status/status.md#folder-sync-2026-11-16)): a storage account's
 bucket kept in step with a folder the user chose (any drive; native folder
@@ -393,9 +421,10 @@ update server exist), all tested headless against in-process servers only.
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (main.ts, App.svelte, TitleBar.svelte, CloudUsage.svelte + cloudUsage.ts, CloudSnapshots.svelte, accountSync.svelte.ts, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
+src/                 Svelte frontend (Autoclicker*.svelte + automation.ts, automationFormat.ts, automationModel.svelte.ts, HotkeyInput.svelte, PlaybackForm.svelte; main.ts, App.svelte, TitleBar.svelte, CloudUsage.svelte + cloudUsage.ts, CloudSnapshots.svelte, accountSync.svelte.ts, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + title_bar.rs + window_state.rs + storage.rs (SQLite)
-src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), backup.rs, updates.rs
+src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), backup.rs, updates.rs, folder_sync.rs, autoclicker.rs
+src-tauri/src/automation/  autoclicker and macros (ADR-050): mod.rs (Automation service, 29 commands), model.rs, keys.rs, timing.rs, input.rs (Backend trait, held input, mock), clicker.rs, recorder.rs, player.rs, native.rs, windows.rs, x11.rs, tests.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs, usage.rs (storage usage, ADR-041), pricing.rs (+ src-tauri/pricing/*.json); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/ (generated from icons/source/*.svg, npm run icons), patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
@@ -426,8 +455,9 @@ Full map: [repository-map.md](architecture/repository-map.md).
   commands of ADR-026, the five recovery commands of ADR-030, the three
   usage commands of ADR-041, the eleven backup commands of ADR-031/ADR-041,
   the 20 account commands of ADR-032, the six update commands of
-  ADR-033/ADR-036, the 16 folder sync commands of ADR-043 and
-  `open_github_page` of ADR-049 (100 in all; listed in
+  ADR-033/ADR-036, the 16 folder sync commands of ADR-043,
+  `open_github_page` of ADR-049 and the 29 automation commands of ADR-050
+  (129 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at

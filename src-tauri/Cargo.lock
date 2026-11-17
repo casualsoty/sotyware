@@ -5050,6 +5050,7 @@ dependencies = [
  "tray-icon",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
+ "x11-dl",
  "zbus",
  "zbus-secret-service-keyring-store",
  "zeroize",

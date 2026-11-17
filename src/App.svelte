@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
   import Account from "./Account.svelte";
+  import { AutomationModel } from "./automationModel.svelte";
   import Backup from "./Backup.svelte";
   import { AutoSync, syncSummary } from "./accountSync.svelte";
   import { overallSummary, stateLabel } from "./folderSync";
@@ -67,6 +68,12 @@
       }),
     ),
   );
+  /** The autoclicker's live state (ADR-050): the sidebar's indicator and
+   * the Autoclicker page. Automation runs in Rust either way. */
+  const automation = new AutomationModel();
+  /** The Autoclicker page is its own chunk (it is large and used by few),
+   * loaded right after startup so opening it stays instant. */
+  let autoclickerPage = $state<Promise<typeof import("./Autoclicker.svelte")> | null>(null);
   const ustatus = $derived(updates.status);
   const uinstall = $derived(updates.install);
 
@@ -199,7 +206,12 @@
     void updates.load();
     void sync("startup");
     void folderSyncs.start();
-    return () => folderSyncs.stop();
+    void automation.start();
+    autoclickerPage = import("./Autoclicker.svelte");
+    return () => {
+      folderSyncs.stop();
+      automation.stop();
+    };
   });
 </script>
 
@@ -221,6 +233,7 @@
       {syncStatus}
       {folderSync}
       {syncedAccounts}
+      automation={automation.indicator}
       {section}
       {browsing}
       {accounts}
@@ -333,6 +346,16 @@
       />
     {:else if section === "backups"}
       <Backup />
+    {:else if section === "autoclicker"}
+      {#if autoclickerPage !== null}
+        {#await autoclickerPage}
+          <p class="page muted" role="status">Loading…</p>
+        {:then page}
+          <page.default model={automation} />
+        {:catch e}
+          <p class="page callout danger" role="alert">The Autoclicker page could not be loaded: {String(e)}</p>
+        {/await}
+      {/if}
     {:else if section === "account"}
       <Account />
     {:else}

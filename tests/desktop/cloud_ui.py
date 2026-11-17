@@ -2,7 +2,7 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage|sync|account <binary>   (run by cloud-ui.sh, which
+usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage|sync|account|autoclicker <binary>   (run by cloud-ui.sh, which
 sets up Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
@@ -35,6 +35,10 @@ Phases:
   account the GitHub pages (feedback, bug report, privacy notice; ADR-049)
          and sign-up, sync set-up and deletion against a local account
          service, the sotyware-server binary (cloud_ui_account.py)
+  autoclicker the autoclicker and macros (ADR-050) with real input through
+         XTest on this private display only, into a window of the driver:
+         turning it on and off, the clicker, the shortcuts, recording and
+         playback (cloud_ui_autoclicker.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -1124,7 +1128,7 @@ try:
             check("the usage phase ran to its end", False, f"{type(e).__name__}: {e}")
             traceback.print_exc()
 
-    elif PHASE in ("sync", "account"):
+    elif PHASE in ("sync", "account", "autoclicker"):
         # As for files: a phase that stops early is a failure.
         try:
             exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"cloud_ui_{PHASE}.py"),

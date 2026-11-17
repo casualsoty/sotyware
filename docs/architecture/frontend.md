@@ -14,7 +14,7 @@ what it shows and how it is built.
 | Part | File | What it holds |
 | --- | --- | --- |
 | Title bar (Windows only) | `src/TitleBar.svelte` | The page's own title bar across the top ([below](#title-bar-windows)). |
-| Sidebar | `src/Sidebar.svelte` | sotyware's name and mark (`src/Logo.svelte`; in the title bar instead on Windows); the sections **Overview**, **Cloud Storage**, **Backups** (links, `aria-current="page"` on the one shown); **Storage accounts**: one link per account, with a status dot, that opens its bucket, and a sync glyph coloured by its folder sync's state when it has one; below them one line summing every folder sync up (ADR-043; the shell's `FolderSyncModel` keeps one `watch_folder_syncs` subscription for the sidebar and the Sync tab); **Add storage account**; at the bottom **Account** (with a dot and tooltip for the sotyware account's sync state when there is an account, ADR-042) and **Settings**. Navigation only: every action belongs to a page. |
+| Sidebar | `src/Sidebar.svelte` | sotyware's name and mark (`src/Logo.svelte`; in the title bar instead on Windows); the sections **Overview**, **Cloud Storage**, **Backups**, **Autoclicker** (links, `aria-current="page"` on the one shown; Autoclicker carries a dot while it runs something: green running, red recording, amber paused, with the words for screen readers, from the shell's one `AutomationModel` subscription, ADR-050); **Storage accounts**: one link per account, with a status dot, that opens its bucket, and a sync glyph coloured by its folder sync's state when it has one; below them one line summing every folder sync up (ADR-043; the shell's `FolderSyncModel` keeps one `watch_folder_syncs` subscription for the sidebar and the Sync tab); **Add storage account**; at the bottom **Account** (with a dot and tooltip for the sotyware account's sync state when there is an account, ADR-042) and **Settings**. Navigation only: every action belongs to a page. |
 | Main area | `src/App.svelte` | One update notification when a version is available or installed (never on Settings › About & updates, which shows the same thing), then the page. |
 
 Navigation is local state in `App.svelte` (`section`, `browsing`,
@@ -66,6 +66,7 @@ the tray.
 | Cloud Storage | `src/CloudStorage.svelte`, `CloudAccountForm.svelte`, `CloudRecovery.svelte` | Account cards in a grid (status badge, bucket, region, endpoint, **Open bucket**, **Check connection**, Edit, Remove with confirmation), the add/edit form, interrupted work. Every account's connection is checked once at startup by the shell (`startupChecks.svelte.ts`, ADR-046). |
 | Bucket browser | `src/CloudBrowser.svelte` and its panels | Full width. Back link, title and bucket/folder line, then four tabs (ADR-041, ADR-043): **Files** (everything below; kept mounted while another tab shows, so transfers go on), **Usage & costs** (`CloudUsage.svelte`; with a sync, also what it keeps on this computer), **Snapshots & backups** (`CloudSnapshots.svelte`) and **Sync** (`CloudSync.svelte`: the bucket kept in step with a folder on this computer, [folder-sync.md](folder-sync.md#status-and-the-sync-tab)), mounted when first opened ([cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates)); the file manager's shortcuts act only on the Files tab. Files: breadcrumb, toolbar (Up one folder, Refresh, **Upload files…**, Upload folder…, New folder…, paste, Deleted items), search row, favourites and recent items, sort and filter bar, a sticky selection bar, the file table, a context menu (also from the ⋯ button and the keyboard), transfer panels (`CloudUpload`, `CloudOperation`, `CloudBulkDownload`, the download panel), a toast for the last action, dialogs (`Modal`): new folder, rename, destination picker (`CloudFolderPicker`), review of plans, properties and preview as a side sheet (`CloudProperties`). |
 | Backups | `src/Backup.svelte` | Job cards with a health badge, the job form, task progress and results, snapshots and restore. |
+| Autoclicker | `src/Autoclicker.svelte` and its tabs `AutoclickerOverview.svelte`, `AutoclickerClicker.svelte`, `AutoclickerRecorder.svelte`, `AutoclickerMacros.svelte` (with `AutoclickerEditor.svelte`), `AutoclickerProfiles.svelte`, `AutoclickerSettings.svelte`; `HotkeyInput.svelte`, `PlaybackForm.svelte` | ADR-050, [automation.md](automation.md). A wider column (72rem). Header with the profile switcher; banners when the feature is off (with **Turn on**) or the system has no input automation; a sticky bar with the running session, Pause/Resume and Stop on every tab; tabs **Overview** (status with metrics and controls, the profile, the shortcuts and whether each is registered, the program in front), **Clicker** (simple or advanced, saved to the profile as it changes), **Recorder** (record, live list, save or discard, options), **Macros** (library and the editor: details, shortcut, program, playback, timeline with a preview that sends nothing, paged action table with inline editing and bulk changes), **Profiles**, **Settings** (shortcuts by key capture, safety). Its own JavaScript chunk, loaded right after startup. |
 | Account | `src/Account.svelte` | The optional sotyware account (ADR-032). |
 | Settings | `src/Settings.svelte` | Tabs down the left (across the top when narrow): **General** (Appearance: System, Light, Dark; how closing the window behaves; keyboard shortcuts), **Features** (`Features.svelte`), **About & updates** (`Updates.svelte`). |
 
@@ -139,7 +140,7 @@ saved.
 
 ## Interaction
 
-- **Keyboard:** Ctrl+1/2/3 (⌘ on a Mac) Overview, Cloud Storage, Backups;
+- **Keyboard:** Ctrl+1/2/3/4 (⌘ on a Mac) Overview, Cloud Storage, Backups, Autoclicker;
   Ctrl/⌘+, Settings. In a bucket: arrows and Shift+arrows, Enter, Ctrl/⌘+A,
   Ctrl/⌘+C/X/V (sotyware's own clipboard of items), Delete or ⌘⌫, F2,
   Ctrl/⌘+R or F5, Ctrl/⌘+F (search), Escape. The context menu takes focus
@@ -160,7 +161,8 @@ saved.
 The headless tests (`src/*.test.ts`) and the desktop drivers
 (`tests/desktop/`) find controls by role and accessible name. Kept as they
 were: the section links (Overview, Cloud Storage, Backups, Account, now
-also Settings), Hide dashboard, Add account, Open bucket, Check connection,
+also Settings, and Autoclicker since ADR-050: its link reads
+"Autoclicker, running" (or recording, paused) while something runs), Hide dashboard, Add account, Open bucket, Check connection,
 Edit, Remove, Remove account, Up one folder, Refresh, Upload files…,
 Upload folder…, New folder…, Deleted items, Download, Copy to…, Move to…,
 the context menu's items, `#cloud-storage-heading`, `section.browser`,

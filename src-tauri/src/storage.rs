@@ -19,10 +19,12 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use crate::backup::{BackupStore, RunRow};
 
+mod automation;
 mod folder_sync;
 use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
 use crate::journal::{EntryRow, JournalStore, StepRow};
+pub use automation::{AUTOMATION_FILE_NAME, SqliteAutomationStore};
 pub use folder_sync::{IssueRow, SYNC_FILE_NAME, SqliteSyncStore};
 
 /// The database file inside the app's local data directory.
@@ -880,6 +882,19 @@ pub fn open_sync_store(dir: tauri::Result<PathBuf>) -> Result<SqliteSyncStore, S
     fs::create_dir_all(&dir)
         .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
     SqliteSyncStore::open(&dir.join(SYNC_FILE_NAME))
+}
+
+/// The autoclicker's store `run()` uses (ADR-050): [`AUTOMATION_FILE_NAME`]
+/// in `dir`.
+pub fn open_automation_store(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::automation::AutomationStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteAutomationStore::open(
+        &dir.join(AUTOMATION_FILE_NAME),
+    )?))
 }
 
 /// The operation journal (ADR-030), separate from the other databases so

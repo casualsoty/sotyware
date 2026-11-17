@@ -24,6 +24,8 @@ const DECORATED_CMD = "plugin:window|is_decorated"; // whether the page draws it
 const ACCOUNT_CMD = "account_status"; // automatic sync reads the account status (local); tested in accountSync.test.ts
 const SYNCS_CMD = "list_folder_syncs"; // folder sync's status for the sidebar (ADR-043); tested in CloudSync.test.ts
 const SYNCS_WATCH_CMD = "watch_folder_syncs"; // its live updates on a channel
+const AUTOMATION_CMD = "automation_status"; // the autoclicker's state for the sidebar (ADR-050); tested in Autoclicker.test.ts
+const AUTOMATION_WATCH_CMD = "watch_automation"; // its live updates on a channel
 
 let calls: IpcCall[];
 let mode: unknown;
@@ -85,6 +87,22 @@ function backend(cmd: string): unknown {
       return folderSyncs;
     case SYNCS_WATCH_CMD:
       return 1;
+    case AUTOMATION_CMD:
+      return {
+        seq: 1,
+        running: false,
+        support: { available: true, backend: "windows", note: null },
+        session: null,
+        last: null,
+        draft: null,
+        hotkeys: [],
+        activeProfile: { id: "profile-1", name: "Default" },
+        activeWindow: null,
+        notice: null,
+        storageError: null,
+      };
+    case AUTOMATION_WATCH_CMD:
+      return 2;
     default:
       return null;
   }
@@ -157,12 +175,14 @@ describe("dashboard in tray mode", () => {
     await render();
     expect(sentCommands()).toEqual([
       ACCOUNT_CMD,
+      AUTOMATION_CMD,
       BACKUPS_CMD,
       ACCOUNTS_CMD,
       SYNCS_CMD,
       MODE_CMD,
       DECORATED_CMD,
       UPDATE_CMD,
+      AUTOMATION_WATCH_CMD,
       SYNCS_WATCH_CMD,
     ]);
   });
@@ -267,12 +287,14 @@ describe("dashboard in dashboard-only mode", () => {
     expect(root.textContent).not.toContain("from the system tray");
     expect(sentCommands()).toEqual([
       ACCOUNT_CMD,
+      AUTOMATION_CMD,
       BACKUPS_CMD,
       ACCOUNTS_CMD,
       SYNCS_CMD,
       MODE_CMD,
       DECORATED_CMD,
       UPDATE_CMD,
+      AUTOMATION_WATCH_CMD,
       SYNCS_WATCH_CMD,
     ]);
     expect(hideCalls()).toHaveLength(0);

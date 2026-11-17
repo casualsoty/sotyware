@@ -258,6 +258,23 @@ ADR-026; public ACLs do not).
   has a prefix), per-sync bandwidth limits, exclusion patterns, several
   syncs per bucket.
 
+## Autoclicker (after ADR-050)
+
+- With the maintainer on an idle desktop: run the Windows real-input test
+  (`cargo test --lib automation::windows::desktop -- --ignored`), then a
+  manual check of the page in the release build: turn on, F6/F8, record a
+  short macro in Notepad, edit, play with speed and repetitions, profiles,
+  export and import, quit while a macro holds a key.
+- A desktop driver for the Autoclicker page (Linux virtual display: the
+  X11 backend works there; Windows: UI Automation, input confined to a
+  test window), in `cloud-ui.sh`/`windows-cloud-ui.ps1` style.
+- A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
+- Possible later work, each a decision of its own: a macOS backend
+  (CGEvent, event tap, Accessibility permission), a Wayland backend through
+  the RemoteDesktop portal / libei, typing text as text, relative mouse
+  movement for games, conditions and variables, scheduled starts, and
+  starting sotyware at login or minimised (see [Ideas](#ideas-not-decided)).
+
 ## Known follow-ups (not started, no design yet)
 
 - CI follow-ups (the workflows exist since `5fe62b9`, see

@@ -5,8 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage sync account b2 b2-browse
-#        (default: local hang browse download upload files usage sync account)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage sync account autoclicker b2 b2-browse
+#        (default: local hang browse download upload files usage sync account autoclicker)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/test-profile/release/sotyware;
 #                            a test-profile build is required, ADR-027)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
@@ -55,6 +55,13 @@
 #        account service (server/target/release/sotyware-server, built if
 #        missing, own database, no mail relay: the code is read from its
 #        outbox); contacts nothing outside this computer.
+# autoclicker: the autoclicker and macros (ADR-050) with real input through
+#        XTest, on this private display only, into a window of the driver
+#        that records what it receives: off by default, turning it on and
+#        off (the shortcuts grabbed and released), a bounded run from the
+#        Clicker tab, F6, F7, F8 and a screen corner from another program,
+#        no click on sotyware's own window, recording with F9 and F10,
+#        saving and playing the macro; no keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -77,7 +84,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage sync account)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage sync account autoclicker)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/test-profile/release/sotyware}")
@@ -105,7 +112,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse|download|upload|files|usage|sync|account) ;;
+      local|hang|browse|download|upload|files|usage|sync|account|autoclicker) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -357,6 +364,10 @@ for phase in "${PHASES[@]}"; do
       else
         echo "[PASS] account: the account service logged no error"
       fi ;;
+    autoclicker)
+      # Real input through XTest, but only on this private display, which
+      # no person uses; nothing else is started.
+      python3 "$H/cloud_ui.py" autoclicker "$BIN" || rc=1 ;;
     upload)
       SRV_FILE=$WORK/upload-endpoint
       record_setup upload

@@ -295,10 +295,10 @@ describe("navigation", () => {
     expect(sent(LIST_CLOUD_PROVIDERS)).toHaveLength(0);
     expect(buttons(root.querySelector("main .page-header")!).map((b) => b.textContent?.trim())).toEqual(["Hide dashboard"]);
     const links = [...root.querySelectorAll<HTMLAnchorElement>('nav[aria-label="Sections"] a')];
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Overview", "Cloud Storage", "Backups", "Autoclicker"]);
     expect(links[0]?.getAttribute("aria-current")).toBe("page");
     const sidebar = [...root.querySelectorAll<HTMLAnchorElement>("aside a")].map((a) => a.textContent?.trim());
-    expect(sidebar).toEqual(["Overview", "Cloud Storage", "Backups", "Photos, Backblaze B2", "Account", "Settings"]);
+    expect(sidebar).toEqual(["Overview", "Cloud Storage", "Backups", "Autoclicker", "Photos, Backblaze B2", "Account", "Settings"]);
 
     links[1]?.click();
     flushSync();

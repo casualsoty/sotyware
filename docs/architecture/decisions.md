@@ -2821,3 +2821,75 @@ the privacy notice). Code: `src-tauri/src/github_page.rs`,
   address to `opened-pages.txt` in the run's profile, so the desktop
   tests (`cloud-ui.sh account`, `windows-cloud-ui.ps1 -Mode account`)
   check the exact URLs without reaching GitHub.
+
+## ADR-050: The autoclicker sends and records input in Rust through native APIs, one session at a time, behind an opt-in feature
+
+Status: Accepted (2026-11-17). Code: `src-tauri/src/automation/`,
+`src-tauri/src/storage/automation.rs`, `src-tauri/src/features/autoclicker.rs`,
+`src/Autoclicker*.svelte`, `src/automation*.ts`. Details:
+[automation.md](automation.md).
+
+- **Context:** the maintainer asked for an autoclicker and a mouse and
+  keyboard macro engine: configurable clicking, global shortcuts that work
+  while sotyware is hidden, recording with timing, an editor, playback with
+  repetitions and speed, a library, profiles, and safety (an emergency
+  stop, nothing stuck, nothing running unasked). Sending and recording
+  another program's input is system-wide and sensitive: it must not live in
+  the page, must not start by itself, and must never leave a key held.
+- **Decision:**
+  - **Rust owns all input**, behind one `Backend` trait (send, read the
+    pointer, monitors and the active window, shortcuts, capture). Windows:
+    `SendInput`, `WH_MOUSE_LL`/`WH_KEYBOARD_LL` hooks only while recording,
+    `RegisterHotKey`, all through `windows-sys` (already a dependency; only
+    features the tree compiles already). Linux: XTest, RECORD and
+    `XGrabKey` through `x11-dl` (already in the tree through tao and wry;
+    the libraries are loaded at runtime), refused on Wayland; rustix's
+    `event` and `pipe` features (already compiled in the tree) for the
+    shortcut thread's `poll`. macOS: no backend yet. The page sends ids and
+    documents only; the import and export dialogs are Rust's (no `fs:` or
+    `dialog:` permission).
+  - **Shortcuts are native on the input thread, not
+    `tauri-plugin-global-shortcut`**: the backends need native code for
+    sending and recording anyway (no official plugin does either), so the
+    plugin would add a dependency tree on every platform for no platform
+    the backends do not already cover; its handler runs on the event loop,
+    while the emergency stop must work when the UI thread is busy; and on
+    Linux it needs an X display at initialisation. `enigo`/`rdev` were not
+    taken for the same reason and because `rdev`'s macOS capture is known
+    to crash; page-level key listeners only see keys while the window has
+    the focus.
+  - **Engines are pure over the trait and a `Clock`**, with absolute
+    deadlines, so every timing is unit-tested exactly with a mock backend
+    and a fake clock; real-input tests are opt-in only (a private Xvfb on
+    Linux, the user's desktop on Windows with input confined to the test's
+    own window), never in CI.
+  - **Safety rules**: one session at a time; every key and button a session
+    holds is tracked and released on stop, pause, end, error, the feature's
+    stop, quitting, and from a panic hook; a shared emergency stop
+    shortcut; fail-safe screen corners; sotyware's own window is never
+    clicked or typed into; an endless run started from the dashboard
+    without a registered emergency stop needs confirming; sessions are
+    never stored, so nothing restarts after a restart.
+  - **The built-in feature `autoclicker` is off by default**: until the
+    user turns it on (the page explains what that does), no shortcut is
+    registered and no input is sent or recorded.
+  - **Persistence**: `automation.sqlite3` with JSON documents (settings,
+    profiles, macros with a summary column), validated strictly; macros
+    are data only (eight action kinds, bounded values, unknown fields
+    refused) and the export file is a versioned envelope of macros and
+    profiles.
+  - **Status on a per-call channel** (`watch_automation`), like folder
+    sync: no custom event.
+- **Consequences:** 29 more commands (129) and permissions; the page is a
+  separate JavaScript chunk so the shell stays small. One more database
+  in the test-profile acknowledgement (the drivers' store lists include
+  it). The Windows backend is validated by type checks, unit tests and an
+  opt-in desktop test the maintainer runs; the X11 backend against Xvfb
+  only (no real Linux desktop exists here). Input cannot reach programs
+  running as administrator (UIPI) or the secure desktop, Wayland sessions
+  get nothing, and macOS has no backend: each is stated on the page and in
+  [limitations.md](../status/limitations.md#autoclicker-adr-050).
+  Recorded macros hold whatever was typed, in plain text on this computer,
+  as the Recorder tab warns; they never leave the computer unless
+  exported. The panic hook is process-wide (it chains to the previous
+  hook and only sends pending releases).
