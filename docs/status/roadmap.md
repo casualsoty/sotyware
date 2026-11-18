@@ -263,8 +263,9 @@ ADR-026; public ACLs do not).
 - With the maintainer on an idle desktop: a manual check of the page in
   the release build on Windows: turn on, F6/F8, record a short macro in
   Notepad, edit, play with speed and repetitions, profiles, export and
-  import, quit while a macro holds a key. (The backend's real-input test
-  passed there on 2026-11-18.)
+  import, quit while a macro holds a key
+  ([checklist](../development/testing.md#manual-check-autoclicker-and-macros-windows-11)).
+  (The backend's real-input test passed there on 2026-11-18.)
 - A Windows desktop driver for the Autoclicker page (UI Automation, input
   confined to a test window), like the Linux `autoclicker` phase of
   `cloud-ui.sh`.

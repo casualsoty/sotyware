@@ -1837,6 +1837,86 @@ engine of WebView2, through a throwaway Vite harness (the shell with IPC
 mocks answering sample data, headless Edge screenshots; not kept in the
 repository); that is not the app in WebView2.
 
+### Manual check: autoclicker and macros (Windows 11)
+
+Not automated on Windows beyond the backend's real-input test above: the
+page has never been driven there. This check sends real clicks and keys,
+so run it on an idle desktop with Notepad open and nothing else that
+matters. If anything runs away: F8, or push the pointer into a screen
+corner. Use a test-profile build in a fresh test profile, so your own
+macros and settings are not touched (quit any installed sotyware first, so
+the tray icon is the test build's):
+
+```powershell
+npm run build:test-profile
+Import-Module .\tests\desktop\TestProfile.psm1
+$p = New-TestProfile -Parent "$env:TEMP\sotyware-manual" -Run "autoclicker-1"
+$env:SOTYWARE_TEST_PROFILE = $p.Root
+.\src-tauri\target\test-profile\release\sotyware.exe
+```
+
+(A release build, `npm run build:release`, works too but uses your own app
+data folder and adds `automation.sqlite3` to it.)
+
+1. **Off by default:** Autoclicker in the sidebar says "The autoclicker is
+   off." with **Turn on**, and F6 in Notepad does nothing. **Turn on**: the
+   notice goes, the Overview shows F6, F7, F8, F9, F10 and Shift+F11 as
+   registered, Settings › Features shows Autoclicker running.
+2. **Button and speed:** on Clicker, Mouse button Right, Click Double, Speed
+   5 clicks per second (the hint says one click every 200 ms), Repeat:
+   stop after 10, at a fixed position picked with **Pick…** over Notepad's
+   text. **Start autoclicker**: nothing during the 3 s countdown, then 10
+   double right-clicks at that spot at about 5 per second, counted by the
+   session bar. Again with Left and Single.
+3. **Shortcuts from another program:** set Repeat until stopped, at the
+   pointer, and rest the pointer on Notepad's text. In Notepad, F6 starts
+   clicking (no countdown), F7 pauses and resumes, F6 stops. On Settings,
+   give the toggle Ctrl+Alt+K and use it from Notepad, then put F6 back. A
+   letter alone, F12 alone and F8 (the emergency stop's key) are refused
+   with the reason.
+4. **Emergency stop and safety:** F6 in Notepad, then F8: it stops at
+   once. Start again and push the pointer into a corner of the screens: it
+   stops. With the pointer on sotyware's own window nothing is clicked
+   there, the skipped clicks are counted and the page's Stop works. Clear
+   the emergency stop on Settings: **Start autoclicker** now asks "Run
+   until you stop it?" first. Put F8 back.
+5. **Record:** in Notepad, F9, click twice in the text, type `abc`, F10.
+   The Recorder's draft lists the clicks and the three keys and nothing of
+   F9, F10 or sotyware's window; name it and **Save macro**.
+6. **Play:** Macros › Play: the clicks land in the same places and `abc` is
+   typed again. In its editor's Playback, 3 times at 2× speed: three runs,
+   each in about half the time; F7 pauses and resumes, F8 stops mid-way.
+   Choose it as the profile's macro (Profiles) and play it with Shift+F11.
+7. **Edit:** in the editor change a delay to 1 s, add a Wait and a Key
+   action, move one up, duplicate and delete one; **Preview** runs its
+   marker and clicks or types nothing; **Save**. Leaving with changes asks
+   first, **Revert** drops them. Play: the saved changes take effect.
+8. **Persistence:** tray › Quit and start again with the same profile:
+   the feature is still on, nothing starts by itself, and the clicker's
+   settings, the shortcuts and the edited macro are as they were left.
+9. **Profiles and files:** a new profile with the toggle on Ctrl+Alt+J
+   instead of F6: switching profiles changes which key works at once;
+   **Start with it**, Quit and start: that profile is active. Give the
+   macro its own shortcut (Ctrl+Alt+M, which plays and stops it), export it
+   on Macros to a `.sotyware.json` file, delete it, **Import…** the file:
+   the macro is back with its shortcut switched off.
+10. **Held keys:** **New macro** with a Key action (Shift, down), then a
+    Wait of 30 s. Play it and quit from the tray during the wait, then type
+    `abc` in Notepad: lowercase (Shift was released). The same with F8 and
+    with the page's Stop instead of Quit.
+11. **Responsiveness:** while it clicks 100 times per second outside the
+    window, switching tabs and scrolling the page stay smooth, Stop answers
+    at once, and Task Manager shows no lasting high CPU for sotyware.
+12. **Limits and messages:** Notepad run as administrator receives no
+    clicks or keys and no error appears (Windows' UIPI, see
+    [limitations](../status/limitations.md#autoclicker-adr-050)). Settings ›
+    Features › Autoclicker off: what runs stops, F6 does nothing, and other
+    programs can use F6 to F10 again.
+
+Record the result with the build, Windows version, scaling, monitors and
+keyboard layout in [status.md](../status/status.md); remove the test
+profile folder afterwards.
+
 ## Update tests
 
 ```bash
