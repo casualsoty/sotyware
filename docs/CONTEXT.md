@@ -63,9 +63,19 @@ the page has not been driven on Windows. Pushed as the branch
 `ci.yml` (Ubuntu 22.04, Windows), `macos.yml` (both Macs, the automation
 code's first macOS build), `isolation-guard.yml`, `release-build.yml` and
 `desktop-virtual.yml` (139/0/0) passed, started by hand
-([status](status/status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18));
-the [manual check](development/testing.md#manual-check-autoclicker-and-macros-windows-11)
-of the page on Windows is still to do.
+([status](status/status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18)).
+The page's manual check is automated since (2026-11-18,
+[testing.md](development/testing.md#the-pages-former-manual-check-automated)):
+the Linux phase grew to 103 checks on its private display, and
+`tests/desktop/windows-autoclicker.ps1` does the same on the real Windows
+desktop (written and checked statically; not yet run, it needs the
+maintainer's go-ahead). The new checks found two defects, both fixed: F8
+did not stop a macro that held Shift (the system matches modifiers
+exactly; while a session runs the emergency stop is now registered with
+every other modifier combination too), and WebKitGTK hid the page's
+hints, units and shortcut labels from screen readers (plain `<span>` flex
+items; now paragraphs)
+([status](status/status.md#the-autoclickers-manual-check-automated-2026-11-18)).
 
 **Folder sync** (2026-11-16, ADR-043, [folder-sync.md](architecture/folder-sync.md);
 [status](status/status.md#folder-sync-2026-11-16)): a storage account's

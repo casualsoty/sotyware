@@ -1809,13 +1809,43 @@ cd src-tauri && cargo test --lib automation::x11 -- --ignored --test-threads=1
 `autoclicker` phase of the [Linux desktop driver](#cloud-storage-ui-end-to-end-test)
 drives the test-profile build's Autoclicker page through AT-SPI and sends
 real input through XTest, but only on the script's own Xvfb display, into
-a window of the driver that records what it receives:
+a window of the driver that records what it receives (each event with the
+X server's time). Besides the first macro (the table below), it does what
+the manual check of the page used to ask of a person: the right button and
+double clicks at 5 per second (timed by the X server), a shortcut changed
+by pressing it in its field and the keys the field refuses, the
+confirmation without an emergency stop, repetitions at 2× (timed), F7 and
+F8 during playback, Shift+F11, the editor (delay, add, move, duplicate,
+delete, Preview sends nothing, leaving asks, Save, Revert, the changes
+played), a restart, a second profile, a macro's own shortcut, export and
+import through the GTK dialogs, keys a macro holds released by F8, Stop
+and quitting, 100 clicks per second with the page in use (rate, tab
+switches, CPU), the emergency stop's key refused while the feature is off,
+and the page's message in a Wayland session. About 6 minutes:
 
 ```bash
 npm run build:test-profile && tests/desktop/cloud-ui.sh autoclicker
 ```
 
-**Windows, real input on the real desktop** (opt-in, **moves the pointer
+**Windows, the page with real input on the real desktop** (opt-in,
+**moves the pointer, clicks and presses keys**; never in CI): the same
+checks as the Linux phase through UI Automation and `SendInput` (keys by
+scan code, so any layout works), into a topmost window of the script that
+records every button and key with its time; before each run it checks
+that this window is under every point sotyware will click (else it stops
+without starting anything), and at the end it puts the pointer back and
+lets go of anything still down. It quits sotyware three times with the
+tray icon's Quit (a real right click). It refuses to start without
+`-ConfirmRealInput pointer-and-keys`, needs the unlocked interactive
+desktop (exit 3 otherwise) and `node` on PATH (the database is read with
+`node:sqlite`). Run it on an idle desktop; about 8 minutes:
+
+```powershell
+npm run build:test-profile
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-autoclicker.ps1 -ConfirmRealInput pointer-and-keys
+```
+
+**Windows, the backend with real input** (opt-in, **moves the pointer
 and clicks**; run it only on a desktop nobody is using, never in CI). It
 clicks only into a topmost window it creates, checks that window is under
 each point first (else it fails without sending), sends keys only while
@@ -1837,85 +1867,26 @@ engine of WebView2, through a throwaway Vite harness (the shell with IPC
 mocks answering sample data, headless Edge screenshots; not kept in the
 repository); that is not the app in WebView2.
 
-### Manual check: autoclicker and macros (Windows 11)
+### The page's former manual check, automated
 
-Not automated on Windows beyond the backend's real-input test above: the
-page has never been driven there. This check sends real clicks and keys,
-so run it on an idle desktop with Notepad open and nothing else that
-matters. If anything runs away: F8, or push the pointer into a screen
-corner. Use a test-profile build in a fresh test profile, so your own
-macros and settings are not touched (quit any installed sotyware first, so
-the tray icon is the test build's):
+The twelve steps a person was asked to do on Windows (2026-11-18) are
+checks of the two drivers above: off by default and Turn on (1), the
+button, double clicks and speed (2), shortcuts from another program and
+the keys a field refuses (3), the emergency stop, the corners, sotyware's
+own window and the confirmation (4), recording (5), playback with
+repetitions, speed, F7, F8 and Shift+F11 (6), the editor (7), a restart
+(8), profiles, a macro's shortcut, export and import (9), held keys
+released by F8, Stop and quitting (10), responsiveness at 100 clicks per
+second (11), and turning the feature off (12). Automating them found two
+defects, both fixed ([status](../status/status.md#the-autoclickers-manual-check-automated-2026-11-18)).
 
-```powershell
-npm run build:test-profile
-Import-Module .\tests\desktop\TestProfile.psm1
-$p = New-TestProfile -Parent "$env:TEMP\sotyware-manual" -Run "autoclicker-1"
-$env:SOTYWARE_TEST_PROFILE = $p.Root
-.\src-tauri\target\test-profile\release\sotyware.exe
-```
-
-(A release build, `npm run build:release`, works too but uses your own app
-data folder and adds `automation.sqlite3` to it.)
-
-1. **Off by default:** Autoclicker in the sidebar says "The autoclicker is
-   off." with **Turn on**, and F6 in Notepad does nothing. **Turn on**: the
-   notice goes, the Overview shows F6, F7, F8, F9, F10 and Shift+F11 as
-   registered, Settings › Features shows Autoclicker running.
-2. **Button and speed:** on Clicker, Mouse button Right, Click Double, Speed
-   5 clicks per second (the hint says one click every 200 ms), Repeat:
-   stop after 10, at a fixed position picked with **Pick…** over Notepad's
-   text. **Start autoclicker**: nothing during the 3 s countdown, then 10
-   double right-clicks at that spot at about 5 per second, counted by the
-   session bar. Again with Left and Single.
-3. **Shortcuts from another program:** set Repeat until stopped, at the
-   pointer, and rest the pointer on Notepad's text. In Notepad, F6 starts
-   clicking (no countdown), F7 pauses and resumes, F6 stops. On Settings,
-   give the toggle Ctrl+Alt+K and use it from Notepad, then put F6 back. A
-   letter alone, F12 alone and F8 (the emergency stop's key) are refused
-   with the reason.
-4. **Emergency stop and safety:** F6 in Notepad, then F8: it stops at
-   once. Start again and push the pointer into a corner of the screens: it
-   stops. With the pointer on sotyware's own window nothing is clicked
-   there, the skipped clicks are counted and the page's Stop works. Clear
-   the emergency stop on Settings: **Start autoclicker** now asks "Run
-   until you stop it?" first. Put F8 back.
-5. **Record:** in Notepad, F9, click twice in the text, type `abc`, F10.
-   The Recorder's draft lists the clicks and the three keys and nothing of
-   F9, F10 or sotyware's window; name it and **Save macro**.
-6. **Play:** Macros › Play: the clicks land in the same places and `abc` is
-   typed again. In its editor's Playback, 3 times at 2× speed: three runs,
-   each in about half the time; F7 pauses and resumes, F8 stops mid-way.
-   Choose it as the profile's macro (Profiles) and play it with Shift+F11.
-7. **Edit:** in the editor change a delay to 1 s, add a Wait and a Key
-   action, move one up, duplicate and delete one; **Preview** runs its
-   marker and clicks or types nothing; **Save**. Leaving with changes asks
-   first, **Revert** drops them. Play: the saved changes take effect.
-8. **Persistence:** tray › Quit and start again with the same profile:
-   the feature is still on, nothing starts by itself, and the clicker's
-   settings, the shortcuts and the edited macro are as they were left.
-9. **Profiles and files:** a new profile with the toggle on Ctrl+Alt+J
-   instead of F6: switching profiles changes which key works at once;
-   **Start with it**, Quit and start: that profile is active. Give the
-   macro its own shortcut (Ctrl+Alt+M, which plays and stops it), export it
-   on Macros to a `.sotyware.json` file, delete it, **Import…** the file:
-   the macro is back with its shortcut switched off.
-10. **Held keys:** **New macro** with a Key action (Shift, down), then a
-    Wait of 30 s. Play it and quit from the tray during the wait, then type
-    `abc` in Notepad: lowercase (Shift was released). The same with F8 and
-    with the page's Stop instead of Quit.
-11. **Responsiveness:** while it clicks 100 times per second outside the
-    window, switching tabs and scrolling the page stay smooth, Stop answers
-    at once, and Task Manager shows no lasting high CPU for sotyware.
-12. **Limits and messages:** Notepad run as administrator receives no
-    clicks or keys and no error appears (Windows' UIPI, see
-    [limitations](../status/limitations.md#autoclicker-adr-050)). Settings ›
-    Features › Autoclicker off: what runs stops, F6 does nothing, and other
-    programs can use F6 to F10 again.
-
-Record the result with the build, Windows version, scaling, monitors and
-keyboard layout in [status.md](../status/status.md); remove the test
-profile folder afterwards.
+Left to a person, because no driver can do it here: input to a program
+running as administrator (Windows' UIPI; it needs an elevated program,
+and the result is Windows' rule, not sotyware's), how smooth the page looks
+while it clicks (the drivers measure tab switches and CPU, not frames),
+and other environments (real GNOME or KDE desktops on Xorg, Windows 10,
+other monitor arrangements). The Windows driver needs the maintainer's
+go-ahead for each run, as it moves the pointer on their desktop.
 
 ## Update tests
 
@@ -2012,7 +1983,7 @@ sotyware's output. Account ids and labels are new for every run
 | Windows `-Mode b2-lifecycle -Scenario <scenario>` | **Connected** for the upload key (`b2-upload.xml`) | one upload lifecycle scenario (multipart, cancel, retry, leave, quit) through the dashboard with the release settings, [described above](#upload-lifecycle-through-the-windows-dashboard-at-backblaze); `-Rehearse` runs it against the local s3s-fs server |
 | Linux `sync`, Windows `-Mode sync` | — (Windows: **Connected**) | folder sync (ADR-043) against the in-memory versioned server of `serve_sync_for_ui` (`src-tauri/src/cloud/test_server/sync_ui.rs`, one versioned bucket seeded with `welcome.txt` and `docs/plan.txt`, made-up key), which plays a second computer on the same bucket through its `.ctl` file (`put <key> <text>`, `delete <key>`) and answers `dump` with every key's current SHA-256, versions and delete markers and the app's operations. Through the bucket's **Sync** tab: Choose folder… in the **native folder dialog** (GTK: as in `files`; Windows: the pick-folders dialog, Folder box and Select Folder by control id) → the confirmation names the empty folder → Start sync → `.sotyware-sync/root.json`; the first pass brings both files down byte for byte; a file written into the folder reaches the bucket; a file put at the server comes down (Sync now pressed every 10 s, so nothing waits for the 5-minute listing); a local rename becomes a rename in the bucket (the old key a delete marker, its version kept); a file deleted at the server leaves the folder and lands in `.sotyware-sync/trash/<day>/` with its content; a file changed on both sides is kept twice (both contents survive, one under `plan (conflicted copy …)`); then sotyware is ended and started again in the same profile (Linux: the window's close, which quits in dashboard-only mode; Windows: `Stop-Process`, as closing only hides in tray mode and the tray Quit would move the mouse), the **startup connection check** (ADR-046) must reach the server with no click (its `HeadBucket` count grows; folder sync sends none) and the account show Connected, and a file written after the restart must reach the bucket with no click; Turn sync off… changes nothing in the folder or the bucket. Every step is checked on disk and at the server. The server fails the phase if a real version was ever removed by id, the app sent a request folder sync and the check do not send, or no transfer reached it. The phase is in `cloud_ui_sync.py`, run by `cloud_ui.py` |
 | Linux `account`, Windows `-Mode account` | — (Windows: **Network error**: this mode's storage account points nowhere) | the GitHub pages of ADR-049 and the sotyware account. A test-profile build never starts a browser: `open_github_page` appends the address to `opened-pages.txt` in the run's profile, which the driver reads. Settings › About & updates: nothing recorded before a click; **Send feedback** → exactly the feedback form's URL; **Report a bug** → the bug form with `version=<x.y.z>&os=Linux%2C%20<arch>` (Windows: `Windows%2C%20<arch>`) and nothing else; **Privacy notice** → the notice on `main`. Then sign-up against a local account service, this checkout's `server/target/release/sotyware-server` (built by the script if needed; loopback, a free port, its own database in the run's folder, no mail relay, so mails stay in its outbox), reached through `SOTYWARE_ACCOUNT_SERVER`, which only debug and test-profile builds read: the age line only in Create account; its Privacy notice link records the notice and sends nothing; register (the service's database: the address, not verified); the code read with `sotyware-server outbox`; Verify and sign in (verified); Set up sync → the recovery key shown once, typed again, I saved it → the synced state (the service holds the recovery wrap and a vault containing neither the key, the password nor the address); Delete account… with the password → gone from the service. The service's database is read directly (Linux: Python's `sqlite3`; Windows: Node's built-in `node:sqlite`); the phase fails if the service logged an error or the password or recovery key reached sotyware's output. The phase is in `cloud_ui_account.py`, run by `cloud_ui.py` |
-| Linux `autoclicker` | — | the autoclicker and macros (ADR-050) with **real input through XTest, on the script's private display only**, into a plain window of the driver that records every click and key it receives (no keyring, no server; the X11 backend works because the script unsets `WAYLAND_DISPLAY`): off by default (the driver can grab F6 and F8 itself; F6 does nothing); **Turn on** → the six suggested shortcuts registered (the driver can grab none of them); the Clicker tab's At a fixed position, X, Y, Stop after 25 clicks and 20 per second, typed as real keys → saved in the profile (`automation.sqlite3`, read directly); **Start autoclicker** → no click in the countdown's first 2 s, then exactly 25 left clicks at that position; from the test window F6 starts and stops it, F7 pauses (no click while paused) and resumes it, F8 (the emergency stop) stops it, the pointer pushed into a corner stops it; with the pointer on sotyware's own window every click is skipped and counted; F9 records two clicks and the key A typed into the test window, F10 stops, **Save macro** → the database holds both clicks where they were made and the key, nothing of F9 or F10; **Play** replays them into the test window; after every stop no button or key is held (`XQueryPointer`, `XQueryKeymap`); Settings › Features turns it off → the driver can grab all six shortcuts again and F6 does nothing. The phase is in `cloud_ui_autoclicker.py`, run by `cloud_ui.py` |
+| Linux `autoclicker` | — | the autoclicker and macros (ADR-050) with **real input through XTest, on the script's private display only**, into a plain window of the driver that records every click and key it receives (no keyring, no server; the X11 backend works because the script unsets `WAYLAND_DISPLAY`): off by default (the driver can grab F6 and F8 itself; F6 does nothing); **Turn on** → the six suggested shortcuts registered (the driver can grab none of them); the Clicker tab's At a fixed position, X, Y, Stop after 25 clicks and 20 per second, typed as real keys → saved in the profile (`automation.sqlite3`, read directly); **Start autoclicker** → no click in the countdown's first 2 s, then exactly 25 left clicks at that position; from the test window F6 starts and stops it, F7 pauses (no click while paused) and resumes it, F8 (the emergency stop) stops it, the pointer pushed into a corner stops it; with the pointer on sotyware's own window every click is skipped and counted; F9 records two clicks and the key A typed into the test window, F10 stops, **Save macro** → the database holds both clicks where they were made and the key, nothing of F9 or F10; **Play** replays them into the test window; after every stop no button or key is held (`XQueryPointer`, `XQueryKeymap`); Settings › Features turns it off → the driver can grab all six shortcuts again and F6 does nothing; in between, the page's [former manual check](#the-pages-former-manual-check-automated): buttons and speed timed by the X server, shortcut fields and the keys they refuse, the confirmation without an emergency stop, playback options (2× timed, F7, F8, Shift+F11), the editor, a restart, profiles, a macro's shortcut, export and import through the GTK dialogs, keys a macro holds released by F8, Stop and quitting, 100 clicks per second (rate, tab switches, CPU), screen-reader text (AT-SPI), the emergency stop's key refused while off, and the Wayland message (103 checks). The phase is in `cloud_ui_autoclicker.py`, run by `cloud_ui.py` |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this

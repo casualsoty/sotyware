@@ -260,15 +260,13 @@ ADR-026; public ACLs do not).
 
 ## Autoclicker (after ADR-050)
 
-- With the maintainer on an idle desktop: a manual check of the page in
-  the release build on Windows: turn on, F6/F8, record a short macro in
-  Notepad, edit, play with speed and repetitions, profiles, export and
-  import, quit while a macro holds a key
-  ([checklist](../development/testing.md#manual-check-autoclicker-and-macros-windows-11)).
-  (The backend's real-input test passed there on 2026-11-18.)
-- A Windows desktop driver for the Autoclicker page (UI Automation, input
-  confined to a test window), like the Linux `autoclicker` phase of
-  `cloud-ui.sh`.
+- With the maintainer's go-ahead, on an idle desktop: run the Windows
+  driver of the page, `tests/desktop/windows-autoclicker.ps1` (written
+  2026-11-18, the same checks as the Linux phase, which replaced the manual
+  check; [testing.md](../development/testing.md#the-pages-former-manual-check-automated)).
+  It has passed static checks only (parser, C# compile, variable names,
+  isolation guard). (The backend's real-input test passed there on
+  2026-11-18.)
 - A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
 - Possible later work, each a decision of its own: a macOS backend
   (CGEvent, event tap, Accessibility permission), a Wayland backend through

@@ -66,7 +66,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   `autoclicker` runs, which is off by default; X11 tested with real input
   on a private Xvfb only, Windows unit-tested natively and its backend run
   with real input by the opt-in desktop test on the maintainer's
-  Windows 11 on 2026-11-18; the page not driven on Windows). No other product features exist yet. Current milestone and status:
+  Windows 11 on 2026-11-18; the page not yet driven on Windows: its driver,
+  `windows-autoclicker.ps1`, is written but not run). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology

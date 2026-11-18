@@ -37,8 +37,10 @@ Phases:
          service, the sotyware-server binary (cloud_ui_account.py)
   autoclicker the autoclicker and macros (ADR-050) with real input through
          XTest on this private display only, into a window of the driver:
-         turning it on and off, the clicker, the shortcuts, recording and
-         playback (cloud_ui_autoclicker.py)
+         turning it on and off, the clicker, the shortcuts, recording,
+         playback, the editor, profiles, export and import, held keys, a
+         restart and the page's other checks a person did by hand
+         (cloud_ui_autoclicker.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's

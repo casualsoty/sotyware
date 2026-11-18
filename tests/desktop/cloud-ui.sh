@@ -61,7 +61,11 @@
 #        off (the shortcuts grabbed and released), a bounded run from the
 #        Clicker tab, F6, F7, F8 and a screen corner from another program,
 #        no click on sotyware's own window, recording with F9 and F10,
-#        saving and playing the macro; no keyring, no server.
+#        saving and playing the macro, then what a person used to check
+#        by hand: buttons and speed timed, shortcut fields, the editor,
+#        playback options, profiles, export and import through the GTK
+#        dialogs, held keys, restarts, 100 clicks per second, the Wayland
+#        message; no keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),

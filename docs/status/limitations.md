@@ -1159,8 +1159,11 @@ server only; no real provider was asked.
   opt-in desktop test (`automation::windows::desktop`) on the
   maintainer's Windows 11 only
   ([status](status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18)).
-  The page has **never been driven on Windows**; never on a real Linux
-  desktop, macOS or Windows 10.
+  The page has **never been driven on Windows** (its driver,
+  `tests/desktop/windows-autoclicker.ps1`, is written but has not run);
+  never on a real Linux desktop, macOS or Windows 10. Input to a program
+  running as administrator is not tested anywhere (it needs an elevated
+  program; Windows' rule, below).
 - **Platforms:** Windows and Linux on X11 only. **Wayland** sessions get
   nothing (the system lets no application send or record other programs'
   input; a portal-based backend would be a new decision); **macOS** has no

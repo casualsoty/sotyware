@@ -149,6 +149,103 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### The autoclicker's manual check, automated (2026-11-18)
+
+The maintainer asked that the manual check of the Autoclicker page
+(testing.md, written the same day) be automated rather than left to a
+person. Its twelve steps are now checks of two drivers
+([testing.md](../development/testing.md#the-pages-former-manual-check-automated)):
+
+- **Linux**, the `autoclicker` phase of `cloud-ui.sh`
+  (`cloud_ui_autoclicker.py`): **64 checks added** to its 39, real input
+  through XTest on the script's private Xvfb display only, into its test
+  window, now with the X server's time of every event: the right button
+  and double clicks at 5 per second (a double click every 150 to 250 ms,
+  its two clicks 20 to 120 ms apart; it counts as one click); a shortcut
+  changed by pressing it in its field (Ctrl+Alt+K, used from the test
+  window, F6 back); a letter alone and F12 alone refused with the reason;
+  the confirmation without an emergency stop (Cancel starts nothing, Start
+  anyway does, the page's Stop stops it); playback 3 times at 2×, the time
+  between the two clicks halved; F7 and F8 during an endless playback;
+  Shift+F11 for the profile's macro, at once; the editor (a delay, a wait
+  and a click added, moved, duplicated, deleted, Preview sending nothing,
+  leaving asking first, Save stored exactly, Revert, the saved changes
+  played); a restart (the feature still on, nothing started, the database
+  unchanged); a second profile with its own toggle, switched and started
+  with; a macro's own shortcut, export through the GTK save dialog, delete,
+  import through the GTK open dialog (shortcut switched off); keys a macro
+  holds released by F8, by the page's Stop and by quitting; 100 clicks per
+  second (85 to 115, timed by the X server) while tabs are switched (under
+  3 s each) and sotyware's process uses under half a core; screen-reader
+  text read through AT-SPI; while the feature is off, F8 refused for the
+  toggle (the emergency stop's); and in a Wayland session
+  (`XDG_SESSION_TYPE=wayland`) the page's "Not available" with the reason,
+  the feature failing with it and holding no shortcut. A click on
+  sotyware's own window during the recording is checked to stay out of
+  the macro.
+- **Windows**, `tests/desktop/windows-autoclicker.ps1` (new): the same
+  checks through UI Automation and `SendInput` (keys by scan code), into a
+  topmost window of the script that records each button and key with its
+  time; it checks before every run that its window is under every point
+  sotyware will click, quits through the tray's Quit, puts the pointer
+  back and releases anything left down. It refuses to start without
+  `-ConfirmRealInput pointer-and-keys`. **Not run**: it moves the pointer
+  and presses keys on the maintainer's desktop. Checked statically on
+  native Windows 11: the PowerShell parser (0 errors), its C# helpers
+  compiled, `check-ps-variables.ps1` (it found two variables spelled two
+  ways, `$F12`/`$f12` and `$Recorded`/`$recorded`, which would have
+  overwritten each other; renamed), the isolation guard, ASCII only.
+
+**Two defects found by the new Linux checks, both fixed:**
+
+- **F8 did not stop a macro that held a modifier.** With real input, a
+  playback holding Shift went on after F8 and Shift stayed down: the
+  system matches a shortcut's modifiers exactly (`XGrabKey` here,
+  `RegisterHotKey` on Windows likewise), so with Shift held F8 arrives as
+  Shift+F8. The unit test pressed the shortcut through the mock's sink,
+  which ignores modifiers, so it passed. While a session runs, the
+  emergency stop is now also registered with every other combination of
+  Ctrl, Alt, Shift and Meta (`Chord::with_other_modifiers`), never listed,
+  given up when the session ends; the recorder leaves those combinations
+  out ([automation.md](../architecture/automation.md#safety), ADR-050
+  amended). New tests `the_emergency_stop_works_while_a_macro_holds_modifiers`
+  and `the_emergency_stop_with_modifiers_held_stops_a_recording_and_is_not_recorded`
+  fail with the registration switched off; `keys.rs` checks the
+  combinations. On Windows the same code registers through
+  `RegisterHotKey`; not yet run there with real input.
+- **Screen readers could not read the page's hints, units and the
+  Overview's shortcut labels.** AT-SPI had no "One click every 200 ms.":
+  WebKitGTK leaves a plain `<span>` that is a flex item out of the
+  accessibility tree ([frontend.md](../architecture/frontend.md#design-system)),
+  and the page had 39 of them (hints, units, labels, the editor's counts
+  and legend). They are paragraphs with no margin now; `Autoclicker.test.ts`
+  checks every tab (it fails on the old markup), and AT-SPI now reads the
+  speed hint, the playback form's hint and the six shortcut labels.
+  Whether WebView2 on Windows read those spans was not checked, before or
+  after (the commit message of `dda78ce` says Chromium exposed them: an
+  assumption, not something seen).
+
+My own checklist was also wrong in one step: while the feature is on, F8
+pressed in a shortcut field never reaches the page (the emergency stop
+holds the key), so "F8 is refused with the reason" shows only while it is
+off; the phase now checks both.
+
+**Runs** (WSL2, Xvfb 1280 × 900 with openbox, test-profile builds of this
+tree): before the fixes 98 passed and 3 failed (F8; the speed hint; the
+click rate measured with the driver's own clock, 120 per second, now
+timed by the X server); with the Rust fix 100 and 1 (the hint); with both
+fixes **103 passed, 0 failed, three runs in a row** (the first of them
+ended with `cloud-ui.sh` exiting 2 after the phase: I had edited that
+script while bash was reading it; the next two exited 0). WSL2 headless:
+`npm run test:headless` (every guard, Vitest 349 in 22 files, Rust 772
+passed and 32 ignored: three new tests), `cargo fmt --check`, clippy with
+`-D warnings` for the default features and for `test-profile`,
+`npm run check` (0 errors, 0 warnings), `npm run build`.
+
+**Not run:** the Windows driver (it waits for the maintainer's go-ahead);
+input to a program running as administrator; real Linux desktops;
+Windows 10.
+
 ### Hosted runs at `423605f`: the autoclicker branch passes on every platform (2026-11-18)
 
 `feat/autoclicker-macros` was pushed on 2026-11-18 as a new branch at
@@ -203,9 +300,9 @@ which admits only `main` and `v*`; dry runs belong on `main`), so neither
 the Linux packages nor the macOS app were built;
 `desktop-windows-isolated.yml` (hosted Windows jobs are elevated: NOT RUN,
 exit 4, as before); every real-input test (opt-in, never in CI); the page
-on Windows (its
-[manual check](../development/testing.md#manual-check-autoclicker-and-macros-windows-11)
-is still to do), real Linux desktops, Windows 10; macOS input (no
+on Windows (its manual check, since
+[automated](../development/testing.md#the-pages-former-manual-check-automated),
+is still to run there), real Linux desktops, Windows 10; macOS input (no
 backend).
 
 ### The autoclicker's Windows backend with real input (2026-11-18)
