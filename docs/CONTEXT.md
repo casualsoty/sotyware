@@ -52,8 +52,13 @@ Tested headless (engines on a mock backend and a fake clock), the X11
 backend with real input on a private Xvfb, the app through its page with
 real input on the private display of `cloud-ui.sh autoclicker` (whose
 first runs found and fixed WebKitGTK field names and two fail-safe
-defects), the Windows build natively (unit tests, clippy); the Windows
-real-input test was not run.
+defects), the Windows build natively (unit tests, clippy), and the
+Windows backend with real input on the maintainer's Windows 11
+(2026-11-18, opt-in `automation::windows::desktop`, into its own window:
+three passes after fixing moves that landed a pixel off and the test's
+own defects;
+[status](status/status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18));
+the page has not been driven on Windows.
 
 **Folder sync** (2026-11-16, ADR-043, [folder-sync.md](architecture/folder-sync.md);
 [status](status/status.md#folder-sync-2026-11-16)): a storage account's

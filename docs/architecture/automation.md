@@ -68,11 +68,12 @@ native APIs, and only while the built-in feature `autoclicker` runs.
   the marker `0x534F5459` ("SOTY") in `dwExtraInfo`; the hooks skip it, so
   playback is never recorded (input injected by other software is recorded
   like the user's). Pointer moves are absolute over the virtual desktop
-  (`MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`, normalised with
-  rounding up), then checked with `GetCursorPos` and put on the exact pixel
-  with `SetCursorPos` if rounding missed, before any button of the same
-  batch. Buttons and keys of one batch go in one `SendInput` call (no user
-  input in between).
+  (`MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`; Windows maps 0 to the
+  desktop's first pixel and 65535 to its last, rounding down, so sotyware
+  sends the middle of the pixel's range of values), then checked with
+  `GetCursorPos` and put on the exact pixel with `SetCursorPos` if it
+  missed, before any button of the same batch. Buttons and keys of one
+  batch go in one `SendInput` call (no user input in between).
 - **Keys** are sent by scan code (`KEYEVENTF_SCANCODE`, with
   `KEYEVENTF_EXTENDEDKEY` for `0xE0` keys), as the keyboard would: the
   layout of the program that receives them gives the character, and games
@@ -289,7 +290,9 @@ explicit action and the same shortcut stops it.
   between that check and the move, which a hand pushing a mouse outlasts.
 - **sotyware's own window is never clicked**: a click, press or scroll that
   would land on it is skipped (with its release), and keys are not sent
-  while it is active, so the dashboard's Stop always works.
+  while it is active, so the dashboard's Stop always works. A skipped click
+  does not count towards the clicker's number of clicks (a time limit
+  still ends the run).
 - **One session at a time**, nothing restarts after a restart, shortcuts
   only while the feature runs, and the confirmation above.
 
@@ -446,7 +449,16 @@ and documents, never paths (the dialogs are Rust's):
 - **Windows, for real** (opt-in, `#[ignore]`):
   `automation::windows::desktop` on the user's desktop, into a topmost
   window it creates (checked under each point; keys only while it has the
-  keyboard); the pointer is put back. Never in CI.
+  keyboard, counted there by scan code): moves on the exact pixel, clicks,
+  the hooks (the user's input recorded, sotyware's own not), the clicker
+  skipping sotyware's own window and then 20 clicks at 5 ms, a key, a
+  global shortcut and one another registration holds, playback skipping
+  keys while sotyware's window is active, and a Shift held by playback
+  released when it is stopped. The test window belongs to the test
+  process, so it is sotyware's own to the engines; they run through a
+  wrapper (`Confined`) that lets them send to that window only, or nothing
+  where the skipping is checked. The pointer is put back, also after a
+  failed check. Never in CI.
 - **Frontend**: `src/automationFormat.test.ts` (helpers),
   `src/Autoclicker.test.ts` (the page with Tauri's IPC mocks).
 

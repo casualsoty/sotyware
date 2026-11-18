@@ -111,7 +111,9 @@ uses cannot be taken: the tab shows which shortcuts work.
   autoclicker or a macro clicks itself does not stop it; push into
   another corner then, or press F8.
 - The autoclicker never clicks sotyware's own window, so its **Stop**
-  button always works.
+  button always works. A click it skips there does not count towards a
+  number of clicks: the page shows it as skipped, and the autoclicker goes
+  on until it has clicked elsewhere that often or you stop it.
 - Stopping, pausing or quitting releases every key and mouse button a
   macro held down.
 - Quitting sotyware (tray › Quit) stops everything.

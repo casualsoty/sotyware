@@ -1820,7 +1820,12 @@ and clicks**; run it only on a desktop nobody is using, never in CI). It
 clicks only into a topmost window it creates, checks that window is under
 each point first (else it fails without sending), sends keys only while
 that window has the keyboard (else it skips those checks and says so) and
-puts the pointer back:
+puts the pointer back, also when a check fails. The clicker and playback
+run through a wrapper (`Confined`) that lets them send to that window
+only, or nothing at all where the test checks that they skip sotyware's
+own window (the test window belongs to the test process, so it is
+sotyware's own to them). Keys are counted by scan code, so any keyboard
+layout works. About 2 seconds:
 
 ```powershell
 cd src-tauri; cargo test --lib automation::windows::desktop -- --ignored --test-threads=1

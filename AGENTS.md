@@ -64,8 +64,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   profiles and global shortcuts, sent and recorded by Rust through native
   APIs on Windows and Linux X11 only, while the built-in feature
   `autoclicker` runs, which is off by default; X11 tested with real input
-  on a private Xvfb only, Windows unit-tested natively, its real-input test
-  not yet run). No other product features exist yet. Current milestone and status:
+  on a private Xvfb only, Windows unit-tested natively and its backend run
+  with real input by the opt-in desktop test on the maintainer's
+  Windows 11 on 2026-11-18; the page not driven on Windows). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology

@@ -260,14 +260,14 @@ ADR-026; public ACLs do not).
 
 ## Autoclicker (after ADR-050)
 
-- With the maintainer on an idle desktop: run the Windows real-input test
-  (`cargo test --lib automation::windows::desktop -- --ignored`), then a
-  manual check of the page in the release build: turn on, F6/F8, record a
-  short macro in Notepad, edit, play with speed and repetitions, profiles,
-  export and import, quit while a macro holds a key.
-- A desktop driver for the Autoclicker page (Linux virtual display: the
-  X11 backend works there; Windows: UI Automation, input confined to a
-  test window), in `cloud-ui.sh`/`windows-cloud-ui.ps1` style.
+- With the maintainer on an idle desktop: a manual check of the page in
+  the release build on Windows: turn on, F6/F8, record a short macro in
+  Notepad, edit, play with speed and repetitions, profiles, export and
+  import, quit while a macro holds a key. (The backend's real-input test
+  passed there on 2026-11-18.)
+- A Windows desktop driver for the Autoclicker page (UI Automation, input
+  confined to a test window), like the Linux `autoclicker` phase of
+  `cloud-ui.sh`.
 - A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
 - Possible later work, each a decision of its own: a macOS backend
   (CGEvent, event tap, Accessibility permission), a Wayland backend through

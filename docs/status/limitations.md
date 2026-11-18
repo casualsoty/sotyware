@@ -1150,13 +1150,15 @@ server only; no real provider was asked.
 - **Where it was tested** ([status](status.md#autoclicker-and-macros-2026-11-17)):
   the engines, the service and the page headless (mock backend and fake
   clock; Tauri's IPC mocks), on WSL2 and on native Windows 11 (Rust only
-  there); the X11 backend with real input on a private Xvfb display only;
-  the Windows backend type-checked, clippy-checked and unit-tested on
-  native Windows 11, but its real-input desktop test
-  (`automation::windows::desktop`) **has not been run** (it moves the
-  pointer; the maintainer runs it on an idle desktop). Never on a real
-  Linux desktop, never on macOS, never driven through the app's own window
-  by a desktop test.
+  there); the X11 backend with real input on a private Xvfb display only,
+  and the app through its page with real input on the private display of
+  `cloud-ui.sh autoclicker`; the Windows backend unit-tested on native
+  Windows 11 and run with real input, into a window of its own, by the
+  opt-in desktop test (`automation::windows::desktop`) on the
+  maintainer's Windows 11 only
+  ([status](status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18)).
+  The page has **never been driven on Windows**; never on a real Linux
+  desktop, macOS or Windows 10.
 - **Platforms:** Windows and Linux on X11 only. **Wayland** sessions get
   nothing (the system lets no application send or record other programs'
   input; a portal-based backend would be a new decision); **macOS** has no

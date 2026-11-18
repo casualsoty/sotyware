@@ -372,12 +372,19 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
 }
 
 /// The 0…65535 coordinate Windows maps back to pixel `v` of a span of
-/// `len` pixels starting at `origin` (rounded up, so the pixel is not
-/// missed by truncation).
+/// `len` pixels starting at `origin`. Windows maps 0 to the first pixel and
+/// 65535 to the last (`MOUSEINPUT`), rounding down: origin + n × (len − 1)
+/// / 65535. Seen on the real desktop (Windows 11 26200, two monitors): the
+/// earlier n × len / 65536 form landed a pixel short of (450, 360). The
+/// value aims at the middle of the pixel's range of n, so a rounding
+/// difference cannot reach a neighbour.
 pub(crate) fn normalise(v: i32, origin: i32, len: u32) -> i32 {
     let len = i64::from(len.max(1));
+    if len == 1 {
+        return 0;
+    }
     let rel = (i64::from(v) - i64::from(origin)).clamp(0, len - 1);
-    ((rel * 65_536 + len - 1) / len).min(65_535) as i32
+    ((2 * rel + 1) * 65_535 / (2 * (len - 1))).min(65_535) as i32
 }
 
 fn mouse(dx: i32, dy: i32, data: u32, flags: u32) -> INPUT {
@@ -746,24 +753,49 @@ mod tests {
 
     #[test]
     fn normalised_coordinates_map_back_to_their_pixel() {
-        // Windows maps n back to origin + n * len / 65536, rounded down.
-        for (origin, len) in [(0, 1920u32), (-1280, 3200), (0, 3840), (0, 1), (100, 7)] {
+        // Windows maps n back to origin + n * (len - 1) / 65535, rounded
+        // down: 0 is the first pixel, 65535 the last. The real desktop test
+        // found it (3440 x 2880 virtual desktop from (0, -1440)): the
+        // earlier n * len / 65536 form sent (450, 360) to (449, 359).
+        let back = |n: i32, origin: i32, len: u32| {
+            origin + (i64::from(n) * (i64::from(len) - 1) / 65_535) as i32
+        };
+        for (origin, len) in [
+            (0, 1920u32),
+            (-1280, 3200),
+            (0, 3840),
+            (0, 3440),
+            (-1440, 2880),
+            (0, 1),
+            (100, 7),
+        ] {
             let last = origin + len as i32 - 1;
             for v in [
                 origin,
                 (origin + 1).min(last),
                 origin + len as i32 / 2,
                 last,
+                (origin + 450).min(last),
+                (origin + 1800).min(last),
             ] {
                 let n = normalise(v, origin, len);
                 assert!((0..=65_535).contains(&n));
-                let back = origin + ((i64::from(n) * i64::from(len)) >> 16) as i32;
-                assert_eq!(back, v, "{v} in {origin}+{len}");
+                assert_eq!(back(n, origin, len), v, "{v} in {origin}+{len}");
             }
         }
-        // Points off the desktop go to its edge.
-        assert_eq!(normalise(-5, 0, 100), 0);
-        assert_eq!(normalise(500, 0, 100), normalise(99, 0, 100));
+        assert_eq!(back(normalise(450, 0, 3440), 0, 3440), 450);
+        assert_eq!(back(normalise(360, -1440, 2880), -1440, 2880), 360);
+        // Every pixel of a span, both ends included.
+        for len in [2u32, 3, 7, 1366, 2560] {
+            for v in 0..len as i32 {
+                assert_eq!(back(normalise(v, 0, len), 0, len), v, "{v} of {len}");
+            }
+        }
+        // Points off the desktop go to its edge pixel.
+        assert_eq!(normalise(-5, 0, 100), normalise(0, 0, 100));
+        assert_eq!(back(normalise(-5, 0, 100), 0, 100), 0);
+        assert_eq!(normalise(500, 0, 100), 65_535);
+        assert_eq!(back(normalise(500, 0, 100), 0, 100), 99);
     }
 
     #[test]
