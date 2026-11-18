@@ -140,7 +140,10 @@ under `sotyware.theme.v1` in the webview's `localStorage`, applied before
 the first paint as `data-theme` on `<html>`, and passed to the window's
 `setTheme` so the title bar matches. Storage that is unavailable or throws
 only means the system theme; Settings says when a choice could not be
-saved.
+saved. The webview, not sotyware, writes it to disk: on Linux WebKitGTK
+commits it 0.5 s later, or just after sotyware quits, so a sotyware
+started again within that moment can miss it
+([limitations](../status/limitations.md#dashboard-adr-035)).
 
 ## Interaction
 

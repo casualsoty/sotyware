@@ -1230,6 +1230,25 @@ server only; no real provider was asked.
 - **The theme is per webview profile:** it lives in the webview's
   `localStorage`; clearing the webview data, a test profile or a new
   computer starts from the system theme. It is not synced.
+- **On Linux a theme just chosen reaches the disk a moment later, through
+  WebKit, not sotyware** (WebKitGTK 2.52.6, read in its source and
+  measured on WSL2, 2026-11-18): WebKit's network process commits a
+  `localStorage` write 0.5 s after it is made, or, when sotyware quits
+  first, as soon as it sees sotyware gone, and then exits (5 to 32 ms
+  after sotyware on WSL2). A quit right after the choice therefore keeps
+  it. But a sotyware started again before that late commit shows the
+  previous theme; and when the webview had nothing else stored, WebKit
+  deletes the store it read as empty when that sotyware quits, so the
+  choice is lost for good. A choice whose helper is killed before it
+  commits is lost as well (a session that ends at that moment, for
+  example; not tested). It never happened on its own on WSL2 (14
+  relaunches started at once after a quit, 9 of them with the CPUs
+  loaded), only when the helper was held back; the desktop test's one
+  failure on a GitHub runner, a relaunch 0.2 s after the quit, is the
+  same failure as when the helper's commit is held back 2 s
+  ([status](status.md#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)).
+  The downloads assumption on Usage & costs is kept the same way. Not
+  examined: WebView2 (Windows) and WKWebView (macOS).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux

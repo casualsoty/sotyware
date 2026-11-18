@@ -2431,11 +2431,19 @@ Files:
     served, close exits 0.
   - 17: feature preferences across real restarts (tray mode). Each restart is a
     tray Quit with exit code 0 and no process left, then a new process; the page
-    is never just reloaded. Scheduled backups (left enabled and saved by 12)
-    is unchecked, sotyware quits, the database row (read with Python's
-    `sqlite3`, read-only) says disabled, and the relaunch shows it disabled with
-    no error and no storage warning in the log; it is checked again, sotyware
-    quits, the row says enabled, and a second relaunch shows it running.
+    is never just reloaded. "No process left" includes WebKit's helpers of the
+    instance (found by the test profile in their environment): they outlive
+    sotyware by about 0.1 s, WebKitGTK's network process committing the page's
+    `localStorage` meanwhile, and a relaunch before that would read the
+    previous theme ([limitations](../status/limitations.md#dashboard-adr-035)),
+    so the driver waits up to 15 s for them (WebKit's own watchdog is 10 s).
+    Scheduled backups (left enabled and saved by 12) is unchecked, Dark is
+    chosen in Settings › General and sotyware quits at once, the database row
+    (read with Python's `sqlite3`, read-only) says disabled, and the relaunch
+    shows it disabled with no error and no storage warning in the log, and
+    Dark still chosen; it is checked again, sotyware quits, the row says
+    enabled, and a second relaunch shows it running. Scenarios 18 and 19 quit
+    the same way.
   - 18: a corrupt `preferences.sqlite3` (text): sotyware starts in tray mode
     with Scheduled backups running (its default); the page shows "Could not
     load the saved feature choices: … not a database" and the log says so;

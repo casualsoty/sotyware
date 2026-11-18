@@ -525,6 +525,19 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **The theme check after a quick quit and relaunch** (2026-11-18, test
+  code and docs only,
+  [status.md](status/status.md#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)):
+  `desktop-virtual.yml` failed once at `0b79903` on "the theme chosen
+  before quitting (Dark) is still chosen". WebKitGTK commits a
+  `localStorage` write 0.5 s after it, or in its network process just
+  after sotyware has ended, so a quit right after the choice keeps it,
+  but the driver's relaunch 0.2 s later can read before that commit
+  (holding the helper's commit back 2 s gives the same failure). The
+  driver now waits for WebKit's helpers of the quitting instance to end
+  (at most 15 s; they take about 0.1 s); the product side is a
+  [limitation](status/limitations.md#dashboard-adr-035). WSL2 virtual
+  display 139/0/0 three times, `test:headless` passed; not pushed.
 - **Usage & costs tab in the Linux desktop test** (2026-11-16,
   [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
   `cloud-ui.sh usage` measures a seeded versioned bucket through the UI
