@@ -859,6 +859,12 @@ async fn invalid_requests_are_refused_before_any_request() {
     assert_eq!(e.kind, ErrorKind::OutdatedPage);
 }
 
+/// Whether the running operation has been asked to stop: what `run` reads
+/// right after the item hook returns.
+fn stop_requested(ops: &CloudOperations) -> bool {
+    matches!(&ops.lock().slot, Slot::Active { control, .. } if control.cancelled())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_cancels_the_running_operation_and_refuses_new_ones() {
     let s = setup(true).await;
@@ -871,19 +877,35 @@ async fn shutdown_cancels_the_running_operation_and_refuses_new_ones() {
         .await
         .unwrap();
     let ops = Arc::clone(&s.ops);
+    let asked: Arc<AtomicBool> = Arc::default();
+    let seen = Arc::clone(&asked);
     s.ops.before_item(move |i| {
         if i == 1 {
-            let ops = Arc::clone(&ops);
-            // Quitting from another thread while the operation runs.
-            std::thread::spawn(move || ops.shutdown(Duration::from_secs(10)));
-            std::thread::sleep(Duration::from_millis(100));
+            let quitting = Arc::clone(&ops);
+            // Quitting from another thread while the operation runs. Item 1
+            // goes on only once the shutdown has asked the operation to
+            // stop, however late that thread gets a CPU (a fixed sleep here
+            // lost that race on a busy runner).
+            std::thread::spawn(move || quitting.shutdown(Duration::from_secs(10)));
+            let t = Instant::now();
+            while !stop_requested(&ops) && t.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            seen.store(stop_requested(&ops), Ordering::SeqCst);
         }
     });
     let started = s.start(&plan, ConflictPolicy::Skip).await;
     let (summary, items) = s.finished(&started.operation).await;
+    assert!(
+        asked.load(Ordering::SeqCst),
+        "the shutdown did not ask the operation to stop within 5 s"
+    );
     assert_eq!(summary.state, OperationState::Cancelled);
     assert_eq!(items[0].state, ItemState::Completed);
-    assert!(items[1..].iter().all(|i| i.state == ItemState::Cancelled));
+    assert!(
+        items[1..].iter().all(|i| i.state == ItemState::Cancelled),
+        "{items:?}"
+    );
     let e = s
         .plan(OperationRequest::Delete {
             items: vec![file("1")],
