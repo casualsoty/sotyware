@@ -143,7 +143,11 @@ only means the system theme; Settings says when a choice could not be
 saved. The webview, not sotyware, writes it to disk: on Linux WebKitGTK
 commits it 0.5 s later, or just after sotyware quits, so a sotyware
 started again within that moment can miss it
-([limitations](../status/limitations.md#dashboard-adr-035)).
+([limitations](../status/limitations.md#dashboard-adr-035)); on Windows
+WebView2 commits it 5 s later, or as soon as sotyware ends, and a
+sotyware started again at once still read it (seen with sotyware ended by
+`Stop-Process`;
+[status](../status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 
 ## Interaction
 

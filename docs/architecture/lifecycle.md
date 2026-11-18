@@ -174,7 +174,10 @@ for a tray host: one that appears later is used on the next start.
   The webview's own storage (the theme, the downloads assumption) is not
   part of this: on Linux WebKitGTK commits a recent change in its network
   process just after sotyware has ended, and that helper exits after it
-  ([limitations](../status/limitations.md#dashboard-adr-035)).
+  ([limitations](../status/limitations.md#dashboard-adr-035)); on Windows
+  WebView2's storage service does the same, and its processes end within
+  about 0.2 s of sotyware (seen with sotyware ended by `Stop-Process`;
+  [status](../status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 - **An unexpected tray failure is fatal.** `setup` exits with code 1 when
   `select_mode()` does not recognise the error as a missing tray host. (A
   watcher that accepts the item while no panel displays it is not detected; see
