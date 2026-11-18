@@ -318,6 +318,63 @@ fn keep_last(n: u32) -> Retention {
     }
 }
 
+/// The whole second a snapshot is named after (`20261118T103000Z`).
+fn named_second(snapshot: &str) -> &str {
+    let name = snapshot.rsplit('/').next().unwrap_or(snapshot);
+    name.get(..16).expect("a snapshot key")
+}
+
+/// How far [`wait_past_the_runs`] waits past the runs, in seconds: twice
+/// the largest backward step of the wall clock seen (1.02 s).
+const SPARE_SECONDS: i64 = 2;
+
+/// Waits until a task started now is recorded, and names a snapshot, later
+/// than every run of `job` so far, by the wall clock the engine reads, with
+/// [`SPARE_SECONDS`] to spare.
+///
+/// The run history is ordered by its runs' start on that clock (`now_ms`),
+/// health counts a verification only if it ended after its snapshot's run
+/// did (`model::health`), and snapshot names, so retention's order, use it
+/// in whole seconds (`engine::now_rfc3339`). The clock can step back: on
+/// WSL2, Hyper-V time sync stepped it back by up to 1.02 s, mostly about
+/// 0.7 s every half minute, on 2026-11-18, and a fixed 1.1 s sleep then left
+/// the next snapshot in the same second as the previous one (ordered by
+/// their random ids) or an earlier one. Waiting on the clock itself absorbs
+/// a step before the wait ends; the spare absorbs a smaller one between the
+/// wait and the next task reading the clock. Nothing here separates the
+/// reads within one task (a backup and its own verification). A clock that
+/// does not get there within 30 s fails the test, saying so.
+async fn wait_past_the_runs(e: &Env, job: &str) {
+    let runs = e.backups.runs(job).unwrap();
+    let recorded = runs
+        .iter()
+        .flat_map(|r| [Some(r.started_ms), r.finished_ms])
+        .flatten()
+        .max()
+        .unwrap_or(0);
+    let named = runs
+        .iter()
+        .filter_map(|r| r.snapshot.as_deref())
+        .map(named_second)
+        .max();
+    let start = Instant::now();
+    loop {
+        // The name a snapshot would get the spare before now.
+        let spare =
+            engine::shift_rfc3339(&engine::now_rfc3339(), -SPARE_SECONDS).expect("a valid time");
+        if now_ms() - SPARE_SECONDS * 1000 > recorded
+            && named.is_none_or(|n| model::compact_time(&spare).as_str() > n)
+        {
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "the wall clock did not pass the runs of {job} by {SPARE_SECONDS} s within 30 s: it stepped back"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_backup_copies_everything_and_restores_byte_identically() {
     let e = env().await;
@@ -400,7 +457,7 @@ async fn an_incremental_backup_transfers_only_changes_and_keeps_history() {
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     assert_eq!(first.state, "completed");
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"one, changed").await;
     e.put("copy-of-b.txt", b"two").await;
     e.delete_primary("c.txt");
@@ -446,7 +503,7 @@ async fn a_mass_deletion_is_flagged_and_retention_keeps_the_older_snapshots() {
     let job = e.save(keep_last(1));
     assert_eq!(e.task(&job.id, TaskKind::Backup).await.state, "completed");
     let before = e.snapshots();
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_past_the_runs(&e, &job.id).await;
     for i in 0..15 {
         e.delete_primary(&format!("f{i:02}.txt"));
     }
@@ -499,7 +556,7 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
     let job = e.save(keep_last(1));
     let first = e.task(&job.id, TaskKind::Backup).await;
     let old_blob = model::blob_key("sotyware/", &sha256_hex(b"version 1"));
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"version 2").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let p = second
@@ -530,7 +587,6 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
         journal: None,
         progress: &mut nothing,
     };
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let p = engine::prune_with_margin(&mut ctx, &job, Duration::ZERO)
         .await
         .unwrap();
@@ -582,7 +638,7 @@ async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses(
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     let first_key = first.snapshot.clone().unwrap();
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_past_the_runs(&e, &job.id).await;
     e.delete_primary("a.txt");
     e.put("c.txt", b"only in the second").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
@@ -654,7 +710,6 @@ async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses(
     assert_eq!(e.snapshots(), std::slice::from_ref(&second_key));
 
     // Once the data is old enough, only the blob no snapshot uses goes.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let spool = e.dir.path("spool-delete");
     fs::create_dir_all(&spool).unwrap();
     let mut ctx = Ctx {
@@ -695,7 +750,7 @@ async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
     e.put("a.txt", b"one").await;
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"two").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let status = e.backups.status(job.clone(), now_ms()).unwrap();
@@ -774,6 +829,7 @@ async fn damaged_or_missing_backup_data_fails_verification_and_is_never_healthy(
     fs::write(e.vault.object_path(VAULT, &blob_a), data(50_000, 99)).unwrap();
     let quick = e.task(&job.id, TaskKind::Verify).await;
     assert!(quick.verification.unwrap().passed);
+    wait_past_the_runs(&e, &job.id).await;
     let full = e.task(&job.id, TaskKind::VerifyFull).await;
     let v = full.verification.unwrap();
     assert!(!v.passed);
@@ -784,6 +840,7 @@ async fn damaged_or_missing_backup_data_fails_verification_and_is_never_healthy(
     // A missing blob fails even the quick check.
     let blob_b = model::blob_key("sotyware/", &sha256_hex(&data(40_000, 4)));
     fs::remove_file(e.vault.object_path(VAULT, &blob_b)).unwrap();
+    wait_past_the_runs(&e, &job.id).await;
     let quick = e.task(&job.id, TaskKind::Verify).await;
     assert_eq!(quick.verification.unwrap().missing.len(), 1);
     assert_eq!(e.health(&job.id), Health::VerificationFailed);

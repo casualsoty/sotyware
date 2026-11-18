@@ -151,6 +151,12 @@ newest snapshot is verified and not suspicious:
    before the oldest remaining manifest was created (a blob uploaded by a
    run on another device has no manifest yet, and clocks differ).
 
+Newest and oldest, here, for a run's previous snapshot and for health, are
+by the writing computer's wall clock: a snapshot's name and `created` carry
+it in whole seconds, the run history in milliseconds. A clock set back
+between two runs can make the newer one count as the older
+([limitations](../status/limitations.md#backups-adr-031)).
+
 On a versioned destination a delete adds a delete marker (the data stays
 until the provider's lifecycle removes it). With Object Lock retention the
 provider refuses deletes of locked versions; the run reports them as

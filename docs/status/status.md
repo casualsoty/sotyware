@@ -149,6 +149,60 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Backup tests and backward steps of the wall clock (2026-11-18)
+
+One full `cargo test` on WSL2 (branch `claude/frosty-vaughan-11b3db` at
+`f244dae`) failed `retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs`
+(keep-last 1 kept the first snapshot, not the second) and
+`a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses`
+(the two snapshots' names in the wrong order) together; both passed alone
+and in three more full runs. **Cause, confirmed:** snapshot names, so
+retention's order, carry the wall clock in whole seconds, and the run
+history and health its milliseconds. The tests put a fixed 1.1 s sleep
+between runs, while this machine's clock steps back, mostly about 0.7 s
+every half minute ([setup.md](../development/setup.md#wsl2-notes)). A
+temporary diagnostic, never committed, stepped sotyware's own clock reads
+back once, 0.5 s after the first snapshot was named. By 3 s, the two tests
+failed at the assertions seen, and so did
+`a_mass_deletion_is_flagged_and_retention_keeps_the_older_snapshots`
+(Healthy instead of Large change detected) and
+`after_deleting_the_newest_snapshot_health_rests_on_the_one_before` (the
+older run's snapshot). By 0.72 s, the two failed in 4 and 1 of 8 runs,
+each time with the second snapshot named in the first's second or an
+earlier one. During the first checks of the fix, a real step failed
+`damaged_or_missing_backup_data_fails_verification_and_is_never_healthy`
+(Not verified instead of Verification failed), and a 0.72 s step at its
+full verification failed the committed version 6 of 6 (Healthy: the
+failed verification sorted below the passed one before it).
+
+**Fix, test code only** (`src-tauri/src/backup/tests.rs`):
+`wait_past_the_runs` waits, at most 30 s, until a task started now is
+recorded, and names a snapshot, later than every run of the job so far,
+by the engine's own clock with two seconds to spare (twice the largest
+step seen). It replaces the five sleeps before a second backup and comes
+before the damaged-data test's full verification and its last quick one.
+The two sleeps before the zero-margin prunes are gone: their cutoff is the
+remaining snapshot's own time, not the current time. No assertion
+changed; `cargo test --lib backup` now finishes in 6.2 to 6.9 s here.
+With the diagnostic, the six tests passed all 42 test runs with steps
+within the spare (none; 3 s during the wait; 0.72 s and 1.5 s at the next
+task's start; 1.5 s at the full verification's start). A 2.5 s step
+at the next task's start still failed 3 of 6, and smaller spares were not
+enough: with one second, a 1.5 s step after the wait failed 8 of 12 and 2
+of 4 runs; waiting only for the next second, a 0.72 s step at the next
+task's start failed 3 of 8 runs of each order test.
+
+**Run** on WSL2 only (Ubuntu 24.04.1, Rust 1.99.1), diagnostic removed:
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+`cargo test --lib backup` 21 runs (28 passed, 1 ignored each) and
+`cargo test` 5 runs (772 passed, 32 ignored each); two real steps
+(−0.42 s, −0.50 s) fell inside those runs. **Not run:** Windows, macOS,
+CI. **Not fixed:** the app's own reliance on wall-clock order, which can
+make retention delete the newest snapshot
+([limitations](limitations.md#backups-adr-031)), and a step inside one
+backup task, between its run and its own verification, which test code
+cannot keep out ([limitations](limitations.md#tests)).
+
 ### The autoclicker's manual check, automated (2026-11-18)
 
 The maintainer asked that the manual check of the Autoclicker page
