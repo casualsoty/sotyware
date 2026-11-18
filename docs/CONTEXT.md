@@ -58,7 +58,14 @@ Windows backend with real input on the maintainer's Windows 11
 three passes after fixing moves that landed a pixel off and the test's
 own defects;
 [status](status/status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18));
-the page has not been driven on Windows.
+the page has not been driven on Windows. Pushed as the branch
+`feat/autoclicker-macros` on 2026-11-18 (not merged): at `423605f`,
+`ci.yml` (Ubuntu 22.04, Windows), `macos.yml` (both Macs, the automation
+code's first macOS build), `isolation-guard.yml`, `release-build.yml` and
+`desktop-virtual.yml` (139/0/0) passed, started by hand
+([status](status/status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18));
+the [manual check](development/testing.md#manual-check-autoclicker-and-macros-windows-11)
+of the page on Windows is still to do.
 
 **Folder sync** (2026-11-16, ADR-043, [folder-sync.md](architecture/folder-sync.md);
 [status](status/status.md#folder-sync-2026-11-16)): a storage account's

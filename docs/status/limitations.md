@@ -1149,8 +1149,10 @@ server only; no real provider was asked.
 
 - **Where it was tested** ([status](status.md#autoclicker-and-macros-2026-11-17)):
   the engines, the service and the page headless (mock backend and fake
-  clock; Tauri's IPC mocks), on WSL2 and on native Windows 11 (Rust only
-  there); the X11 backend with real input on a private Xvfb display only,
+  clock; Tauri's IPC mocks), on WSL2, on native Windows 11 (Rust only
+  there) and on GitHub's hosted Ubuntu, Windows and both Macs
+  ([hosted runs](status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18));
+  the X11 backend with real input on a private Xvfb display only,
   and the app through its page with real input on the private display of
   `cloud-ui.sh autoclicker`; the Windows backend unit-tested on native
   Windows 11 and run with real input, into a window of its own, by the

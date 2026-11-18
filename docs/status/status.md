@@ -149,6 +149,65 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `423605f`: the autoclicker branch passes on every platform (2026-11-18)
+
+`feat/autoclicker-macros` was pushed on 2026-11-18 as a new branch at
+`423605f`, three commits on `main`'s `3ee2f35`: the
+[single-instance driver fix](#the-single-instance-driver-checks-one-window-snapshot-2026-11-17)
+(`6ba567e`), the [autoclicker](#autoclicker-and-macros-2026-11-17)
+(`73e66bf`) and the
+[pixel fix](#the-autoclickers-windows-backend-with-real-input-2026-11-18)
+(`423605f`). Not merged; no pull request, tag or release. Every
+workflow's automatic trigger is limited to `main` (pushes and pull
+requests), so the push started nothing: five workflows were started by
+hand on the branch (`gh workflow run <workflow> --ref
+feat/autoclicker-macros`), and **all five passed** at the first attempt.
+Every job that built Rust used rustc 1.100.0 (developed with 1.99.1).
+
+- **`ci.yml`** run 44264545422: `headless (ubuntu-22.04)` (20261111.360.2),
+  6 min 0 s: Vitest 348/348 (22 files), `cargo test` **769 passed, 0
+  failed**, 32 ignored, the recorder build 798 passed, 32 ignored; each
+  with 108 automation tests (the two X11 real-input tests ignored, as
+  opt-in). `headless (windows-latest)` (windows-2025-vs2026
+  20261103.298.1), 8 min 20 s: PowerShell helpers 20/20, Vitest 348/348,
+  `cargo test` **749 passed, 0 failed**, 31 ignored, with 110 automation
+  tests, the Windows backend's coordinate and key tests among them (its
+  real-input test ignored, as opt-in). `account service (ubuntu-22.04)`,
+  22 s: 42 tests.
+- **`macos.yml`** run 44264550619, the automation code's **first build on
+  macOS** (where it has no backend): `macOS tests (aarch64)` (macos-15-arm64
+  20261104.0514.1), 5 min 47 s, and `macOS tests (x86_64)` (macos-15
+  20260824.0482.1), 11 min 6 s, each on a native machine (no Rosetta):
+  `cargo fmt --check`, clippy with `-D warnings` for the default features
+  and for `test-profile`, Vitest 348/348, `cargo test` **759 passed, 0
+  failed**, 30 ignored (108 automation tests), then the Keychain round
+  trip. `macOS package` was skipped (`package` is false). The patched
+  rfd's 4 × 50 macOS warnings (deprecated calls and unneeded `unsafe` in
+  its own code) are the same in `main`'s last run, 44034644241.
+- **`isolation-guard.yml`** run 44264554933 (the desktop drivers changed):
+  `guard` 8 s, `powershell-helpers` 22 s.
+- **`release-build.yml`** run 44264559067, `windows-installers`, 10 min
+  53 s: the release binary with the path remaps (8 min 39 s) passed the
+  guards (no test build, no local path); the MSI (6.64 MiB) and the NSIS
+  setup (4.80 MiB) were built and unpacked without installing, each
+  packaged `sotyware.exe` equal to the checked binary apart from the
+  bundle-type marker; the installer icon check passed. Nothing signed or
+  uploaded.
+- **`desktop-virtual.yml`** run 44264563357, 7 min 15 s, on
+  `ubuntu-latest`, now Ubuntu 26.04 (20261111.196.1): the test-profile
+  build, **139 passed, 0 failed, 0 skipped**.
+
+One run each. **Not run:** `release.yml` (a dry run on a branch cannot
+pass: its `macOS package` job runs in the `macos-signing` environment,
+which admits only `main` and `v*`; dry runs belong on `main`), so neither
+the Linux packages nor the macOS app were built;
+`desktop-windows-isolated.yml` (hosted Windows jobs are elevated: NOT RUN,
+exit 4, as before); every real-input test (opt-in, never in CI); the page
+on Windows (its
+[manual check](../development/testing.md#manual-check-autoclicker-and-macros-windows-11)
+is still to do), real Linux desktops, Windows 10; macOS input (no
+backend).
+
 ### The autoclicker's Windows backend with real input (2026-11-18)
 
 The opt-in test `automation::windows::desktop`
