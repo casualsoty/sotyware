@@ -242,6 +242,24 @@ passed and 32 ignored: three new tests), `cargo fmt --check`, clippy with
 `-D warnings` for the default features and for `test-profile`,
 `npm run check` (0 errors, 0 warnings), `npm run build`.
 
+**Hosted runs at `0b79903`** (pushed to the branch, started by hand): at
+the first attempt `macos.yml` (44278549060: Vitest 349 and `cargo test`
+762 passed, 0 failed, 30 ignored on Apple Silicon and on Intel) and
+`isolation-guard.yml` passed; `ci.yml` (44278544793) failed on Windows
+only, in `cloud::operations::tests::shutdown_cancels_the_running_operation_and_refuses_new_ones`
+(file management, unchanged here: it starts a shutdown on another thread
+and sleeps a fixed 100 ms, and on the runner the next item finished
+first), and `desktop-virtual.yml` (44278560511) failed one check of 139,
+"17 persistence relaunch 1: the theme chosen before quitting (Dark) is
+still chosen" (unchanged too: the driver quits right after choosing the
+theme, and WebKitGTK writes `localStorage` a moment later). Both failed
+jobs passed when run again: `ci.yml` attempt 2 (Ubuntu 22.04: Vitest 349,
+Rust 772 and the recorder build 801; Windows: 752 passed, 0 failed, 31
+ignored; account service) and `desktop-virtual.yml` attempt 2 (139
+passed, 0 failed, 0 skipped); locally the virtual-display test passed
+139/0/0 twice on this tree. Both flaky checks are left as they are here
+(follow-ups, not this change).
+
 **Not run:** the Windows driver (it waits for the maintainer's go-ahead);
 input to a program running as administrator; real Linux desktops;
 Windows 10.
