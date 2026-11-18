@@ -131,9 +131,9 @@
         {#each status.hotkeys as h (h.label + h.chord)}
           <li>
             <kbd>{h.keys}</kbd>
-            <span class="what">{h.label}</span>
+            <p class="what">{h.label}</p>
             {#if !status.running}
-              <span class="subtle small-text">off</span>
+              <p class="subtle small-text">off</p>
             {:else if h.registered}
               <span class="ok" title="Registered"><Icon name="check" size={14} /><span class="visually-hidden">registered</span></span>
             {:else}
@@ -285,5 +285,12 @@
   .warn {
     color: var(--warning);
     display: inline-flex;
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .keys li > p {
+    margin: 0;
   }
 </style>

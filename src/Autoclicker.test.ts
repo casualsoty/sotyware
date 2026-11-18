@@ -537,6 +537,64 @@ describe("the Macros tab", () => {
   });
 });
 
+describe("text a screen reader can read", () => {
+  // WebKitGTK leaves the text of a plain <span> that is a flex item out of
+  // the accessibility tree (frontend.md), so hints, units and labels inside
+  // flex boxes are paragraphs. Found by the Linux desktop driver: the
+  // Clicker's speed hint was not there.
+  const UNREAD = [
+    ".field > span.hint",
+    "span.unit",
+    ".inline > span.muted",
+    ".keys li > span.what",
+    ".keys li > span.subtle",
+    ".points li > span",
+    ".legend > span",
+    ".selectionbar > span",
+    ".pager > span",
+    ".actions-head > span",
+  ].join(", ");
+
+  it("keeps the hints, units and labels of every tab out of plain spans in flex boxes", async () => {
+    const full = clicker({
+      advanced: true,
+      clickType: "double",
+      random: { mode: "range", minMs: 80, maxMs: 120, variationPercent: 20 },
+      maxDurationMs: 60_000,
+      batch: { clicks: 10, pauseMs: 1000 },
+      target: { mode: "points", points: [{ x: 1, y: 2 }, { x: 3, y: 4 }], order: "sequential", area: null, spread: 5 },
+    });
+    cfg = config({ profiles: [profile("profile-1", "Default", { clicker: full }), profile("profile-2", "Gaming")] });
+    doc = { ...macroDoc(), playback: { ...(macroDoc()["playback"] as Record<string, unknown>), repeat: 3, stopAfterMs: 60_000, jitterPercent: 10, section: { first: 0, last: 1 } } };
+    const { root } = await render();
+    const unread: string[] = [];
+    const look = (where: string): void => {
+      unread.push(...[...root.querySelectorAll(UNREAD)].map((e) => `${where}: ${text(e)}`));
+    };
+    look("Overview");
+    expect([...root.querySelectorAll(".keys li > p.what")].map(text)).toContain("Start or stop the autoclicker");
+    for (const name of ["Clicker", "Recorder", "Profiles", "Settings"]) {
+      tab(root, name).click();
+      await settle();
+      look(name);
+      if (name === "Clicker") {
+        expect(text(root.querySelector(".field > p.hint"))).toBe("One click every 100 ms.");
+        expect(root.querySelectorAll("p.unit").length).toBeGreaterThanOrEqual(10);
+      }
+    }
+    tab(root, "Macros").click();
+    await settle();
+    root.querySelector<HTMLButtonElement>('[aria-label="Edit Daily report"]')!.click();
+    await settle();
+    root.querySelector<HTMLInputElement>('[aria-label="Select action 1"]')!.click();
+    await settle();
+    look("the editor");
+    expect(text(root.querySelector(".selectionbar > p"))).toBe("1 selected");
+    expect(text(root.querySelector(".actions-head > p"))).toBe("3 actions, 1.5 s at normal speed");
+    expect(unread).toEqual([]);
+  });
+});
+
 describe("the Settings tab", () => {
   it("records a shortcut from a key press and saves it on the profile", async () => {
     const { root } = await render();

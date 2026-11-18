@@ -442,7 +442,7 @@
               <label class="check"><input type="checkbox" bind:checked={m.shortcut.enabled} onchange={changed} />On</label>
             {/if}
           </div>
-          <span class="hint">Pressed again while the macro plays, it stops it.</span>
+          <p class="hint">Pressed again while the macro plays, it stops it.</p>
         </div>
         <label class="check"><input type="checkbox" bind:checked={m.favorite} onchange={changed} />Favorite</label>
       </div>
@@ -493,7 +493,7 @@
     <div class="card">
       <div class="actions-head">
         <h3 class="section-title">Actions</h3>
-        <span class="muted small-text">{m.actions.length.toLocaleString("en-US")} actions, {formatDuration(total)} at normal speed</span>
+        <p class="muted small-text">{m.actions.length.toLocaleString("en-US")} actions, {formatDuration(total)} at normal speed</p>
       </div>
 
       <div class="timeline" role="img" aria-label="Timeline of {m.actions.length} actions over {formatDuration(total)}">
@@ -510,11 +510,11 @@
         {/if}
       </div>
       <div class="legend small-text">
-        <span><span class="swatch click"></span>Clicks</span>
-        <span><span class="swatch key"></span>Keys</span>
-        <span><span class="swatch move"></span>Movements</span>
-        <span><span class="swatch scroll"></span>Scrolling</span>
-        <span><span class="swatch wait"></span>Waits and pauses</span>
+        <p><span class="swatch click"></span>Clicks</p>
+        <p><span class="swatch key"></span>Keys</p>
+        <p><span class="swatch move"></span>Movements</p>
+        <p><span class="swatch scroll"></span>Scrolling</p>
+        <p><span class="swatch wait"></span>Waits and pauses</p>
       </div>
 
       <div class="toolbar">
@@ -535,7 +535,7 @@
 
       {#if selected.length > 0}
         <div class="selectionbar" role="region" aria-label="Selected actions">
-          <span>{selected.length} selected</span>
+          <p>{selected.length} selected</p>
           <button type="button" class="small" onclick={() => duplicate(selected)}>Duplicate</button>
           <button type="button" class="small danger" onclick={() => remove(selected)}>Delete</button>
           <label class="inline small-text">Delay <input type="number" class="coord" min="0" aria-label="Delay of the selected actions, in ms" bind:value={bulkDelay} /> ms
@@ -593,7 +593,7 @@
         {#if pages > 1}
           <div class="pager">
             <button type="button" class="small" disabled={page === 0} onclick={() => (page -= 1)}>Previous</button>
-            <span class="small-text muted">Actions {page * PAGE + 1}–{Math.min(m.actions.length, (page + 1) * PAGE)} of {m.actions.length.toLocaleString("en-US")}</span>
+            <p class="small-text muted">Actions {page * PAGE + 1}–{Math.min(m.actions.length, (page + 1) * PAGE)} of {m.actions.length.toLocaleString("en-US")}</p>
             <button type="button" class="small" disabled={page >= pages - 1} onclick={() => (page += 1)}>Next</button>
           </div>
         {/if}
@@ -809,5 +809,16 @@
     justify-content: center;
     gap: var(--space-3);
     margin-top: var(--space-3);
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .field > p.hint,
+  .actions-head > p,
+  .legend > p,
+  .selectionbar > p,
+  .pager > p {
+    margin: 0;
   }
 </style>

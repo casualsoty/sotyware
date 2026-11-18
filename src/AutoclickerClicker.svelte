@@ -222,12 +222,12 @@
             <option value="interval">ms between clicks</option>
           </select>
         </div>
-        <span class="hint">
+        <p class="hint">
           {c.rateUnit === "cps"
             ? `One click every ${Math.round(c.intervalMs * 100) / 100} ms.`
             : `${formatRate(intervalToCps(c.intervalMs))} clicks per second.`}
           {intervalToCps(c.intervalMs) > 100 ? " Many programs miss clicks this fast." : ""}
-        </span>
+        </p>
       </div>
 
       <fieldset class="field">
@@ -292,7 +292,7 @@
           <ol class="points">
             {#each c.target.points as p, i (i)}
               <li>
-                <span class="muted">{c.target.points.length > 1 ? `${i + 1}.` : "Position"}</span>
+                <p class="muted">{c.target.points.length > 1 ? `${i + 1}.` : "Position"}</p>
                 <label class="xy">X <input type="number" class="coord" aria-label={c.target.points.length > 1 ? `X of position ${i + 1}` : "X"} value={p.x} onchange={(e) => { const n = num(e); if (n !== null) { edit((x) => { const q = x.target.points[i]; if (q) { q.x = Math.round(n); } }); } }} /></label>
                 <label class="xy">Y <input type="number" class="coord" aria-label={c.target.points.length > 1 ? `Y of position ${i + 1}` : "Y"} value={p.y} onchange={(e) => { const n = num(e); if (n !== null) { edit((x) => { const q = x.target.points[i]; if (q) { q.y = Math.round(n); } }); } }} /></label>
                 <button type="button" class="small" disabled={picking !== null} onclick={() => void pick(`point-${i}`, (pt) => edit((x) => { x.target.points[i] = pt; }))}>
@@ -352,15 +352,15 @@
           {#if c.random.mode === "range"}
             <div class="inline">
               <input type="number" class="short" min="1" aria-label="Shortest interval in ms" value={c.random.minMs} onchange={(e) => { const n = num(e); if (n !== null) { edit((x) => (x.random.minMs = n)); } }} />
-              <span class="unit">to</span>
+              <p class="unit">to</p>
               <input type="number" class="short" min="1" aria-label="Longest interval in ms" value={c.random.maxMs} onchange={(e) => { const n = num(e); if (n !== null) { edit((x) => (x.random.maxMs = n)); } }} />
-              <span class="unit">ms</span>
+              <p class="unit">ms</p>
             </div>
           {:else if c.random.mode === "variation"}
             <div class="inline">
-              <span class="unit">±</span>
+              <p class="unit">±</p>
               <input type="number" class="short" min="1" max="90" aria-label="Variation in percent" value={c.random.variationPercent} onchange={(e) => { const n = num(e); if (n !== null) { edit((x) => (x.random.variationPercent = Math.round(n))); } }} />
-              <span class="unit">%</span>
+              <p class="unit">%</p>
             </div>
           {/if}
         </fieldset>
@@ -373,7 +373,7 @@
           {#if c.maxDurationMs !== null}
             <div class="inline">
               <input type="number" class="short" min="0.001" step="any" aria-label="Time limit in seconds" value={c.maxDurationMs / 1000} onchange={(e) => { const n = num(e); if (n !== null && n > 0) { edit((x) => (x.maxDurationMs = Math.round(n * 1000))); } }} />
-              <span class="unit">s</span>
+              <p class="unit">s</p>
             </div>
           {/if}
         </div>
@@ -382,7 +382,7 @@
           <label for="clicker-delay">Start delay</label>
           <div class="inline">
             <input id="clicker-delay" type="number" class="short" min="0" max="86400" step="0.1" value={c.startDelayMs / 1000} onchange={(e) => { const n = num(e); if (n !== null && n >= 0) { edit((x) => (x.startDelayMs = Math.round(n * 1000))); } }} />
-            <span class="unit">s</span>
+            <p class="unit">s</p>
           </div>
         </div>
 
@@ -394,11 +394,11 @@
           {#if c.batch !== null}
             {@const b = c.batch}
             <div class="inline">
-              <span class="unit">every</span>
+              <p class="unit">every</p>
               <input type="number" class="short" min="1" aria-label="Clicks per batch" value={b.clicks} onchange={(e) => { const n = num(e); if (n !== null && n >= 1) { edit((x) => { if (x.batch) { x.batch.clicks = Math.round(n); } }); } }} />
-              <span class="unit">clicks, for</span>
+              <p class="unit">clicks, for</p>
               <input type="number" class="short" min="0" aria-label="Pause in ms" value={b.pauseMs} onchange={(e) => { const n = num(e); if (n !== null && n >= 0) { edit((x) => { if (x.batch) { x.batch.pauseMs = Math.round(n); } }); } }} />
-              <span class="unit">ms</span>
+              <p class="unit">ms</p>
             </div>
           {/if}
         </div>
@@ -407,7 +407,7 @@
           <label for="clicker-hold">Hold each click</label>
           <div class="inline">
             <input id="clicker-hold" type="number" class="short" min="0" max="10000" value={c.holdMs} onchange={(e) => { const n = num(e); if (n !== null && n >= 0) { edit((x) => (x.holdMs = Math.round(n))); } }} />
-            <span class="unit">ms</span>
+            <p class="unit">ms</p>
           </div>
         </div>
 
@@ -416,7 +416,7 @@
             <label for="clicker-gap">Between the two clicks</label>
             <div class="inline">
               <input id="clicker-gap" type="number" class="short" min="0" max="10000" value={c.doubleGapMs} onchange={(e) => { const n = num(e); if (n !== null && n >= 0) { edit((x) => (x.doubleGapMs = Math.round(n))); } }} />
-              <span class="unit">ms</span>
+              <p class="unit">ms</p>
             </div>
           </div>
         {/if}
@@ -426,7 +426,7 @@
             <label for="clicker-spread">Spread around each position</label>
             <div class="inline">
               <input id="clicker-spread" type="number" class="short" min="0" max="10000" value={c.target.spread} onchange={(e) => { const n = num(e); if (n !== null && n >= 0) { edit((x) => (x.target.spread = Math.round(n))); } }} />
-              <span class="unit">px</span>
+              <p class="unit">px</p>
             </div>
           </div>
         {/if}
@@ -550,8 +550,17 @@
   }
 
   .unit {
+    margin: 0;
     color: var(--text-muted);
     font-weight: var(--weight-regular);
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .field > p.hint,
+  .points p {
+    margin: 0;
   }
 
   .xy {

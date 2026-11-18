@@ -239,7 +239,7 @@
             <option value="relative">Relative to where the pointer starts</option>
             <option value="window">Relative to the program's window</option>
           </select>
-          <span class="hint">Can be changed for each macro later.</span>
+          <p class="hint">Can be changed for each macro later.</p>
         </div>
         <div class="field">
           <label for="rec-rate">Pointer movements kept</label>
@@ -253,9 +253,9 @@
           <label for="rec-min">Ignore movements under</label>
           <div class="inline">
             <input id="rec-min" type="number" class="short" min="0" max="500" value={o.minMovePx} onchange={(e) => { const v = numberOf(e.currentTarget as HTMLInputElement); if (v !== null && v >= 0) { setOptions({ minMovePx: Math.round(v) }); } }} />
-            <span class="muted">px</span>
+            <p class="muted">px</p>
           </div>
-          <span class="hint">The position just before a click or key is always kept.</span>
+          <p class="hint">The position just before a click or key is always kept.</p>
         </div>
         <fieldset class="field">
           <legend>Never record these buttons</legend>
@@ -485,5 +485,13 @@
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .field > p.hint,
+  .inline > p {
+    margin: 0;
   }
 </style>

@@ -121,8 +121,12 @@ message's text directly in its `<p>` (the toast, the update notification,
 "Last checked …", "N selected"), use a `<p>` rather than a `<span>` for text
 that must be read inside a flex row (the Usage & costs tiles, whose figures
 `cloud-ui.sh usage` found missing on 2026-11-16), and keep cell content
-inline (the row icon is `inline-block`). `src/CloudFileManager.test.ts` and
-`src/CloudUsage.test.ts` pin the shapes;
+inline (the row icon is `inline-block`). The Autoclicker page's hints,
+units, the Overview's shortcut labels and the editor's counts are
+paragraphs too since 2026-11-18 (the Linux desktop test found the Clicker
+tab's speed hint missing; "(optional)" inside a label and a table header's
+hint stay `<span>`s). `src/CloudFileManager.test.ts`, `src/CloudUsage.test.ts`
+and `src/Autoclicker.test.ts` pin the shapes;
 after changing a layout, compare a page's `innerText` with an AT-SPI dump
 (the method is in [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)).
 

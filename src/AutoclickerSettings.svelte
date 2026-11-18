@@ -158,7 +158,7 @@
             <option value={ms}>{ms === 0 ? "No wait" : `${ms / 1000} s`}</option>
           {/each}
         </select>
-        <span class="hint">Time to move the pointer, or switch to another program, after clicking Start here.</span>
+        <p class="hint">Time to move the pointer, or switch to another program, after clicking Start here.</p>
       </div>
       <ul class="facts small-text">
         <li>Stopping, pausing or quitting releases every key and mouse button that automation held.</li>
@@ -245,5 +245,12 @@
     margin: var(--space-3) 0 0;
     padding-left: var(--space-5);
     color: var(--text-muted);
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .field > p.hint {
+    margin: 0;
   }
 </style>

@@ -66,7 +66,7 @@
             }
           }}
         />
-        <span class="unit">times</span>
+        <p class="unit">times</p>
       {/if}
     </div>
   </div>
@@ -89,14 +89,14 @@
           }
         }}
       />
-      <span class="unit">×</span>
+      <p class="unit">×</p>
       <span class="presets" role="group" aria-label="Speed presets">
         {#each SPEEDS as s (s)}
           <button type="button" class="small" aria-pressed={value.speed === s} onclick={() => set({ speed: s })}>{s}×</button>
         {/each}
       </span>
     </div>
-    <span class="hint">Delays are divided by the speed; the delays below are not.</span>
+    <p class="hint">Delays are divided by the speed; the delays below are not.</p>
   </div>
 
   <div class="field">
@@ -117,7 +117,7 @@
           }
         }}
       />
-      <span class="unit">s</span>
+      <p class="unit">s</p>
     </div>
   </div>
 
@@ -140,7 +140,7 @@
             }
           }}
         />
-        <span class="unit">s</span>
+        <p class="unit">s</p>
       </div>
     </div>
   {/if}
@@ -163,7 +163,7 @@
           }
         }}
       />
-      <span class="unit">±%</span>
+      <p class="unit">±%</p>
     </div>
   </div>
 
@@ -214,7 +214,7 @@
             }
           }}
         />
-        <span class="unit">s</span>
+        <p class="unit">s</p>
       </div>
     {/if}
   </div>
@@ -233,7 +233,7 @@
       {#if value.section !== null}
         {@const sec = value.section}
         <div class="inline">
-          <span class="unit">actions</span>
+          <p class="unit">actions</p>
           <input
             type="number"
             class="short"
@@ -248,7 +248,7 @@
               }
             }}
           />
-          <span class="unit">to</span>
+          <p class="unit">to</p>
           <input
             type="number"
             class="short"
@@ -264,7 +264,7 @@
             }}
           />
         </div>
-        <span class="hint">The actions before play once at the start, the ones after once at the end.</span>
+        <p class="hint">The actions before play once at the start, the ones after once at the end.</p>
       {/if}
     </div>
   {/if}
@@ -300,5 +300,13 @@
   .presets {
     display: inline-flex;
     gap: var(--space-1);
+  }
+
+  /* Text in a flex box is a <p>: WebKitGTK leaves a <span> flex item's
+     text out of the accessibility tree (frontend.md). No margin, as the
+     <span> had none. */
+  .unit,
+  .field > p.hint {
+    margin: 0;
   }
 </style>
