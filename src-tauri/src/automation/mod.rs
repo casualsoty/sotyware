@@ -334,6 +334,9 @@ struct Registration {
     owner: BindingOwner,
     chord: Chord,
     result: std::result::Result<(), String>,
+    /// The emergency stop with other modifiers, registered only while a
+    /// session runs and never listed ([`Automation::sync_hotkeys`]).
+    alias: bool,
 }
 
 enum Dispatch {
@@ -620,28 +623,50 @@ impl Automation {
     /// Registers what should be registered and unregisters the rest. A
     /// shortcut that conflicts with an earlier one is not registered and
     /// says why.
+    ///
+    /// The system matches a shortcut's modifiers exactly (`RegisterHotKey`,
+    /// `XGrabKey`), so while a macro holds Shift, the user's F8 arrives as
+    /// Shift+F8 and the emergency stop would not fire (found by the Linux
+    /// desktop test). While a session runs, the emergency stop is also
+    /// registered with every other combination of modifiers; those
+    /// registrations are never listed, and a combination another shortcut or
+    /// program already has is left to it.
     fn sync_hotkeys(&self, inner: &mut Inner) {
         let profile = inner
             .profiles
             .iter()
             .find(|p| p.id == inner.active)
             .cloned();
-        let wanted = active_bindings(&inner.settings, profile.as_ref(), &inner.macros);
+        let mut wanted: Vec<(BindingOwner, Chord, bool)> =
+            active_bindings(&inner.settings, profile.as_ref(), &inner.macros)
+                .into_iter()
+                .map(|(owner, chord)| (owner, chord, false))
+                .collect();
+        if inner.session.is_some()
+            && let Some(stop) = inner.settings.emergency_stop.active()
+        {
+            for chord in stop.with_other_modifiers() {
+                wanted.push((BindingOwner::Settings, chord, true));
+            }
+        }
         let Some(backend) = inner.backend.clone() else {
             inner.registrations = wanted
                 .into_iter()
-                .map(|(owner, chord)| Registration {
+                .map(|(owner, chord, alias)| Registration {
                     id: 0,
                     owner,
                     chord,
                     result: Err("Not registered: the autoclicker is off".to_owned()),
+                    alias,
                 })
                 .collect();
             return;
         };
         let mut keep: Vec<Registration> = Vec::new();
         for r in inner.registrations.drain(..) {
-            let still = wanted.iter().any(|(o, c)| *o == r.owner && *c == r.chord);
+            let still = wanted
+                .iter()
+                .any(|(o, c, a)| *o == r.owner && *c == r.chord && *a == r.alias);
             if still && r.result.is_ok() {
                 keep.push(r);
             } else if r.result.is_ok() {
@@ -649,10 +674,10 @@ impl Automation {
             }
         }
         let mut out: Vec<Registration> = Vec::new();
-        for (owner, chord) in wanted {
+        for (owner, chord, alias) in wanted {
             if let Some(i) = keep
                 .iter()
-                .position(|r| r.owner == owner && r.chord == chord)
+                .position(|r| r.owner == owner && r.chord == chord && r.alias == alias)
             {
                 out.push(keep.remove(i));
                 continue;
@@ -679,6 +704,7 @@ impl Automation {
                             owner,
                             chord,
                             result: Ok(()),
+                            alias,
                         });
                         continue;
                     }
@@ -690,6 +716,7 @@ impl Automation {
                 owner,
                 chord,
                 result,
+                alias,
             });
         }
         inner.registrations = out;
@@ -700,6 +727,7 @@ impl Automation {
         inner
             .registrations
             .iter()
+            .filter(|r| !r.alias)
             .map(|r| HotkeyView {
                 owner: r.owner.clone(),
                 label: r.owner.label(),
@@ -1013,7 +1041,7 @@ impl Automation {
         !inner
             .registrations
             .iter()
-            .any(|r| r.owner == BindingOwner::Settings && r.result.is_ok())
+            .any(|r| r.owner == BindingOwner::Settings && !r.alias && r.result.is_ok())
     }
 
     fn delay(inner: &Inner, configured: u32, from_dashboard: bool) -> Duration {
@@ -1109,6 +1137,8 @@ impl Automation {
             live,
             started_ms: now_ms(),
         });
+        // The emergency stop with other modifiers held, while it runs.
+        self.sync_hotkeys(&mut inner);
         inner.notice = None;
         drop(inner);
         self.touch();
@@ -1217,6 +1247,8 @@ impl Automation {
             live,
             started_ms: now_ms(),
         });
+        // The emergency stop with other modifiers held, while it runs.
+        self.sync_hotkeys(&mut inner);
         inner.notice = None;
         drop(inner);
         self.touch();
@@ -1235,12 +1267,17 @@ impl Automation {
         }
         let options = inner.settings.recording.clone();
         options.validate().map_err(invalid)?;
-        let shortcuts: Vec<Chord> = inner
+        let mut shortcuts: Vec<Chord> = inner
             .registrations
             .iter()
             .filter(|r| r.result.is_ok())
             .map(|r| r.chord)
             .collect();
+        // The emergency stop pressed with other modifiers held: it stops
+        // the recording too (see `sync_hotkeys`) and is never recorded.
+        if let Some(stop) = inner.settings.emergency_stop.active() {
+            shortcuts.extend(stop.with_other_modifiers());
+        }
         let delay = if from_dashboard {
             Duration::from_millis(u64::from(inner.settings.dashboard_countdown_ms))
         } else {
@@ -1308,6 +1345,8 @@ impl Automation {
             live,
             started_ms: now_ms(),
         });
+        // The emergency stop with other modifiers held, while it runs.
+        self.sync_hotkeys(&mut inner);
         inner.notice = None;
         drop(inner);
         self.touch();
@@ -1318,6 +1357,7 @@ impl Automation {
         let mut inner = self.lock();
         if inner.session.as_ref().is_some_and(|s| s.id == id) {
             inner.session = None;
+            self.sync_hotkeys(&mut inner);
         }
         let (outcome_name, message) = match outcome {
             Outcome::Completed(m) => ("completed", m),
@@ -1559,7 +1599,11 @@ impl Automation {
     fn shortcut_warnings(&self, m: &Macro) -> Vec<String> {
         let inner = self.lock();
         let mut out: Vec<String> = Vec::new();
-        for r in inner.registrations.iter().filter(|r| r.result.is_ok()) {
+        for r in inner
+            .registrations
+            .iter()
+            .filter(|r| r.result.is_ok() && !r.alias)
+        {
             let presses = m.actions.iter().any(|a| match &a.kind {
                 model::ActionKind::Key { key, .. } => *key == r.chord.key,
                 model::ActionKind::Keys { chord } => *chord == r.chord,

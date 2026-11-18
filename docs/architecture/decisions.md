@@ -2824,7 +2824,9 @@ the privacy notice). Code: `src-tauri/src/github_page.rs`,
 
 ## ADR-050: The autoclicker sends and records input in Rust through native APIs, one session at a time, behind an opt-in feature
 
-Status: Accepted (2026-11-17). Code: `src-tauri/src/automation/`,
+Status: Accepted (2026-11-17; amended 2026-11-18, before any release:
+while a session runs, the emergency stop is also registered with every
+other combination of modifiers). Code: `src-tauri/src/automation/`,
 `src-tauri/src/storage/automation.rs`, `src-tauri/src/features/autoclicker.rs`,
 `src/Autoclicker*.svelte`, `src/automation*.ts`. Details:
 [automation.md](automation.md).
@@ -2866,7 +2868,11 @@ Status: Accepted (2026-11-17). Code: `src-tauri/src/automation/`,
   - **Safety rules**: one session at a time; every key and button a session
     holds is tracked and released on stop, pause, end, error, the feature's
     stop, quitting, and from a panic hook; a shared emergency stop
-    shortcut; fail-safe screen corners; sotyware's own window is never
+    shortcut, which while a session runs is also registered with every
+    other combination of Ctrl, Alt, Shift and the Windows key (the system
+    matches a shortcut's modifiers exactly, so with Shift held by a macro
+    F8 arrives as Shift+F8; found by the Linux desktop test, where it
+    stopped nothing); fail-safe screen corners; sotyware's own window is never
     clicked or typed into; an endless run started from the dashboard
     without a registered emergency stop needs confirming; sessions are
     never stored, so nothing restarts after a restart.

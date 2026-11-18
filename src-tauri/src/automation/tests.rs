@@ -440,6 +440,96 @@ fn the_emergency_stop_stops_playback_and_releases_held_keys() {
 }
 
 #[test]
+fn the_emergency_stop_works_while_a_macro_holds_modifiers() {
+    // A system matches a shortcut's modifiers exactly (RegisterHotKey,
+    // XGrabKey): with Shift held by the macro, the user's F8 arrives as
+    // Shift+F8 (found by the Linux desktop test, where it stopped nothing).
+    let h = harness();
+    h.on();
+    let idle = h.registered();
+    let listed = h.a.status().hotkeys.len();
+    let m = h.macro_with(
+        "Hold",
+        vec![
+            Action::new(
+                0,
+                ActionKind::Key {
+                    key: key("ShiftLeft"),
+                    state: Press::Down,
+                },
+            ),
+            Action::new(60_000, ActionKind::Wait),
+        ],
+    );
+    h.a.play(Some(m.id), false, false).unwrap();
+    h.wait_for("Shift held", |_| !h.backend.still_held().is_empty());
+    assert_eq!(
+        h.registered().len(),
+        idle.len() + 15,
+        "{:?}",
+        h.registered()
+    );
+    assert_eq!(
+        h.a.status().hotkeys.len(),
+        listed,
+        "the other combinations are never listed"
+    );
+    h.press("Shift+F8");
+    let s = h.idle();
+    assert_eq!(s.last.unwrap().message, "Emergency stop (Shift + F8)");
+    assert!(h.backend.still_held().is_empty());
+    assert_eq!(h.registered(), idle, "gone once the session ended");
+}
+
+#[test]
+fn the_emergency_stop_with_modifiers_held_stops_a_recording_and_is_not_recorded() {
+    let h = harness();
+    h.on();
+    h.press("F9");
+    h.wait_for("the recording", |s| {
+        matches!(
+            &s.session,
+            Some(SessionView::Recording {
+                state: RunState::Running,
+                ..
+            })
+        )
+    });
+    let sink = h.backend.capture_sink().unwrap();
+    let t0 = Instant::now();
+    let ev = |ms: u64, kind| RawEvent {
+        at: t0 + Duration::from_millis(ms),
+        kind,
+    };
+    for e in [
+        ev(0, RawKind::Key(key("F9"), Press::Up)),
+        ev(100, RawKind::Key(key("KeyH"), Press::Down)),
+        ev(140, RawKind::Key(key("KeyH"), Press::Up)),
+        ev(500, RawKind::Key(key("ShiftLeft"), Press::Down)),
+    ] {
+        sink.send(e).unwrap();
+    }
+    h.wait_for(
+        "H and Shift",
+        |s| matches!(&s.session, Some(SessionView::Recording { actions, .. }) if *actions == 3),
+    );
+    // F8 with Shift held: the emergency stop, so neither key is recorded.
+    sink.send(ev(600, RawKind::Key(key("F8"), Press::Down)))
+        .unwrap();
+    h.wait_for(
+        "Shift taken back out",
+        |s| matches!(&s.session, Some(SessionView::Recording { actions, .. }) if *actions == 2),
+    );
+    h.press("Shift+F8");
+    let s = h.idle();
+    assert_eq!(s.last.unwrap().message, "Recorded 2 actions");
+    let saved = h.a.save_recording("Typed", "", "").unwrap();
+    let m = h.a.load_macro(&saved.id).unwrap();
+    let described: Vec<String> = m.actions.iter().map(Action::describe).collect();
+    assert_eq!(described, ["H down", "H up"]);
+}
+
+#[test]
 fn only_one_session_runs_at_a_time() {
     let h = harness();
     h.on();

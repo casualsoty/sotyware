@@ -105,7 +105,9 @@ uses cannot be taken: the tab shows which shortcuts work.
 
 ## Staying in control
 
-- **F8** (the emergency stop) stops everything, from any program.
+- **F8** (the emergency stop) stops everything, from any program, also
+  while a macro holds Shift, Ctrl, Alt or the Windows key down. While
+  something runs, F8 with any of those keys belongs to sotyware.
 - **Push the pointer into a corner of the screen** to stop the autoclicker
   or a macro (Settings › Safety). A position in a corner that the
   autoclicker or a macro clicks itself does not stop it; push into

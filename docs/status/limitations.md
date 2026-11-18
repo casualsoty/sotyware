@@ -1200,6 +1200,12 @@ server only; no real provider was asked.
   instant between the last check and the run's next move is undone by
   that move; a hand keeps pushing, a script moving the pointer once may
   not. The emergency stop shortcut and the page's Stop always work.
+- **While something runs, the emergency stop's key with any other
+  modifier** (Shift+F8, Ctrl+Alt+F8, …) is sotyware's, so that it works
+  while a macro holds a modifier: other programs lose those combinations
+  until the run ends. A combination another program had first stays that
+  program's, and pressing it then does not stop the run (F8 alone, the
+  page's Stop and the corners still do).
 - **A process killed from outside** (Task Manager, a crash that is not a
   Rust panic, power loss) cannot release a key or button a macro held;
   pressing and releasing that key or button releases it. Nothing restarts

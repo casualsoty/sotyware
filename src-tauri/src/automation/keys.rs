@@ -406,6 +406,27 @@ impl Chord {
         })
     }
 
+    /// The same key with every other combination of modifiers added,
+    /// leaving out the ones that belong to the system: what this shortcut
+    /// becomes when it is pressed while other modifiers are down (the
+    /// system matches a shortcut's modifiers exactly).
+    pub fn with_other_modifiers(self) -> Vec<Chord> {
+        let mut out = Vec::new();
+        for bits in 1u8..16 {
+            let c = Chord {
+                ctrl: self.ctrl || bits & 1 != 0,
+                alt: self.alt || bits & 2 != 0,
+                shift: self.shift || bits & 4 != 0,
+                meta: self.meta || bits & 8 != 0,
+                key: self.key,
+            };
+            if c != self && c.problem().is_none() && !out.contains(&c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     /// Why this shortcut cannot be used, if it cannot: a shortcut must not
     /// take a key away from typing (a letter, digit, Space, Enter… needs
     /// Ctrl, Alt or Meta), and a few combinations belong to the system.
@@ -613,5 +634,36 @@ mod tests {
     fn labels_name_modifiers_then_the_key() {
         let c = Chord::parse("Ctrl+Alt+KeyP").unwrap();
         assert_eq!(c.label_with(|k| k.label().to_owned()), "Ctrl + Alt + P");
+    }
+
+    #[test]
+    fn a_shortcut_with_other_modifiers_held_is_every_superset_but_the_systems() {
+        let all = |t: &str| -> Vec<String> {
+            let mut v: Vec<String> = Chord::parse(t)
+                .unwrap()
+                .with_other_modifiers()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            v.sort();
+            v
+        };
+        let f8 = all("F8");
+        assert_eq!(f8.len(), 15, "{f8:?}");
+        assert!(f8.contains(&"Shift+F8".to_owned()));
+        assert!(f8.contains(&"Ctrl+Alt+Shift+Meta+F8".to_owned()));
+        assert!(!f8.contains(&"F8".to_owned()));
+        // Already holding Ctrl and Alt: only Shift and Meta can be added.
+        assert_eq!(
+            all("Ctrl+Alt+KeyK"),
+            [
+                "Ctrl+Alt+Meta+KeyK",
+                "Ctrl+Alt+Shift+KeyK",
+                "Ctrl+Alt+Shift+Meta+KeyK"
+            ]
+        );
+        // Alt+F4 belongs to the system: F4's supersets leave it out.
+        assert!(!all("F4").contains(&"Alt+F4".to_owned()));
+        assert!(all("Ctrl+Alt+Shift+Meta+F8").is_empty());
     }
 }

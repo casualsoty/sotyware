@@ -162,8 +162,10 @@ exported.
   the others still work.
 - **Registration** follows the configuration: the emergency stop, the
   active profile's and the macros' enabled bindings are registered while
-  the feature runs; switching profiles, saving or deleting changes only
-  what changed. Shortcut ids stay within 1…0xBFFF (Windows' range).
+  the feature runs (and, while a session runs, the emergency stop with
+  other modifiers: see [Safety](#safety)); switching profiles, saving or
+  deleting changes only what changed. Shortcut ids stay within 1…0xBFFF
+  (Windows' range).
 - **What a shortcut does while something runs**: the emergency stop stops
   anything (and releases what it held); toggle stops the autoclicker it
   started; a macro's shortcut stops that macro; a start of anything else is
@@ -275,7 +277,15 @@ explicit action and the same shortcut stops it.
   before the process ends. A process killed from outside cannot release
   anything; the user's next press and release of that key does.
 - **Emergency stop**: a shortcut shared by every profile, handled on its
-  own thread, stops whatever runs.
+  own thread, stops whatever runs. The system matches a shortcut's
+  modifiers exactly (`RegisterHotKey`, `XGrabKey`), so while a macro holds
+  Shift the user's F8 arrives as Shift+F8: while a session runs, the
+  emergency stop is also registered with every other combination of Ctrl,
+  Alt, Shift and Meta (`Chord::with_other_modifiers`, leaving out the
+  system's own), never listed, and given up when the session ends; a
+  combination another shortcut or program already has stays theirs. The
+  recorder leaves those combinations out too. Found by the Linux desktop
+  test (2026-11-18): F8 stopped nothing while a macro held Shift.
 - **Fail-safe corners** (on by default): pushing the pointer into a corner
   of the screen (one of the bounding box's corners that lies on a monitor,
   within 2 px) stops the autoclicker or playback before its next action.
