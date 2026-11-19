@@ -276,12 +276,14 @@ ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)
 
-- Find whose WebKit helper outlived the Linux driver's 15 s wait after
-  scenario 17's first Quit in `desktop-virtual.yml` at `1ef6bfa`
-  (`single_instance.py`, since `877ca1b`; the wait counts every helper of
-  the run's test profile, and the log names neither the helper's program
-  nor its parent), before that check is relied on
-  ([status](status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
+- Find out why a WebKit helper of an earlier launch, very probably
+  scenario 12's web process, ran on for 22 to 25 s after its sotyware in
+  `desktop-virtual.yml` at `1ef6bfa` (on WSL2 none outlived its sotyware
+  by more than about 0.1 s): run `desktop-virtual.yml` with the driver
+  that names such a helper (program, state, threads and their kernel wait
+  channels, launch), whose check before scenario 17 fails if one is left,
+  and read what it says
+  ([status](status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)).
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost

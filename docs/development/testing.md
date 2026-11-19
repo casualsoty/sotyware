@@ -2431,12 +2431,25 @@ Files:
     served, close exits 0.
   - 17: feature preferences across real restarts (tray mode). Each restart is a
     tray Quit with exit code 0 and no process left, then a new process; the page
-    is never just reloaded. "No process left" includes WebKit's helpers of the
-    instance (found by the test profile in their environment): they outlive
-    sotyware by about 0.1 s, WebKitGTK's network process committing the page's
-    `localStorage` meanwhile, and a relaunch before that would read the
-    previous theme ([limitations](../status/limitations.md#dashboard-adr-035)),
-    so the driver waits up to 15 s for them (WebKit's own watchdog is 10 s).
+    is never just reloaded. "No process left" includes the instance's WebKit
+    helpers: they outlive sotyware by about 0.1 s, WebKitGTK's network
+    process committing the page's `localStorage` meanwhile, and a relaunch
+    before that would read the previous theme
+    ([limitations](../status/limitations.md#dashboard-adr-035)), so the
+    driver waits up to 15 s for them (WebKit's own watchdog is 10 s). Every
+    launch carries its label in its environment (`SI_DRIVER_LAUNCH`, which
+    sotyware never reads), and WebKit's helpers inherit it with the test
+    profile, so a helper names its launch even after sotyware has ended.
+    A quit waits only for its own launch's helpers; its
+    `WebKitNetworkProcess` must be among those listed as sotyware's children
+    before the Quit, and the check says how long they outlived sotyware.
+    Scenarios 1 to 16 do not wait for theirs, so before 17 starts a check
+    requires that no helper of an earlier launch is left (at most 15 s). A
+    helper left is named with its program, pid, parent, state, threads, start
+    relative to the Quit (or that wait) and launch, then its command line,
+    its threads (name, state, kernel wait channel) and its launch's output
+    are printed; a quit's check names other launches' helpers still running
+    without waiting for them.
     Scheduled backups (left enabled and saved by 12) is unchecked, Dark is
     chosen in Settings › General and sotyware quits at once, the database row
     (read with Python's `sqlite3`, read-only) says disabled, and the relaunch
@@ -2973,7 +2986,7 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   gir1.2-atspi-2.0 at-spi2-core dbus-x11`). `virtual.sh` already fails on any
   FAIL or SKIP, a missing dependency (exit 2) and a display that does not start
   (exit 3). The workflow additionally requires the summary line
-  `139 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
+  `140 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
   in the same commit that adds or removes a check; it stayed at 92 when
   `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
   run summary, and fails on anything else. It is virtual-display testing, not

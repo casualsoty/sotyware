@@ -1330,6 +1330,14 @@ server only; no real provider was asked.
   With the `ksni` backend no run has failed so far (3 runs and a 420-launch
   loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
   2026-11-10). That is evidence, not proof.
+- **The virtual-display test waits for WebKit's helpers only from scenario
+  17 on.** The quits of 17 to 19 wait for their own launch's helpers;
+  scenarios 1 to 16 wait for none, so a helper one of them leaves behind is
+  found only by the check before 17 (at most 15 s), which names its launch
+  but cannot say how long it ran after its own Quit. On GitHub at
+  `1ef6bfa` one, very probably scenario 12's web process, ran on for 22
+  to 25 s; why is not known
+  ([status](status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)).
 - **No test covers screen-reader access** on either platform.
 - **The locked-keyring checks of `cloud-ui.sh local` decline the unlock
   prompt; none accepts it.** With a system-installed gnome-keyring the driver

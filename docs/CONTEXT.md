@@ -529,6 +529,19 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Whose WebKit helper the Linux driver finds left** (2026-11-19, test
+  code and docs only,
+  [status.md](status/status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)):
+  the helper that failed `desktop-virtual.yml` at `1ef6bfa` was not the
+  quitting instance's but an earlier launch's, very probably scenario 12's
+  web process, which ran on for 22 to 25 s (why is not known). Every launch
+  now carries its label in its environment, which WebKit's helpers
+  inherit; a quit waits only for its own launch's helpers (its network
+  process among them), a new check before 17 requires that none of an
+  earlier launch is left, and a helper left is named with its program,
+  parent, state, start and launch, its threads and kernel wait channels
+  printed. 140 checks. WSL2 only (also emulating the runner's 4 CPUs);
+  not pushed.
 - **The theme check on Windows** (2026-11-18, test code and docs only,
   [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):
   `windows.ps1` now chooses Dark just before a tray Quit and checks it
@@ -557,9 +570,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   display 139/0/0 three times, `test:headless` passed. On `main` since
   2026-11-19; its first hosted run, `desktop-virtual.yml` at `1ef6bfa`,
   kept the theme but failed the new wait once: a WebKit helper of the
-  run's test profile outlived it after the first Quit, whose is not
-  established
-  ([status](status/status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
+  run's test profile outlived it after the first Quit, an earlier
+  launch's, as found since (entry above;
+  [status](status/status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
 - **Usage & costs tab in the Linux desktop test** (2026-11-16,
   [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
   `cloud-ui.sh usage` measures a seeded versioned bucket through the UI

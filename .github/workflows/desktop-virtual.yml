@@ -25,7 +25,7 @@ env:
   # Number of checks the driver runs today. A run with fewer is a failure: a check
   # must never disappear silently. Update it in the same commit that adds or
   # removes a check in tests/desktop/single_instance.py.
-  EXPECTED_CHECKS: 139
+  EXPECTED_CHECKS: 140
 
 jobs:
   virtual-display:
