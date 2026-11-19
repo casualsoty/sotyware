@@ -13,7 +13,10 @@ $script:pass = 0; $script:fail = 0
 function Check([string]$name, [bool]$ok, [string]$detail = "") {
   if ($ok) { $script:pass++; "PASS  $name" } else { $script:fail++; "FAIL  $name  $detail" }
 }
-function Throws([scriptblock]$b) { try { & $b; $false } catch { $true } }
+# Not $b: the blocks given to it read the script's $b (the second profile),
+# and inside Throws that name would be its own parameter, the block itself
+# (check-ps-variables.ps1 checks for this).
+function Throws([scriptblock]$attempt) { try { & $attempt; $false } catch { $true } }
 
 $parent = Join-Path $env:TEMP ("sotyware-profile-selftest-" + [guid]::NewGuid().ToString("n"))
 New-Item -ItemType Directory $parent | Out-Null

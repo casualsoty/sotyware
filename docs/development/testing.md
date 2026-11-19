@@ -2166,8 +2166,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\check-ps-varia
 PowerShell variable names ignore case, so `$out` and `$Out` are one
 variable; that clash broke a `b2-download` attempt after its upload on
 2026-11-12. The check fails when one scope (the script, or one function)
-spells a variable two ways, and on a parse error. Without arguments it
-checks `windows.ps1`, `windows-isolated.ps1` and `windows-cloud-ui.ps1`.
+spells a variable two ways, and on a parse error. It also fails where a
+name is hidden at run time: PowerShell looks a variable up through the
+scopes of the callers, not where the code was written, so a function's own
+variable (a parameter, an assignment, a `foreach`) hides the script's
+variable of that name, ignoring case, from every function it calls, and a
+script block given to a function sees that function's own variables first.
+Both broke `windows-autoclicker.ps1` before its first run (2026-11-19):
+`Says([string]$s)` hid `$S` (UI Automation's TreeScope) from `Names`, so
+every `Says` read an empty page, and a block given to `WaitFor` that called
+`$pred` called `WaitFor`'s own `$pred`, itself, until PowerShell's call
+depth overflowed; the same rule found two checks of
+`test-profile-selftest.ps1` that passed without testing what they said.
+Without arguments it checks `windows.ps1`, `windows-isolated.ps1`,
+`windows-cloud-ui.ps1` and `windows-autoclicker.ps1`.
 
 Keep the Windows scripts **ASCII only**, comments included; write other
 characters as `[char]0x…` or as a regex escape (`\u00b7`). Windows
