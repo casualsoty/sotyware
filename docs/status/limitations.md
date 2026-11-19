@@ -1279,17 +1279,19 @@ server only; no real provider was asked.
   the tray Quit on the real desktop is not run yet
   ([status](status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 - **On GitHub's Ubuntu 26.04 runner, WebKit's web process sometimes
-  crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`,
-  2026-11-19; 2 of the 28 instances of two runs, and very probably 1 in
-  an earlier run): in one of the two glibc aborted it with `free():
-  corrupted unsorted chunks`, and the core dump then kept it running for
-  more than 15 s (one was still dumping when the job ended, 18 s later).
-  sotyware had ended with 0, and the network process, which commits the
-  theme, ended normally. On a desktop that collects crashes (apport,
-  systemd-coredump) quitting sotyware could leave a crash report. What
-  crashes is not known; not seen on WSL2 (Ubuntu 24.04's build of the same
-  version: 42 web processes ended with 0), not examined on a real desktop
-  ([status](status.md#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19)).
+  crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`, Mesa
+  26.0.8, 2026-11-19; 4 of 70 instances in five runs, very probably 1
+  more in an earlier run): glibc aborts it with `free(): corrupted
+  unsorted chunks` in a C++ static destructor of Mesa's `libgallium` as
+  the process exits (the heap was corrupted earlier, by what is not
+  known), and the core dump then keeps it running for more than 15 s (one
+  was still dumping when the job ended, 18 s later). sotyware had ended
+  with 0, and the network process, which commits the theme, ended
+  normally. On a desktop that collects crashes (apport, systemd-coredump)
+  quitting sotyware could leave a crash report. Not seen on WSL2 (Ubuntu
+  24.04, Mesa 25.2.8: 42 web processes ended with 0), not examined on a
+  real desktop
+  ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux

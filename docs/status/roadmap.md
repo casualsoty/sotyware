@@ -276,17 +276,16 @@ ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)
 
-- Find out what crashes in WebKit's web process as sotyware quits on
-  GitHub's Ubuntu 26.04 runner (glibc: `free(): corrupted unsorted
-  chunks`; 2 of 14 instances at `8b1deac`, none of 14 at `eb2a703`, very
-  probably 1 at `1ef6bfa`; none of 42 on WSL2), whose core dump keeps it
-  running for more than 15 s and fails the Linux driver's quit checks:
-  run `desktop-virtual.yml` until a run crashes, whose last step then
-  prints systemd-coredump's stack trace. Then
-  decide how the test treats it (keep failing, wait only for the network
-  process and report the crash on its own, or record it as WebKit's) and
-  whether sotyware can avoid it
-  ([status](status.md#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19)).
+- WebKit's web process crashes as sotyware quits on GitHub's Ubuntu 26.04
+  runner (4 of 70 instances in five runs, very probably 1 more at
+  `1ef6bfa`; none of 42 on WSL2): glibc aborts in a C++ static destructor
+  of Mesa 26.0.8's `libgallium` as the process exits, the heap already
+  corrupt, and the core dump outlasts the Linux driver's waits. Decide how
+  the test treats it (keep failing; or count a helper that is dumping core
+  as ended and name the crash without failing), whether to report it
+  upstream (Mesa or WebKitGTK, with the stack traces), and whether
+  sotyware can avoid it, for example by closing its webview before it
+  exits ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost

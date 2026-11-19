@@ -544,11 +544,15 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   hosted run (`8b1deac`) failed 138/2 and showed why: **WebKit's web
   process crashed as sotyware quit** (glibc: a corrupt heap) and was still
   dumping core into the runner's systemd-coredump 15 s later, in 2 of 14
-  instances; never on WSL2 (42 of 42 ended with 0). What crashes is not
-  known; the driver now says when a helper is dumping core, and the
-  workflow prints systemd-coredump's record. Run again at `eb2a703`:
-  140/0/0, no core dump, so the crash is intermittent
-  ([status](status/status.md#hosted-run-at-eb2a703-no-crash-this-time-2026-11-19),
+  instances; never on WSL2 (42 of 42 ended with 0). The driver now also
+  says when a helper is dumping core, and the workflow prints
+  systemd-coredump's record. In five hosted runs (two more were cancelled
+  on the Ubuntu archive's timeouts), two had crashes (4 of 70 web
+  processes), and the stack traces show where: glibc aborts in a C++
+  static destructor of Mesa 26.0.8's `libgallium` as the process exits,
+  the heap already corrupt; WebKit's and Mesa's code, not sotyware's.
+  How the test treats it is open
+  ([status](status/status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19),
   [limitation](status/limitations.md#dashboard-adr-035)).
 - **The theme check on Windows** (2026-11-18, test code and docs only,
   [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):
