@@ -553,8 +553,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   the heap already corrupt; WebKit's and Mesa's code, not sotyware's.
   Since then the driver counts a helper dumping core as ended and names
   the crash without failing (a crashed network process still fails), and
-  the workflow puts the number of WebKit core dumps in the run summary
-  ([status](status/status.md#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19),
+  the workflow puts the number of WebKit core dumps in the run summary.
+  Three hosted runs at `c02ea7e` passed, one of them naming a real crash
+  ([status](status/status.md#hosted-runs-at-c02ea7e-a-crash-at-quit-named-the-run-passing-2026-11-19),
   [limitation](status/limitations.md#dashboard-adr-035)).
 - **The theme check on Windows** (2026-11-18, test code and docs only,
   [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):

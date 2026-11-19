@@ -1280,7 +1280,7 @@ server only; no real provider was asked.
   ([status](status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 - **On GitHub's Ubuntu 26.04 runner, WebKit's web process sometimes
   crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`, Mesa
-  26.0.8, 2026-11-19; 4 of 70 instances in five runs, very probably 1
+  26.0.8, 2026-11-19; 5 of 112 instances in eight runs, very probably 1
   more in an earlier run): glibc aborts it with `free(): corrupted
   unsorted chunks` in a C++ static destructor of Mesa's `libgallium` as
   the process exits (the heap was corrupted earlier, by what is not

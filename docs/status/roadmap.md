@@ -277,7 +277,7 @@ ADR-026; public ACLs do not).
 ## Known follow-ups (not started, no design yet)
 
 - WebKit's web process crashes as sotyware quits on GitHub's Ubuntu 26.04
-  runner (4 of 70 instances in five runs, very probably 1 more at
+  runner (5 of 112 instances in eight runs, very probably 1 more at
   `1ef6bfa`; none of 42 on WSL2): glibc aborts in a C++ static destructor
   of Mesa 26.0.8's `libgallium` as the process exits, the heap already
   corrupt; the Linux driver names it without failing (decided
