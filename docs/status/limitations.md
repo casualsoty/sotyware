@@ -1278,9 +1278,10 @@ server only; no real provider was asked.
   ([status](status.md#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)).
   The downloads assumption on Usage & costs is kept the same way. Not
   examined: WKWebView (macOS). WebView2 (Windows) commits such a write
-  5 s after it, or as soon as sotyware ends, and lost none in a probe on
-  a private desktop, also with a relaunch before its processes had ended;
-  the tray Quit on the real desktop is not run yet
+  5 s after it, or as soon as sotyware ends, and lost none: not through a
+  tray Quit on the real desktop (2026-11-19), nor in a probe on a private
+  desktop with sotyware killed, also with a relaunch before its processes
+  had ended
   ([status](status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 - **On GitHub's Ubuntu 26.04 runner, WebKit's web process sometimes
   crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`, Mesa

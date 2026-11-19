@@ -2691,7 +2691,8 @@ What it does, and how:
   `%LOCALAPPDATA%\com.sotyware.desktop\preferences.sqlite3` aside and deleted
   "its" copy at the end, which is unsafe:
   [ADR-027](../architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
-- Since 2026-11-18, the theme chosen just before Quit, as scenario 17 of
+- Since 2026-11-18 (first run on native Windows 11 on 2026-11-19,
+  136/0), the theme chosen just before Quit, as scenario 17 of
   the Linux single-instance driver: after enabling the feature in the
   first relaunch it chooses Dark in Settings › General (the radio button's
   UIA `SelectionItem`, whose `IsSelected` is its checked state), quits
