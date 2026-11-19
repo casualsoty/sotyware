@@ -58,7 +58,11 @@ Windows backend with real input on the maintainer's Windows 11
 three passes after fixing moves that landed a pixel off and the test's
 own defects;
 [status](status/status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18));
-the page has not been driven on Windows. Pushed as the branch
+the page driven on Windows once (2026-11-19, the maintainer's desktop:
+92 of 102 checks, the failures the driver's own; the release of held keys
+by F8, Stop and quitting not yet seen there;
+[status](status/status.md#the-autoclicker-page-on-windows-11-the-drivers-first-run-2026-11-19)).
+Pushed as the branch
 `feat/autoclicker-macros` on 2026-11-18: at `423605f`, `ci.yml` (Ubuntu
 22.04, Windows), `macos.yml` (both Macs, the automation code's first
 macOS build), `isolation-guard.yml`, `release-build.yml` and
@@ -72,8 +76,8 @@ The page's manual check is automated since (2026-11-18,
 [testing.md](development/testing.md#the-pages-former-manual-check-automated)):
 the Linux phase grew to 103 checks on its private display, and
 `tests/desktop/windows-autoclicker.ps1` does the same on the real Windows
-desktop (written and checked statically; not yet run, it needs the
-maintainer's go-ahead). The new checks found two defects, both fixed: F8
+desktop (first run 2026-11-19, above; its second, with the driver's
+defects fixed, waits for an idle desktop). The new checks found two defects, both fixed: F8
 did not stop a macro that held Shift (the system matches modifiers
 exactly; while a session runs the emergency stop is now registered with
 every other modifier combination too), and WebKitGTK hid the page's

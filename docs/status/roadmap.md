@@ -260,13 +260,13 @@ ADR-026; public ACLs do not).
 
 ## Autoclicker (after ADR-050)
 
-- With the maintainer's go-ahead, on an idle desktop: run the Windows
-  driver of the page, `tests/desktop/windows-autoclicker.ps1` (written
-  2026-11-18, the same checks as the Linux phase, which replaced the manual
-  check; [testing.md](../development/testing.md#the-pages-former-manual-check-automated)).
-  It has passed static checks only (parser, C# compile, variable names,
-  isolation guard). (The backend's real-input test passed there on
-  2026-11-18.)
+- With the maintainer's go-ahead, on an idle desktop with the installed
+  sotyware quit: run the Windows driver of the page,
+  `tests/desktop/windows-autoclicker.ps1`, again. Its first run on
+  2026-11-19 passed 92 of 102 checks; the driver's defects it showed are
+  fixed but not run, and the F12 refusal, F7 during an endless playback
+  and held keys released by F8, Stop and quitting have not been seen on
+  Windows ([status](status.md#the-autoclicker-page-on-windows-11-the-drivers-first-run-2026-11-19)).
 - A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
 - Possible later work, each a decision of its own: a macOS backend
   (CGEvent, event tap, Accessibility permission), a Wayland backend through
