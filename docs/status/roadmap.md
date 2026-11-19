@@ -267,9 +267,6 @@ ADR-026; public ACLs do not).
   It has passed static checks only (parser, C# compile, variable names,
   isolation guard). (The backend's real-input test passed there on
   2026-11-18.)
-- Warn in the editor about a "keys" step that presses the emergency
-  stop's key with other modifiers: since `c1726d7` such a step stops its
-  own playback ([limitations](limitations.md#autoclicker-adr-050)).
 - A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
 - Possible later work, each a decision of its own: a macOS backend
   (CGEvent, event tap, Accessibility permission), a Wayland backend through

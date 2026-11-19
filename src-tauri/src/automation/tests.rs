@@ -232,6 +232,14 @@ impl Harness {
         self.a.save_macro(m.clone()).unwrap();
         self.a.load_macro(&m.id).unwrap()
     }
+
+    /// Saves `actions` as the steps of `m`, as the editor does, and returns
+    /// the warnings it shows.
+    fn save_steps(&self, m: &Macro, actions: Vec<Action>) -> Vec<String> {
+        let mut edited = m.clone();
+        edited.actions = actions;
+        self.a.save_macro(edited).unwrap().warnings
+    }
 }
 
 fn key(code: &str) -> Key {
@@ -255,6 +263,21 @@ fn tap(code: &str) -> Vec<Action> {
             },
         ),
     ]
+}
+
+/// One "keys" step per shortcut, 10 ms apart.
+fn keys_steps(chords: &[&str]) -> Vec<Action> {
+    chords
+        .iter()
+        .map(|c| {
+            Action::new(
+                10,
+                ActionKind::Keys {
+                    chord: Chord::parse(c).unwrap(),
+                },
+            )
+        })
+        .collect()
 }
 
 // --------------------------------------------------------------- tests
@@ -794,6 +817,113 @@ fn saving_a_macro_warns_about_keys_that_are_shortcuts() {
     let saved = h.a.save_macro(edited).unwrap();
     assert_eq!(saved.warnings.len(), 1);
     assert!(saved.warnings[0].contains("F6"));
+}
+
+#[test]
+fn saving_a_macro_warns_once_about_keys_steps_that_press_the_emergency_stop_with_modifiers() {
+    // While a session runs, the emergency stop is also registered with every
+    // other combination of modifiers, so each of these steps would stop the
+    // macro's own playback ("Emergency stop (Shift + F8)"). Those
+    // registrations are never listed, and the warnings compared a keys step
+    // with the listed shortcuts exactly, so the editor said nothing.
+    let h = harness();
+    h.on();
+    let registered = h.registered();
+    let listed = h.a.status().hotkeys.len();
+    let m = h.a.create_macro("Presses Shift F8", "", "").unwrap();
+    let warnings = h.save_steps(
+        &m,
+        keys_steps(&[
+            "Shift+F8",
+            "Ctrl+Alt+F8",
+            "Shift+F8",
+            "Ctrl+KeyS",
+            "Ctrl+Alt+Shift+Meta+F8",
+        ]),
+    );
+    assert_eq!(
+        warnings,
+        [
+            "This macro presses Shift + F8, Ctrl + Alt + F8 and Ctrl + Alt + Shift + Meta + F8: \
+             while something runs, \"Emergency stop\" (F8) also works with other modifiers held, \
+             so playing it may stop there"
+        ]
+    );
+    // Nothing more is registered or listed for it.
+    assert_eq!(h.registered(), registered);
+    assert_eq!(h.a.status().hotkeys.len(), listed);
+}
+
+#[test]
+fn the_emergency_stop_warning_follows_its_setting_not_what_is_registered() {
+    // Those combinations are registered only while a session runs, so what
+    // counts is the configured emergency stop, also while the feature is
+    // off: the macro plays with it on.
+    let h = harness();
+    assert!(h.a.status().hotkeys.iter().all(|k| !k.registered));
+    let m = h.a.create_macro("Presses Meta F8", "", "").unwrap();
+    let off = h.save_steps(&m, keys_steps(&["Meta+F8"]));
+    assert_eq!(off.len(), 1, "{off:?}");
+    assert!(
+        off[0].starts_with("This macro presses Meta + F8: "),
+        "{}",
+        off[0]
+    );
+    // Another emergency stop: its key with more modifiers counts, with
+    // fewer modifiers, or the old key, not.
+    let mut settings = h.a.config().settings;
+    settings.emergency_stop = Binding::on("Ctrl+Alt+KeyK");
+    h.a.save_settings(settings.clone()).unwrap();
+    assert_eq!(
+        h.save_steps(
+            &m,
+            keys_steps(&["Ctrl+KeyK", "Shift+F8", "Ctrl+Alt+Shift+KeyK"])
+        ),
+        [
+            "This macro presses Ctrl + Alt + Shift + K: while something runs, \"Emergency stop\" \
+             (Ctrl + Alt + K) also works with other modifiers held, so playing it may stop there"
+        ]
+    );
+    // Switched off, it is not registered at all, with modifiers or without.
+    settings.emergency_stop.enabled = false;
+    h.a.save_settings(settings).unwrap();
+    assert_eq!(
+        h.save_steps(&m, keys_steps(&["Ctrl+Alt+Shift+KeyK"])),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_combination_another_shortcut_has_is_warned_about_as_that_shortcut() {
+    // The other shortcuts are registered first: while something runs,
+    // Ctrl+F8 here is "Other"'s and Shift+F8 the macro's own (which stops
+    // it), not the emergency stop's.
+    let h = harness();
+    h.on();
+    let other = h.a.create_macro("Other", "", "").unwrap();
+    h.a.update_macro_info(
+        &other.id,
+        MacroChanges {
+            shortcut: Some(Binding::on("Ctrl+F8")),
+            ..MacroChanges::default()
+        },
+    )
+    .unwrap();
+    let mut m = h.a.create_macro("Own", "", "").unwrap();
+    // A shortcut this save changes counts as it will when the macro plays.
+    m.shortcut = Binding::on("Shift+F8");
+    m.actions = keys_steps(&["Ctrl+F8", "Shift+F8", "Alt+F8"]);
+    assert_eq!(
+        h.a.save_macro(m).unwrap().warnings,
+        [
+            "This macro presses Ctrl + F8, the shortcut of \"Play \"Other\"\": playing it may \
+             trigger that shortcut",
+            "This macro presses Shift + F8, the shortcut of \"Play \"Own\"\": playing it may \
+             trigger that shortcut",
+            "This macro presses Alt + F8: while something runs, \"Emergency stop\" (F8) also \
+             works with other modifiers held, so playing it may stop there",
+        ]
+    );
 }
 
 #[test]

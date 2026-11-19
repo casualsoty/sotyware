@@ -171,6 +171,17 @@ exported.
   started; a macro's shortcut stops that macro; a start of anything else is
   refused and the reason appears on the page as a notice ("F9: A macro is
   playing; stop it first"). Shortcut presses are not recorded (below).
+- **Saving a macro warns** (`save_macro`'s `warnings`, shown by the
+  editor) about steps that would set off a shortcut when it plays. A key
+  step with the key of a registered shortcut, or a keys step with exactly
+  its keys, names that shortcut; nothing is registered while the feature
+  is off, so these come only while it runs. Keys steps that press the
+  emergency stop's key with other modifiers (see [Safety](#safety)) get
+  one warning naming the emergency stop, from its setting rather than the
+  registrations: those combinations are registered only while a session
+  runs, whether or not F8 itself could be, and a combination another
+  binding has stays that binding's. The warnings are computed after the
+  macro is stored, so a shortcut the same save changed counts.
 
 ## Sessions
 
@@ -284,8 +295,10 @@ explicit action and the same shortcut stops it.
   Alt, Shift and Meta (`Chord::with_other_modifiers`, leaving out the
   system's own), never listed, and given up when the session ends; a
   combination another shortcut or program already has stays theirs. The
-  recorder leaves those combinations out too. Found by the Linux desktop
-  test (2026-11-18): F8 stopped nothing while a macro held Shift.
+  recorder leaves those combinations out too, and a macro's own keys step
+  pressing one stops its playback there, which the editor warns about when
+  the macro is saved ([above](#keys-and-shortcuts)). Found by the Linux
+  desktop test (2026-11-18): F8 stopped nothing while a macro held Shift.
 - **Fail-safe corners** (on by default): pushing the pointer into a corner
   of the screen (one of the bounding box's corners that lies on a monitor,
   within 2 px) stops the autoclicker or playback before its next action.
