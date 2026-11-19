@@ -621,6 +621,16 @@ async fn a_copy_stopped_by_a_server_error_is_retried_without_copying_twice() {
     }
 }
 
+/// The id of the operation holding the slot. `start` takes the slot before
+/// it returns the id, so an item hook can read it here; the test body learns
+/// it only once `start` has returned, which may be after the hook ran.
+fn running_operation(ops: &CloudOperations) -> Option<String> {
+    match &ops.lock().slot {
+        Slot::Active { id, .. } => Some(id.clone()),
+        Slot::Free => None,
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_stops_before_the_next_item_and_keeps_move_originals() {
     let s = setup(true).await;
@@ -633,26 +643,30 @@ async fn cancelling_stops_before_the_next_item_and_keeps_move_originals() {
         .await
         .unwrap();
     let ops = Arc::clone(&s.ops);
-    let id: Arc<Mutex<String>> = Arc::default();
-    let seen = Arc::clone(&id);
+    let cancel: Arc<Mutex<Option<(String, CancelOutcome)>>> = Arc::default();
+    let seen = Arc::clone(&cancel);
     s.ops.before_item(move |i| {
-        if i == 1 {
-            ops.cancel(&seen.lock().unwrap());
+        if i == 1
+            && let Some(id) = running_operation(&ops)
+        {
+            let outcome = ops.cancel(&id);
+            *seen.lock().unwrap() = Some((id, outcome));
         }
     });
     let started = s.start(&plan, ConflictPolicy::Skip).await;
-    *id.lock().unwrap() = started.operation.clone();
     let (summary, items) = s.finished(&started.operation).await;
-    // The hook may run before the id is known: then nothing was cancelled.
-    if summary.state == OperationState::Cancelled {
-        assert_eq!(items[0].state, ItemState::Completed);
-        assert_eq!(items[1].state, ItemState::Cancelled);
-        assert_eq!(items[2].state, ItemState::Cancelled);
-        assert_eq!(s.current(), vec!["2", "3", "z/1"]);
-        assert!(summary.retryable);
-    } else {
-        assert_eq!(summary.state, OperationState::Completed);
-    }
+    let cancel = cancel.lock().unwrap().take();
+    assert_eq!(
+        cancel,
+        Some((started.operation.clone(), CancelOutcome::Cancelling)),
+        "the hook before item 1 cancels the running operation"
+    );
+    assert_eq!(summary.state, OperationState::Cancelled, "{summary:?}");
+    assert_eq!(items[0].state, ItemState::Completed);
+    assert_eq!(items[1].state, ItemState::Cancelled);
+    assert_eq!(items[2].state, ItemState::Cancelled);
+    assert_eq!(s.current(), vec!["2", "3", "z/1"]);
+    assert!(summary.retryable);
     assert_eq!(s.ops.cancel("op-unknown"), CancelOutcome::NotActive);
 }
 
