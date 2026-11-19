@@ -1777,7 +1777,10 @@ recovery commands in `cloud/recovery.rs`; page `src/CloudRecovery.svelte`.
 
 ## ADR-031: Backups are content-addressed blobs plus plain JSON snapshot manifests in an independent destination
 
-Status: Accepted (2026-11-15), implemented the same day. Code:
+Status: Accepted (2026-11-15), implemented the same day; how a snapshot
+is dated and the run history is read is amended by
+[ADR-051](#adr-051-a-new-snapshot-is-never-dated-before-the-newest-one-and-the-run-history-is-read-in-the-order-recorded).
+Code:
 `src-tauri/src/backup/`, `features/backup.rs`; page `src/Backup.svelte`;
 tool `scripts/recovery/sotyware-restore.py`; design: [backup.md](backup.md);
 recovery without sotyware: [docs/user/recovery.md](../user/recovery.md).
@@ -2899,3 +2902,56 @@ other combination of modifiers). Code: `src-tauri/src/automation/`,
   as the Recorder tab warns; they never leave the computer unless
   exported. The panic hook is process-wide (it chains to the previous
   hook and only sends pending releases).
+
+## ADR-051: A new snapshot is never dated before the newest one, and the run history is read in the order recorded
+
+Status: Accepted (2026-11-19). Code: `engine::snapshot_time` and
+`engine::run` (`src-tauri/src/backup/engine.rs`), `model::health`,
+`Backups::status`, `SqliteBackupStore::runs` (`src-tauri/src/storage.rs`).
+
+- **Context:** a snapshot's name and `created` carried the wall clock of
+  the computer that wrote it, in whole seconds, and the last name counted
+  as the newest snapshot everywhere: the snapshot a run compares with,
+  "Verify", the Snapshots & backups tab, the restore list,
+  `sotyware-restore.py --latest` and retention (ADR-031). The run history
+  was read by each run's start time, and health counted a verification
+  only if it ended after its snapshot's run, by time. A clock set back
+  between two runs by more than the time between them, or two runs ending
+  in one second, made the newer count as the older: retention with
+  keep-last 1 deleted the snapshot a backup had just written and verified,
+  a failed verification hid behind an earlier passed one (health Healthy,
+  so retention was allowed), a large change showed as Healthy, and a
+  verification counted as older than its snapshot. Found on 2026-11-18,
+  when WSL2's clock, which Hyper-V time sync steps back about 0.7 s every
+  half minute, failed backup tests
+  ([status](../status/status.md#backup-tests-and-backward-steps-of-the-wall-clock-2026-11-18)).
+- **Decision:**
+  - A backup run dates its snapshot (name and `created`) at the current
+    time, or one second after the newest snapshot of the job it found at
+    the destination when the clock does not read later than that. The
+    run already lists the snapshots and reads the newest, so this costs
+    no request, and the manifest format is unchanged. A clock behind the
+    newest snapshot is logged.
+  - The run history is read in the order it was recorded (`ORDER BY id`),
+    and health counts a verification only if it was recorded after its
+    snapshot's run. On one computer runs are recorded one at a time as
+    they end, so that order is the order they happened in. Their times
+    stay for display, the schedule and "out of date".
+  - Not chosen: refusing to back up while the clock is behind the newest
+    snapshot (visible, but no backup until the clock catches up, which can
+    take days); a sequence number in the manifest (a format change that
+    does not help two computers without locking either); keeping the
+    snapshot a task just wrote out of its own retention (redundant on one
+    computer with the dating rule); a clock only the tests control (they
+    would pass while the app kept the fault).
+- **Consequences:** on one computer the last name is the last snapshot
+  written, retention keeps it and health follows the runs as they
+  happened, whatever the clock did; the backup tests need no waits. While
+  the clock is behind the newest snapshot, new snapshots are dated a
+  second after it, so the dates shown run ahead of the real time and
+  retention's days and weeks count by them. Two computers running one job
+  at the same time still date their snapshots by their own clocks, and
+  retention's one-day margin for data is still measured from the
+  remaining snapshots' dates
+  ([limitations](../status/limitations.md#backups-adr-031)). No schema
+  change: older builds read the same databases and repositories.

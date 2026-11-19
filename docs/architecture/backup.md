@@ -98,7 +98,11 @@ a local file chosen in a save dialog.
 6. **Write the manifest** only if every planned object ended in a blob.
    Otherwise the run is `partial`: no manifest is written for it (a manifest
    always describes a complete source state), the blobs already uploaded stay
-   and are reused by the next run.
+   and are reused by the next run. Its name and `created` carry the current
+   time, or one second after the newest snapshot of step 2 when the clock
+   does not read later (a clock set back, or two runs in one second;
+   ADR-051): on one computer the last name is always the last snapshot
+   written.
 7. **Verify** (quick) the new snapshot right away (below).
 8. **Apply retention** if the job has a policy and the snapshot is verified
    and not suspicious.
@@ -119,7 +123,9 @@ operations). Cancel stops after the request in flight; the run is
 ## Health
 
 A job's health is computed from its local run history and shown on the
-Backup page:
+Backup page. The history is read in the order runs were recorded, never by
+their wall-clock times, and "verified after it was written" means a
+verification recorded after the snapshot's run (ADR-051):
 
 | Health | When |
 | --- | --- |
@@ -150,6 +156,11 @@ newest snapshot is verified and not suspicious:
    blobs referenced by none of them and last modified more than 24 hours
    before the oldest remaining manifest was created (a blob uploaded by a
    run on another device has no manifest yet, and clocks differ).
+
+Newest and oldest are by the snapshots' dates, which step 6 of a run keeps
+in the order they were written on one computer; two computers running one
+job at the same time date by their own clocks
+([limitations](../status/limitations.md#backups-adr-031)).
 
 On a versioned destination a delete adds a delete marker (the data stays
 until the provider's lifecycle removes it). With Object Lock retention the

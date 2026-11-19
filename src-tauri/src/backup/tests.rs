@@ -318,6 +318,31 @@ fn keep_last(n: u32) -> Retention {
     }
 }
 
+/// The whole second a snapshot is named after (`20261118T103000Z`).
+fn named_second(snapshot: &str) -> &str {
+    let name = snapshot.rsplit('/').next().unwrap_or(snapshot);
+    name.get(..16).expect("a snapshot key")
+}
+
+/// Gives the manifest of `snapshot` the name and `created` time a run whose
+/// clock ran `secs` seconds fast would have given it (moved, with its
+/// SHA-256 stored again). Returns the new key and time.
+async fn date_ahead(e: &Env, snapshot: &str, secs: i64) -> (String, String) {
+    let old = e.vault.object_path(VAULT, snapshot);
+    let mut m: model::Manifest = serde_json::from_slice(&fs::read(&old).unwrap()).unwrap();
+    m.created = engine::shift_rfc3339(&m.created, secs).unwrap();
+    let key = model::snapshot_key("sotyware/", &m.job.id, &m.created, &m.snapshot);
+    let local = e.files.path(&format!("ahead-{}.json", m.snapshot));
+    fs::write(&local, serde_json::to_vec_pretty(&m).unwrap()).unwrap();
+    e.store(&e.vault, VAULT)
+        .upload_file(VAULT, &key, &local)
+        .await
+        .unwrap();
+    fs::remove_file(old).unwrap();
+    let _ = fs::remove_file(e.vault.metadata_path(VAULT, snapshot));
+    (key, m.created)
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_backup_copies_everything_and_restores_byte_identically() {
     let e = env().await;
@@ -400,7 +425,6 @@ async fn an_incremental_backup_transfers_only_changes_and_keeps_history() {
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     assert_eq!(first.state, "completed");
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     e.put("a.txt", b"one, changed").await;
     e.put("copy-of-b.txt", b"two").await;
     e.delete_primary("c.txt");
@@ -446,7 +470,6 @@ async fn a_mass_deletion_is_flagged_and_retention_keeps_the_older_snapshots() {
     let job = e.save(keep_last(1));
     assert_eq!(e.task(&job.id, TaskKind::Backup).await.state, "completed");
     let before = e.snapshots();
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     for i in 0..15 {
         e.delete_primary(&format!("f{i:02}.txt"));
     }
@@ -499,7 +522,6 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
     let job = e.save(keep_last(1));
     let first = e.task(&job.id, TaskKind::Backup).await;
     let old_blob = model::blob_key("sotyware/", &sha256_hex(b"version 1"));
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     e.put("a.txt", b"version 2").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let p = second
@@ -530,7 +552,6 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
         journal: None,
         progress: &mut nothing,
     };
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let p = engine::prune_with_margin(&mut ctx, &job, Duration::ZERO)
         .await
         .unwrap();
@@ -582,7 +603,6 @@ async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses(
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     let first_key = first.snapshot.clone().unwrap();
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     e.delete_primary("a.txt");
     e.put("c.txt", b"only in the second").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
@@ -654,7 +674,6 @@ async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses(
     assert_eq!(e.snapshots(), std::slice::from_ref(&second_key));
 
     // Once the data is old enough, only the blob no snapshot uses goes.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let spool = e.dir.path("spool-delete");
     fs::create_dir_all(&spool).unwrap();
     let mut ctx = Ctx {
@@ -695,7 +714,6 @@ async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
     e.put("a.txt", b"one").await;
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     e.put("a.txt", b"two").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let status = e.backups.status(job.clone(), now_ms()).unwrap();
@@ -714,6 +732,126 @@ async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
     let status = e.backups.status(job, now_ms()).unwrap();
     assert_eq!(status.last_snapshot, None);
     assert_eq!(status.health, Health::NeverRun);
+}
+
+/// A run whose clock reads before the newest snapshot dates its own a
+/// second after it (ADR-051). The first snapshot here carries the date of a
+/// clock that ran a day fast and was then set right: the next one is named
+/// after it, so retention keeps the new snapshot, not the one dated ahead,
+/// and it restores the new state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_is_dated_after_one_dated_ahead_and_retention_keeps_it() {
+    let e = env().await;
+    e.put("a.txt", b"before").await;
+    let job = e.save(keep_last(1));
+    let first = e.task(&job.id, TaskKind::Backup).await;
+    let (ahead, ahead_created) =
+        date_ahead(&e, first.snapshot.as_deref().unwrap(), 24 * 3600).await;
+    e.put("a.txt", b"after").await;
+    let second = e.task(&job.id, TaskKind::Backup).await;
+    assert_eq!(second.state, "completed", "{second:?}");
+    let key = second.snapshot.clone().unwrap();
+    let after_ahead = engine::shift_rfc3339(&ahead_created, 1).unwrap();
+    assert_eq!(named_second(&key), model::compact_time(&after_ahead));
+    let m: model::Manifest =
+        serde_json::from_slice(&fs::read(e.vault.object_path(VAULT, &key)).unwrap()).unwrap();
+    assert_eq!(m.created, after_ahead, "dated as it is named");
+    assert_eq!(
+        second.prune.as_ref().map(|p| p.snapshots_deleted),
+        Some(1),
+        "{second:?}"
+    );
+    assert_eq!(
+        e.snapshots(),
+        std::slice::from_ref(&key),
+        "the one dated ahead went"
+    );
+    assert!(!e.vault_keys().contains(&ahead));
+    assert_eq!(e.health(&job.id), Health::Healthy);
+    let out = e.files.path("after-ahead");
+    fs::create_dir_all(&out).unwrap();
+    let r = e
+        .restore(&job.id, &key, "", RestoreTo::Local(out.clone()))
+        .await;
+    assert_eq!(r.state, "completed", "{r:?}");
+    assert_eq!(
+        tree(&out),
+        BTreeMap::from([("a.txt".into(), b"after".to_vec())])
+    );
+}
+
+/// Health, the last backup and the newest snapshot follow the order runs
+/// were recorded in, never their wall-clock times (ADR-051): here each run
+/// reads an earlier time than the one before, as on a clock set back
+/// between all of them.
+#[test]
+fn health_follows_the_order_runs_were_recorded_in_not_their_times() {
+    let dir = TempDir::new("backup-order");
+    let backups = Backups::load(
+        SqliteBackupStore::open(&dir.path("backup.sqlite3"))
+            .map(|s| Box::new(s) as Box<dyn BackupStore>),
+        dir.path("spool"),
+    );
+    let job = JobConfig {
+        id: "photos".into(),
+        name: "Photos".into(),
+        source: Location {
+            account: "primary".into(),
+            bucket: PRIMARY.into(),
+            prefix: String::new(),
+        },
+        destination: Location {
+            account: "vault".into(),
+            bucket: VAULT.into(),
+            prefix: "sotyware/".into(),
+        },
+        interval_hours: 24,
+        retention: Retention::default(),
+        suspicious_percent: model::DEFAULT_SUSPICIOUS_PERCENT,
+    };
+    backups.save(&job).unwrap();
+    let first = "sotyware/snapshots/photos/20261119T100000Z-aa.json";
+    let second = "sotyware/snapshots/photos/20261119T100001Z-bb.json";
+    let now = 1_000_000_000;
+    let mut clock = now;
+    let mut record = |kind: &str, snapshot: &str, suspicious: bool, passed: Option<bool>| {
+        clock -= 1_000;
+        backups.record(RunRow {
+            job_id: job.id.clone(),
+            kind: kind.into(),
+            state: "completed".into(),
+            started_ms: clock,
+            finished_ms: Some(clock + 500),
+            snapshot: Some(snapshot.into()),
+            suspicious,
+            passed,
+            ..RunRow::default()
+        });
+        clock
+    };
+    let status = || backups.status(job.clone(), now).unwrap();
+
+    record("backup", first, false, None);
+    assert_eq!(status().health, Health::NotVerified);
+    record("verify", first, false, Some(true));
+    assert_eq!(status().health, Health::Healthy, "verified after the run");
+    record("verify-full", first, false, Some(false));
+    assert_eq!(
+        status().health,
+        Health::VerificationFailed,
+        "the last verification failed"
+    );
+    let started = record("backup", second, true, None);
+    let s = status();
+    assert_eq!(s.last_snapshot.as_deref(), Some(second));
+    assert_eq!(
+        s.last_backup.and_then(|r| r.snapshot).as_deref(),
+        Some(second)
+    );
+    assert_eq!(s.next_due_ms, Some(started + 24 * 3_600_000));
+    assert_eq!(s.health, Health::NotVerified);
+    record("verify", second, false, Some(true));
+    assert_eq!(status().health, Health::LargeChange);
 }
 
 #[tokio::test(flavor = "multi_thread")]

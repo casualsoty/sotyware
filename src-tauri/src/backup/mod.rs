@@ -71,8 +71,12 @@ pub trait BackupStore: Send {
     fn save_job(&mut self, id: &str, config: &str, now_ms: i64) -> Result<(), StoreError>;
     /// Removes the job and its history (never remote data).
     fn remove_job(&mut self, id: &str) -> Result<(), StoreError>;
+    /// Records a run; returns its id, larger than that of every run still
+    /// recorded.
     fn add_run(&mut self, run: &RunRow) -> Result<i64, StoreError>;
-    /// The newest `limit` runs of a job, newest first.
+    /// The `limit` runs of a job recorded last, the last first: by the order
+    /// they were recorded in, never by their wall-clock times, which can
+    /// step back (ADR-051).
     fn runs(&mut self, job_id: &str, limit: usize) -> Result<Vec<RunRow>, StoreError>;
 }
 
@@ -371,13 +375,14 @@ impl Backups {
         let history = History {
             last_run: last_backup
                 .and_then(|r| RunState::parse(&r.state).map(|s| (s, r.started_ms))),
-            last_snapshot: last_snapshot_run
-                .map(|r| (r.finished_ms.unwrap_or(r.started_ms), r.suspicious)),
-            last_verification: last_verification.map(|r| {
-                (
-                    r.finished_ms.unwrap_or(r.started_ms),
-                    r.passed.unwrap_or(false),
-                )
+            last_snapshot: last_snapshot_run.map(|r| model::SnapshotRecord {
+                written_ms: r.finished_ms.unwrap_or(r.started_ms),
+                suspicious: r.suspicious,
+                seq: r.id,
+            }),
+            last_verification: last_verification.map(|r| model::VerificationRecord {
+                seq: r.id,
+                passed: r.passed.unwrap_or(false),
             }),
         };
         Ok(JobStatus {

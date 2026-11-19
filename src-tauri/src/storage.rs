@@ -567,10 +567,12 @@ impl BackupStore for SqliteBackupStore {
 
     fn runs(&mut self, job_id: &str, limit: usize) -> Result<Vec<RunRow>, StoreError> {
         let read = || -> rusqlite::Result<Vec<RunRow>> {
+            // In the order recorded: the rowid grows with each insert, the
+            // wall-clock times in a row can step back (ADR-051).
             let mut stmt = self.conn.prepare(
                 "SELECT id, job_id, kind, state, started_ms, finished_ms, snapshot, suspicious,
                         passed, summary, error
-                 FROM backup_runs WHERE job_id = ?1 ORDER BY started_ms DESC, id DESC LIMIT ?2",
+                 FROM backup_runs WHERE job_id = ?1 ORDER BY id DESC LIMIT ?2",
             )?;
             stmt.query_map(
                 params![job_id, i64::try_from(limit).unwrap_or(i64::MAX)],
@@ -1855,5 +1857,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(store.history("other", 10).unwrap(), [m("other", 7)]);
+    }
+
+    #[test]
+    fn backup_runs_come_back_in_the_order_recorded_not_by_their_times() {
+        let dir = TestDir::new("backup-runs");
+        let path = dir.0.join(BACKUP_FILE_NAME);
+        let run = |job: &str, kind: &str, started_ms: i64| RunRow {
+            job_id: job.into(),
+            kind: kind.into(),
+            state: "completed".into(),
+            started_ms,
+            finished_ms: Some(started_ms + 10),
+            ..RunRow::default()
+        };
+        let mut ids = Vec::new();
+        {
+            let mut store = SqliteBackupStore::open(&path).unwrap();
+            // Each run reads an earlier time than the one before, as on a
+            // clock that was set back between them.
+            for (i, kind) in ["backup", "verify", "prune", "backup"]
+                .into_iter()
+                .enumerate()
+            {
+                ids.push(
+                    store
+                        .add_run(&run("photos", kind, 1_000 - i as i64 * 100))
+                        .unwrap(),
+                );
+            }
+            store.add_run(&run("other", "backup", 5_000)).unwrap();
+        }
+        assert!(ids.is_sorted(), "{ids:?}");
+        let mut store = SqliteBackupStore::open(&path).unwrap();
+        let read = |runs: Vec<RunRow>| -> Vec<(i64, String, i64)> {
+            runs.into_iter()
+                .map(|r| (r.id, r.kind, r.started_ms))
+                .collect()
+        };
+        assert_eq!(
+            read(store.runs("photos", 10).unwrap()),
+            [
+                (ids[3], "backup".to_owned(), 700),
+                (ids[2], "prune".to_owned(), 800),
+                (ids[1], "verify".to_owned(), 900),
+                (ids[0], "backup".to_owned(), 1_000),
+            ],
+            "the last recorded first, whatever its time"
+        );
+        assert_eq!(
+            read(store.runs("photos", 2).unwrap()),
+            [
+                (ids[3], "backup".to_owned(), 700),
+                (ids[2], "prune".to_owned(), 800)
+            ]
+        );
+        assert_eq!(store.runs("other", 10).unwrap().len(), 1);
     }
 }

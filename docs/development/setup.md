@@ -172,3 +172,13 @@ environment issues, not sotyware bugs.
   its socket file there. `tests/desktop/virtual.sh` makes Xvfb listen on the
   abstract socket only, which works.
 - A `libEGL warning: DRI3 error` on startup under WSLg is harmless.
+- **The wall clock steps back, often about 0.7 s every half minute.**
+  Measured on 2026-11-18 (Ubuntu 24.04.1, kernel
+  6.18.58.1-microsoft-standard-WSL2) by sampling wall time minus
+  `/proc/uptime` every 0.25 s for 33 minutes: 52 backward steps of 0.42 to
+  1.02 s, 45 of them 31 to 33 s apart (mostly about 0.7 s), the others up
+  to 3 minutes apart; between steps the wall clock kept pace with uptime.
+  It is Hyper-V time sync (`hv_utils: TimeSync IC` in `dmesg`). Monotonic
+  clocks (`Instant`, tokio's timers) do not step, so a fixed sleep does not
+  make two wall-clock readings a second apart: order things by the order
+  they happened in, as backups do since ADR-051, not by wall-clock times.

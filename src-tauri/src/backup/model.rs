@@ -129,7 +129,8 @@ pub fn snapshots_prefix(prefix: &str, job: &str) -> String {
     format!("{prefix}snapshots/{job}/")
 }
 
-/// A manifest's key: the time first, so key order is creation order.
+/// A manifest's key: the time first, so key order is creation order (a new
+/// snapshot is never dated before the newest one, `engine::snapshot_time`).
 pub fn snapshot_key(prefix: &str, job: &str, created: &str, id: &str) -> String {
     format!(
         "{}{}-{id}.json",
@@ -388,7 +389,7 @@ fn week_of(created: &str) -> Option<i64> {
 }
 
 /// How a job stands, from its local history. Never `Healthy` without a
-/// verification that passed after the newest snapshot was written.
+/// passed verification recorded after the newest snapshot's run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Health {
@@ -402,17 +403,35 @@ pub enum Health {
     LargeChange,
 }
 
-/// What the health computation needs from the newest run and verification.
+/// What the health computation needs from the newest run and verification
+/// recorded on this computer. Which came first is the order of the records,
+/// never the wall-clock times in them, which can step back (ADR-051).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct History {
     /// The newest run: its state and when it started (ms since the epoch).
     pub last_run: Option<(RunState, i64)>,
-    /// The newest completed snapshot: when it was written and whether it was
-    /// suspicious.
-    pub last_snapshot: Option<(i64, bool)>,
-    /// The newest verification of that snapshot: when, and whether it
-    /// passed.
-    pub last_verification: Option<(i64, bool)>,
+    /// The newest completed snapshot.
+    pub last_snapshot: Option<SnapshotRecord>,
+    /// The newest verification of that snapshot.
+    pub last_verification: Option<VerificationRecord>,
+}
+
+/// A completed snapshot as health needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotRecord {
+    /// When its run ended (ms since the epoch), for "out of date".
+    pub written_ms: i64,
+    pub suspicious: bool,
+    /// Its run's place in the history (later records have larger values).
+    pub seq: i64,
+}
+
+/// A verification as health needs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VerificationRecord {
+    /// Its place in the history (later records have larger values).
+    pub seq: i64,
+    pub passed: bool,
 }
 
 /// How a run ended.
@@ -457,21 +476,22 @@ pub fn health(history: &History, interval_hours: u32, now_ms: i64) -> Health {
         RunState::Partial => return Health::Partial,
         RunState::Completed | RunState::Cancelled => {}
     }
-    let Some((written, suspicious)) = history.last_snapshot else {
+    let Some(snapshot) = history.last_snapshot else {
         // A cancelled first run: nothing to restore yet.
         return Health::NeverRun;
     };
+    // Only a verification recorded after the snapshot's run counts.
     match history.last_verification {
-        Some((at, true)) if at >= written => {}
-        Some((at, false)) if at >= written => return Health::VerificationFailed,
+        Some(v) if v.seq > snapshot.seq && v.passed => {}
+        Some(v) if v.seq > snapshot.seq => return Health::VerificationFailed,
         _ => return Health::NotVerified,
     }
-    if suspicious {
+    if snapshot.suspicious {
         return Health::LargeChange;
     }
     if interval_hours > 0 {
         let allowed = i64::from(interval_hours) * 2 * 3_600_000;
-        if now_ms.saturating_sub(written) > allowed {
+        if now_ms.saturating_sub(snapshot.written_ms) > allowed {
             return Health::OutOfDate;
         }
     }
@@ -752,42 +772,41 @@ mod tests {
                 now,
             )
         };
+        // A snapshot whose run is record 10, and verifications before and
+        // after it.
+        let written = |written_ms, suspicious| {
+            Some(SnapshotRecord {
+                written_ms,
+                suspicious,
+                seq: 10,
+            })
+        };
+        let verified = |seq, passed| Some(VerificationRecord { seq, passed });
         assert_eq!(h(None, None, None), Health::NeverRun);
         let ok = Some((RunState::Completed, now - 1000));
-        let snap = Some((now - 900, false));
+        let snap = written(now - 900, false);
         assert_eq!(h(ok, snap, None), Health::NotVerified);
         assert_eq!(
-            h(ok, snap, Some((now - 2000, true))),
+            h(ok, snap, verified(9, true)),
             Health::NotVerified,
-            "verified an older one"
+            "recorded before the snapshot's run"
         );
+        assert_eq!(h(ok, snap, verified(11, false)), Health::VerificationFailed);
+        assert_eq!(h(ok, snap, verified(11, true)), Health::Healthy);
         assert_eq!(
-            h(ok, snap, Some((now - 800, false))),
-            Health::VerificationFailed
-        );
-        assert_eq!(h(ok, snap, Some((now - 800, true))), Health::Healthy);
-        assert_eq!(
-            h(ok, Some((now - 900, true)), Some((now - 800, true))),
+            h(ok, written(now - 900, true), verified(11, true)),
             Health::LargeChange
         );
         assert_eq!(
-            h(
-                ok,
-                Some((now - 3 * day, false)),
-                Some((now - 3 * day + 5, true))
-            ),
+            h(ok, written(now - 3 * day, false), verified(11, true)),
             Health::OutOfDate
         );
         assert_eq!(
-            h(Some((RunState::Failed, now)), snap, Some((now - 800, true))),
+            h(Some((RunState::Failed, now)), snap, verified(11, true)),
             Health::Failed
         );
         assert_eq!(
-            h(
-                Some((RunState::Partial, now)),
-                snap,
-                Some((now - 800, true))
-            ),
+            h(Some((RunState::Partial, now)), snap, verified(11, true)),
             Health::Partial
         );
         // Manual jobs are never out of date.
@@ -795,8 +814,8 @@ mod tests {
             health(
                 &History {
                     last_run: ok,
-                    last_snapshot: Some((0, false)),
-                    last_verification: Some((1, true)),
+                    last_snapshot: written(0, false),
+                    last_verification: verified(11, true),
                 },
                 0,
                 now

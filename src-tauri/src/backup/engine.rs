@@ -144,6 +144,21 @@ pub fn now_rfc3339() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
 }
 
+/// The time a new snapshot is named and dated after (ADR-051): `now`, or
+/// one second after `newest` (the time the job's newest snapshot is named
+/// after) when the clock does not read later than that. A clock set back
+/// since would otherwise name the new snapshot before the newest one, and a
+/// run that ends within the newest one's second would leave their order to
+/// the random ids; everything that takes the last name as the newest would
+/// pass it over. Both are RFC 3339 UTC to the second, so they compare as
+/// text.
+pub fn snapshot_time(now: &str, newest: Option<&str>) -> String {
+    match newest {
+        Some(n) if now <= n => shift_rfc3339(n, 1).unwrap_or_else(|| now.to_owned()),
+        _ => now.to_owned(),
+    }
+}
+
 /// A fresh identifier (not secret, only unique).
 pub fn new_id() -> String {
     static N: AtomicU64 = AtomicU64::new(0);
@@ -417,13 +432,14 @@ pub async fn run(ctx: &mut Ctx<'_>, source: &Source<'_>, job: &JobConfig) -> Run
         Ok(r) => r,
         Err(e) => return stop(report, e),
     };
-    let previous = match snapshots(ctx, &job.id).await {
+    // The previous snapshot, and the time it is named after.
+    let (previous, newest) = match snapshots(ctx, &job.id).await {
         Ok(list) => match list.last() {
             Some(s) => match read_manifest(ctx, &s.key).await {
-                Ok(m) => Some(m),
+                Ok(m) => (Some(m), Some(s.created.clone())),
                 Err(e) => return stop(report, e),
             },
-            None => None,
+            None => (None, None),
         },
         Err(e) => return stop(report, e),
     };
@@ -519,7 +535,14 @@ pub async fn run(ctx: &mut Ctx<'_>, source: &Source<'_>, job: &JobConfig) -> Run
     entries.sort_by(|a, b| a.key.cmp(&b.key));
     report.stats.objects = entries.len() as u64;
     report.stats.bytes = entries.iter().map(|e| e.size).sum();
-    let created = now_rfc3339();
+    let now = now_rfc3339();
+    let created = snapshot_time(&now, newest.as_deref());
+    if let Some(n) = newest.as_deref().filter(|n| now.as_str() < *n) {
+        eprintln!(
+            "sotyware: the clock reads {now}, before the newest snapshot of backup job '{}' ({n}); the new snapshot is dated {created}",
+            job.id
+        );
+    }
     let snapshot = new_id();
     let manifest = Manifest {
         format: SNAPSHOT_FORMAT.into(),
@@ -1153,6 +1176,42 @@ mod tests {
         assert_eq!(now.len(), 20, "{now}");
         assert!(now.ends_with('Z'));
         assert_ne!(new_id(), new_id());
+    }
+
+    #[test]
+    fn a_new_snapshot_is_never_dated_before_the_newest_one() {
+        let t = snapshot_time;
+        assert_eq!(t("2026-11-19T10:00:05Z", None), "2026-11-19T10:00:05Z");
+        assert_eq!(
+            t("2026-11-19T10:00:05Z", Some("2026-11-19T10:00:04Z")),
+            "2026-11-19T10:00:05Z",
+            "a clock that reads later is used as it is"
+        );
+        assert_eq!(
+            t("2026-11-19T10:00:05Z", Some("2026-11-19T10:00:05Z")),
+            "2026-11-19T10:00:06Z",
+            "two runs within one second"
+        );
+        assert_eq!(
+            t("2026-11-19T10:00:04Z", Some("2026-11-19T10:00:05Z")),
+            "2026-11-19T10:00:06Z",
+            "a clock set back by a second"
+        );
+        assert_eq!(
+            t("2026-11-19T10:00:00Z", Some("2026-11-20T23:59:59Z")),
+            "2026-11-21T00:00:00Z",
+            "the newest dated more than a day ahead"
+        );
+        // Every result names a snapshot after the newest one, whatever the
+        // random ids (here the new one's would sort first).
+        let newest = "2026-11-19T10:00:05Z";
+        for now in ["2026-11-19T10:00:04Z", newest, "2026-11-19T10:00:06Z"] {
+            let at = t(now, Some(newest));
+            assert!(
+                model::snapshot_key("", "j", &at, "a") > model::snapshot_key("", "j", newest, "b"),
+                "{now} -> {at}"
+            );
+        }
     }
 
     #[test]

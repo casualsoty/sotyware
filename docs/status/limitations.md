@@ -778,6 +778,23 @@ server only; no real provider was asked.
   (deduplication still avoids re-uploading; s3s-fs is such a server).
 - **No cross-device locking:** two devices running the same job write two
   snapshots; retention protects unreferenced blobs younger than a day.
+- **Snapshot dates follow the writing computer's clock** (ADR-051). On one
+  computer a clock set back no longer reorders anything since 2026-11-19:
+  a new snapshot is never dated before the newest one, and health reads
+  the run history in the order recorded. Until then retention could delete
+  the snapshot a backup had just written, and a failed verification could
+  hide behind a passed one
+  ([status](status.md#backup-order-no-longer-follows-a-clock-set-back-2026-11-19)).
+  What remains: while the clock reads before the newest snapshot, each new
+  one is dated a second after it, so the dates shown run ahead of the real
+  time and retention's days and weeks count by those dates. Two computers
+  running one job at the same time date their snapshots by their own
+  clocks, so the one with the slower clock can write a snapshot that sorts
+  before the other's and that the other's retention drops. Retention's
+  one-day margin for unreferenced data is measured from the oldest
+  remaining snapshot's date: while that one is dated ahead (a clock that
+  ran fast, then was set right), the margin shrinks by as much, and is
+  gone once it is a day.
 - **No desktop notification** when a scheduled backup fails; the Backups
   page shows the health. Schedules run only while sotyware runs.
 - **Folder markers are not backed up** (keys ending in `/`), and empty
