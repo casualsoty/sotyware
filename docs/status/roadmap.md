@@ -274,12 +274,15 @@ ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)
 
-- Find whose WebKit helper outlived the Linux driver's 15 s wait after
-  scenario 17's first Quit in `desktop-virtual.yml` at `1ef6bfa`
-  (`single_instance.py`, since `877ca1b`; the wait counts every helper of
-  the run's test profile, and the log names neither the helper's program
-  nor its parent), before that check is relied on
-  ([status](status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
+- WebKit's web process crashes as sotyware quits on GitHub's Ubuntu 26.04
+  runner (5 of 112 instances in eight runs, very probably 1 more at
+  `1ef6bfa`; none of 42 on WSL2): glibc aborts in a C++ static destructor
+  of Mesa 26.0.8's `libgallium` as the process exits, the heap already
+  corrupt; the Linux driver names it without failing (decided
+  2026-11-19). Decide whether to report it upstream (Mesa or WebKitGTK,
+  with the stack traces), and whether sotyware can avoid it, for example
+  by closing its webview before it exits
+  ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost

@@ -13,15 +13,18 @@ exercise that behaviour (for example a window manager that ignores minimize
 requests); it is never counted as a pass.
 """
 import atexit
+import collections
 import ctypes
 import ctypes.util
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+from typing import NamedTuple
 
 import dbus
 import gi
@@ -188,13 +191,14 @@ def iconic(w):
     return prop_long(w, A_WM_STATE) == ICONIC_STATE
 
 
-def wait_for(pred, timeout=8.0):
-    end = time.time() + timeout
-    while time.time() < end:
+def wait_for(pred, timeout=8.0, interval=0.1):
+    # The monotonic clock: WSL2 steps the wall clock by most of a second now and then.
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
         x.XSync(dpy, 0)
         if pred():
             return True
-        time.sleep(0.1)
+        time.sleep(interval)
     return False
 
 
@@ -296,6 +300,24 @@ def sotyware_pids():
     return sorted(pids)
 
 
+# Every launch carries its label in this variable, which sotyware never
+# reads. WebKit's helpers inherit sotyware's environment, so a helper names
+# the launch that started it, also once that sotyware has ended and the
+# helper has been given another parent.
+LAUNCH_ENV = "SI_DRIVER_LAUNCH"
+LAUNCHED = {}  # sotyware pid -> its launch's label
+
+
+def start(label, env=None, **popen_args):
+    """Starts the binary, `label` in its environment (LAUNCH_ENV)."""
+    assert label not in LAUNCHED.values(), f"two launches labelled {label!r}"
+    env = dict(os.environ if env is None else env)
+    env[LAUNCH_ENV] = label
+    p = subprocess.Popen([BIN], env=env, **popen_args)
+    LAUNCHED[p.pid] = label
+    return p
+
+
 # WebKitGTK keeps a page's localStorage (the theme, ADR-035) in its network
 # process, which commits a write 0.5 s after it is made or, when sotyware
 # ends first, as soon as it sees sotyware gone, and only then exits
@@ -303,26 +325,156 @@ def sotyware_pids():
 # reads the storage before that commit shows the previous value, and can
 # delete the late commit for good
 # (docs/status/limitations.md#dashboard-adr-035): scenario 17's one failure
-# on GitHub looked exactly so. On WSL2 the helpers ended within about 0.1 s
-# of sotyware; 15 s leaves room for WebKit's own 10 s.
+# on GitHub looked exactly so. So every quit of 17 to 19 waits for the
+# quitting launch's helpers, and before 17 starts a check waits until no
+# helper of an earlier launch is left. On WSL2 the helpers ended within
+# about 0.1 s of sotyware; 15 s leaves room for WebKit's own 10 s.
 WEBKIT_HELPERS_WAIT = 15
+HELPERS_POLL = 0.02  # s: fine enough to say how long they outlived sotyware
+# The process that commits the page's storage: one per sotyware.
+NETWORK_PROCESS = "WebKitNetworkProcess"
+CLK_TCK = os.sysconf("SC_CLK_TCK")
+
+
+def boot_clock():
+    """Now, in seconds on the clock of /proc/<pid>/stat's start times (CLOCK_BOOTTIME)."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+class Helper(NamedTuple):
+    """A WebKit helper process as /proc shows it at one moment."""
+    pid: int
+    started: float  # seconds since boot (/proc/<pid>/stat); with the pid, the process's identity
+    program: str  # the name of /proc/<pid>/exe: WebKitNetworkProcess, WebKitWebProcess, ...
+    parent: int  # its parent now: sotyware, or 1 or a subreaper once sotyware has ended
+    state: str  # R running, S sleeping, D waiting on a device, T stopped, ...
+    threads: int
+    launch: str  # the label of the launch whose sotyware started it (LAUNCH_ENV)
+
+
+def _stat(task):
+    """(state, parent pid, threads, start in clock ticks since boot) of /proc/<task>/stat."""
+    with open(f"/proc/{task}/stat") as f:
+        fields = f.read().rsplit(")", 1)[1].split()  # the name before ")" may hold anything
+    return fields[0], int(fields[1]), int(fields[17]), int(fields[19])
 
 
 def webkit_helpers():
-    """PIDs of WebKit's helper processes (network, web) of this run's
+    """WebKit's helper processes (network, web, ...) of this run's
     instances, which outlive their sotyware briefly. Started by sotyware,
-    they inherit its environment, and with it this run's test profile."""
-    pids = []
+    they inherit its environment, and with it this run's test profile and
+    the label of its launch."""
+    found = []
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
         try:
-            if os.path.basename(os.path.realpath(f"/proc/{entry}/exe")).startswith("WebKit") and \
-                    _environ(entry).get(tp.ENV) == PROFILE.root:
-                pids.append(int(entry))
+            program = os.path.basename(os.readlink(f"/proc/{entry}/exe"))
+            if not program.startswith("WebKit"):
+                continue
+            env = _environ(entry)
+            if env.get(tp.ENV) != PROFILE.root:
+                continue
+            state, parent, threads, ticks = _stat(entry)
         except OSError:
-            pass
-    return sorted(pids)
+            continue  # ended meanwhile (an ended process has no exe left), or not ours to read
+        found.append(Helper(int(entry), ticks / CLK_TCK, program, parent, state, threads,
+                            env.get(LAUNCH_ENV, "?")))
+    return sorted(found)
+
+
+def _comm(task):
+    """The name of /proc/<task> (a process, or a process's thread), '?' once it is gone."""
+    try:
+        with open(f"/proc/{task}/comm") as f:
+            return f.read().strip()
+    except OSError:
+        return "?"
+
+
+def _core_dumping(pid):
+    """True while the kernel writes the process's core dump, that is after it
+    crashed (CoreDumping in /proc/<pid>/status). On GitHub's runner the core
+    goes to systemd-coredump, which took more than 15 s for a WebKit web
+    process."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            return any(line.split() == ["CoreDumping:", "1"] for line in f)
+    except OSError:
+        return False
+
+
+# A helper the kernel is dumping core for after a crash runs none of its
+# own code any more and cannot touch the page's storage. On GitHub's
+# Ubuntu 26.04 runner WebKit's web process crashed so as sotyware quit, in
+# a static destructor of Mesa's libgallium, and its core took more than
+# 15 s (docs/status/limitations.md#dashboard-adr-035). The waits count such
+# a helper as ended and name it, and the run lists them at its end; a
+# crashed network process, which may not have committed the page's
+# storage, still fails.
+CRASHED = []  # (where it was seen, helper) of every helper seen dumping core
+
+
+def split_crashed(helpers, crashed):
+    """The helpers in `helpers` still running their own code. Those the
+    kernel is dumping core for go into `crashed` (keyed by pid and start)."""
+    running = []
+    for h in helpers:
+        if _core_dumping(h.pid):
+            crashed.setdefault((h.pid, h.started), h)
+        else:
+            running.append(h)
+    return running
+
+
+CRASHED_ABOUT = ("dumping core after a crash (a web process's crash at quit is WebKit's and Mesa's: "
+                 "docs/status/limitations.md#dashboard-adr-035)")
+
+
+def crashed_text(h, since, event):
+    """A helper seen dumping core, for a check's message (it may have ended since)."""
+    offset = h.started - since
+    return (f"{h.program} {h.pid} of launch '{h.launch}' (started {abs(offset):.2f} s "
+            f"{'after' if offset >= 0 else 'before'} {event})")
+
+
+def helper_text(h, since, event):
+    """`h` for a check's message, its start relative to `event` (at `since` on boot_clock())."""
+    offset = h.started - since
+    crashed = ", dumping core after a crash" if _core_dumping(h.pid) else ""
+    return (f"{h.program} {h.pid} (parent {h.parent} {_comm(h.parent)}, state {h.state}, {h.threads} threads"
+            f"{crashed}, started {abs(offset):.2f} s {'after' if offset >= 0 else 'before'} {event}, "
+            f"of launch '{h.launch}')")
+
+
+def show_helper(h, with_output=True):
+    """Prints what a helper that did not end is doing, as far as /proc tells
+    without tracing it: its command line, its threads by name (numbered
+    ones together), state and kernel wait channel, the main thread first,
+    and the output of its launch, which WebKit's helpers write to as well
+    (launches through launch() only)."""
+    print(f"--- WebKit helper {h.pid} ({h.program}) of launch '{h.launch}' ---")
+    try:
+        with open(f"/proc/{h.pid}/cmdline", "rb") as f:
+            print("command line: " + f.read().replace(b"\0", b" ").decode(errors="replace").strip())
+        tids = os.listdir(f"/proc/{h.pid}/task")
+    except OSError as e:
+        print(f"(could not read it any more: {e})")
+        tids = []
+    threads = collections.Counter()
+    for tid in tids:
+        task = f"{h.pid}/task/{tid}"
+        try:
+            with open(f"/proc/{task}/wchan") as f:
+                wchan = f.read().strip()
+            state = _stat(task)[0]
+        except OSError:
+            continue  # this thread ended meanwhile
+        threads[(int(tid) != h.pid, re.sub(r"\d+$", "<n>", _comm(task)), state, wchan)] += 1
+    for (not_main, name, state, wchan), n in sorted(threads.items()):
+        print(f"{n} × {'thread' if not_main else 'main thread'} {name!r}: state {state}, in {wchan}")
+    if with_output and h.launch in LAUNCH_LOGS:
+        print(f"--- output of launch '{h.launch}' ---\n" + read_log(LAUNCH_LOGS[h.launch]).strip())
 
 
 def tray_registrations():
@@ -335,7 +487,7 @@ def tray_registrations():
 def second_launch(label):
     """Launches the binary again; returns (exit code, output, new windows seen)."""
     before = set(all_dashboards())
-    p = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    p = start(label, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     seen_new = set()
     end = time.time() + 15
     while p.poll() is None and time.time() < end:
@@ -525,11 +677,15 @@ def click_button(pid, name):
 
 
 # ---------- instances whose output is read while they run ----------
+LAUNCH_LOGS = {}  # launch label -> the file its output goes to
+
+
 def launch(label, env=None):
     """Starts the binary with its output in a log file; returns (process, log path)."""
     log = os.path.join(LOGS, f"{label.split()[0]}-{len(os.listdir(LOGS))}.log")
     with open(log, "wb") as f:
-        p = subprocess.Popen([BIN], env=env, stdout=f, stderr=subprocess.STDOUT)
+        p = start(label, env, stdout=f, stderr=subprocess.STDOUT)
+    LAUNCH_LOGS[label] = log
     return p, log
 
 
@@ -629,7 +785,7 @@ start_watcher()
 # falls back to the normal profile.
 def refused(label, env):
     before = set(all_dashboards())
-    p = subprocess.Popen([BIN], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    p = start(f"0 {label}", env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         out, _ = p.communicate(timeout=15)
     except subprocess.TimeoutExpired:
@@ -652,7 +808,7 @@ check("0 refused launches created nothing in either profile",
       sorted(os.listdir(bad_profile)) == [tp.MARKER_FILE] and sorted(os.listdir(PROFILE.root)) == [tp.MARKER_FILE])
 
 # 1. First launch.
-proc = subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+proc = start("1 first launch", stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 verified(proc, "1 first launch")
 alive = lambda: proc.poll() is None
 ok = wait_for(lambda: one_dashboard_shown(proc.pid), 20)
@@ -730,7 +886,8 @@ for i in range(5):
 send_wm_delete(win)
 wait_for(lambda: not viewable(win))
 before = set(all_dashboards())
-burst = [subprocess.Popen([BIN], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for _ in range(4)]
+burst = [start(f"7 concurrent launch #{i + 1}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+         for i in range(4)]
 codes = []
 for p in burst:
     try:
@@ -763,7 +920,7 @@ check("9 tray Quit: no sotyware process left", wait_for(lambda: not sotyware_pid
       f"pids={sotyware_pids()}")
 
 open(REG, "w").close()
-again = verified(subprocess.Popen([BIN], stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "9 relaunch")
+again = verified(start("9 relaunch", stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "9 relaunch")
 ok = wait_for(lambda: one_dashboard_shown(again.pid), 20)
 check("relaunch after Quit: starts as a new primary instance", ok and again.poll() is None)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
@@ -812,8 +969,8 @@ open(REG, "w").close()
 read_only_parent = os.path.join(os.path.dirname(os.path.abspath(REG)), "read-only")
 os.mkdir(read_only_parent, 0o500)
 missing_dir = os.path.join(read_only_parent, "runtime")
-odd = verified(subprocess.Popen([BIN], env={**os.environ, "XDG_RUNTIME_DIR": missing_dir},
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "11 unusable XDG_RUNTIME_DIR")
+odd = verified(start("11 unusable XDG_RUNTIME_DIR", {**os.environ, "XDG_RUNTIME_DIR": missing_dir},
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT), "11 unusable XDG_RUNTIME_DIR")
 ok = wait_for(lambda: one_dashboard_shown(odd.pid), 20)
 registered = wait_for(lambda: len(tray_registrations()) == 1, 10)
 check("11 unusable XDG_RUNTIME_DIR: starts with one tray item", ok and registered and odd.poll() is None,
@@ -1062,18 +1219,60 @@ def start_tray_instance(label, env=None):
 
 
 def quit_completely(label, p, log):
-    """Tray Quit; checks the process really ended, and with it WebKit's
-    helpers, so that the next launch reads what this one stored, as a later
-    start would (see WEBKIT_HELPERS_WAIT)."""
+    """Tray Quit; checks the process really ended, and with it the WebKit
+    helpers it started, so that the next launch reads what this one stored,
+    as a later start would (see WEBKIT_HELPERS_WAIT). Its helpers are those
+    carrying its launch's label: the ones listed before the Quit, children
+    of this sotyware, among which its network process must be, and any
+    started later. One dumping core after a crash counts as ended and is
+    named, unless it is the network process (see CRASHED). Helpers of
+    other launches are not this quit's (the check before 17 looks for
+    those) and are only named."""
+    launch_label = LAUNCHED[p.pid]
+
+    def own():
+        return [h for h in webkit_helpers() if h.launch == launch_label]
+
+    before = own()
+    quit_at = boot_clock()
     if tray_registrations():
         menu, labels = tray_menu()
         tray_click(menu, labels, "Quit")
     code = wait_exit(p)
-    ended = code == 0 and wait_for(lambda: not sotyware_pids(), 5) and wait_for(
-        lambda: not webkit_helpers(), WEBKIT_HELPERS_WAIT)
-    check(f"{label}: tray Quit ends the process and WebKit's helpers (exit 0, no process left)", ended,
-          f"exit code={code} pids={sotyware_pids()} webkit helpers={webkit_helpers()}")
+    exited_at = boot_clock()
+    gone = code == 0 and wait_for(lambda: not sotyware_pids(), 5)
+    crashed = {}
+    helpers_gone = gone and wait_for(lambda: not split_crashed(own(), crashed), WEBKIT_HELPERS_WAIT,
+                                     HELPERS_POLL)
+    waited = boot_clock() - exited_at
+    network = any(h.program == NETWORK_PROCESS and h.parent == p.pid for h in before)
+    network_crashed = [h for h in crashed.values() if h.program == NETWORK_PROCESS]
+    ended = gone and helpers_gone and network and not network_crashed
+    left = split_crashed(own(), crashed)
+    others = [h for h in webkit_helpers() if h.launch != launch_label]
+    detail = f"exit code={code} pids={sotyware_pids()} sotyware {p.pid}; its helpers before the Quit: " + (
+        ", ".join(f"{h.program} {h.pid} (parent {h.parent})" for h in before) or "none")
+    if not network:
+        detail += f"; no {NETWORK_PROCESS} of this sotyware among them"
+    if helpers_gone:
+        detail += (f"; within {waited:.2f} s of sotyware all had ended or were dumping core" if crashed
+                   else f"; all ended within {waited:.2f} s of sotyware")
+    elif left:
+        detail += (f"; left {waited:.2f} s after sotyware: " if gone else "; still running: ") + "; ".join(
+            helper_text(h, quit_at, "the Quit") for h in left)
+    if crashed:
+        detail += f"; {CRASHED_ABOUT}: " + "; ".join(crashed_text(h, quit_at, "the Quit")
+                                                     for h in crashed.values())
+        CRASHED.extend((label, h) for h in crashed.values())
+    if network_crashed:
+        detail += f"; its {NETWORK_PROCESS} crashed, so the page's storage may not have been committed"
+    if others:
+        detail += "; helpers of other launches still running, not waited for: " + "; ".join(
+            helper_text(h, quit_at, "the Quit") for h in others)
+    check(f"{label}: tray Quit ends the process and its WebKit helpers (exit 0, no process left)", ended, detail)
     if not ended:
+        for h in left + network_crashed:
+            show_helper(h, with_output=False)  # its output is the instance's, printed next
         print("--- instance output ---\n" + read_log(log).strip())
     return ended
 
@@ -1083,6 +1282,32 @@ def switch_feature(pid, want_checked, state):
     return box is not None and Atspi.Action.do_action(box, 0) and wait_for(
         lambda: feature_is(pid, want_checked, state), 5)
 
+
+# Scenarios 1 to 15 never wait for WebKit's helpers, and 17 to 19 wait at
+# each Quit only for the quitting launch's own. A helper of an earlier
+# launch still running here, a network process above all, could still
+# write the page's storage that 17 reads; on GitHub one was blamed on 17's
+# first Quit. It must be gone before 17 starts, and is named if not. One
+# dumping core after a crash counts as gone and is named, unless it is a
+# network process (see CRASHED).
+waited_from = boot_clock()
+early_crashed = {}
+quiet = wait_for(lambda: not split_crashed(webkit_helpers(), early_crashed), WEBKIT_HELPERS_WAIT,
+                 HELPERS_POLL)
+early = split_crashed(webkit_helpers(), early_crashed)
+early_network = [h for h in early_crashed.values() if h.program == NETWORK_PROCESS]
+detail = (f"none still running after {boot_clock() - waited_from:.2f} s" if quiet and not early else
+          "left: " + "; ".join(helper_text(h, waited_from, "this wait") for h in early))
+if early_crashed:
+    detail += f"; {CRASHED_ABOUT}: " + "; ".join(crashed_text(h, waited_from, "this wait")
+                                                 for h in early_crashed.values())
+    CRASHED.extend(("before 17", h) for h in early_crashed.values())
+if early_network:
+    detail += f"; a crashed {NETWORK_PROCESS} among them may not have committed the page's storage"
+check(f"17 persistence: before it starts, no WebKit helper of an earlier launch is left "
+      f"(at most {WEBKIT_HELPERS_WAIT} s)", quiet and not early and not early_network, detail)
+for h in early + early_network:
+    show_helper(h)
 
 # 17. Disable, quit, relaunch: still disabled. Enable, quit, relaunch: enabled.
 # Scenario 12 left Scheduled backups enabled (and saved).
@@ -1199,6 +1424,11 @@ check("the user's own sotyware folders are unchanged (names, sizes, times, SHA-2
       tp.fingerprint(NORMAL_DIRS) == NORMAL_BEFORE, ", ".join(NORMAL_DIRS))
 check("nothing was written under the app's real identifier in the private data folder",
       not os.path.exists(os.path.join(DATA_HOME, tp.NORMAL_IDENTIFIER)))
+
+if CRASHED:
+    print(f"\nnote: {len(CRASHED)} WebKit helper(s) crashed as their sotyware quit, each named in the check "
+          "given here; a web process's crash fails no check, a network process's does: "
+          + "; ".join(f"{h.program} {h.pid} of launch '{h.launch}' ({where})" for where, h in CRASHED))
 
 counts = {s: sum(1 for _, r in results if r == s) for s in ("PASS", "FAIL", "SKIP")}
 print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped")

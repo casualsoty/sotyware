@@ -25,7 +25,7 @@ env:
   # Number of checks the driver runs today. A run with fewer is a failure: a check
   # must never disappear silently. Update it in the same commit that adds or
   # removes a check in tests/desktop/single_instance.py.
-  EXPECTED_CHECKS: 139
+  EXPECTED_CHECKS: 140
 
 jobs:
   virtual-display:
@@ -107,3 +107,25 @@ jobs:
             echo "::error::virtual-display test: exit $rc ($meaning)"
           fi
           exit "$rc"
+
+      # On this runner a crashed process's core goes to systemd-coredump, which
+      # took more than 15 s for a WebKit web process that crashed as sotyware
+      # quit (docs/status/limitations.md#dashboard-adr-035; the driver names
+      # such a crash without failing). Wait for any WebKit helper still
+      # dumping, print what systemd-coredump recorded about WebKit's helpers,
+      # the stack trace of the crashed thread included, and put their number
+      # in the run summary, so that a passing run still shows them.
+      - name: core dumps of WebKit's helpers
+        if: always()
+        run: |
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          for _ in $(seq 120); do
+            pgrep -f '/webkit2gtk-4\.1/WebKit' >/dev/null || break
+            sleep 1
+          done
+          helpers=(/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess
+                   /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess)
+          sudo coredumpctl list --no-pager || true
+          sudo coredumpctl info --no-pager "${helpers[@]}" || true
+          n=$(sudo coredumpctl list --no-pager --no-legend "${helpers[@]}" 2>/dev/null | wc -l)
+          echo "- core dumps of WebKit's helpers: $n (crashes at quit in WebKit or Mesa, named by the driver, not failed; stack traces in this step's log)" >> "$GITHUB_STEP_SUMMARY"

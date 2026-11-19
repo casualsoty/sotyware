@@ -1282,6 +1282,22 @@ server only; no real provider was asked.
   a private desktop, also with a relaunch before its processes had ended;
   the tray Quit on the real desktop is not run yet
   ([status](status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
+- **On GitHub's Ubuntu 26.04 runner, WebKit's web process sometimes
+  crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`, Mesa
+  26.0.8, 2026-11-19; 5 of 112 instances in eight runs, very probably 1
+  more in an earlier run): glibc aborts it with `free(): corrupted
+  unsorted chunks` in a C++ static destructor of Mesa's `libgallium` as
+  the process exits (the heap was corrupted earlier, by what is not
+  known), and the core dump then keeps it running for more than 15 s (one
+  was still dumping when the job ended, 18 s later). sotyware had ended
+  with 0, and the network process, which commits the theme, ended
+  normally. On a desktop that collects crashes (apport, systemd-coredump)
+  quitting sotyware could leave a crash report. Not seen on WSL2 (Ubuntu
+  24.04, Mesa 25.2.8: 42 web processes ended with 0), not examined on a
+  real desktop
+  ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
+  The desktop test names such a crash and does not fail on it
+  ([Tests](#tests)).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux
@@ -1334,6 +1350,24 @@ server only; no real provider was asked.
   With the `ksni` backend no run has failed so far (3 runs and a 420-launch
   loop, 2026-11-10; 3 runs of the 92-check driver with dashboard-only mode,
   2026-11-10). That is evidence, not proof.
+- **The virtual-display test waits for WebKit's helpers only from scenario
+  17 on.** The quits of 17 to 19 wait for their own launch's helpers;
+  scenarios 1 to 16 wait for none, so a helper one of them leaves behind is
+  found only by the check before 17 (at most 15 s), which names its launch
+  but cannot say how long it ran after its own Quit. On GitHub at
+  `1ef6bfa` one, very probably scenario 12's web process, ran on for 22
+  to 25 s, very probably dumping core after a crash
+  ([status](status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19);
+  the crash: [Dashboard](#dashboard-adr-035)).
+- **The virtual-display test names a WebKit helper that crashes at quit
+  instead of failing** (since 2026-11-19, at the maintainer's choice): in
+  the waits a helper the kernel is dumping core for counts as ended, so a
+  run passes with the web process's crash in Mesa named in the check's
+  message, in a note at its end and, on GitHub, in the run summary; only a
+  crashed network process still fails. A crash is seen only while its core
+  is being dumped (polled every 20 ms): one whose dump is quicker goes
+  unnoticed by the driver, though on GitHub systemd-coredump still records
+  it ([status](status.md#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)).
 - **No test covers screen-reader access** on either platform.
 - **The locked-keyring checks of `cloud-ui.sh local` decline the unlock
   prompt; none accepts it.** With a system-installed gnome-keyring the driver

@@ -533,6 +533,34 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Whose WebKit helper the Linux driver finds left** (2026-11-19, test
+  code and docs only,
+  [status.md](status/status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)):
+  the helper that failed `desktop-virtual.yml` at `1ef6bfa` was not the
+  quitting instance's but an earlier launch's, very probably scenario 12's
+  web process, which ran on for 22 to 25 s. Every launch now carries its
+  label in its environment, which WebKit's helpers inherit; a quit waits
+  only for its own launch's helpers (its network process among them), a
+  new check before 17 requires that none of an earlier launch is left,
+  and a helper left is named with its program, parent, state, start and
+  launch, its threads and kernel wait channels printed. 140 checks.
+  Pushed as the branch `test/whose-webkit-helper-is-left`; its first
+  hosted run (`8b1deac`) failed 138/2 and showed why: **WebKit's web
+  process crashed as sotyware quit** (glibc: a corrupt heap) and was still
+  dumping core into the runner's systemd-coredump 15 s later, in 2 of 14
+  instances; never on WSL2 (42 of 42 ended with 0). The driver now also
+  says when a helper is dumping core, and the workflow prints
+  systemd-coredump's record. In five hosted runs (two more were cancelled
+  on the Ubuntu archive's timeouts), two had crashes (4 of 70 web
+  processes), and the stack traces show where: glibc aborts in a C++
+  static destructor of Mesa 26.0.8's `libgallium` as the process exits,
+  the heap already corrupt; WebKit's and Mesa's code, not sotyware's.
+  Since then the driver counts a helper dumping core as ended and names
+  the crash without failing (a crashed network process still fails), and
+  the workflow puts the number of WebKit core dumps in the run summary.
+  Three hosted runs at `c02ea7e` passed, one of them naming a real crash
+  ([status](status/status.md#hosted-runs-at-c02ea7e-a-crash-at-quit-named-the-run-passing-2026-11-19),
+  [limitation](status/limitations.md#dashboard-adr-035)).
 - **The theme check on Windows** (2026-11-18, test code and docs only,
   [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):
   `windows.ps1` now chooses Dark just before a tray Quit and checks it
@@ -561,9 +589,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   display 139/0/0 three times, `test:headless` passed. On `main` since
   2026-11-19; its first hosted run, `desktop-virtual.yml` at `1ef6bfa`,
   kept the theme but failed the new wait once: a WebKit helper of the
-  run's test profile outlived it after the first Quit, whose is not
-  established
-  ([status](status/status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
+  run's test profile outlived it after the first Quit, an earlier
+  launch's, as found since (entry above;
+  [status](status/status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
 - **Usage & costs tab in the Linux desktop test** (2026-11-16,
   [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
   `cloud-ui.sh usage` measures a seeded versioned bucket through the UI
