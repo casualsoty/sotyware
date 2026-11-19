@@ -529,6 +529,32 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **The theme check on Windows** (2026-11-18, test code and docs only,
+  [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):
+  `windows.ps1` now chooses Dark just before a tray Quit and checks it
+  after the relaunch, as the Linux driver does; every relaunch waits for
+  the quitting instance's WebView2 processes (`msedgewebview2.exe` naming
+  the run's test profile on its command line) and records from their exit
+  times how long they outlived sotyware (136 checks). Checked statically
+  and in a scratch harness (37/37). A probe on a private desktop (sotyware
+  ended with `Stop-Process`, no tray there) found WebView2 commits a
+  choice 5 s after it, or at once when sotyware ends, and lost none, also
+  with a relaunch 0.13 s after the choice; its processes end within
+  0.16 s. `windows.ps1` itself is not run on the real desktop yet: it
+  waits for the maintainer's go-ahead.
+- **The theme check after a quick quit and relaunch** (2026-11-18, test
+  code and docs only,
+  [status.md](status/status.md#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)):
+  `desktop-virtual.yml` failed once at `0b79903` on "the theme chosen
+  before quitting (Dark) is still chosen". WebKitGTK commits a
+  `localStorage` write 0.5 s after it, or in its network process just
+  after sotyware has ended, so a quit right after the choice keeps it,
+  but the driver's relaunch 0.2 s later can read before that commit
+  (holding the helper's commit back 2 s gives the same failure). The
+  driver now waits for WebKit's helpers of the quitting instance to end
+  (at most 15 s; they take about 0.1 s); the product side is a
+  [limitation](status/limitations.md#dashboard-adr-035). WSL2 virtual
+  display 139/0/0 three times, `test:headless` passed; not pushed.
 - **Usage & costs tab in the Linux desktop test** (2026-11-16,
   [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
   `cloud-ui.sh usage` measures a seeded versioned bucket through the UI

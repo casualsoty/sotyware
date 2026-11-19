@@ -2431,11 +2431,19 @@ Files:
     served, close exits 0.
   - 17: feature preferences across real restarts (tray mode). Each restart is a
     tray Quit with exit code 0 and no process left, then a new process; the page
-    is never just reloaded. Scheduled backups (left enabled and saved by 12)
-    is unchecked, sotyware quits, the database row (read with Python's
-    `sqlite3`, read-only) says disabled, and the relaunch shows it disabled with
-    no error and no storage warning in the log; it is checked again, sotyware
-    quits, the row says enabled, and a second relaunch shows it running.
+    is never just reloaded. "No process left" includes WebKit's helpers of the
+    instance (found by the test profile in their environment): they outlive
+    sotyware by about 0.1 s, WebKitGTK's network process committing the page's
+    `localStorage` meanwhile, and a relaunch before that would read the
+    previous theme ([limitations](../status/limitations.md#dashboard-adr-035)),
+    so the driver waits up to 15 s for them (WebKit's own watchdog is 10 s).
+    Scheduled backups (left enabled and saved by 12) is unchecked, Dark is
+    chosen in Settings › General and sotyware quits at once, the database row
+    (read with Python's `sqlite3`, read-only) says disabled, and the relaunch
+    shows it disabled with no error and no storage warning in the log, and
+    Dark still chosen; it is checked again, sotyware quits, the row says
+    enabled, and a second relaunch shows it running. Scenarios 18 and 19 quit
+    the same way.
   - 18: a corrupt `preferences.sqlite3` (text): sotyware starts in tray mode
     with Scheduled backups running (its default); the page shows "Could not
     load the saved feature choices: … not a database" and the log says so;
@@ -2585,7 +2593,7 @@ its own title bar (Close, a double click, and a drag that moves the window
 by 80 × 60 px; ADR-040), drags the window's bottom-right corner and top edge
 to resize it, and
 opens the notification area's "Show Hidden Icons" flyout. Do not touch the mouse or
-keyboard while it runs (about 30 seconds).
+keyboard while it runs (about 40 seconds).
 
 What it does, and how:
 
@@ -2640,6 +2648,36 @@ What it does, and how:
   `%LOCALAPPDATA%\com.sotyware.desktop\preferences.sqlite3` aside and deleted
   "its" copy at the end, which is unsafe:
   [ADR-027](../architecture/decisions.md#adr-027-desktop-tests-run-a-test-profile-build-that-cannot-reach-the-users-data)).
+- Since 2026-11-18, the theme chosen just before Quit, as scenario 17 of
+  the Linux single-instance driver: after enabling the feature in the
+  first relaunch it chooses Dark in Settings › General (the radio button's
+  UIA `SelectionItem`, whose `IsSelected` is its checked state), quits
+  through the tray at once (only the tray menu lies between the choice and
+  Quit; not at the first quit, which hides the dashboard first), and the
+  second relaunch must show Dark chosen and nothing else. The theme lives
+  in the webview's `localStorage`, which WebView2 writes to disk itself;
+  on Linux a relaunch that read it before WebKit's late commit showed the
+  previous theme ([limitations](../status/limitations.md#dashboard-adr-035)).
+  INFO lines give the time from the choice to the Quit click and to
+  sotyware's end, and whether WebView2's local storage files (a LevelDB,
+  `webview\EBWebView\Default\Local Storage\leveldb` in the profile, read
+  without locking it) held the choice just after it was made, once
+  sotyware had ended and once WebView2 had ended.
+- Since 2026-11-18, every relaunch waits until WebView2's processes of the
+  quitting instance have ended too, at most 30 s, so that it reads what
+  any later start would. They are the `msedgewebview2.exe` processes whose
+  command line names this run's test profile (WebView2 gives each process
+  the user data folder, here the profile's `webview` folder, as
+  `--user-data-dir`; the profile as the driver and as the app's
+  acknowledgement spell it, lower case, without `\\?\`). A handle to each
+  is opened before the Quit, so their exit times are read exactly
+  (`GetProcessTimes`) after they have ended; one that started later is
+  waited for by listing when its parent is that sotyware or one of its
+  WebView2 processes (another sotyware in the profile would start a
+  browser of its own). Each quit's check passes when they were found,
+  one browser process (no `--type`) started after this sotyware among
+  them, and all ended; an INFO line says how long each outlived sotyware.
+  At the end any left are stopped by id, so the profile can be removed.
 - Finds the sotyware icon in the notification area by its UI Automation name
   (`sotyware`, the tooltip). Windows 11 puts new icons in the hidden-icons flyout,
   so the test opens it first. It treats the flyout as open only while it is the
@@ -2682,7 +2720,11 @@ missing feature permission: a build without `allow-set-feature-enabled` in the
 capability failed exactly the 5 switch checks, 85 passed / 5 failed (2026-11-11,
 `3a8a715`'s script).
 
-The count is 99 checks since `a7bf8f3` (90 since `3a8a715`, 80 before). Of the
+The count is 136 checks since 2026-11-18 (the theme across a quick quit:
+the choice, the check after relaunch 2, WebView2's processes ended at each
+of the three quits and none left at cleanup), 130 since `ec27b17`
+(2026-11-16, the title bar, placement and frame checks), 99 since `a7bf8f3`
+(90 since `3a8a715`, 80 before). Of the
 10 feature checks added at `3a8a715`, "Running again after relaunch (not
 persisted)" was replaced at `a7bf8f3` by "still Disabled (persisted)", and 9
 persistence checks were added. The isolated-desktop test below has no feature

@@ -296,6 +296,35 @@ def sotyware_pids():
     return sorted(pids)
 
 
+# WebKitGTK keeps a page's localStorage (the theme, ADR-035) in its network
+# process, which commits a write 0.5 s after it is made or, when sotyware
+# ends first, as soon as it sees sotyware gone, and only then exits
+# (NetworkProcess::didClose; a watchdog ends it after 10 s). A launch that
+# reads the storage before that commit shows the previous value, and can
+# delete the late commit for good
+# (docs/status/limitations.md#dashboard-adr-035): scenario 17's one failure
+# on GitHub looked exactly so. On WSL2 the helpers ended within about 0.1 s
+# of sotyware; 15 s leaves room for WebKit's own 10 s.
+WEBKIT_HELPERS_WAIT = 15
+
+
+def webkit_helpers():
+    """PIDs of WebKit's helper processes (network, web) of this run's
+    instances, which outlive their sotyware briefly. Started by sotyware,
+    they inherit its environment, and with it this run's test profile."""
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.path.basename(os.path.realpath(f"/proc/{entry}/exe")).startswith("WebKit") and \
+                    _environ(entry).get(tp.ENV) == PROFILE.root:
+                pids.append(int(entry))
+        except OSError:
+            pass
+    return sorted(pids)
+
+
 def tray_registrations():
     if not os.path.exists(REG):
         return []
@@ -453,6 +482,12 @@ def theme_radio(pid, name):
     """The Appearance radio button `name` (System, Light, Dark) in Settings › General."""
     return next((node for r, n, _, node in _page_nodes(pid)
                  if r == Atspi.Role.RADIO_BUTTON and n == name), None)
+
+
+def themes_shown(pid):
+    """The Appearance choices shown as chosen (one, unless something is wrong)."""
+    return [n for n in ("System", "Light", "Dark")
+            if (radio := theme_radio(pid, n)) is not None and checked(radio)]
 
 
 def switched_feature(pid):
@@ -1027,14 +1062,17 @@ def start_tray_instance(label, env=None):
 
 
 def quit_completely(label, p, log):
-    """Tray Quit; checks the process really ended."""
+    """Tray Quit; checks the process really ended, and with it WebKit's
+    helpers, so that the next launch reads what this one stored, as a later
+    start would (see WEBKIT_HELPERS_WAIT)."""
     if tray_registrations():
         menu, labels = tray_menu()
         tray_click(menu, labels, "Quit")
     code = wait_exit(p)
-    ended = code == 0 and wait_for(lambda: not sotyware_pids(), 5)
-    check(f"{label}: tray Quit ends the process (exit 0, no process left)", ended,
-          f"exit code={code} pids={sotyware_pids()}")
+    ended = code == 0 and wait_for(lambda: not sotyware_pids(), 5) and wait_for(
+        lambda: not webkit_helpers(), WEBKIT_HELPERS_WAIT)
+    check(f"{label}: tray Quit ends the process and WebKit's helpers (exit 0, no process left)", ended,
+          f"exit code={code} pids={sotyware_pids()} webkit helpers={webkit_helpers()}")
     if not ended:
         print("--- instance output ---\n" + read_log(log).strip())
     return ended
@@ -1056,7 +1094,10 @@ off = page and switch_feature(p.pid, False, "Disabled")
 check("17 persistence: unchecking disables it, no error shown", off,
       f"text={switched_feature(p.pid)[1] if page else ''!r}")
 # The theme (ADR-035) is kept by the webview, not the database: choose Dark
-# in Settings › General now and look for it after the restart.
+# in Settings › General now and look for it after the restart. The quit
+# follows within moments, usually before WebKit commits the write, so the
+# choice must survive through the commit WebKit makes when sotyware ends,
+# which quit_completely waits for (WEBKIT_HELPERS_WAIT).
 dark_chosen = page and open_settings_tab(p.pid, "General") and wait_for(
     lambda: theme_radio(p.pid, "Dark") is not None, 5) and Atspi.Action.do_action(
     theme_radio(p.pid, "Dark"), 0) and wait_for(lambda: checked(theme_radio(p.pid, "Dark")), 5)
@@ -1074,7 +1115,7 @@ dark_kept = page and open_settings_tab(p.pid, "General") and wait_for(
     lambda: theme_radio(p.pid, "Dark") is not None and checked(theme_radio(p.pid, "Dark")), 5)
 check("17 persistence relaunch 1: the theme chosen before quitting (Dark) is still chosen",
       bool(dark_chosen) and bool(dark_kept) and not checked(theme_radio(p.pid, "System")),
-      f"chosen={bool(dark_chosen)} kept={bool(dark_kept)}")
+      f"chosen={bool(dark_chosen)} kept={bool(dark_kept)} shown={themes_shown(p.pid) if page else []}")
 on = page and switch_feature(p.pid, True, "Running")
 check("17 persistence relaunch 1: checking enables it, no error shown", on,
       f"text={switched_feature(p.pid)[1] if page else ''!r}")

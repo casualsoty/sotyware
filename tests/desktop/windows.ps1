@@ -1,7 +1,9 @@
 # Native Windows desktop test of the sotyware release binary: window lifecycle,
 # "Hide dashboard" button, built-in features section (list and switch the
 # Scheduled backups feature), tray icon and menu, single instance, Quit and
-# relaunch, and that feature's saved choice across real restarts.
+# relaunch, that feature's saved choice across real restarts, and the theme
+# chosen just before a tray Quit (ADR-035), each relaunch waiting until
+# WebView2's processes of the quitting instance have ended too.
 #
 # usage (PowerShell, from the repository root on a Windows path):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows.ps1 [-Exe <path>]
@@ -125,6 +127,18 @@ public static class W {
     if (h == IntPtr.Zero) return ""; var b = new System.Text.StringBuilder(256); int n;
     return GetUserObjectInformation(h, 2, b, 512, out n) ? b.ToString() : "";
   }
+  // A process handle kept across the process's end, so its exit time can
+  // still be read (SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION; zero if
+  // refused). While it is open the process id cannot be reused.
+  [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+  [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr h, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
+  public static IntPtr Watch(uint pid) { return OpenProcess(0x00101000u, false, pid); }
+  public static bool Ended(IntPtr h) { return WaitForSingleObject(h, 0) == 0; }
+  // Creation and exit time as UTC file times (100 ns units); the exit time
+  // means something only once the process has ended.
+  public static long[] Times(IntPtr h) { long c, e, k, u; return GetProcessTimes(h, out c, out e, out k, out u) ? new long[] { c, e } : null; }
 }
 "@
 $ErrorActionPreference = "Continue"
@@ -235,19 +249,21 @@ function FindFeatureBox {
   $d = Dash; if (-not $d) { return $null }
   $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::CheckBox)), (PC $A::NameProperty $SwitchedFeature)))
 }
-# Since the redesign the features are under Settings > Features: the Settings
-# link in the sidebar, then the Features tab (UIA Invoke, or SelectionItem
+# Since the redesign Settings has tabs (General, Features, About & updates):
+# the Settings link in the sidebar, then the tab (UIA Invoke, or SelectionItem
 # where WebView2 offers only that for a tab).
-function OpenFeatures {
+function OpenSettingsTab([string]$name) {
   $d = Dash; if (-not $d) { return $false }
   $link = $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::Hyperlink)), (PC $A::NameProperty "Settings")))
   if (-not $link) { return $false }
   try { $link.GetCurrentPattern($Invoke).Invoke() } catch { return $false }
-  $script:featuresTab = $null
-  if (-not (WaitFor { $script:featuresTab = (Dash).FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::TabItem)), (PC $A::NameProperty "Features"))); $script:featuresTab -ne $null } 5)) { return $false }
-  try { $script:featuresTab.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
-  try { $script:featuresTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); return $true } catch { return $false }
+  $script:settingsTab = $null
+  if (-not (WaitFor { $script:settingsTab = (Dash).FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT ([System.Windows.Automation.ControlType]::TabItem)), (PC $A::NameProperty $name))); $script:settingsTab -ne $null } 5)) { return $false }
+  try { $script:settingsTab.GetCurrentPattern($Invoke).Invoke(); return $true } catch { }
+  try { $script:settingsTab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); return $true } catch { return $false }
 }
+# The features are under Settings > Features since the redesign.
+function OpenFeatures { OpenSettingsTab "Features" }
 function FeatureBox {
   $b = FindFeatureBox
   if (-not $b -and (OpenFeatures)) { Start-Sleep -Milliseconds 300; $b = FindFeatureBox }
@@ -291,6 +307,29 @@ function ClickFeature {
   [W]::Click($x, $y, $false)
   return $true
 }
+# The theme (ADR-035, src/theme.ts) in Settings > General: radio buttons named
+# System, Light and Dark; WebView2 gives a radio button the SelectionItem
+# pattern, whose IsSelected is its checked state.
+$RadioType = [System.Windows.Automation.ControlType]::RadioButton
+$SelItem = [System.Windows.Automation.SelectionItemPattern]::Pattern
+function ThemeRadio([string]$name) {
+  $d = Dash; if (-not $d) { return $null }
+  $d.FindFirst($S::Descendants, [System.Windows.Automation.AndCondition]::new((PCT $RadioType), (PC $A::NameProperty $name)))
+}
+function IsChosen($radio) { if (-not $radio) { return $false }; try { [bool]$radio.GetCurrentPattern($SelItem).Current.IsSelected } catch { $false } }
+# The choices shown as chosen: one, unless something is wrong.
+function ThemesShown { @("System", "Light", "Dark" | Where-Object { IsChosen (ThemeRadio $_) }) }
+# Chooses a theme as assistive technology would (Settings > General, then the
+# radio button's SelectionItem, or Invoke); true once it shows as chosen.
+function ChooseTheme([string]$name) {
+  if (-not (OpenSettingsTab "General")) { return $false }
+  $script:themeRadio = $null
+  if (-not (WaitFor { $script:themeRadio = ThemeRadio $name; $null -ne $script:themeRadio } 5)) { return $false }
+  $picked = $false
+  try { $script:themeRadio.GetCurrentPattern($SelItem).Select(); $picked = $true } catch { }
+  if (-not $picked) { try { $script:themeRadio.GetCurrentPattern($Invoke).Invoke(); $picked = $true } catch { } }
+  $picked -and (WaitFor { IsChosen (ThemeRadio $name) } 5)
+}
 function SecondLaunch($label) {
   $before = (Procs).Id
   $p = Start-Process $Exe -PassThru
@@ -326,16 +365,148 @@ if ($null -eq $RealBefore) {
 }
 $PrefsDb = Join-Path $Prof.DataDir "preferences.sqlite3"
 $CloudDb = Join-Path $Prof.DataDir "cloud-accounts.sqlite3"
+# This run's profile as the driver spells it and as the app does (canonical,
+# links resolved), lower case without \\?\: what WebView2's command lines
+# carry (see WebViewProcs).
+$WebViewRoots = @(ConvertTo-ComparablePath $Prof.Root)
 # Stops the whole run unless $proc acknowledges this run's profile: nothing is
 # clicked in a window whose data is not provably this run's.
 function Verified($proc, [string]$label) {
-  try { $null = Wait-TestProfileAck $Prof $proc.Id 30 $proc }
+  try { $ack = Wait-TestProfileAck $Prof $proc.Id 30 $proc }
   catch {
     Check "${label}: runs in this run's test profile (acknowledged)" $false "$_"
     Procs | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
     "ABORT: the app is not provably isolated; nothing else is run"; exit 1
   }
   Check "${label}: runs in this run's test profile (acknowledged)" $true
+  $ackRoot = ConvertTo-ComparablePath ([string]$ack.root)
+  if ($script:WebViewRoots -notcontains $ackRoot) { $script:WebViewRoots += $ackRoot }
+}
+
+# --- WebView2's processes of this run -----------------------------------------
+# WebView2 runs the page in processes of its own (msedgewebview2.exe: the
+# browser process, which also keeps the page's localStorage, and its renderer,
+# GPU, utility and crash-handler processes) and gives each, on its command
+# line, the user data folder sotyware chose: this run's test profile's webview
+# folder (ADR-027). They can outlive sotyware. On Linux WebKit commits a choice
+# made just before Quit only as sotyware ends, so a relaunch that read the
+# storage before that commit showed the previous theme
+# (docs/status/limitations.md#dashboard-adr-035): every relaunch here waits for
+# them (at most $WebViewWait s) and records how long they outlived sotyware.
+$WebViewWait = 30
+function NamesThisRun([string]$cmd) {
+  $c = $cmd.ToLowerInvariant()
+  foreach ($want in $script:WebViewRoots) { if ($c.Contains($want + '\')) { return $true } }
+  $false
+}
+# Running ones only: a process that has ended but is still held open has no
+# thread left.
+function WebViewProcs {
+  @(Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -EA SilentlyContinue |
+    Where-Object { $_.ThreadCount -gt 0 -and (NamesThisRun "$($_.CommandLine)") })
+}
+# The kind of WebView2 process a command line starts: browser (no --type),
+# renderer, gpu-process, crashpad-handler, or utility with its service.
+function WebViewKind([string]$cmd) {
+  if ($cmd -notmatch '--type=([^\s"]+)') { return "browser" }
+  $kind = $Matches[1]
+  if ($kind -eq "utility" -and $cmd -match '--utility-sub-type=([^\s"]+)') { $kind = "utility " + $Matches[1] }
+  $kind
+}
+# This run's WebView2 processes now, each with a handle kept until it has been
+# measured (and one to sotyware, $proc), so that exit times can be read after
+# the processes have ended. A process id reused between the listing and the
+# handle (another creation time) is left out.
+function WatchWebView($proc) {
+  try { $null = $proc.Handle } catch { }
+  @(WebViewProcs | ForEach-Object {
+      $h = [W]::Watch([uint32]$_.ProcessId)
+      $t = if ($h -ne [IntPtr]::Zero) { [W]::Times($h) } else { $null }
+      if ($null -ne $t -and $null -ne $_.CreationDate -and [Math]::Abs($t[0] - $_.CreationDate.ToFileTime()) -lt 10000000) {
+        [pscustomobject]@{ Id = [int]$_.ProcessId; Parent = [int]$_.ParentProcessId; Kind = (WebViewKind "$($_.CommandLine)"); Created = $t[0]; Handle = $h }
+      } elseif ($h -ne [IntPtr]::Zero) { [void][W]::CloseHandle($h) }
+    })
+}
+# After a tray Quit of $proc: waits until its WebView2 processes have ended
+# too, at most $WebViewWait s. Passes when they were found (one browser
+# process among them, started after this sotyware) and all ended; records how
+# long each outlived sotyware, from the exit times of the kept handles. One
+# that started after WatchWebView is seen only by listing, and is this
+# sotyware's only if its parent is sotyware or one of its WebView2 processes
+# (another sotyware in the profile would start a browser of its own). Sets
+# $script:SotywareEnded (UTC file time).
+function WebViewEnded([string]$label, $proc, $watched) {
+  $watched = @($watched | Where-Object { $null -ne $_ })
+  $what = "its WebView2 processes (found by the test profile on their command lines, the browser among them) ended too, within $WebViewWait s"
+  $script:SotywareEnded = $null
+  if (-not $proc.WaitForExit(10000)) { Check "${label}: $what" $false "sotyware did not end"; return }
+  $own = [W]::Times($proc.Handle)
+  $startedFt = if ($null -ne $own) { $own[0] } else { 0 }
+  $endedFt = if ($null -ne $own) { $own[1] } else { $null }
+  $script:SotywareEnded = $endedFt
+  $deadline = (Get-Date).AddSeconds($WebViewWait)
+  $known = @($watched | ForEach-Object { $_.Id })
+  $later = @{}
+  while ($true) {
+    $running = @($watched | Where-Object { -not [W]::Ended($_.Handle) }).Count
+    $extra = @()
+    if ($running -eq 0) {
+      $family = @($known) + @([int]$proc.Id) + @($later.Keys)
+      $extra = @(WebViewProcs | Where-Object { $known -notcontains [int]$_.ProcessId -and $family -contains [int]$_.ParentProcessId })
+      foreach ($e in $extra) { $later[[int]$e.ProcessId] = WebViewKind "$($e.CommandLine)" }
+    }
+    if ($running + $extra.Count -eq 0 -or (Get-Date) -gt $deadline) { break }
+    Start-Sleep -Milliseconds 50
+  }
+  $doneFt = [DateTime]::UtcNow.ToFileTimeUtc()
+  $family = @($known) + @([int]$proc.Id) + @($later.Keys)
+  $unended = @($watched | Where-Object { -not [W]::Ended($_.Handle) }) + @(WebViewProcs | Where-Object { $known -notcontains [int]$_.ProcessId -and $family -contains [int]$_.ParentProcessId })
+  $parts = @($watched | ForEach-Object {
+      $over = $null; $done = [W]::Ended($_.Handle)
+      $tt = if ($done) { [W]::Times($_.Handle) } else { $null }
+      if ($null -ne $tt -and $null -ne $endedFt) { $over = [int](($tt[1] - $endedFt) / 10000) }
+      [pscustomobject]@{ Kind = $_.Kind; Done = $done; Ms = $over }
+    } | Sort-Object { if ($null -eq $_.Ms) { [int]::MaxValue } else { $_.Ms } })
+  $browser = @($watched | Where-Object { $_.Kind -eq "browser" -and $_.Created -ge $startedFt })
+  $found = "found=$($watched.Count): " + (($watched | ForEach-Object { "$($_.Kind) $($_.Id) (parent $($_.Parent))" }) -join ", ") + "; sotyware $($proc.Id)"
+  Check "${label}: $what" ($browser.Count -eq 1 -and $unended.Count -eq 0) "$found; still running: $($unended.Count)"
+  $times = ($parts | ForEach-Object { if (-not $_.Done) { "$($_.Kind) still running" } elseif ($null -eq $_.Ms) { "$($_.Kind) ended" } else { "$($_.Kind) {0:+0;-0} ms" -f $_.Ms } }) -join ", "
+  if ($parts.Count -eq 0) { $times = "none found" }
+  $seen = if ($later.Count -gt 0) { "; started after the snapshot, seen only by listing: $(($later.Values | Sort-Object) -join ', ')" } else { "" }
+  $waited = if ($null -ne $endedFt) { [int](($doneFt - $endedFt) / 10000) } else { "?" }
+  Info "${label}: WebView2's processes after sotyware ended (exit times)" "$times$seen; the wait ended at +$waited ms"
+  foreach ($entry in $watched) { [void][W]::CloseHandle($entry.Handle) }
+}
+# For the record, not a check: whether WebView2's localStorage files (a
+# LevelDB, "Local Storage\leveldb" under the profile's webview folder) hold
+# the theme's key with the value dark yet. Only what WebView2 has committed
+# is in them; read without locking them.
+$ThemeKey = "sotyware.theme.v1"
+# The default profile's folder where WebView2 usually keeps it; with $search,
+# else the first "Local Storage\leveldb" under the webview folder (slower).
+function LocalStorageDir([bool]$search) {
+  $wv = Join-Path $Prof.Root "webview"
+  $usual = Join-Path $wv "EBWebView\Default\Local Storage\leveldb"
+  if (Test-Path -LiteralPath $usual) { return $usual }
+  if (-not $search) { return $null }
+  $hit = @(Get-ChildItem -LiteralPath $wv -Recurse -Directory -Filter "leveldb" -EA SilentlyContinue | Where-Object { $_.Parent.Name -eq "Local Storage" })
+  if ($hit.Count -ge 1) { $hit[0].FullName } else { $null }
+}
+function ThemeOnDisk([bool]$search = $false) {
+  $dir = LocalStorageDir $search
+  if (-not $dir) { return "no Local Storage folder" }
+  $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+  # Chromium stores an ASCII key and value as Latin-1 (else UTF-16) bytes.
+  $narrow = [regex]::Escape($ThemeKey) + "[\s\S]{0,16}dark"
+  $wide = (-join ($ThemeKey.ToCharArray() | ForEach-Object { [regex]::Escape([string]$_) + "\x00" })) + "[\s\S]{0,32}d\x00a\x00r\x00k\x00"
+  try {
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -EA Stop | Where-Object { $_.Extension -eq ".log" -or $_.Extension -eq ".ldb" })) {
+      $fs = [System.IO.File]::Open($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+      try { $buf = New-Object System.IO.MemoryStream; $fs.CopyTo($buf); $text = $latin1.GetString($buf.ToArray()) } finally { $fs.Dispose() }
+      if ($text -match $narrow -or $text -match $wide) { return "yes ($($f.Name))" }
+    }
+    "no"
+  } catch { "unreadable: $($_.Exception.Message)" }
 }
 # Fail closed: no profile, or an invalid one, ends the app with exit 3 before
 # any window exists.
@@ -579,7 +750,9 @@ $n = TrayIconCount; Check "after all launches: exactly one tray icon" ($n -eq 1)
 
 # --- quit and relaunch ------------------------------------------------------------
 # Quit with Scheduled backups disabled; the relaunch (a new process) must keep it
-# disabled, since the choice is saved. Then enable it, quit, relaunch: running.
+# disabled, since the choice is saved. Then enable it, choose Dark, quit at once,
+# relaunch: running, and Dark. Each relaunch waits until WebView2's processes
+# of the quitting instance have ended (WebViewEnded).
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $false "Disabled" } 5)
 Check "quit: Scheduled backups disabled before quitting" $ok (FeatureDetail)
 # Where the dashboard is now (moved by the drag above): the relaunch must open it here.
@@ -592,10 +765,12 @@ $btn = $null
 WaitFor { $script:btn = Named "Hide dashboard" $ButtonType; $script:btn -ne $null } 10 | Out-Null
 if ($btn) { $btn.GetCurrentPattern($Invoke).Invoke() }
 Check "quit: dashboard hidden first (Hide button on Overview)" (WaitFor { Hidden } 5)
+$WebViews = @(WatchWebView $primary)
 $ok = TrayMenu "Quit"; Check "quit: tray Quit invoked" $ok $script:why
 Check "quit: process exited" ($primary.WaitForExit(10000))
 Check "quit: exit code 0" ($primary.ExitCode -eq 0) "code=$($primary.ExitCode)"
 Check "quit: no sotyware process left" ((Procs).Count -eq 0)
+WebViewEnded "quit" $primary $WebViews
 Start-Sleep 2
 $n = TrayIconCount; Check "quit: tray icon removed (overflow flyout open and inspected)" ((OverflowOpen) -and $n -eq 0) "count=$n overflowOpen=$(OverflowOpen)"
 [W]::Esc()
@@ -613,9 +788,34 @@ Check "relaunch: window-state.sqlite3 in the test profile" (Test-Path (Join-Path
 Check "relaunch: Scheduled backups still Disabled, checkbox unchecked (persisted)" (WaitFor { SwitchedTo $false "Disabled" } 10) (FeatureDetail)
 $ok = (ToggleFeature) -and (WaitFor { SwitchedTo $true "Running" } 5)
 Check "relaunch: checking (UIA toggle) enables it, no error shown" $ok (FeatureDetail)
-$ok = TrayMenu "Quit"; Check "relaunch: tray Quit invoked" $ok $script:why
+
+# --- the theme chosen just before Quit (ADR-035) ----------------------------------------
+# As scenario 17 of single_instance.py on Linux. The theme lives in the
+# webview's localStorage, which WebView2 writes to disk by itself: choose Dark
+# in Settings > General, quit through the tray at once, wait until sotyware
+# and this run's WebView2 processes have ended, and relaunch 2 must still show
+# Dark. Here and not at the first quit, which hides the dashboard first, and
+# with WebView2's processes listed before the choice: only the tray menu lies
+# between the choice and Quit.
+$WebViews = @(WatchWebView $fresh)
+$darkChosen = ChooseTheme "Dark"
+$DarkAt = [DateTime]::UtcNow
+$darkDetail = if ($darkChosen) { "" } else { "shown=$((ThemesShown) -join ',')" }
+$OnDiskAtChoice = ThemeOnDisk
+$ok = TrayMenu "Quit"
+$QuitAt = [DateTime]::UtcNow
+Check "theme: Dark chosen in Settings > General (UIA radio button) just before the Quit" $darkChosen $darkDetail
+Check "relaunch: tray Quit invoked" $ok $script:why
 Check "relaunch: quit exits 0" ($fresh.WaitForExit(10000) -and $fresh.ExitCode -eq 0)
+$OnDiskAtExit = ThemeOnDisk
 Check "relaunch: no sotyware process left" ((Procs).Count -eq 0)
+WebViewEnded "relaunch" $fresh $WebViews
+$OnDiskAfter = ThemeOnDisk $true
+$ThemeDir = LocalStorageDir $true
+$ThemeDir = if ($ThemeDir) { $ThemeDir.Substring($Prof.Root.Length).TrimStart('\') } else { "not found" }
+$sinceChoice = if ($null -ne $script:SotywareEnded) { "$([int]([DateTime]::FromFileTimeUtc($script:SotywareEnded) - $DarkAt).TotalMilliseconds) ms" } else { "?" }
+Info "theme: timing" "Quit clicked $([int]($QuitAt - $DarkAt).TotalMilliseconds) ms after Dark showed as chosen; sotyware ended $sinceChoice after it"
+Info "theme: the choice in WebView2's localStorage files (profile\$ThemeDir)" "just after it was made: $OnDiskAtChoice; once sotyware had ended: $OnDiskAtExit; once WebView2 had ended: $OnDiskAfter"
 [W]::Esc()
 
 # --- second relaunch: the enabled choice was saved too ---------------------------------
@@ -624,19 +824,29 @@ Verified $again "relaunch 2"
 Check "relaunch 2: fresh dashboard visible" (WaitFor { Visible } 15)
 Check "relaunch 2: a new process is the running primary" (-not $again.HasExited -and $again.Id -ne $fresh.Id -and (Procs).Count -eq 1 -and (Procs)[0].Id -eq $again.Id)
 Check "relaunch 2: Scheduled backups Running, checkbox checked (persisted)" (WaitFor { SwitchedTo $true "Running" } 10) (FeatureDetail)
+$kept = (OpenSettingsTab "General") -and (WaitFor { ((ThemesShown) -join ",") -eq "Dark" } 5)
+Check "relaunch 2: the theme chosen just before quitting (Dark) is still chosen" ($darkChosen -and $kept) "chosen=$darkChosen shown=$((ThemesShown) -join ',')"
 Check "relaunch 2: one tray icon" ((WaitFor { OpenOverflow; (TrayIcons).Count -ge 1 } 8) -and (TrayIcons).Count -eq 1)
+$WebViews = @(WatchWebView $again)
 $ok = TrayMenu "Quit"; Check "relaunch 2: tray Quit invoked" $ok $script:why
 Check "relaunch 2: quit exits 0" ($again.WaitForExit(10000) -and $again.ExitCode -eq 0)
+WebViewEnded "relaunch 2" $again $WebViews
 [W]::Esc()
 
 # Anything still running means a quit path failed; report it and clean up.
 $left = Procs
 Check "cleanup: no sotyware process left" ($left.Count -eq 0) "pids=$($left.Id -join ',')"
 $left | ForEach-Object { Stop-Process -Id $_.Id -EA SilentlyContinue }
+# A WebView2 process of this run still running (a wait above failed) is
+# stopped by its id, found by this run's profile only, so that the profile
+# can be removed.
+$wvLeft = @(WebViewProcs)
+Check "cleanup: no WebView2 process of this run left" ($wvLeft.Count -eq 0) "pids=$(($wvLeft | ForEach-Object { $_.ProcessId }) -join ',')"
+$wvLeft | ForEach-Object { Stop-Process -Id $_.ProcessId -EA SilentlyContinue }
 
 # Only this run's profile is removed; the user's own folders and credentials
 # must be exactly as before.
-$null = WaitFor { (Procs).Count -eq 0 } 5
+$null = WaitFor { (Procs).Count -eq 0 -and (WebViewProcs).Count -eq 0 } 5
 Remove-TestProfile $Prof
 Check "cleanup: this run's test profile removed" (-not (Test-Path -LiteralPath $Prof.Root))
 Check "the user's own sotyware folders are unchanged (names, sizes, times, SHA-256)" (((Get-NormalProfileFingerprint) -join "|") -eq ($NormalBefore -join "|"))
