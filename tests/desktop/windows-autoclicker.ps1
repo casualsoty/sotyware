@@ -21,7 +21,7 @@
 # Alt, Escape, Backspace, A, J, K, M), and quits sotyware three times with
 # the tray icon's Quit (a real right click in the "Show Hidden Icons"
 # flyout). Run it only on an idle, unlocked desktop, and do not use the
-# mouse or keyboard while it runs (about 8 minutes). It refuses to start
+# mouse or keyboard while it runs (about 4 minutes). It refuses to start
 # without -ConfirmRealInput pointer-and-keys. Needs node on PATH (the
 # autoclicker's database is read with Node's built-in node:sqlite).
 #
@@ -126,10 +126,12 @@ public static class AcW {
 
   // ---- real input, as from the user's keyboard and mouse ----
   static void Send(INPUT i) { var a = new INPUT[] { i }; SendInput(1, a, Marshal.SizeOf(typeof(INPUT))); }
-  // A key by its scan code (KEYEVENTF_SCANCODE): the physical key, whatever the layout.
+  // A key by its scan code (KEYEVENTF_SCANCODE): the physical key, whatever
+  // the layout. 0xE0xx is an extended key (Home, the arrows), sent with
+  // KEYEVENTF_EXTENDEDKEY: without it 0x47 is the keypad's 7.
   public static void Key(int scan, bool up) {
-    var i = new INPUT(); i.type = 1; i.u.ki.wScan = (ushort)scan;
-    i.u.ki.dwFlags = 0x0008u | (up ? 0x0002u : 0u); Send(i);
+    var i = new INPUT(); i.type = 1; i.u.ki.wScan = (ushort)(scan & 0xFF);
+    i.u.ki.dwFlags = 0x0008u | (up ? 0x0002u : 0u) | ((scan & 0xFF00) == 0xE000 ? 0x0001u : 0u); Send(i);
   }
   public static void Tap(int scan) { Key(scan, false); Thread.Sleep(30); Key(scan, true); Thread.Sleep(30); }
   public static void Chord(int[] mods, int scan) {
@@ -291,7 +293,10 @@ function PageText { (Names) -join " | " }
 # The page's text with its pieces joined as they read: a sentence made of
 # several text nodes ("Autoclicker" ": " "Finished: 4 clicks") reads whole.
 function Flat { -join @(Names) }
-function Says([string]$s) { (Flat).Contains($s) }
+# Not $s: PowerShell looks a variable up through the callers' scopes, and
+# names ignore case, so a parameter $s would be the $S (TreeScope) that
+# Names reads, and every Says would see an empty page.
+function Says([string]$phrase) { (Flat).Contains($phrase) }
 function Btns { $d = Dash; if (-not $d) { return @() }; try { @($d.FindAll($S::Descendants, (PCT $CT::Button)) | ForEach-Object { $_.Current.Name.Trim() }) } catch { @() } }
 # The last element of that type and name (dialogs come last in the page).
 function Named($name, $type) {
@@ -337,17 +342,35 @@ function SetField([string]$name, [string]$value) {
   # A number input may offer only the RangeValue pattern.
   try { $script:fld.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue([double]$value); Start-Sleep -Milliseconds 300; $true } catch { Write-Host "  field '$name': $($_.Exception.Message)"; $false }
 }
-# Chooses `option` in the <select> `label` (its option's SelectionItem).
+# Chooses `option` in the <select> `label` with the keyboard, as a person
+# does: WebView2 shows a closed select's options to UI Automation only while
+# its list is open, Expand does not open it, and the Value pattern's
+# SetValue is ignored (seen on a private desktop, 2026-11-19). On Windows a
+# closed select changes with the arrow keys and fires change each time: so
+# focus, Home, then Down until its Value reads the option, or until Down
+# changes nothing (the last option). The Value pattern follows a key some
+# time after it (once more than 200 ms after Home), so each read waits for
+# it, and a pass that missed the option is tried once more.
 function Choose([string]$label, [string]$option) {
   $cb = Prefixed $label $CT::ComboBox
   if (-not $cb) { Write-Host "  no select '$label'"; return $false }
-  $opts = @($cb.FindAll($S::Descendants, (PCT $CT::ListItem)))
-  if ($opts.Count -eq 0) { try { $cb.GetCurrentPattern($ExpColl).Expand(); Start-Sleep -Milliseconds 400 } catch { }; $opts = @($cb.FindAll($S::Descendants, (PCT $CT::ListItem))) }
-  $opt = @($opts | Where-Object { $_.Current.Name.Trim() -ceq $option })[0]
-  if (-not $opt) { Write-Host "  select '$label' has no option '$option': $(($opts | ForEach-Object { $_.Current.Name } | Select-Object -First 40) -join ', ')"; return $false }
-  try { $opt.GetCurrentPattern($SelItem).Select() } catch { Write-Host "  select '$label': $($_.Exception.Message)"; return $false }
-  try { $cb.GetCurrentPattern($ExpColl).Collapse() } catch { }
-  Start-Sleep -Milliseconds 300; $true
+  try { $vp = $cb.GetCurrentPattern($ValueP) } catch { Write-Host "  select '$label': no Value pattern"; return $false }
+  for ($round = 1; $round -le 2; $round++) {
+    if ("$($vp.Current.Value)".Trim() -ceq $option) { return $true }
+    try { $cb.SetFocus() } catch { }
+    if (-not (WaitFor { $cb.Current.HasKeyboardFocus -and [AcW]::GetForegroundWindow() -eq (DashHwnd) } 3)) { Write-Host "  select '$label' could not be focused"; return $false }
+    [AcW]::Tap($KHome); Start-Sleep -Milliseconds 700
+    $seen = @("$($vp.Current.Value)".Trim())
+    for ($k = 0; $k -lt 200 -and $seen[-1] -cne $option; $k++) {
+      [AcW]::Tap($KDown)
+      $script:sv = $seen[-1]
+      if (-not (WaitFor { $script:sv = "$($vp.Current.Value)".Trim(); $script:sv -cne $seen[-1] } 1.5)) { break }
+      $seen += $script:sv
+    }
+    if ($seen[-1] -ceq $option) { Start-Sleep -Milliseconds 300; return $true }
+    Write-Host "  select '$label', pass ${round}: no option '$option' among $(($seen | Select-Object -First 60) -join ', ')"
+  }
+  $false
 }
 function ToggleNamed([string]$name, $type) {
   $e = Named $name $type
@@ -386,15 +409,19 @@ function RowState([string]$label) {
   $null
 }
 function Registered { @(Names | Where-Object { $_ -ceq "registered" }).Count }
-# A feature's state in Settings > Features (Running, Disabled, Failed, ...).
+# A feature's state in Settings > Features. WebView2 names the feature's row
+# (a list item) "<version> \u00b7 <state><description>" and shows the state
+# as no element of its own, so it is read from the name of the checkbox's
+# row: a sibling row would give another feature's state ("RunningRuns ...").
 function FeatureState([string]$name) {
   $cb = Named $name $CT::CheckBox; if (-not $cb) { return $null }
   $w = [System.Windows.Automation.TreeWalker]::RawViewWalker; $e = $cb
   for ($k = 0; $k -lt 4 -and $e; $k++) {
     $e = $w.GetParent($e); if (-not $e) { break }
-    $t = -join @($e.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name })
-    $m = [regex]::Match($t, [regex]::Escape($Dot) + "\s*(\w+)")
+    if ($e.Current.ControlType -ne $CT::ListItem) { continue }
+    $m = [regex]::Match("$($e.Current.Name)", [regex]::Escape($Dot) + "\s*(Not started yet|Disabled|Starting|Running|Failed|Stopping)")
     if ($m.Success) { return $m.Groups[1].Value }
+    return $null
   }
   $null
 }
@@ -413,7 +440,9 @@ function ProfileNamed([string]$n) { $d = Docs; if (-not $d) { return $null }; @(
 function MacroNamed([string]$n) { $d = Docs; if (-not $d) { return $null }; @($d.macros | Where-Object { $_.name -ceq $n })[0] }
 function Bind($doc, [string]$action) { if (-not $doc -or -not $doc.hotkeys) { return $null }; $b = $doc.hotkeys.$action; if ($b) { $b.chord } else { $null } }
 function EmergencyChord { $d = Docs; if (-not $d -or -not $d.settings) { return "unread" }; $d.settings.emergencyStop.chord }
-function ClickerSaved([scriptblock]$pred) { $script:cs = $null; WaitFor { $p = FirstProfile; $script:cs = if ($p) { $p.clicker } else { $null }; ($null -ne $script:cs) -and (& $pred $script:cs) } 10 }
+# Not $pred: inside WaitFor that name is WaitFor's own block, which would
+# call itself until PowerShell's call depth overflows.
+function ClickerSaved([scriptblock]$accept) { $script:cs = $null; WaitFor { $p = FirstProfile; $script:cs = if ($p) { $p.clicker } else { $null }; ($null -ne $script:cs) -and (& $accept $script:cs) } 10 }
 
 # ---- the test window's events ----
 function Mark { [AcTarget]::Count }
@@ -429,7 +458,7 @@ function ShiftHeld { [AcW]::IsDown(0xA0) }
 # Scan codes and RegisterHotKey modifiers.
 $F6 = 0x40; $F7 = 0x41; $F8 = 0x42; $F9 = 0x43; $F10 = 0x44; $F11 = 0x57; $F12 = 0x58
 $Esc = 0x01; $Bksp = 0x0E; $LShift = 0x2A; $LCtrl = 0x1D; $LAlt = 0x38
-$KA = 0x1E; $KJ = 0x24; $KK = 0x25; $KM = 0x32
+$KA = 0x1E; $KJ = 0x24; $KK = 0x25; $KM = 0x32; $KHome = 0xE047; $KDown = 0xE050
 $MAlt = 1; $MCtrl = 2; $MShift = 4
 $Six = @(@(0, $F6, "F6"), @(0, $F7, "F7"), @(0, $F8, "F8"), @(0, $F9, "F9"), @(0, $F10, "F10"), @($MShift, $F11, "Shift+F11"))
 function Free { @($Six | Where-Object { [AcW]::CanRegister([uint32]$_[0], $_[1]) } | ForEach-Object { $_[2] }) }
@@ -694,7 +723,8 @@ try {
   $letter = $ok -and (WaitFor { Says "alone would stop that key from working everywhere" } 5)
   [AcW]::Tap($F12)
   $refusedF12 = WaitFor { Says "F12 alone is reserved by Windows for debuggers" } 5
-  Check "the field refuses a letter alone and F12 alone, with the reason, and keeps listening" ($letter -and $refusedF12 -and (Listening $Toggle) -and (Bind (FirstProfile) "toggle-clicker") -eq "Ctrl+Alt+KeyK") (PageText)
+  $near = @([regex]::Matches((Flat), ".{0,60}(alone would stop|reserved by Windows|press the keys).{0,60}") | ForEach-Object { $_.Value })
+  Check "the field refuses a letter alone and F12 alone, with the reason, and keeps listening" ($letter -and $refusedF12 -and (Listening $Toggle) -and (Bind (FirstProfile) "toggle-clicker") -eq "Ctrl+Alt+KeyK") "letter refused $letter, F12 refused $refusedF12, listening $(Listening $Toggle), toggle $(Bind (FirstProfile) 'toggle-clicker'); the page: $($near -join ' / ')"
   [AcW]::Tap($F8); Start-Sleep -Seconds 1
   $unchanged = (Listening $Toggle) -and (Bind (FirstProfile) "toggle-clicker") -eq "Ctrl+Alt+KeyK"
   [AcW]::Tap($Esc)
@@ -875,9 +905,18 @@ try {
   $hold = MacroNamed "E2E hold"
   $holdActs = @($hold.actions | ForEach-Object { "$($_.type) $($_.key) $($_.state) $($_.delayMs)" })
   Check "a macro written in the editor: Left Shift down, then a 30 s wait" ($ok -and ($holdActs -join "|") -eq "key ShiftLeft down 100|wait   30000") ($holdActs -join " / ")
-  # Playback sends no keys while sotyware's own window is active: the test
-  # window comes to the front first. True once Shift is down.
-  function HoldShift { MustBeCovered; $null = Front; (Press "Play") -and (WaitFor { ShiftHeld } 10) }
+  # Playback sends no keys while sotyware's own window is active, and
+  # pressing Play may bring it to the front (a click on it would; in the
+  # first run on 2026-11-19 Play pressed after the test window gave no
+  # Shift): the test window comes to the front during the countdown, as a
+  # person switches to the program to play into. True once Shift is down.
+  function HoldShift {
+    MustBeCovered
+    $played = Press "Play"; $front = $played -and (Front)
+    $down = $front -and (WaitFor { ShiftHeld } 10)
+    if (-not $down) { Write-Host "  hold: Play pressed $played, test window in front $front, in front now: '$([AcW]::ClassOf([AcW]::GetForegroundWindow()))'" }
+    $down
+  }
   $ok = HoldShift
   [AcW]::Tap($F8)
   $released = WaitFor { -not (ShiftHeld) } 3

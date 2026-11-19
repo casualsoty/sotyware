@@ -1835,10 +1835,19 @@ records every button and key with its time; before each run it checks
 that this window is under every point sotyware will click (else it stops
 without starting anything), and at the end it puts the pointer back and
 lets go of anything still down. It quits sotyware three times with the
-tray icon's Quit (a real right click). It refuses to start without
+tray icon's Quit (a real right click). WebView2 shows a closed `<select>`'s
+options to UI Automation only while its list is open, does not open it
+for UI Automation's Expand and ignores the Value pattern's SetValue, so
+the script chooses an option as a person does with the keyboard (focus,
+Home, Down until the select reads the option); and since pressing Play
+may bring sotyware to the front, where playback sends no keys, it brings
+its own window to the front during the countdown. It refuses to start without
 `-ConfirmRealInput pointer-and-keys`, needs the unlocked interactive
 desktop (exit 3 otherwise) and `node` on PATH (the database is read with
-`node:sqlite`). Run it on an idle desktop; about 8 minutes:
+`node:sqlite`). Run it on an idle desktop; about 4 minutes (205 s on
+2026-11-19). The two checks that the user's own folders are unchanged
+fail while the installed sotyware runs, since it writes to them itself:
+quit it first.
 
 ```powershell
 npm run build:test-profile
