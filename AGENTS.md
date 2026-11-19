@@ -66,10 +66,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   `autoclicker` runs, which is off by default; X11 tested with real input
   on a private Xvfb only, Windows unit-tested natively and its backend run
   with real input by the opt-in desktop test on the maintainer's
-  Windows 11 on 2026-11-18; the page driven on Windows once by
-  `windows-autoclicker.ps1`, 2026-11-19: 92 of 102 checks, the failures the
-  driver's own, held keys released by F8, Stop and quitting not yet seen
-  there). No other product features exist yet. Current milestone and status:
+  Windows 11 on 2026-11-18; the page driven on Windows by
+  `windows-autoclicker.ps1` on 2026-11-19: 101 of 102 checks, the shortcut
+  field's refusal having no text for UI Automation). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology

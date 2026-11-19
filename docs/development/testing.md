@@ -1844,10 +1844,10 @@ may bring sotyware to the front, where playback sends no keys, it brings
 its own window to the front during the countdown. It refuses to start without
 `-ConfirmRealInput pointer-and-keys`, needs the unlocked interactive
 desktop (exit 3 otherwise) and `node` on PATH (the database is read with
-`node:sqlite`). Run it on an idle desktop; about 4 minutes (205 s on
-2026-11-19). The two checks that the user's own folders are unchanged
-fail while the installed sotyware runs, since it writes to them itself:
-quit it first.
+`node:sqlite`). Run it on an idle desktop; about 3 minutes (146 and 205 s
+on 2026-11-19). The two checks that the user's own folders are unchanged
+can fail while the installed sotyware runs, since it writes to them
+itself: quit it first.
 
 ```powershell
 npm run build:test-profile
