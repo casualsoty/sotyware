@@ -278,10 +278,11 @@ ADR-026; public ACLs do not).
 
 - Find out what crashes in WebKit's web process as sotyware quits on
   GitHub's Ubuntu 26.04 runner (glibc: `free(): corrupted unsorted
-  chunks`; 2 of 14 instances at `8b1deac`, very probably 1 at `1ef6bfa`;
-  none of 42 on WSL2), whose core dump keeps it running for more than
-  15 s and fails the Linux driver's quit checks: run `desktop-virtual.yml`
-  again with its step that prints systemd-coredump's stack traces. Then
+  chunks`; 2 of 14 instances at `8b1deac`, none of 14 at `eb2a703`, very
+  probably 1 at `1ef6bfa`; none of 42 on WSL2), whose core dump keeps it
+  running for more than 15 s and fails the Linux driver's quit checks:
+  run `desktop-virtual.yml` until a run crashes, whose last step then
+  prints systemd-coredump's stack trace. Then
   decide how the test treats it (keep failing, wait only for the network
   process and report the crash on its own, or record it as WebKit's) and
   whether sotyware can avoid it

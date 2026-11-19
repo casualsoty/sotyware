@@ -2994,9 +2994,10 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   in the same commit that adds or removes a check; it stayed at 92 when
   `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
   run summary, and fails on anything else. A last step, run also when the
-  test failed, waits up to 120 s for any WebKit helper still dumping core
-  and prints what the runner's systemd-coredump recorded about WebKit's
-  helpers, with the crashed thread's stack trace. It is virtual-display
+  test failed, prints the runner's `core_pattern`, waits up to 120 s for
+  any WebKit helper still dumping core and prints what the runner's
+  systemd-coredump recorded about WebKit's helpers, with the crashed
+  thread's stack trace. It is virtual-display
   testing, not real Linux desktop validation (see
   [what it does not validate](#virtual-display-test)).
 - **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).

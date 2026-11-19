@@ -1280,7 +1280,8 @@ server only; no real provider was asked.
   ([status](status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 - **On GitHub's Ubuntu 26.04 runner, WebKit's web process sometimes
   crashes as sotyware quits** (WebKitGTK `2.52.6-0ubuntu0.26.04.2`,
-  2026-11-19): in one of two cases glibc aborted it with `free():
+  2026-11-19; 2 of the 28 instances of two runs, and very probably 1 in
+  an earlier run): in one of the two glibc aborted it with `free():
   corrupted unsorted chunks`, and the core dump then kept it running for
   more than 15 s (one was still dumping when the job ended, 18 s later).
   sotyware had ended with 0, and the network process, which commits the
