@@ -1292,6 +1292,8 @@ server only; no real provider was asked.
   24.04, Mesa 25.2.8: 42 web processes ended with 0), not examined on a
   real desktop
   ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
+  The desktop test names such a crash and does not fail on it
+  ([Tests](#tests)).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux
@@ -1353,6 +1355,15 @@ server only; no real provider was asked.
   to 25 s, very probably dumping core after a crash
   ([status](status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19);
   the crash: [Dashboard](#dashboard-adr-035)).
+- **The virtual-display test names a WebKit helper that crashes at quit
+  instead of failing** (since 2026-11-19, at the maintainer's choice): in
+  the waits a helper the kernel is dumping core for counts as ended, so a
+  run passes with the web process's crash in Mesa named in the check's
+  message, in a note at its end and, on GitHub, in the run summary; only a
+  crashed network process still fails. A crash is seen only while its core
+  is being dumped (polled every 20 ms): one whose dump is quicker goes
+  unnoticed by the driver, though on GitHub systemd-coredump still records
+  it ([status](status.md#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)).
 - **No test covers screen-reader access** on either platform.
 - **The locked-keyring checks of `cloud-ui.sh local` decline the unlock
   prompt; none accepts it.** With a system-installed gnome-keyring the driver

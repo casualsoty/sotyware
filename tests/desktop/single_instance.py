@@ -404,6 +404,40 @@ def _core_dumping(pid):
         return False
 
 
+# A helper the kernel is dumping core for after a crash runs none of its
+# own code any more and cannot touch the page's storage. On GitHub's
+# Ubuntu 26.04 runner WebKit's web process crashed so as sotyware quit, in
+# a static destructor of Mesa's libgallium, and its core took more than
+# 15 s (docs/status/limitations.md#dashboard-adr-035). The waits count such
+# a helper as ended and name it, and the run lists them at its end; a
+# crashed network process, which may not have committed the page's
+# storage, still fails.
+CRASHED = []  # (where it was seen, helper) of every helper seen dumping core
+
+
+def split_crashed(helpers, crashed):
+    """The helpers in `helpers` still running their own code. Those the
+    kernel is dumping core for go into `crashed` (keyed by pid and start)."""
+    running = []
+    for h in helpers:
+        if _core_dumping(h.pid):
+            crashed.setdefault((h.pid, h.started), h)
+        else:
+            running.append(h)
+    return running
+
+
+CRASHED_ABOUT = ("dumping core after a crash (a web process's crash at quit is WebKit's and Mesa's: "
+                 "docs/status/limitations.md#dashboard-adr-035)")
+
+
+def crashed_text(h, since, event):
+    """A helper seen dumping core, for a check's message (it may have ended since)."""
+    offset = h.started - since
+    return (f"{h.program} {h.pid} of launch '{h.launch}' (started {abs(offset):.2f} s "
+            f"{'after' if offset >= 0 else 'before'} {event})")
+
+
 def helper_text(h, since, event):
     """`h` for a check's message, its start relative to `event` (at `since` on boot_clock())."""
     offset = h.started - since
@@ -1190,8 +1224,10 @@ def quit_completely(label, p, log):
     as a later start would (see WEBKIT_HELPERS_WAIT). Its helpers are those
     carrying its launch's label: the ones listed before the Quit, children
     of this sotyware, among which its network process must be, and any
-    started later. Helpers of other launches are not this quit's (the
-    check before 17 looks for those) and are only named."""
+    started later. One dumping core after a crash counts as ended and is
+    named, unless it is the network process (see CRASHED). Helpers of
+    other launches are not this quit's (the check before 17 looks for
+    those) and are only named."""
     launch_label = LAUNCHED[p.pid]
 
     def own():
@@ -1205,27 +1241,37 @@ def quit_completely(label, p, log):
     code = wait_exit(p)
     exited_at = boot_clock()
     gone = code == 0 and wait_for(lambda: not sotyware_pids(), 5)
-    helpers_gone = gone and wait_for(lambda: not own(), WEBKIT_HELPERS_WAIT, HELPERS_POLL)
+    crashed = {}
+    helpers_gone = gone and wait_for(lambda: not split_crashed(own(), crashed), WEBKIT_HELPERS_WAIT,
+                                     HELPERS_POLL)
     waited = boot_clock() - exited_at
     network = any(h.program == NETWORK_PROCESS and h.parent == p.pid for h in before)
-    ended = gone and helpers_gone and network
-    left = own()
+    network_crashed = [h for h in crashed.values() if h.program == NETWORK_PROCESS]
+    ended = gone and helpers_gone and network and not network_crashed
+    left = split_crashed(own(), crashed)
     others = [h for h in webkit_helpers() if h.launch != launch_label]
     detail = f"exit code={code} pids={sotyware_pids()} sotyware {p.pid}; its helpers before the Quit: " + (
         ", ".join(f"{h.program} {h.pid} (parent {h.parent})" for h in before) or "none")
     if not network:
         detail += f"; no {NETWORK_PROCESS} of this sotyware among them"
     if helpers_gone:
-        detail += f"; all ended within {waited:.2f} s of sotyware"
+        detail += (f"; within {waited:.2f} s of sotyware all had ended or were dumping core" if crashed
+                   else f"; all ended within {waited:.2f} s of sotyware")
     elif left:
         detail += (f"; left {waited:.2f} s after sotyware: " if gone else "; still running: ") + "; ".join(
             helper_text(h, quit_at, "the Quit") for h in left)
+    if crashed:
+        detail += f"; {CRASHED_ABOUT}: " + "; ".join(crashed_text(h, quit_at, "the Quit")
+                                                     for h in crashed.values())
+        CRASHED.extend((label, h) for h in crashed.values())
+    if network_crashed:
+        detail += f"; its {NETWORK_PROCESS} crashed, so the page's storage may not have been committed"
     if others:
         detail += "; helpers of other launches still running, not waited for: " + "; ".join(
             helper_text(h, quit_at, "the Quit") for h in others)
     check(f"{label}: tray Quit ends the process and its WebKit helpers (exit 0, no process left)", ended, detail)
     if not ended:
-        for h in left:
+        for h in left + network_crashed:
             show_helper(h, with_output=False)  # its output is the instance's, printed next
         print("--- instance output ---\n" + read_log(log).strip())
     return ended
@@ -1241,15 +1287,26 @@ def switch_feature(pid, want_checked, state):
 # each Quit only for the quitting launch's own. A helper of an earlier
 # launch still running here, a network process above all, could still
 # write the page's storage that 17 reads; on GitHub one was blamed on 17's
-# first Quit. It must be gone before 17 starts, and is named if not.
+# first Quit. It must be gone before 17 starts, and is named if not. One
+# dumping core after a crash counts as gone and is named, unless it is a
+# network process (see CRASHED).
 waited_from = boot_clock()
-quiet = wait_for(lambda: not webkit_helpers(), WEBKIT_HELPERS_WAIT, HELPERS_POLL)
-early = webkit_helpers()
+early_crashed = {}
+quiet = wait_for(lambda: not split_crashed(webkit_helpers(), early_crashed), WEBKIT_HELPERS_WAIT,
+                 HELPERS_POLL)
+early = split_crashed(webkit_helpers(), early_crashed)
+early_network = [h for h in early_crashed.values() if h.program == NETWORK_PROCESS]
+detail = (f"none still running after {boot_clock() - waited_from:.2f} s" if quiet and not early else
+          "left: " + "; ".join(helper_text(h, waited_from, "this wait") for h in early))
+if early_crashed:
+    detail += f"; {CRASHED_ABOUT}: " + "; ".join(crashed_text(h, waited_from, "this wait")
+                                                 for h in early_crashed.values())
+    CRASHED.extend(("before 17", h) for h in early_crashed.values())
+if early_network:
+    detail += f"; a crashed {NETWORK_PROCESS} among them may not have committed the page's storage"
 check(f"17 persistence: before it starts, no WebKit helper of an earlier launch is left "
-      f"(at most {WEBKIT_HELPERS_WAIT} s)",
-      quiet and not early, f"none left after {boot_clock() - waited_from:.2f} s" if quiet and not early else
-      "left: " + "; ".join(helper_text(h, waited_from, "this wait") for h in early))
-for h in early:
+      f"(at most {WEBKIT_HELPERS_WAIT} s)", quiet and not early and not early_network, detail)
+for h in early + early_network:
     show_helper(h)
 
 # 17. Disable, quit, relaunch: still disabled. Enable, quit, relaunch: enabled.
@@ -1367,6 +1424,11 @@ check("the user's own sotyware folders are unchanged (names, sizes, times, SHA-2
       tp.fingerprint(NORMAL_DIRS) == NORMAL_BEFORE, ", ".join(NORMAL_DIRS))
 check("nothing was written under the app's real identifier in the private data folder",
       not os.path.exists(os.path.join(DATA_HOME, tp.NORMAL_IDENTIFIER)))
+
+if CRASHED:
+    print(f"\nnote: {len(CRASHED)} WebKit helper(s) crashed as their sotyware quit, each named in the check "
+          "given here; a web process's crash fails no check, a network process's does: "
+          + "; ".join(f"{h.program} {h.pid} of launch '{h.launch}' ({where})" for where, h in CRASHED))
 
 counts = {s: sum(1 for _, r in results if r == s) for s in ("PASS", "FAIL", "SKIP")}
 print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped")

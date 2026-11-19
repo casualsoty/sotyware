@@ -280,12 +280,11 @@ ADR-026; public ACLs do not).
   runner (4 of 70 instances in five runs, very probably 1 more at
   `1ef6bfa`; none of 42 on WSL2): glibc aborts in a C++ static destructor
   of Mesa 26.0.8's `libgallium` as the process exits, the heap already
-  corrupt, and the core dump outlasts the Linux driver's waits. Decide how
-  the test treats it (keep failing; or count a helper that is dumping core
-  as ended and name the crash without failing), whether to report it
-  upstream (Mesa or WebKitGTK, with the stack traces), and whether
-  sotyware can avoid it, for example by closing its webview before it
-  exits ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
+  corrupt; the Linux driver names it without failing (decided
+  2026-11-19). Decide whether to report it upstream (Mesa or WebKitGTK,
+  with the stack traces), and whether sotyware can avoid it, for example
+  by closing its webview before it exits
+  ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost

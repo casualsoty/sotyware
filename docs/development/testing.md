@@ -2451,9 +2451,14 @@ Files:
     launch, then its command line, its threads (name, state, kernel wait
     channel) and its launch's output are printed; a quit's check names
     other launches' helpers still running without waiting for them. On
-    GitHub's runner WebKit's web process sometimes crashed as sotyware
-    quit, and its core dump outlasted the wait
-    ([limitations](../status/limitations.md#dashboard-adr-035)).
+    GitHub's runner WebKit's web process sometimes crashes as sotyware
+    quits (in Mesa, not sotyware:
+    [limitations](../status/limitations.md#dashboard-adr-035)), and its
+    core dump outlasts the wait. So in both waits a helper the kernel is
+    dumping core for counts as ended: it runs none of its own code any
+    more. It is named in the check's message and listed in a note at the
+    end of the run, not failed; a crashed network process, which may not
+    have committed the page's storage, still fails the check.
     Scheduled backups (left enabled and saved by 12) is unchecked, Dark is
     chosen in Settings › General and sotyware quits at once, the database row
     (read with Python's `sqlite3`, read-only) says disabled, and the relaunch
@@ -2997,7 +3002,8 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   test failed, prints the runner's `core_pattern`, waits up to 120 s for
   any WebKit helper still dumping core and prints what the runner's
   systemd-coredump recorded about WebKit's helpers, with the crashed
-  thread's stack trace. It is virtual-display
+  thread's stack trace, and puts their number in the run summary, so that
+  a passing run still shows a crash the driver named. It is virtual-display
   testing, not real Linux desktop validation (see
   [what it does not validate](#virtual-display-test)).
 - **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).
