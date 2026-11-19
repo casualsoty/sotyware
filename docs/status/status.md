@@ -149,6 +149,46 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Backup order no longer follows a clock set back (2026-11-19)
+
+The maintainer chose two of the fixes proposed after the entry below
+(ADR-051). A backup run dates its snapshot (name and `created`) one
+second after the newest snapshot it found when the clock does not read
+later (`engine::snapshot_time`), and logs a clock that reads before it.
+The run history is read in the order recorded (`ORDER BY id` in
+`storage.rs`), and health counts a verification only if it was recorded
+after its snapshot's run (`model::health`, `Backups::status`); the times
+stay for display, the schedule and "out of date". No schema or manifest
+format change.
+
+**Tests:** four new, and the clock waits of the entry below removed. They
+cover the dating rule (`engine.rs`), runs read back in the order recorded
+although each reads an earlier time (`storage.rs`), and health by record
+order (`model.rs`). In `backup/tests.rs`, a history in which every run
+reads an earlier time than the one before gives Healthy, Verification
+failed, Not verified and Large change in the order recorded, with the last
+snapshot and the next run following the last backup recorded; and after a
+first snapshot dated a day ahead, the next one is named a second after
+it, retention keeps it and deletes the one ahead, and it restores the new
+state. Undoing the dating rule failed its two tests, undoing the record
+order its three. The clock-step diagnostic of the entry below, adapted and
+never committed, stepped sotyware's clock reads back by 3 s and by 30 s at
+the second backup's start, inside one backup task between its run and its
+own verification, and at a full verification: all 30 test runs passed. The
+previous commit, `3a01194`, failed under the same 3 s steps: 2 of 5, 4 of
+6 (Not verified instead of Healthy) and 1 of 3 (Healthy instead of
+Verification failed).
+
+**Run** on WSL2 only (Ubuntu 24.04.1, Rust 1.99.1): `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, `cargo test --lib backup` 11
+runs (32 passed, 1 ignored, in about 4 s instead of 6.2 to 6.9 s with the
+waits), the ignored recovery-script test once (`--latest`), and
+`cargo test` 3 runs (776 passed, 32 ignored); no real step of the clock
+fell inside these runs. **Not run:** Windows, macOS, CI, the app through a
+desktop driver. What remains (dates ahead of the real time while the clock
+is behind, two computers at the same time, the one-day margin measured
+from dates): [limitations](limitations.md#backups-adr-031).
+
 ### Backup tests and backward steps of the wall clock (2026-11-18)
 
 One full `cargo test` on WSL2 (branch `claude/frosty-vaughan-11b3db` at

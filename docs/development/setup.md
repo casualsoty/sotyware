@@ -180,5 +180,5 @@ environment issues, not sotyware bugs.
   to 3 minutes apart; between steps the wall clock kept pace with uptime.
   It is Hyper-V time sync (`hv_utils: TimeSync IC` in `dmesg`). Monotonic
   clocks (`Instant`, tokio's timers) do not step, so a fixed sleep does not
-  make two wall-clock readings a second apart: tests that compare them wait
-  on the wall clock itself, as `backup::tests::wait_past_the_runs` does.
+  make two wall-clock readings a second apart: order things by the order
+  they happened in, as backups do since ADR-051, not by wall-clock times.

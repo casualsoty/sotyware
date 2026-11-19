@@ -324,55 +324,23 @@ fn named_second(snapshot: &str) -> &str {
     name.get(..16).expect("a snapshot key")
 }
 
-/// How far [`wait_past_the_runs`] waits past the runs, in seconds: twice
-/// the largest backward step of the wall clock seen (1.02 s).
-const SPARE_SECONDS: i64 = 2;
-
-/// Waits until a task started now is recorded, and names a snapshot, later
-/// than every run of `job` so far, by the wall clock the engine reads, with
-/// [`SPARE_SECONDS`] to spare.
-///
-/// The run history is ordered by its runs' start on that clock (`now_ms`),
-/// health counts a verification only if it ended after its snapshot's run
-/// did (`model::health`), and snapshot names, so retention's order, use it
-/// in whole seconds (`engine::now_rfc3339`). The clock can step back: on
-/// WSL2, Hyper-V time sync stepped it back by up to 1.02 s, mostly about
-/// 0.7 s every half minute, on 2026-11-18, and a fixed 1.1 s sleep then left
-/// the next snapshot in the same second as the previous one (ordered by
-/// their random ids) or an earlier one. Waiting on the clock itself absorbs
-/// a step before the wait ends; the spare absorbs a smaller one between the
-/// wait and the next task reading the clock. Nothing here separates the
-/// reads within one task (a backup and its own verification). A clock that
-/// does not get there within 30 s fails the test, saying so.
-async fn wait_past_the_runs(e: &Env, job: &str) {
-    let runs = e.backups.runs(job).unwrap();
-    let recorded = runs
-        .iter()
-        .flat_map(|r| [Some(r.started_ms), r.finished_ms])
-        .flatten()
-        .max()
-        .unwrap_or(0);
-    let named = runs
-        .iter()
-        .filter_map(|r| r.snapshot.as_deref())
-        .map(named_second)
-        .max();
-    let start = Instant::now();
-    loop {
-        // The name a snapshot would get the spare before now.
-        let spare =
-            engine::shift_rfc3339(&engine::now_rfc3339(), -SPARE_SECONDS).expect("a valid time");
-        if now_ms() - SPARE_SECONDS * 1000 > recorded
-            && named.is_none_or(|n| model::compact_time(&spare).as_str() > n)
-        {
-            return;
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(30),
-            "the wall clock did not pass the runs of {job} by {SPARE_SECONDS} s within 30 s: it stepped back"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+/// Gives the manifest of `snapshot` the name and `created` time a run whose
+/// clock ran `secs` seconds fast would have given it (moved, with its
+/// SHA-256 stored again). Returns the new key and time.
+async fn date_ahead(e: &Env, snapshot: &str, secs: i64) -> (String, String) {
+    let old = e.vault.object_path(VAULT, snapshot);
+    let mut m: model::Manifest = serde_json::from_slice(&fs::read(&old).unwrap()).unwrap();
+    m.created = engine::shift_rfc3339(&m.created, secs).unwrap();
+    let key = model::snapshot_key("sotyware/", &m.job.id, &m.created, &m.snapshot);
+    let local = e.files.path(&format!("ahead-{}.json", m.snapshot));
+    fs::write(&local, serde_json::to_vec_pretty(&m).unwrap()).unwrap();
+    e.store(&e.vault, VAULT)
+        .upload_file(VAULT, &key, &local)
+        .await
+        .unwrap();
+    fs::remove_file(old).unwrap();
+    let _ = fs::remove_file(e.vault.metadata_path(VAULT, snapshot));
+    (key, m.created)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -457,7 +425,6 @@ async fn an_incremental_backup_transfers_only_changes_and_keeps_history() {
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     assert_eq!(first.state, "completed");
-    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"one, changed").await;
     e.put("copy-of-b.txt", b"two").await;
     e.delete_primary("c.txt");
@@ -503,7 +470,6 @@ async fn a_mass_deletion_is_flagged_and_retention_keeps_the_older_snapshots() {
     let job = e.save(keep_last(1));
     assert_eq!(e.task(&job.id, TaskKind::Backup).await.state, "completed");
     let before = e.snapshots();
-    wait_past_the_runs(&e, &job.id).await;
     for i in 0..15 {
         e.delete_primary(&format!("f{i:02}.txt"));
     }
@@ -556,7 +522,6 @@ async fn retention_deletes_only_dropped_snapshots_and_unreferenced_old_blobs() {
     let job = e.save(keep_last(1));
     let first = e.task(&job.id, TaskKind::Backup).await;
     let old_blob = model::blob_key("sotyware/", &sha256_hex(b"version 1"));
-    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"version 2").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let p = second
@@ -638,7 +603,6 @@ async fn a_chosen_snapshot_is_deleted_with_only_the_data_no_other_snapshot_uses(
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
     let first_key = first.snapshot.clone().unwrap();
-    wait_past_the_runs(&e, &job.id).await;
     e.delete_primary("a.txt");
     e.put("c.txt", b"only in the second").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
@@ -750,7 +714,6 @@ async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
     e.put("a.txt", b"one").await;
     let job = e.save(Retention::default());
     let first = e.task(&job.id, TaskKind::Backup).await;
-    wait_past_the_runs(&e, &job.id).await;
     e.put("a.txt", b"two").await;
     let second = e.task(&job.id, TaskKind::Backup).await;
     let status = e.backups.status(job.clone(), now_ms()).unwrap();
@@ -769,6 +732,126 @@ async fn after_deleting_the_newest_snapshot_health_rests_on_the_one_before() {
     let status = e.backups.status(job, now_ms()).unwrap();
     assert_eq!(status.last_snapshot, None);
     assert_eq!(status.health, Health::NeverRun);
+}
+
+/// A run whose clock reads before the newest snapshot dates its own a
+/// second after it (ADR-051). The first snapshot here carries the date of a
+/// clock that ran a day fast and was then set right: the next one is named
+/// after it, so retention keeps the new snapshot, not the one dated ahead,
+/// and it restores the new state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_is_dated_after_one_dated_ahead_and_retention_keeps_it() {
+    let e = env().await;
+    e.put("a.txt", b"before").await;
+    let job = e.save(keep_last(1));
+    let first = e.task(&job.id, TaskKind::Backup).await;
+    let (ahead, ahead_created) =
+        date_ahead(&e, first.snapshot.as_deref().unwrap(), 24 * 3600).await;
+    e.put("a.txt", b"after").await;
+    let second = e.task(&job.id, TaskKind::Backup).await;
+    assert_eq!(second.state, "completed", "{second:?}");
+    let key = second.snapshot.clone().unwrap();
+    let after_ahead = engine::shift_rfc3339(&ahead_created, 1).unwrap();
+    assert_eq!(named_second(&key), model::compact_time(&after_ahead));
+    let m: model::Manifest =
+        serde_json::from_slice(&fs::read(e.vault.object_path(VAULT, &key)).unwrap()).unwrap();
+    assert_eq!(m.created, after_ahead, "dated as it is named");
+    assert_eq!(
+        second.prune.as_ref().map(|p| p.snapshots_deleted),
+        Some(1),
+        "{second:?}"
+    );
+    assert_eq!(
+        e.snapshots(),
+        std::slice::from_ref(&key),
+        "the one dated ahead went"
+    );
+    assert!(!e.vault_keys().contains(&ahead));
+    assert_eq!(e.health(&job.id), Health::Healthy);
+    let out = e.files.path("after-ahead");
+    fs::create_dir_all(&out).unwrap();
+    let r = e
+        .restore(&job.id, &key, "", RestoreTo::Local(out.clone()))
+        .await;
+    assert_eq!(r.state, "completed", "{r:?}");
+    assert_eq!(
+        tree(&out),
+        BTreeMap::from([("a.txt".into(), b"after".to_vec())])
+    );
+}
+
+/// Health, the last backup and the newest snapshot follow the order runs
+/// were recorded in, never their wall-clock times (ADR-051): here each run
+/// reads an earlier time than the one before, as on a clock set back
+/// between all of them.
+#[test]
+fn health_follows_the_order_runs_were_recorded_in_not_their_times() {
+    let dir = TempDir::new("backup-order");
+    let backups = Backups::load(
+        SqliteBackupStore::open(&dir.path("backup.sqlite3"))
+            .map(|s| Box::new(s) as Box<dyn BackupStore>),
+        dir.path("spool"),
+    );
+    let job = JobConfig {
+        id: "photos".into(),
+        name: "Photos".into(),
+        source: Location {
+            account: "primary".into(),
+            bucket: PRIMARY.into(),
+            prefix: String::new(),
+        },
+        destination: Location {
+            account: "vault".into(),
+            bucket: VAULT.into(),
+            prefix: "sotyware/".into(),
+        },
+        interval_hours: 24,
+        retention: Retention::default(),
+        suspicious_percent: model::DEFAULT_SUSPICIOUS_PERCENT,
+    };
+    backups.save(&job).unwrap();
+    let first = "sotyware/snapshots/photos/20261119T100000Z-aa.json";
+    let second = "sotyware/snapshots/photos/20261119T100001Z-bb.json";
+    let now = 1_000_000_000;
+    let mut clock = now;
+    let mut record = |kind: &str, snapshot: &str, suspicious: bool, passed: Option<bool>| {
+        clock -= 1_000;
+        backups.record(RunRow {
+            job_id: job.id.clone(),
+            kind: kind.into(),
+            state: "completed".into(),
+            started_ms: clock,
+            finished_ms: Some(clock + 500),
+            snapshot: Some(snapshot.into()),
+            suspicious,
+            passed,
+            ..RunRow::default()
+        });
+        clock
+    };
+    let status = || backups.status(job.clone(), now).unwrap();
+
+    record("backup", first, false, None);
+    assert_eq!(status().health, Health::NotVerified);
+    record("verify", first, false, Some(true));
+    assert_eq!(status().health, Health::Healthy, "verified after the run");
+    record("verify-full", first, false, Some(false));
+    assert_eq!(
+        status().health,
+        Health::VerificationFailed,
+        "the last verification failed"
+    );
+    let started = record("backup", second, true, None);
+    let s = status();
+    assert_eq!(s.last_snapshot.as_deref(), Some(second));
+    assert_eq!(
+        s.last_backup.and_then(|r| r.snapshot).as_deref(),
+        Some(second)
+    );
+    assert_eq!(s.next_due_ms, Some(started + 24 * 3_600_000));
+    assert_eq!(s.health, Health::NotVerified);
+    record("verify", second, false, Some(true));
+    assert_eq!(status().health, Health::LargeChange);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -829,7 +912,6 @@ async fn damaged_or_missing_backup_data_fails_verification_and_is_never_healthy(
     fs::write(e.vault.object_path(VAULT, &blob_a), data(50_000, 99)).unwrap();
     let quick = e.task(&job.id, TaskKind::Verify).await;
     assert!(quick.verification.unwrap().passed);
-    wait_past_the_runs(&e, &job.id).await;
     let full = e.task(&job.id, TaskKind::VerifyFull).await;
     let v = full.verification.unwrap();
     assert!(!v.passed);
@@ -840,7 +922,6 @@ async fn damaged_or_missing_backup_data_fails_verification_and_is_never_healthy(
     // A missing blob fails even the quick check.
     let blob_b = model::blob_key("sotyware/", &sha256_hex(&data(40_000, 4)));
     fs::remove_file(e.vault.object_path(VAULT, &blob_b)).unwrap();
-    wait_past_the_runs(&e, &job.id).await;
     let quick = e.task(&job.id, TaskKind::Verify).await;
     assert_eq!(quick.verification.unwrap().missing.len(), 1);
     assert_eq!(e.health(&job.id), Health::VerificationFailed);

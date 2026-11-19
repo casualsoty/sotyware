@@ -778,33 +778,23 @@ server only; no real provider was asked.
   (deduplication still avoids re-uploading; s3s-fs is such a server).
 - **No cross-device locking:** two devices running the same job write two
   snapshots; retention protects unreferenced blobs younger than a day.
-- **The newest snapshot and the newest run are the latest by the wall
-  clock** (found 2026-11-18, not fixed). A snapshot's name starts with the
-  time its run wrote it, in whole seconds of that computer's clock. The
-  last name is the snapshot the next run compares with, the one "Verify",
-  "Verify content" and "Verify newest" check, the one the Snapshots &
-  backups tab labels newest, the top of the Backups page's restore list,
-  and the one `sotyware-restore.py --latest` restores; retention keeps by
-  the same time, and orders two snapshots of one second by their random
-  ids. The run history is ordered by each run's start on that clock, and
-  health takes the newest backup and verification from it, counting a
-  verification only if it ended after its snapshot's run. A clock set
-  back between two runs by more than the time between them, or two
-  backups in one second, makes the newer one count as the older: retention
-  with keep-last 1 then deletes the snapshot the backup just wrote and
-  verified, and keeps the one before; a failed verification can hide
-  behind an earlier passed one, so health says Healthy and "Apply
-  retention" runs; a large change can show as Healthy; a verification can
-  count as older than its snapshot ("Not verified"). If the snapshot
-  retention keeps is dated more than a day ahead (a clock that ran that
-  fast, then was set right), the data only the deleted one used goes at
-  once too. Seen in the Rust tests only, with a diagnostic that stepped
-  sotyware's clock reads back and with WSL2's own steps
-  ([status](status.md#backup-tests-and-backward-steps-of-the-wall-clock-2026-11-18)).
-  WSL2's steps (about a second at most) reorder only runs about a second
-  apart or less; scheduled backups hours apart are reordered only by a larger
-  correction (a clock that ran hours or days fast, then was set right) or
-  by two computers with different clocks running one job.
+- **Snapshot dates follow the writing computer's clock** (ADR-051). On one
+  computer a clock set back no longer reorders anything since 2026-11-19:
+  a new snapshot is never dated before the newest one, and health reads
+  the run history in the order recorded. Until then retention could delete
+  the snapshot a backup had just written, and a failed verification could
+  hide behind a passed one
+  ([status](status.md#backup-order-no-longer-follows-a-clock-set-back-2026-11-19)).
+  What remains: while the clock reads before the newest snapshot, each new
+  one is dated a second after it, so the dates shown run ahead of the real
+  time and retention's days and weeks count by those dates. Two computers
+  running one job at the same time date their snapshots by their own
+  clocks, so the one with the slower clock can write a snapshot that sorts
+  before the other's and that the other's retention drops. Retention's
+  one-day margin for unreferenced data is measured from the oldest
+  remaining snapshot's date: while that one is dated ahead (a clock that
+  ran fast, then was set right), the margin shrinks by as much, and is
+  gone once it is a day.
 - **No desktop notification** when a scheduled backup fails; the Backups
   page shows the health. Schedules run only while sotyware runs.
 - **Folder markers are not backed up** (keys ending in `/`), and empty
@@ -1339,15 +1329,6 @@ server only; no real provider was asked.
   test work in Session 0 (a service, a scheduled task without a logged-on user)
   is unknown
   ([testing.md](../development/testing.md#headless-windows-desktop-testing)).
-- **The backup tests keep the wall clock out of their checks only between
-  tasks.** Before a task whose order or health they check, they wait until
-  the clock is two seconds past every run recorded so far
-  (`wait_past_the_runs`, 2026-11-18). A larger backward step right after
-  such a wait, or any backward step inside one backup task between the end
-  of its run and the end of its own verification (tens of milliseconds),
-  can still fail a check of health or order: the tests read the same clock
-  as the app ([the app's side](#backups-adr-031),
-  [status](status.md#backup-tests-and-backward-steps-of-the-wall-clock-2026-11-18)).
 
 ## CI
 
