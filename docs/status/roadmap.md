@@ -276,14 +276,16 @@ ADR-026; public ACLs do not).
 
 ## Known follow-ups (not started, no design yet)
 
-- Find out why a WebKit helper of an earlier launch, very probably
-  scenario 12's web process, ran on for 22 to 25 s after its sotyware in
-  `desktop-virtual.yml` at `1ef6bfa` (on WSL2 none outlived its sotyware
-  by more than about 0.1 s): run `desktop-virtual.yml` with the driver
-  that names such a helper (program, state, threads and their kernel wait
-  channels, launch), whose check before scenario 17 fails if one is left,
-  and read what it says
-  ([status](status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)).
+- Find out what crashes in WebKit's web process as sotyware quits on
+  GitHub's Ubuntu 26.04 runner (glibc: `free(): corrupted unsorted
+  chunks`; 2 of 14 instances at `8b1deac`, very probably 1 at `1ef6bfa`;
+  none of 42 on WSL2), whose core dump keeps it running for more than
+  15 s and fails the Linux driver's quit checks: run `desktop-virtual.yml`
+  again with its step that prints systemd-coredump's stack traces. Then
+  decide how the test treats it (keep failing, wait only for the network
+  process and report the crash on its own, or record it as WebKit's) and
+  whether sotyware can avoid it
+  ([status](status.md#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19)).
 - CI follow-ups (the workflows exist since `5fe62b9`, see
   [testing.md](../development/testing.md#ci); `ci.yml` passed on both runners in
   its two automatic runs): record the real job durations and replace the cost

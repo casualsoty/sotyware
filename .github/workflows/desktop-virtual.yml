@@ -107,3 +107,20 @@ jobs:
             echo "::error::virtual-display test: exit $rc ($meaning)"
           fi
           exit "$rc"
+
+      # On this runner a crashed process's core goes to systemd-coredump, which
+      # took more than 15 s for a WebKit web process that crashed as sotyware
+      # quit (docs/status/status.md, 2026-11-19). Wait for any WebKit helper
+      # still dumping, then print what systemd-coredump recorded about WebKit's
+      # helpers, the stack trace of the crashed thread included.
+      - name: core dumps of WebKit's helpers
+        if: always()
+        run: |
+          for _ in $(seq 120); do
+            pgrep -f '/webkit2gtk-4\.1/WebKit' >/dev/null || break
+            sleep 1
+          done
+          sudo coredumpctl list --no-pager || true
+          sudo coredumpctl info --no-pager \
+            /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess \
+            /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess || true

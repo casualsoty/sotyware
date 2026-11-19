@@ -392,11 +392,24 @@ def _comm(task):
         return "?"
 
 
+def _core_dumping(pid):
+    """True while the kernel writes the process's core dump, that is after it
+    crashed (CoreDumping in /proc/<pid>/status). On GitHub's runner the core
+    goes to systemd-coredump, which took more than 15 s for a WebKit web
+    process."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            return any(line.split() == ["CoreDumping:", "1"] for line in f)
+    except OSError:
+        return False
+
+
 def helper_text(h, since, event):
     """`h` for a check's message, its start relative to `event` (at `since` on boot_clock())."""
     offset = h.started - since
-    return (f"{h.program} {h.pid} (parent {h.parent} {_comm(h.parent)}, state {h.state}, {h.threads} threads, "
-            f"started {abs(offset):.2f} s {'after' if offset >= 0 else 'before'} {event}, "
+    crashed = ", dumping core after a crash" if _core_dumping(h.pid) else ""
+    return (f"{h.program} {h.pid} (parent {h.parent} {_comm(h.parent)}, state {h.state}, {h.threads} threads"
+            f"{crashed}, started {abs(offset):.2f} s {'after' if offset >= 0 else 'before'} {event}, "
             f"of launch '{h.launch}')")
 
 

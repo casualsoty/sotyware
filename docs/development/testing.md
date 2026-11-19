@@ -2445,11 +2445,15 @@ Files:
     before the Quit, and the check says how long they outlived sotyware.
     Scenarios 1 to 16 do not wait for theirs, so before 17 starts a check
     requires that no helper of an earlier launch is left (at most 15 s). A
-    helper left is named with its program, pid, parent, state, threads, start
-    relative to the Quit (or that wait) and launch, then its command line,
-    its threads (name, state, kernel wait channel) and its launch's output
-    are printed; a quit's check names other launches' helpers still running
-    without waiting for them.
+    helper left is named with its program, pid, parent, state, threads,
+    whether it is dumping core after a crash (`CoreDumping` in
+    `/proc/<pid>/status`), start relative to the Quit (or that wait) and
+    launch, then its command line, its threads (name, state, kernel wait
+    channel) and its launch's output are printed; a quit's check names
+    other launches' helpers still running without waiting for them. On
+    GitHub's runner WebKit's web process sometimes crashed as sotyware
+    quit, and its core dump outlasted the wait
+    ([limitations](../status/limitations.md#dashboard-adr-035)).
     Scheduled backups (left enabled and saved by 12) is unchecked, Dark is
     chosen in Settings › General and sotyware quits at once, the database row
     (read with Python's `sqlite3`, read-only) says disabled, and the relaunch
@@ -2989,8 +2993,12 @@ anything. Each builds a release binary (`--no-bundle`, no installers).
   `140 passed, 0 failed, 0 skipped` (`EXPECTED_CHECKS` in the workflow; update it
   in the same commit that adds or removes a check; it stayed at 92 when
   `a9fb338` added 4 checks and was corrected to 115 at `b4918e1`), names the exit code in the
-  run summary, and fails on anything else. It is virtual-display testing, not
-  real Linux desktop validation (see [what it does not validate](#virtual-display-test)).
+  run summary, and fails on anything else. A last step, run also when the
+  test failed, waits up to 120 s for any WebKit helper still dumping core
+  and prints what the runner's systemd-coredump recorded about WebKit's
+  helpers, with the crashed thread's stack trace. It is virtual-display
+  testing, not real Linux desktop validation (see
+  [what it does not validate](#virtual-display-test)).
 - **`desktop-windows-isolated.yml`** (Windows private desktop, **experimental**).
   Every non-zero exit code fails the job; the run summary says which: 1 a check
   failed, 2 binary missing or already running, **3 the runner could not create

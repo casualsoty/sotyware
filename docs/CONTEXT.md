@@ -534,14 +534,21 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   [status.md](status/status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)):
   the helper that failed `desktop-virtual.yml` at `1ef6bfa` was not the
   quitting instance's but an earlier launch's, very probably scenario 12's
-  web process, which ran on for 22 to 25 s (why is not known). Every launch
-  now carries its label in its environment, which WebKit's helpers
-  inherit; a quit waits only for its own launch's helpers (its network
-  process among them), a new check before 17 requires that none of an
-  earlier launch is left, and a helper left is named with its program,
-  parent, state, start and launch, its threads and kernel wait channels
-  printed. 140 checks. WSL2 only (also emulating the runner's 4 CPUs);
-  not pushed.
+  web process, which ran on for 22 to 25 s. Every launch now carries its
+  label in its environment, which WebKit's helpers inherit; a quit waits
+  only for its own launch's helpers (its network process among them), a
+  new check before 17 requires that none of an earlier launch is left,
+  and a helper left is named with its program, parent, state, start and
+  launch, its threads and kernel wait channels printed. 140 checks.
+  Pushed as the branch `test/whose-webkit-helper-is-left`; its first
+  hosted run (`8b1deac`) failed 138/2 and showed why: **WebKit's web
+  process crashed as sotyware quit** (glibc: a corrupt heap) and was still
+  dumping core into the runner's systemd-coredump 15 s later, in 2 of 14
+  instances; never on WSL2 (42 of 42 ended with 0). What crashes is not
+  known; the driver now says when a helper is dumping core, and the
+  workflow prints systemd-coredump's record (not pushed;
+  [status](status/status.md#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19),
+  [limitation](status/limitations.md#dashboard-adr-035)).
 - **The theme check on Windows** (2026-11-18, test code and docs only,
   [status.md](status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)):
   `windows.ps1` now chooses Dark just before a tray Quit and checks it
