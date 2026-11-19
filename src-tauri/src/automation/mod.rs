@@ -1590,12 +1590,18 @@ impl Automation {
             return Err(invalid(format!("Another macro is called \"{}\"", m.name)));
         }
         self.check_macro_shortcut(&m)?;
-        let warnings = self.shortcut_warnings(&m);
         let summary = self.store_macro(&m)?;
+        // After storing, so a shortcut this save changed counts as it will
+        // when the macro plays.
+        let warnings = self.shortcut_warnings(&m);
         self.touch();
         Ok(SavedMacro { summary, warnings })
     }
 
+    /// What playing `m` may trigger, for the editor after a save: a step
+    /// that presses a registered shortcut (a key step its key, a keys step
+    /// exactly its keys), and a keys step that presses the emergency stop's
+    /// key with other modifiers.
     fn shortcut_warnings(&self, m: &Macro) -> Vec<String> {
         let inner = self.lock();
         let mut out: Vec<String> = Vec::new();
@@ -1614,6 +1620,50 @@ impl Automation {
                     "This macro presses {}, the shortcut of \"{}\": playing it may trigger that shortcut",
                     r.chord.label_with(|k| k.label().to_owned()),
                     r.owner.label()
+                ));
+            }
+        }
+        // While a session runs, the emergency stop is also registered with
+        // every other combination of modifiers (`sync_hotkeys`), so a keys
+        // step pressing Shift+F8 stops its own playback. Those registrations
+        // exist only while something runs, and are made whether or not F8
+        // itself could be registered, so the steps are compared with the
+        // configured emergency stop, not with what is registered now (a
+        // macro edited while the feature is off plays with it on). A
+        // combination another binding has is that binding's (it comes first
+        // in `sync_hotkeys`), so it is left to the warnings above.
+        if let Some(stop) = inner.settings.emergency_stop.active() {
+            let profile = inner.profiles.iter().find(|p| p.id == inner.active);
+            let taken: Vec<Chord> = active_bindings(&inner.settings, profile, &inner.macros)
+                .into_iter()
+                .map(|(_, c)| c)
+                .collect();
+            let combinations: Vec<Chord> = stop
+                .with_other_modifiers()
+                .into_iter()
+                .filter(|c| !taken.contains(c))
+                .collect();
+            let mut pressed: Vec<String> = Vec::new();
+            for a in &m.actions {
+                if let model::ActionKind::Keys { chord } = &a.kind
+                    && combinations.contains(chord)
+                {
+                    let keys = chord.label_with(|k| k.label().to_owned());
+                    if !pressed.contains(&keys) {
+                        pressed.push(keys);
+                    }
+                }
+            }
+            if let Some((last, rest)) = pressed.split_last() {
+                let list = if rest.is_empty() {
+                    last.clone()
+                } else {
+                    format!("{} and {last}", rest.join(", "))
+                };
+                out.push(format!(
+                    "This macro presses {list}: while something runs, \"{}\" ({}) also works with other modifiers held, so playing it may stop there",
+                    BindingOwner::Settings.label(),
+                    stop.label_with(|k| k.label().to_owned())
                 ));
             }
         }

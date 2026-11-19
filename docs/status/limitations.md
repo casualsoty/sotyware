@@ -1209,9 +1209,14 @@ server only; no real provider was asked.
   until the run ends. A combination another program had first stays that
   program's, and pressing it then does not stop the run (F8 alone, the
   page's Stop and the corners still do). A macro's own "keys" step that
-  presses one of those combinations stops its playback there, and the
-  editor does not warn about it as it does about a step that presses a
-  listed shortcut (found by reading the code on 2026-11-19, not run).
+  presses one of those combinations stops its playback there (found by
+  reading the code on 2026-11-19, not run with real input); since
+  2026-11-19 saving the macro in the editor warns about such steps, also
+  while the autoclicker is off.
+- **The editor's other warnings**, about a step that presses one of the
+  listed shortcuts, appear only while the autoclicker is on: they compare
+  the steps with the shortcuts registered when the macro is saved. An
+  imported macro is not checked until it is saved in the editor.
 - **A process killed from outside** (Task Manager, a crash that is not a
   Rust panic, power loss) cannot release a key or button a macro held;
   pressing and releasing that key or button releases it. Nothing restarts

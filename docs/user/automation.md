@@ -76,7 +76,10 @@ You can:
   only part of the macro** (before it plays once, then the part repeats,
   then the rest plays once).
 
-**Save** keeps the changes; **Revert** drops them.
+**Save** keeps the changes; **Revert** drops them. When a step would set
+off one of sotyware's shortcuts as the macro plays, saving says so while
+the autoclicker is on: for example a shortcut step that presses F8 with
+Shift, Ctrl, Alt or the Windows key, which stops the macro there like F8.
 
 ## Play a macro
 
