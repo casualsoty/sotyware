@@ -575,7 +575,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   desktop (2026-11-19) `windows.ps1` passed **136/0** once: Dark chosen
   3.9 s before the tray Quit was kept, through WebView2's commit as
   sotyware ended, and WebView2's processes ended 56 to 76 ms after
-  sotyware. No limitation on Windows; not pushed.
+  sotyware. No limitation on Windows; on `main` since 2026-11-19.
 - **The theme check after a quick quit and relaunch** (2026-11-18, test
   code and docs only,
   [status.md](status/status.md#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)):
