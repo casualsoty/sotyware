@@ -9,9 +9,11 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.2, **released on 2026-11-17** as `v0.1.2`, the
-first release offering sotyware accounts
-([status](status/status.md#release-012-2026-11-17)), after `v0.1.1` on
+TypeScript. Version 0.1.3, **released on 2026-11-19** as `v0.1.3`, with
+the autoclicker and macros
+([status](status/status.md#release-013-2026-11-19)), after `v0.1.2` on
+2026-11-17, the first release offering sotyware accounts
+([status](status/status.md#release-012-2026-11-17)), `v0.1.1` on
 2026-11-16 ([status](status/status.md#release-011-2026-11-16)) and `v0.1.0`
 on 2026-11-15
 ([status](status/status.md#first-release-v010-2026-11-15)). Code and builds target
@@ -69,10 +71,12 @@ Pushed as the branch
 macOS build), `isolation-guard.yml`, `release-build.yml` and
 `desktop-virtual.yml` (139/0/0) passed, started by hand
 ([status](status/status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18)).
-**On `main` since 2026-11-19** (a fast-forward to `37581df`; no tag or
-release): `ci.yml`, `macos.yml` and `isolation-guard.yml` passed at the
-first attempt
+**On `main` since 2026-11-19** (a fast-forward to `37581df`):
+`ci.yml`, `macos.yml` and `isolation-guard.yml` passed at the first
+attempt
 ([status](status/status.md#hosted-runs-at-37581df-the-autoclicker-on-main-2026-11-19)).
+**Released in `v0.1.3`** the same day
+([status](status/status.md#release-013-2026-11-19)).
 The page's manual check is automated since (2026-11-18,
 [testing.md](development/testing.md#the-pages-former-manual-check-automated)):
 the Linux phase grew to 103 checks on its private display, and

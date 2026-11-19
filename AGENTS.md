@@ -18,7 +18,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   ([cross-platform.md](docs/development/cross-platform.md)); macOS is built
   and tested only on GitHub's hosted runners ([macos.md](docs/development/macos.md)).
   **Release support** is narrower: the releases, `v0.1.0` (published
-  2026-11-15), `v0.1.1` (2026-11-16) and `v0.1.2` (2026-11-17), target
+  2026-11-15), `v0.1.1` (2026-11-16), `v0.1.2` (2026-11-17) and `v0.1.3`
+  (2026-11-19), target
   Windows 11 only, and their
   installers have not yet been through the installation test; Windows 10 is not validated, Linux has
   never run on a real desktop and macOS never on a Mac a person used, so
@@ -39,7 +40,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   recovery tool (ADR-031), and an optional sotyware account with
   end-to-end encrypted sync of storage accounts and backup jobs (ADR-032;
   the service runs at `https://accounts.sotyware.com` since 2026-11-17,
-  ADR-045, and builds from `main` and `v0.1.2` use it; earlier releases
+  ADR-045, and builds from `main`, `v0.1.2` and `v0.1.3` use it; earlier releases
   have none),
   and signed application updates from GitHub
   Releases of this public repository, `casualsoty/sotyware` (ADR-033,
@@ -47,7 +48,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   signing key only in the protected `release` environment; the release key
   exists since 2026-11-15, its public half in `src-tauri/update-key.pub`,
   and `v0.1.0` was published with it that day, `v0.1.1` on 2026-11-16,
-  `v0.1.2` on 2026-11-17; the
+  `v0.1.2` on 2026-11-17, `v0.1.3` on 2026-11-19; the
   maintainer's Windows 11 updated itself from 0.1.0 to 0.1.1 through
   Update now, the one update installed so far), in a
   desktop shell with a sidebar, Settings and one design system (ADR-035),
