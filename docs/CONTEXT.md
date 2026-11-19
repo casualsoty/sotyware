@@ -554,7 +554,12 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   driver now waits for WebKit's helpers of the quitting instance to end
   (at most 15 s; they take about 0.1 s); the product side is a
   [limitation](status/limitations.md#dashboard-adr-035). WSL2 virtual
-  display 139/0/0 three times, `test:headless` passed; not pushed.
+  display 139/0/0 three times, `test:headless` passed. On `main` since
+  2026-11-19; its first hosted run, `desktop-virtual.yml` at `1ef6bfa`,
+  kept the theme but failed the new wait once: a WebKit helper of the
+  run's test profile outlived it after the first Quit, whose is not
+  established
+  ([status](status/status.md#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)).
 - **Usage & costs tab in the Linux desktop test** (2026-11-16,
   [status.md](status/status.md#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)):
   `cloud-ui.sh usage` measures a seeded versioned bucket through the UI
