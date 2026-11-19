@@ -1208,7 +1208,10 @@ server only; no real provider was asked.
   while a macro holds a modifier: other programs lose those combinations
   until the run ends. A combination another program had first stays that
   program's, and pressing it then does not stop the run (F8 alone, the
-  page's Stop and the corners still do).
+  page's Stop and the corners still do). A macro's own "keys" step that
+  presses one of those combinations stops its playback there, and the
+  editor does not warn about it as it does about a step that presses a
+  listed shortcut (found by reading the code on 2026-11-19, not run).
 - **A process killed from outside** (Task Manager, a crash that is not a
   Rust panic, power loss) cannot release a key or button a macro held;
   pressing and releasing that key or button releases it. Nothing restarts

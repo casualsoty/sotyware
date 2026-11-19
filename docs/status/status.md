@@ -149,6 +149,49 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `37581df`: the autoclicker on `main` (2026-11-19)
+
+`main` was pushed as a fast-forward from `3ee2f35` to `37581df`: the nine
+commits of `feat/autoclicker-macros`, from `6ba567e` to `37581df` (no
+pull request, tag or release). Before the push the branch was reviewed:
+a fast-forward of `main`, whose ruleset refuses only deletion and
+non-fast-forward pushes, whose code had passed `ci.yml`, `macos.yml`,
+`isolation-guard.yml` and `desktop-virtual.yml` (at `0b79903`, the same
+tree but for this file, two jobs at the second attempt;
+[runs](#the-autoclickers-manual-check-automated-2026-11-18)). The push
+started three workflows; every job checked out `37581df`, the headless
+and macOS jobs built with rustc 1.100.0, and **all three passed at the
+first attempt**:
+
+- **`ci.yml`** run 44434381747 (push): `headless (ubuntu-22.04)` (image
+  20261116.365), 6 min 44 s: Vitest 349/349 (22 files), `cargo test` 772
+  passed, 0 failed, 32 ignored, the recorder build 801 passed, 32
+  ignored, and the standalone recovery script's test. `headless
+  (windows-latest)` (windows-2025-vs2026 20261103.298), 11 min 49 s:
+  Vitest 349/349, `cargo test` 752 passed, 0 failed, 31 ignored,
+  `shutdown_cancels_the_running_operation_and_refuses_new_ones` among
+  them (it failed there at `0b79903`; its fix, `cd3f871`, is not on
+  `main`). `account service (ubuntu-22.04)`, 29 s: 42 tests.
+- **`macos.yml`** run 44434382229 (push): `macOS tests (aarch64)`
+  (macos-15-arm64 20261104.0514), 6 min 12 s, and `macOS tests (x86_64)`
+  (macos-15 20260824.0482), 7 min 14 s: Vitest 349/349, `cargo test` 762
+  passed, 0 failed, 30 ignored, then the Keychain round trip; `macOS
+  package` skipped.
+- **`isolation-guard.yml`** run 44434381634 (push; the push changed
+  `tests/desktop/**`): `guard`, 6 s: the driver check, its self-test 9/9,
+  the Python helpers 10/10, the desktop-workflow check;
+  `powershell-helpers`, 37 s: 20/20.
+
+Not run at `37581df` (manual workflows): `release-build.yml` (last at
+`423605f`) and `desktop-virtual.yml` (last at `0b79903`, 139/0/0 at the
+second attempt).
+
+The review found one gap, recorded and not fixed: since `c1726d7` a
+macro's "keys" step that presses the emergency stop's key with a
+modifier (Shift+F8, …) stops that playback, and the editor does not warn
+about it ([limitations](limitations.md#autoclicker-adr-050)). Found by
+reading the code, not run.
+
 ### The autoclicker's manual check, automated (2026-11-18)
 
 The maintainer asked that the manual check of the Autoclicker page

@@ -59,11 +59,15 @@ three passes after fixing moves that landed a pixel off and the test's
 own defects;
 [status](status/status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18));
 the page has not been driven on Windows. Pushed as the branch
-`feat/autoclicker-macros` on 2026-11-18 (not merged): at `423605f`,
-`ci.yml` (Ubuntu 22.04, Windows), `macos.yml` (both Macs, the automation
-code's first macOS build), `isolation-guard.yml`, `release-build.yml` and
+`feat/autoclicker-macros` on 2026-11-18: at `423605f`, `ci.yml` (Ubuntu
+22.04, Windows), `macos.yml` (both Macs, the automation code's first
+macOS build), `isolation-guard.yml`, `release-build.yml` and
 `desktop-virtual.yml` (139/0/0) passed, started by hand
 ([status](status/status.md#hosted-runs-at-423605f-the-autoclicker-branch-passes-on-every-platform-2026-11-18)).
+**On `main` since 2026-11-19** (a fast-forward to `37581df`; no tag or
+release): `ci.yml`, `macos.yml` and `isolation-guard.yml` passed at the
+first attempt
+([status](status/status.md#hosted-runs-at-37581df-the-autoclicker-on-main-2026-11-19)).
 The page's manual check is automated since (2026-11-18,
 [testing.md](development/testing.md#the-pages-former-manual-check-automated)):
 the Linux phase grew to 103 checks on its private display, and
