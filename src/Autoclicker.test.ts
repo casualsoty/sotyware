@@ -607,6 +607,11 @@ describe("the Settings tab", () => {
     field.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
     flushSync();
     expect(text(root)).toContain("alone would stop that key from working everywhere");
+    // The refusal is an alert in a table cell, which WebView2 leaves without
+    // a name unless it has one (seen through UI Automation, 2026-11-19).
+    const refusal = root.querySelector<HTMLElement>('td [role="alert"]');
+    expect(refusal?.getAttribute("aria-label")).toBe(text(refusal));
+    expect(refusal?.getAttribute("aria-label")).toContain("alone would stop that key from working everywhere");
     field.dispatchEvent(new KeyboardEvent("keydown", { key: "p", code: "KeyP", ctrlKey: true, altKey: true, bubbles: true }));
     await settle();
     const saved = sent("save_profile")[0]?.["profile"] as Record<string, Record<string, unknown>>;

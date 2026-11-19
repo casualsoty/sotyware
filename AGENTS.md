@@ -67,8 +67,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   on a private Xvfb only, Windows unit-tested natively and its backend run
   with real input by the opt-in desktop test on the maintainer's
   Windows 11 on 2026-11-18; the page driven on Windows by
-  `windows-autoclicker.ps1` on 2026-11-19: 101 of 102 checks, the shortcut
-  field's refusal having no text for UI Automation). No other product features exist yet. Current milestone and status:
+  `windows-autoclicker.ps1` on 2026-11-19: 101 of 102 checks, the one
+  failure, a shortcut field's refusal without a name for UI Automation,
+  fixed the same day). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology

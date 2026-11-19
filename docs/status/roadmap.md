@@ -260,11 +260,10 @@ ADR-026; public ACLs do not).
 
 ## Autoclicker (after ADR-050)
 
-- Give the shortcut field's refusal text to UI Automation (for example a
-  paragraph instead of the `<span role="alert">`, checked in WebView2 and
-  with AT-SPI), then run `tests/desktop/windows-autoclicker.ps1` again with
-  the maintainer's go-ahead: on 2026-11-19 it passed 101 of 102 checks,
-  failing only there
+- With the maintainer's go-ahead, run `tests/desktop/windows-autoclicker.ps1`
+  once more: on 2026-11-19 it passed 101 of 102 checks, and its one failure
+  (the shortcut field's refusal without a name for UI Automation) is fixed
+  but was checked only through UI Automation on a private desktop
   ([status](status.md#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)).
 - A real Linux X11 desktop (GNOME on Xorg, KDE on X11).
 - Possible later work, each a decision of its own: a macOS backend

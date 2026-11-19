@@ -1178,17 +1178,11 @@ server only; no real provider was asked.
   ([status](status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18)).
   The page was driven on Windows by `tests/desktop/windows-autoclicker.ps1`
   on the maintainer's Windows 11 (2026-11-19; the second run passed 101 of
-  102 checks;
+  102 checks; its one failure, a shortcut field's refusal without a name
+  for UI Automation, was fixed the same day and checked through UI
+  Automation, not by a third run;
   [status](status.md#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)).
-  Never on a real Linux desktop, macOS or Windows 10.
-- **A shortcut field's refusal has no text for UI Automation** (Windows):
-  the reason a key is refused ("A alone would stop that key …", "F12 alone
-  is reserved by Windows for debuggers") shows under the field, but
-  WebView2 exposes `HotkeyInput.svelte`'s `<span role="alert">`, a flex
-  item, as a Text element with an empty name, so a screen reader that reads
-  UI Automation, such as Narrator, may not say it. Seen 2026-11-19; not
-  tried with a screen reader. The page's `<p role="alert">` messages are
-  read. Input to a program
+  Never with a screen reader, on a real Linux desktop, macOS or Windows 10. Input to a program
   running as administrator is not tested anywhere (it needs an elevated
   program; Windows' rule, below).
 - **Platforms:** Windows and Linux on X11 only. **Wayland** sessions get

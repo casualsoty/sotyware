@@ -60,8 +60,8 @@ own defects;
 [status](status/status.md#the-autoclickers-windows-backend-with-real-input-2026-11-18));
 the page driven on Windows on 2026-11-19 (the maintainer's desktop; the
 second run 101 of 102 checks, the emergency stop with Shift held and every
-release of held keys among them; the shortcut field's refusal has no text
-for UI Automation;
+release of held keys among them; the one failure, a shortcut field's
+refusal without a name for UI Automation, fixed the same day;
 [status](status/status.md#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)).
 Pushed as the branch
 `feat/autoclicker-macros` on 2026-11-18: at `423605f`, `ci.yml` (Ubuntu

@@ -105,7 +105,10 @@
     {/if}
   </button>
   {#if problem !== null}
-    <span class="problem-text" role="alert">{problem}</span>
+    <!-- Named by its own text: inside a table cell (the Settings tab, the
+         editor) WebView2 gives an alert no name from its content, and
+         Narrator reads a live region's name (frontend.md). -->
+    <span class="problem-text" role="alert" aria-label={problem}>{problem}</span>
   {/if}
 </span>
 

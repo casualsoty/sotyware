@@ -130,6 +130,20 @@ and `src/Autoclicker.test.ts` pin the shapes;
 after changing a layout, compare a page's `innerText` with an AT-SPI dump
 (the method is in [status.md](../status/status.md#desktop-redesign-macos-and-github-releases-updates-2026-11-15)).
 
+**Accessibility tree (WebView2).** Found 2026-11-19 by the Windows
+desktop driver, then shown in Edge 157 (the engine of the WebView2 runtime)
+with a page of variants read through UI Automation: inside a **table
+cell**, an alert (`<span role="alert">` or `<p role="alert">`) is a Text
+element with an **empty name**, its text hidden, while outside a table the
+same alert is named by its text; a plain `aria-live` element in a cell is
+no element of its own, its text only part of the cell's name. Narrator
+announces a live region by its name, so an alert that can appear inside a
+table cell carries its text as `aria-label` too: the shortcut field's
+refusal (`HotkeyInput.svelte`, in the Settings tab's table and the
+editor's), which the driver found without a name. WebView2 also names a
+list item from its whole text without spaces between its parts ("0.1.0 ·
+DisabledClicks, records …" in Settings › Features).
+
 **Icons** are `src/Icon.svelte`: 24×24 line drawings in the current text
 colour, drawn for sotyware, always `aria-hidden` next to a control that has
 its own name. The brand mark in the sidebar and About is the application
