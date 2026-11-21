@@ -149,6 +149,35 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Hosted runs at `6d43914`: folder uploads of up to 50,000 files (2026-11-21)
+
+`main` was pushed as a fast-forward from `0860063` to `6d43914`, with the
+maintainer's approval ([the change](#folder-uploads-of-up-to-50000-files-2026-11-21);
+no pull request, tag or release). The push started `ci.yml` and
+`macos.yml` (not `isolation-guard.yml`: nothing under its paths changed);
+every job checked out `6d43914` and built with rustc 1.100.0, and **both
+passed at the first attempt**:
+
+- **`ci.yml`** run 44909356112 (push), 6 min 39 s: `headless
+  (ubuntu-22.04)` (image 20261116.365), 6 min 21 s: Vitest 350/350 (22
+  files), `cargo test` 780 passed, 0 failed, 32 ignored, the recorder
+  build 809 passed, 32 ignored, and the standalone recovery script's
+  test. `headless (windows-latest)` (windows-2025-vs2026 20261116.315),
+  6 min 34 s: Vitest 350/350, `cargo test` 760 passed, 0 failed, 31
+  ignored. `account service (ubuntu-22.04)`, 15 s: 42 tests.
+- **`macos.yml`** run 44909356172 (push), 8 min 43 s: `macOS tests
+  (aarch64)` (macos-15-arm64 20261118.0550), 4 min 44 s, and `macOS tests
+  (x86_64)` (macos-15 20260824.0482), 8 min 37 s: Vitest 350/350, `cargo
+  test` 770 passed, 0 failed, 30 ignored, then the Keychain round trip;
+  `macOS package` skipped.
+
+The two new tests passed on every platform: the upload of a 1,001-file
+folder through the in-process server (on Linux with and without the
+recorder) and the paging of a 2,500-file batch (671 to 973 ms).
+
+Not run at `6d43914` (manual workflows): `release-build.yml` and
+`desktop-virtual.yml`.
+
 ### Folder uploads of up to 50,000 files (2026-11-21)
 
 Folder uploads and drops were refused above 1,000 files; the bound is now
@@ -162,10 +191,12 @@ uploaded. A throwaway happy-dom benchmark (not committed): the old panel
 took 31 s to show a 5,000-file selection and 26 ms per event; the new one
 shows 50,000 in 0.2 s and handles an event in about 2 ms.
 
-WSL2 only: a Rust test uploads a 1,001-file folder through the in-process
+On WSL2: a Rust test uploads a 1,001-file folder through the in-process
 server (completed, 1,001 PUTs); a Vitest test pages a 2,500-file batch.
-Not run: a desktop driver with a large folder, native Windows, a real
-provider.
+Both passed on GitHub's runners too (Ubuntu 22.04, Windows, both Macs;
+[hosted runs](#hosted-runs-at-6d43914-folder-uploads-of-up-to-50000-files-2026-11-21)).
+Not run: a desktop driver with a large folder, the app on a real desktop,
+a real provider.
 
 ### Release 0.1.3 (2026-11-19)
 
