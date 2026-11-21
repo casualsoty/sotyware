@@ -1503,8 +1503,10 @@ code: `src-tauri/src/cloud/operations.rs` (+ `operations/names.rs`),
     systems; a failed item is removed, never left half-written.
   - **Folder uploads and drops** reuse the upload batch (same checks,
     `HeadObject` before each file, never overwrite) with keys
-    `prefix + folder/…`, at most 1,000 files; symbolic links are not
-    followed. Dropped paths stay in Rust (`CloudDrops`); the page hears
+    `prefix + folder/…`, at most 50,000 files (1,000 until 2026-11-21,
+    raised to the bound of a file operation's plan so large folders go in
+    one batch; the upload panel then shows its rows 1,000 at a time);
+    symbolic links are not followed. Dropped paths stay in Rust (`CloudDrops`); the page hears
     counts and names through a channel and confirms.
   - **Favorites and recent items** are local, per account, in
     `cloud-places.sqlite3` (own schema, append-only migrations); never

@@ -976,7 +976,12 @@ can be retried.
    Cancelled during its upload, Not started: …) and notes below. A file is
    shown as uploaded only after its `completed` event. The list scrolls
    (at most about 15 lines high), so a batch of 100 does not push the folder
-   out of view.
+   out of view. Above 1,000 files (a folder or a drop) it shows 1,000 rows
+   at a time, "Files *a*–*b* of *n* listed." with **Previous files** and
+   **Next files**, and once the batch finished **Only files that were not
+   uploaded** (skipped, failed, cancelled). Each event updates one file and
+   the running counts without scanning the batch, so a 50,000-file batch
+   costs the same per event as a small one.
 5. At the end the `finished` summary replaces the files' states: "Upload
    finished / cancelled / stopped after an error. *m* files: *x* uploaded,
    *y* skipped, *z* failed, … not started.", the stopping error, and "*k*
@@ -1125,7 +1130,7 @@ files it had completed).
 ### Folder uploads and drag and drop
 
 `upload_cloud_folder` opens a folder dialog and builds one upload batch from
-every regular file below it (≤ 1,000; symbolic links skipped, empty folders
+every regular file below it (≤ 50,000; symbolic links skipped, empty folders
 add nothing) with keys `prefix + <folder name>/<path>`; a name that is not
 valid Unicode anywhere on the path skips that file. Dropped files and
 folders (`WindowEvent::DragDrop`) are kept in `CloudDrops` for 2 minutes;

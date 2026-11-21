@@ -615,6 +615,48 @@ describe("progress", () => {
     expect(text(panel(b).querySelector(".upload-progress"))).toContain("0 of 100 files finished.");
   });
 
+  it("pages a folder batch longer than 1,000 files and keeps counting as events arrive", async () => {
+    const files = Array.from({ length: 2500 }, (_, i) => uf(i, `big/f${i}.txt`));
+    const { b, channel } = await started(files);
+    expect(fileRows(b)).toHaveLength(1000);
+    expect(row(b, 0)).toBeDefined();
+    expect(text(panel(b))).toContain("Files 1–1,000 of 2,500 listed.");
+    expect(button(b, "Previous files").disabled).toBe(true);
+
+    await send(channel, fileEvent("upload-1", 1, 2500, done(0, "big/f0.txt")));
+    await send(channel, fileEvent("upload-1", 2, 2500, progressing(1, "big/f1.txt", "sending", 500)));
+    expect(text(panel(b).querySelector(".upload-progress"))).toContain("1 of 2500 files finished.");
+    expect(text(panel(b).querySelector(".upload-current"))).toContain("File 2 of 2500: big/f1.txt");
+    expect(status(b, 0)).toBe("Uploaded and verified");
+
+    await click(b, "Next files");
+    expect(text(panel(b))).toContain("Files 1,001–2,000 of 2,500 listed.");
+    expect(fileRows(b)[0]).toBe("big/f1000.txt | 1000 B | Waiting");
+    // An event for a file on another page changes the counts, not the rows.
+    await send(channel, fileEvent("upload-1", 3, 2500, done(1, "big/f1.txt")));
+    expect(text(panel(b).querySelector(".upload-progress"))).toContain("2 of 2500 files finished.");
+    expect(panel(b).querySelector(".upload-current")).toBeNull();
+    await click(b, "Next files");
+    expect(fileRows(b)).toHaveLength(500);
+    expect(button(b, "Next files").disabled).toBe(true);
+
+    const final = files.map((f, i) =>
+      i === 7
+        ? failedFile(7, "big/f7.txt", "network", "the connection broke off", "nothing-stored")
+        : done(i, f["name"] as string),
+    );
+    await send(channel, finishedEvent("upload-1", 4, summary("completed", final)));
+    expect(text(panel(b))).toContain("2500 files: 2499 uploaded, 1 failed.");
+    const only = panel(b).querySelector<HTMLInputElement>(".list-controls input[type=checkbox]");
+    expect(only).not.toBeNull();
+    only!.click();
+    flushSync();
+    await settle();
+    expect(fileRows(b)).toHaveLength(1);
+    expect(fileRows(b)[0]).toContain("big/f7.txt | 1000 B | Failed");
+    expect(maybeButton(b, "Next files")).toBeUndefined();
+  });
+
   it("reports an event it cannot read without showing its content", async () => {
     const { b, channel } = await started();
     await send(channel, { batch: "upload-1", seq: 1, kind: "file", count: 2, file: { path: LOCAL_PATH } });

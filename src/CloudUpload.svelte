@@ -92,7 +92,22 @@
     protocolError: boolean;
     /** Whether this batch is a retry of an earlier one. */
     retry: boolean;
+    /** How many files are in a final state, kept as events arrive. */
+    finished: number;
+    /** The file being uploaded, by `index`, kept as events arrive. */
+    runningIndex: number | null;
+    /** The page of rows shown when the list is longer than `ROW_LIMIT`. */
+    page: number;
+    /** Whether the list shows only the files that were not uploaded. */
+    onlyNotUploaded: boolean;
   }
+
+  /**
+   * Rows shown at once. A folder batch can hold 50,000 files: every event
+   * updates one file in O(1) and redraws at most one page, so a long batch
+   * costs the same per event as a short one.
+   */
+  const ROW_LIMIT = 1000;
 
   let upload = $state<Batch | null>(null);
   let uploadSeq = 0;
@@ -106,13 +121,28 @@
     busy = active;
   });
 
-  const finishedCount = $derived(upload === null ? 0 : upload.files.filter((f) => FINAL_FILE_STATES.has(f.state)).length);
-  const running = $derived(
-    upload === null || upload.summary !== null
-      ? null
-      : (upload.files.find((f) => f.state === "hashing" || f.state === "sending" || f.state === "verifying") ??
-          upload.files.find((f) => f.started && !FINAL_FILE_STATES.has(f.state)) ??
-          null),
+  const finishedCount = $derived(upload === null ? 0 : upload.finished);
+  const running = $derived.by((): UploadFile | null => {
+    if (upload === null || upload.summary !== null || upload.runningIndex === null) {
+      return null;
+    }
+    const at = position(upload.files, upload.runningIndex);
+    return at < 0 ? null : (upload.files[at] ?? null);
+  });
+
+  /** The files the list can show: all, or only those not uploaded. */
+  const listed = $derived.by((): UploadFile[] => {
+    if (upload === null) {
+      return [];
+    }
+    return upload.onlyNotUploaded && upload.summary !== null
+      ? upload.files.filter((f) => NOT_UPLOADED.has(f.state))
+      : upload.files;
+  });
+  const pageCount = $derived(Math.max(1, Math.ceil(listed.length / ROW_LIMIT)));
+  const shownPage = $derived(upload === null ? 0 : Math.min(upload.page, pageCount - 1));
+  const shown = $derived(
+    listed.length <= ROW_LIMIT ? listed : listed.slice(shownPage * ROW_LIMIT, (shownPage + 1) * ROW_LIMIT),
   );
 
   const STAGE_LABELS: Record<UploadStage, string> = {
@@ -147,16 +177,72 @@
       retryClosed: false,
       protocolError: false,
       retry,
+      finished: 0,
+      runningIndex: null,
+      page: 0,
+      onlyNotUploaded: false,
     };
   }
 
+  const NOT_UPLOADED: ReadonlySet<UploadFile["state"]> = new Set(["skipped", "failed", "cancelled"]);
+
+  /**
+   * Where the file `index` is in `files` (sorted by index), or -1. Rust
+   * numbers a batch's files 0, 1, 2…, so once the reply is in, a file sits
+   * at its own index; before that, a binary search finds it.
+   */
+  function position(files: readonly UploadFile[], index: number): number {
+    if (files[index]?.index === index) {
+      return index;
+    }
+    let lo = 0;
+    let hi = files.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const at = files[mid]!.index;
+      if (at === index) {
+        return mid;
+      }
+      if (at < index) {
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return -1;
+  }
+
+  function isRunning(f: UploadFile): boolean {
+    return !FINAL_FILE_STATES.has(f.state) && (f.started || f.state !== "pending");
+  }
+
   function putFile(b: Batch, file: UploadFile): void {
-    const at = b.files.findIndex((f) => f.index === file.index);
+    const at = position(b.files, file.index);
+    const before = at === -1 ? null : b.files[at]!;
     if (at === -1) {
+      // Only before the reply: at most the few files its events reached.
       b.files = [...b.files, file].sort((x, y) => x.index - y.index);
     } else {
       b.files[at] = file;
     }
+    b.finished +=
+      (FINAL_FILE_STATES.has(file.state) ? 1 : 0) -
+      (before !== null && FINAL_FILE_STATES.has(before.state) ? 1 : 0);
+    if (isRunning(file)) {
+      b.runningIndex = file.index;
+    } else if (b.runningIndex === file.index) {
+      b.runningIndex = null;
+    }
+  }
+
+  function countFinished(files: readonly UploadFile[]): number {
+    let n = 0;
+    for (const f of files) {
+      if (FINAL_FILE_STATES.has(f.state)) {
+        n += 1;
+      }
+    }
+    return n;
   }
 
   function onEvent(seq: number, event: UploadEvent): void {
@@ -193,6 +279,8 @@
       case "finished":
         b.summary = event.summary;
         b.files = [...event.summary.files].sort((x, y) => x.index - y.index);
+        b.finished = countFinished(b.files);
+        b.runningIndex = null;
         b.count = event.summary.count;
         b.phase = "finished";
         b.cancel = null;
@@ -221,12 +309,24 @@
       return;
     }
     b.destination.prefix = selection.prefix;
+    // One merge, not one insert per file: a folder batch can be large.
+    // Files that events already reported keep their newer state.
+    const reported = new Map(b.files.map((f) => [f.index, f]));
+    const merged: UploadFile[] = [];
     for (const file of selection.files) {
-      if (b.fileSeq[file.index] === undefined) {
+      const known = reported.get(file.index);
+      if (known === undefined) {
         b.fileSeq[file.index] = 0;
-        putFile(b, file);
+        merged.push(file);
+      } else {
+        reported.delete(file.index);
+        merged.push(known);
       }
     }
+    merged.push(...reported.values());
+    merged.sort((x, y) => x.index - y.index);
+    b.files = merged;
+    b.finished = countFinished(merged);
     b.count = Math.max(b.count, selection.files.length);
     if (selection.batch === null) {
       b.phase = "nothing";
@@ -588,9 +688,49 @@
         </ul>
       {/if}
 
-      {#if upload.files.length > 0}
+      {#if upload.files.length > ROW_LIMIT}
+        <div class="list-controls">
+          {#if upload.summary !== null}
+            <label>
+              <input
+                type="checkbox"
+                checked={upload.onlyNotUploaded}
+                onchange={(e) => {
+                  if (upload !== null) {
+                    upload.onlyNotUploaded = e.currentTarget.checked;
+                    upload.page = 0;
+                  }
+                }}
+              />
+              Only files that were not uploaded
+            </label>
+          {/if}
+          {#if listed.length > ROW_LIMIT}
+            <p class="hint" role="status">
+              Files {(shownPage * ROW_LIMIT + 1).toLocaleString()}–{Math.min(
+                (shownPage + 1) * ROW_LIMIT,
+                listed.length,
+              ).toLocaleString()} of {listed.length.toLocaleString()} listed.
+            </p>
+            <div class="actions">
+              <button
+                type="button"
+                disabled={shownPage === 0}
+                onclick={() => upload !== null && (upload.page = shownPage - 1)}>Previous files</button
+              >
+              <button
+                type="button"
+                disabled={shownPage >= pageCount - 1}
+                onclick={() => upload !== null && (upload.page = shownPage + 1)}>Next files</button
+              >
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      {#if shown.length > 0}
         <ol class="upload-files" aria-label="Files in this upload">
-          {#each upload.files as f (f.index)}
+          {#each shown as f (f.index)}
             <li data-index={f.index} data-state={f.state} data-started={f.started}>
               <span class="file-name name">{shownName(f.name)}</span>
               <span class="file-size">{f.size === null ? "" : formatSize(f.size)}</span>
@@ -692,14 +832,19 @@
     font-weight: var(--weight-semibold);
   }
 
+  .list-controls {
+    margin: var(--space-2) 0;
+    font-size: var(--text-sm);
+  }
+
   .upload-cleanup {
     margin: var(--space-2) 0;
     padding-left: var(--space-5);
     font-size: var(--text-sm);
   }
 
-  /* A batch holds up to 100 files: the list scrolls instead of pushing the
-     folder out of view. */
+  /* A batch shows up to 1,000 rows at a time (more as pages): the list
+     scrolls instead of pushing the folder out of view. */
   .upload-files {
     list-style: none;
     margin: var(--space-2) 0;

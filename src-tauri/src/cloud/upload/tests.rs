@@ -1939,6 +1939,31 @@ async fn a_retried_folder_upload_keeps_the_relative_keys() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_folder_with_more_files_than_the_old_limit_is_uploaded_whole() {
+    // Folder uploads were refused above 1,000 files until 2026-11-21.
+    const { assert!(MAX_FOLDER_FILES >= 50_000) };
+    let s = setup().await;
+    let names: Vec<String> = (0..1_001)
+        .map(|i| format!("part{}/f{i:04}.txt", i % 3))
+        .collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let root = s.tree("Big", &refs);
+    let selection = s.begin_folder("", Some(root)).await.unwrap().unwrap();
+    assert_eq!(selection.files.len(), 1_001);
+    assert!(
+        selection
+            .files
+            .iter()
+            .enumerate()
+            .all(|(i, f)| f.index as usize == i && f.skip.is_none())
+    );
+    let summary = s.finished(selection.batch.as_ref().unwrap()).await;
+    assert_eq!(summary.state, BatchState::Completed, "{:?}", summary.error);
+    assert_eq!(summary.completed, 1_001);
+    assert_eq!(s.count_ops("PutObject"), 1_001);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_empty_or_too_large_folder_starts_nothing() {
     let s = setup().await;
     let empty = s.dir.path("Empty");

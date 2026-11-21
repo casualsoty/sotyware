@@ -734,8 +734,10 @@ server only; no real provider was asked.
   before, that item failed). A folder that appears at the chosen name in
   the instant between the existence check and the rename could, on Linux,
   be replaced if it is empty (rename semantics).
-- **Folder uploads and drops**: at most 1,000 files; empty folders are not
-  created; symbolic links are skipped; a drop is kept 2 minutes.
+- **Folder uploads and drops**: at most 50,000 files (the same bound as a
+  file operation); files go one after another, so a large folder of small
+  files takes long (three requests each, no parallel uploads); empty
+  folders are not created; symbolic links are skipped; a drop is kept 2 minutes.
 - **Share links** contain the access key id and cannot be withdrawn before
   they expire except by removing the key at the provider.
 - **Previews**: text up to 256 KiB, PNG/JPEG/GIF/WebP/BMP up to 10 MiB;

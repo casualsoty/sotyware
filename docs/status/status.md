@@ -149,6 +149,24 @@ about another.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
 
+### Folder uploads of up to 50,000 files (2026-11-21)
+
+Folder uploads and drops were refused above 1,000 files; the bound is now
+50,000 (`MAX_FOLDER_FILES`), the same as a file operation's plan. The
+backend's per-file work was already linear. The upload panel was not: each
+event scanned every file (finished count, running file), the reply was
+merged one file at a time (quadratic) and every file had a row. Now an
+event updates one file and the counts directly, the reply is merged once,
+and above 1,000 files the list is paged with a filter for the files not
+uploaded. A throwaway happy-dom benchmark (not committed): the old panel
+took 31 s to show a 5,000-file selection and 26 ms per event; the new one
+shows 50,000 in 0.2 s and handles an event in about 2 ms.
+
+WSL2 only: a Rust test uploads a 1,001-file folder through the in-process
+server (completed, 1,001 PUTs); a Vitest test pages a 2,500-file batch.
+Not run: a desktop driver with a large folder, native Windows, a real
+provider.
+
 ### Release 0.1.3 (2026-11-19)
 
 **`v0.1.3` is published**, with the autoclicker and macros (ADR-050)

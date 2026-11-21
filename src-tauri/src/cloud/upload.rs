@@ -79,9 +79,12 @@ use crate::journal::Journal;
 /// Most files one batch of picked files may hold.
 pub const MAX_FILES: usize = 100;
 
-/// Most files a folder upload may hold (every file under the picked
-/// folder, at any depth).
-pub const MAX_FOLDER_FILES: usize = 1_000;
+/// Most files a folder upload or a drop may hold (every file under the
+/// picked folder, at any depth). The same bound as a file operation's plan
+/// (`operations::MAX_OBJECTS`), so a folder that could be uploaded can also
+/// be copied, moved or deleted. Everything a batch keeps per file is small
+/// and linear; the page shows the rows a page at a time.
+pub const MAX_FOLDER_FILES: usize = 50_000;
 
 /// How long quitting waits for a cancelled batch and for multipart aborts:
 /// the default abort timeout (30 s, `ClientOptions::abort_timeout`) plus
@@ -1842,7 +1845,7 @@ async fn choose_folder(_window: &tauri::WebviewWindow) -> Option<PathBuf> {
 }
 
 /// Asks for a folder in the native folder dialog and uploads every file in
-/// it (any depth, at most 1,000) into `prefix` + the folder's name, as one
+/// it (any depth, at most 50,000) into `prefix` + the folder's name, as one
 /// batch with the same rules as `upload_cloud_files`. The folder's path
 /// stays in Rust. Allowed by `allow-upload-cloud-folder`.
 #[tauri::command]

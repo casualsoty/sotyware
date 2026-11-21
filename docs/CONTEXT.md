@@ -379,7 +379,7 @@ update server exist), all tested headless against in-process servers only.
   CSP `img-src data:`), presigned share links (1 h / 1 day / 7 days),
   several-item downloads into a picked folder (staging, `name (n)`, safe
   local names), folder uploads and drag and drop through the upload batch
-  (≤ 1,000 files, paths kept in Rust), favorites and recent items per
+  (≤ 50,000 files since 2026-11-21, paths kept in Rust), favorites and recent items per
   account (`cloud-places.sqlite3`).
 
 - **Provider capabilities and conditional writes** (2026-11-15, ADR-029):
