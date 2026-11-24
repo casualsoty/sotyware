@@ -274,8 +274,6 @@ ADR-026; public ACLs do not).
 
 ## Gaming notes overlay (after ADR-052)
 
-- `desktop-virtual.yml` (`ci.yml` and `macos.yml` passed at `fe816d1`:
-  [status](status.md#hosted-runs-at-fe816d1-the-notes-overlay-and-en-us-numbers-on-main-2026-11-24)).
 - A real game in borderless and exclusive fullscreen on Windows; a real
   Linux desktop with a compositor (GNOME on Xorg, KDE), and Wayland;
   monitors with different scalings.

@@ -55,7 +55,9 @@ unattended on a private desktop (50 of 50 four times after the keyboard
 fix) and, with their go-ahead, with real input on their desktop against a
 window of the driver playing the game (2026-11-24: 80 of 80 three times
 after fixes of the driver only). Hosted CI passed at `fe816d1`
-(2026-11-24), the overlay's first build on both Macs. Not run: a Mac a
+(2026-11-24), the overlay's first build on both Macs, and
+`release-build.yml` and `desktop-virtual.yml` (140/0/0) at `d3f6673`
+([2026-11-25](status/status.md#release-buildyml-and-desktop-virtualyml-on-main-at-d3f6673-2026-11-25)). Not run: a Mac a
 person used, real Linux desktops, Wayland, Windows 10, a real game.
 
 **Autoclicker and macros** (2026-11-17, ADR-050,
