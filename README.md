@@ -27,7 +27,7 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   primary screen (at least 900 × 540), centred, then where you left it.
 - Built-in features: native Rust modules that can be enabled and disabled from
   the dashboard (scheduled backups, automatic update checks, folder sync, the
-  autoclicker); each
+  autoclicker, the notes overlay); each
   choice is saved locally (SQLite, in the app's data folder, private to the
   user).
 - **Cloud Storage** for S3-compatible buckets (Backblaze B2, Hetzner or any
@@ -73,6 +73,15 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
   shortcuts, with an emergency stop (F8), fail-safe screen corners and
   every held key released when anything stops
   ([docs/user/automation.md](docs/user/automation.md)).
+- **Gaming notes overlay** (off until you turn it on): a small window of
+  notes that stays above a game or any other program, see-through from 20
+  to 100 %, moved, resized and collapsed from its own title bar; several
+  Markdown notes with checklists, tabs, search and pins, saved on this
+  computer as you type; a passive mode in which clicks go through it to
+  the game and it never takes the keyboard; global shortcuts
+  (Ctrl+Shift+F1 to F5) on Windows and Linux on X11. It cannot show above
+  a game in exclusive fullscreen
+  ([docs/user/notes-overlay.md](docs/user/notes-overlay.md)).
 - **Backups**: jobs that keep an independent, verified, versioned copy of a
   bucket (or folder) in a second account, ideally at another provider:
   scheduled or manual runs that transfer only changes, verification, a
