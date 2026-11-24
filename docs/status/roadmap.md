@@ -272,6 +272,17 @@ ADR-026; public ACLs do not).
   movement for games, conditions and variables, scheduled starts, and
   starting sotyware at login or minimised (see [Ideas](#ideas-not-decided)).
 
+## Gaming notes overlay (after ADR-052)
+
+- Hosted CI on the branch (`ci.yml`, `macos.yml`: the overlay's code has
+  not been built on macOS), and `desktop-virtual.yml`.
+- A real game in borderless and exclusive fullscreen on Windows; a real
+  Linux desktop with a compositor (GNOME on Xorg, KDE), and Wayland;
+  monitors with different scalings.
+- Possible later work, each a decision of its own: macOS (see-through
+  windows through Tauri's private API, a shortcut backend), per-game
+  profiles, images in notes, timers.
+
 ## Known follow-ups (not started, no design yet)
 
 - WebKit's web process crashes as sotyware quits on GitHub's Ubuntu 26.04

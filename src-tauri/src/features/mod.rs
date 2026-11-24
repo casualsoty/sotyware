@@ -13,6 +13,7 @@
 mod autoclicker;
 mod backup;
 mod folder_sync;
+mod notes_overlay;
 mod preferences;
 mod registry;
 mod updates;
@@ -35,6 +36,7 @@ pub fn builtin() -> Vec<Box<dyn Feature>> {
         Box::new(updates::UpdateCheck),
         Box::new(folder_sync::FolderSync),
         Box::new(autoclicker::Autoclicker),
+        Box::new(notes_overlay::NotesOverlay),
     ]
 }
 

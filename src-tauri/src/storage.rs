@@ -21,11 +21,13 @@ use crate::backup::{BackupStore, RunRow};
 
 mod automation;
 mod folder_sync;
+mod notes;
 use crate::cloud::account::{AccountConfig, AccountStore};
 use crate::features::{PreferenceStore, StoreError};
 use crate::journal::{EntryRow, JournalStore, StepRow};
 pub use automation::{AUTOMATION_FILE_NAME, SqliteAutomationStore};
 pub use folder_sync::{IssueRow, SYNC_FILE_NAME, SqliteSyncStore};
+pub use notes::{NOTES_FILE_NAME, SqliteNotesStore};
 
 /// The database file inside the app's local data directory.
 pub const FILE_NAME: &str = "preferences.sqlite3";
@@ -896,6 +898,19 @@ pub fn open_automation_store(
         .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
     Ok(Box::new(SqliteAutomationStore::open(
         &dir.join(AUTOMATION_FILE_NAME),
+    )?))
+}
+
+/// The notes overlay's store `run()` uses (ADR-052): [`NOTES_FILE_NAME`]
+/// in `dir`.
+pub fn open_notes_store(
+    dir: tauri::Result<PathBuf>,
+) -> Result<Box<dyn crate::overlay::NotesStore>, StoreError> {
+    let dir = dir.map_err(|e| StoreError::new(format!("no app data folder: {e}")))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| StoreError::new(format!("cannot create the folder {}: {e}", dir.display())))?;
+    Ok(Box::new(SqliteNotesStore::open(
+        &dir.join(NOTES_FILE_NAME),
     )?))
 }
 

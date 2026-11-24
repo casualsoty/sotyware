@@ -25,7 +25,7 @@
     describeUploadError,
     describeUploadFailure,
   } from "./cloudMessages";
-  import { formatSize, shownName } from "./format";
+  import { formatCount, formatSize, shownName } from "./format";
 
   // The upload panel of the cloud browser. It shows one batch (the latest)
   // exactly as Rust reports it (src-tauri/src/cloud/upload.rs): Rust opens
@@ -707,10 +707,10 @@
           {/if}
           {#if listed.length > ROW_LIMIT}
             <p class="hint" role="status">
-              Files {(shownPage * ROW_LIMIT + 1).toLocaleString()}–{Math.min(
+              Files {formatCount(shownPage * ROW_LIMIT + 1)}–{formatCount(Math.min(
                 (shownPage + 1) * ROW_LIMIT,
                 listed.length,
-              ).toLocaleString()} of {listed.length.toLocaleString()} listed.
+              ))} of {formatCount(listed.length)} listed.
             </p>
             <div class="actions">
               <button

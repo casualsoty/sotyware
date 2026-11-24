@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { formatSize } from "./format";
+  import { formatDate, formatDateTime, formatSize } from "./format";
   import Icon from "./Icon.svelte";
   import { FAILURE_TITLES, UpdatesModel } from "./updatesModel.svelte";
 
@@ -23,7 +23,7 @@
   const install = $derived(model.install);
 
   function when(ms: number): string {
-    return new Date(ms).toLocaleString();
+    return formatDateTime(new Date(ms));
   }
 
   function released(rfc3339: string | null): string | null {
@@ -31,7 +31,7 @@
       return null;
     }
     const d = new Date(rfc3339);
-    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" });
+    return Number.isNaN(d.getTime()) ? null : formatDate(d, { year: "numeric", month: "long", day: "numeric" });
   }
 
   function progressText(downloaded: number, total: number | null): string {

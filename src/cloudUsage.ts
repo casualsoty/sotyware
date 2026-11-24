@@ -6,6 +6,7 @@
 // fails loudly.
 import { Channel } from "@tauri-apps/api/core";
 import { call, CANCEL_OUTCOMES, type CancelOutcome } from "./cloud";
+import { LOCALE } from "./format";
 
 export const STORAGE_USAGE_OVERVIEW = "storage_usage_overview";
 export const MEASURE_STORAGE_USAGE = "measure_storage_usage";
@@ -374,7 +375,7 @@ export function storedBytes(m: Measurement): number {
 /** An amount in its currency, as the page writes it ("$1.39", "€6.49"). */
 export function formatMoney(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+    return new Intl.NumberFormat(LOCALE, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
   } catch {
     return `${currency} ${amount.toFixed(2)}`;
   }

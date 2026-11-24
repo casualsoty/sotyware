@@ -22,6 +22,7 @@
     positionBefore,
     totalDuration,
   } from "./automationFormat";
+  import { formatCount } from "./format";
   import type { AutomationModel } from "./automationModel.svelte";
   import HotkeyInput from "./HotkeyInput.svelte";
   import Icon from "./Icon.svelte";
@@ -248,7 +249,7 @@
     selected = [];
     page = 0;
     changed();
-    notice = `${removed.toLocaleString("en-US")} pointer movements removed; their time was kept.`;
+    notice = `${formatCount(removed)} pointer movements removed; their time was kept.`;
   }
 
   function setDelays(indices: number[], f: (d: number) => number): void {
@@ -493,7 +494,7 @@
     <div class="card">
       <div class="actions-head">
         <h3 class="section-title">Actions</h3>
-        <p class="muted small-text">{m.actions.length.toLocaleString("en-US")} actions, {formatDuration(total)} at normal speed</p>
+        <p class="muted small-text">{formatCount(m.actions.length)} actions, {formatDuration(total)} at normal speed</p>
       </div>
 
       <div class="timeline" role="img" aria-label="Timeline of {m.actions.length} actions over {formatDuration(total)}">
@@ -593,7 +594,7 @@
         {#if pages > 1}
           <div class="pager">
             <button type="button" class="small" disabled={page === 0} onclick={() => (page -= 1)}>Previous</button>
-            <p class="small-text muted">Actions {page * PAGE + 1}–{Math.min(m.actions.length, (page + 1) * PAGE)} of {m.actions.length.toLocaleString("en-US")}</p>
+            <p class="small-text muted">Actions {page * PAGE + 1}–{Math.min(m.actions.length, (page + 1) * PAGE)} of {formatCount(m.actions.length)}</p>
             <button type="button" class="small" disabled={page >= pages - 1} onclick={() => (page += 1)}>Next</button>
           </div>
         {/if}

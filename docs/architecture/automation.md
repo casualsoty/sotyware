@@ -159,7 +159,12 @@ exported.
   profile activated later) register first come first served and the others
   show "has the same shortcut". A chord the system or another program
   holds shows that program's refusal per binding (Settings tab, Overview),
-  the others still work.
+  the others still work. A chord the gaming notes overlay holds (ADR-052:
+  its own instance of the backend, so the system alone would call it
+  "another program") is refused with its name, "Not registered: the notes
+  overlay uses this shortcut": both features publish the chords they hold
+  in `automation::claims` (`claims.rs`), and when one gives a chord up the
+  other tries its refused bindings again, on a thread of its own.
 - **Registration** follows the configuration: the emergency stop, the
   active profile's and the macros' enabled bindings are registered while
   the feature runs (and, while a session runs, the emergency stop with

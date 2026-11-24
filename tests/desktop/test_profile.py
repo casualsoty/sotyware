@@ -32,7 +32,7 @@ ACK_FILE = "sotyware-test-profile-ack.json"
 STORES = ("preferences.sqlite3", "cloud-accounts.sqlite3", "cloud-places.sqlite3",
           "operations-journal.sqlite3", "backup.sqlite3", "account.sqlite3",
           "updates.sqlite3", "window-state.sqlite3", "storage-usage.sqlite3",
-          "folder-sync.sqlite3", "automation.sqlite3")
+          "folder-sync.sqlite3", "automation.sqlite3", "notes.sqlite3")
 PURPOSE = "sotyware-desktop-test-profile"
 BUILD_MARKER = b"sotyware-test-profile-build"
 IDENTIFIER = "com.sotyware.desktop.test"

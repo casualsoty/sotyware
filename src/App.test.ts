@@ -26,9 +26,12 @@ const SYNCS_CMD = "list_folder_syncs"; // folder sync's status for the sidebar (
 const SYNCS_WATCH_CMD = "watch_folder_syncs"; // its live updates on a channel
 const AUTOMATION_CMD = "automation_status"; // the autoclicker's state for the sidebar (ADR-050); tested in Autoclicker.test.ts
 const AUTOMATION_WATCH_CMD = "watch_automation"; // its live updates on a channel
+const OVERLAY_WATCH_CMD = "watch_overlay"; // the notes overlay's state for Settings and the Overview (ADR-052); tested in NotesOverlaySettings.test.ts
 
 let calls: IpcCall[];
 let mode: unknown;
+/** The notes overlay's status channel, once the shell watches it. */
+let overlayChannel: { onmessage: (m: unknown) => void } | null;
 let respond: (cmd: string) => unknown;
 let app: ReturnType<typeof mount> | undefined;
 
@@ -58,6 +61,32 @@ let accountList: Record<string, unknown>[];
 /** What the window says about its native decorations (null: the default
  * answer of the mock, which keeps the native title bar). */
 let decorated: boolean | null;
+
+/** A notes overlay status (ADR-052; NotesOverlaySettings.test.ts covers
+ * the rest). */
+function overlayStatus(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    seq: 1,
+    running: true,
+    visible: false,
+    mode: "interactive",
+    collapsed: false,
+    opacity: 88,
+    textSize: "medium",
+    activeNote: null,
+    activeSeq: 0,
+    notesSeq: 0,
+    focusSeq: 0,
+    focusTarget: "content",
+    settingsSeq: 0,
+    noteCount: 2,
+    hotkeys: [{ action: "toggle-visible", label: "", chord: "Ctrl+Shift+F1", keys: "Ctrl + Shift + F1", registered: true, error: null }],
+    shortcutsNote: null,
+    notice: null,
+    storageError: null,
+    ...over,
+  };
+}
 
 /** What `list_folder_syncs` answers (CloudSync.test.ts covers the tab). */
 let folderSyncs: Record<string, unknown>;
@@ -103,6 +132,10 @@ function backend(cmd: string): unknown {
       };
     case AUTOMATION_WATCH_CMD:
       return 2;
+    case OVERLAY_WATCH_CMD:
+      return 3;
+    case "set_overlay_visible":
+      return overlayStatus({ seq: 9, visible: true });
     default:
       return null;
   }
@@ -123,8 +156,12 @@ beforeEach(() => {
   mode = "tray";
   respond = backend;
   mockWindows(DASHBOARD_LABEL);
+  overlayChannel = null;
   mockIPC((cmd, payload) => {
     calls.push({ cmd, payload });
+    if (cmd === OVERLAY_WATCH_CMD) {
+      overlayChannel = (payload as { onEvent: { onmessage: (m: unknown) => void } }).onEvent;
+    }
     return respond(cmd);
   });
 });
@@ -184,6 +221,7 @@ describe("dashboard in tray mode", () => {
       UPDATE_CMD,
       AUTOMATION_WATCH_CMD,
       SYNCS_WATCH_CMD,
+      OVERLAY_WATCH_CMD,
     ]);
   });
 
@@ -296,6 +334,7 @@ describe("dashboard in dashboard-only mode", () => {
       UPDATE_CMD,
       AUTOMATION_WATCH_CMD,
       SYNCS_WATCH_CMD,
+      OVERLAY_WATCH_CMD,
     ]);
     expect(hideCalls()).toHaveLength(0);
   });
@@ -741,5 +780,33 @@ describe("main.ts", () => {
     } finally {
       svelte.unmount(mounted);
     }
+  });
+});
+
+describe("the notes overlay in the shell", () => {
+  it("opens Settings › Notes overlay when the overlay asks for its settings", async () => {
+    const root = await render();
+    overlayChannel?.onmessage(overlayStatus());
+    flushSync();
+    expect(root.querySelector("main h1")?.textContent).toBe("Overview");
+    overlayChannel?.onmessage(overlayStatus({ seq: 2, settingsSeq: 1 }));
+    await settle();
+    expect(root.querySelector("main h1")?.textContent).toBe("Settings");
+    expect(root.querySelector("[role='tab'][aria-selected='true']")?.textContent?.trim()).toBe("Notes overlay");
+  });
+
+  it("shows the overlay's state on the Overview and shows the overlay from there", async () => {
+    const root = await render();
+    overlayChannel?.onmessage(overlayStatus());
+    flushSync();
+    const card = root.querySelector("[aria-labelledby='overview-overlay']");
+    expect(card?.textContent).toContain("Hidden");
+    expect(card?.textContent).toContain("2 notes");
+    expect(card?.textContent).toContain("Ctrl + Shift + F1 shows and hides it.");
+    const show = [...(card?.querySelectorAll("button") ?? [])].find((b) => b.textContent?.trim() === "Show overlay");
+    show?.click();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "set_overlay_visible").map((c) => c.payload)).toEqual([{ visible: true }]);
+    expect(card?.textContent).toContain("Shown");
   });
 });

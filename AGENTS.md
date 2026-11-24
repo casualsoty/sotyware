@@ -70,17 +70,25 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   Windows 11 on 2026-11-18; the page driven on Windows by
   `windows-autoclicker.ps1` on 2026-11-19: 101 of 102 checks, the one
   failure, a shortcut field's refusal without a name for UI Automation,
-  fixed the same day). No other product features exist yet. Current milestone and status:
+  fixed the same day); and the gaming notes overlay (ADR-052: a second
+  window, frameless, transparent, always on top, interactive or passive
+  (click-through), with several Markdown notes and checklists in
+  `notes.sqlite3` and its own global shortcuts, while the built-in feature
+  `notes-overlay` runs, which is off by default; committed as `4706140` on
+  the branch `feat/gaming-notes-overlay`, not pushed; tested
+  with real input on a private Xvfb and on the maintainer's Windows 11
+  desktop (80/80 three times on 2026-11-24), and on a Windows private
+  desktop without input). No other product features exist yet. Current milestone and status:
   [docs/status/status.md](docs/status/status.md).
 
 ### Terminology
 
 | Term | Meaning |
 | --- | --- |
-| dashboard | the one webview window, label `main` (`DASHBOARD_LABEL`) |
+| dashboard | the main webview window, label `main` (`DASHBOARD_LABEL`), the only one `tauri.conf.json` declares (the notes overlay's is created at runtime) |
 | tray | the system tray icon and its menu |
 | hide | make the dashboard invisible; process keeps running |
-| close | the window manager's close (✕, Alt+F4); sotyware turns it into hide in tray mode, into quit in dashboard-only mode |
+| close | the window manager's close (✕, Alt+F4); sotyware turns it into hide in tray mode, into quit in dashboard-only mode (the notes overlay's close always hides it) |
 | quit | end the process; the tray "Quit" does this, and close in dashboard-only mode |
 | tray mode | the tray icon exists; the normal, background-running mode (`OperatingMode::Tray`) |
 | dashboard-only mode | Linux without a reachable tray host: no tray, no hide, close quits (`OperatingMode::DashboardOnly`) |
@@ -107,6 +115,8 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
 | profile (automation) | a named set of the clicker's configuration, shortcuts and a macro to play (`Profile`); the default profile is the one sotyware starts with |
 | binding / emergency stop | a shortcut that can be switched off without forgetting its keys (`Binding`, a `Chord` like `Ctrl+Alt+KeyR`) / the binding shared by every profile that stops whatever runs and releases what it held |
 | input backend | the platform's implementation of `automation::input::Backend` (Windows: SendInput, low-level hooks, RegisterHotKey; X11: XTest, RECORD, XGrabKey) |
+| notes overlay / note | the built-in feature `notes-overlay` and its window, label `overlay` (`OVERLAY_LABEL`), created at runtime (ADR-052) / one titled Markdown text in it (`Note`, in `notes.sqlite3`) |
+| interactive / passive (overlay) | the overlay takes clicks and, when asked, the keyboard / clicks go through it to the window below and it never takes the keyboard (`Mode`); switched by its shortcut, never stuck |
 | update manifest / version floor | `sotyware-update.json`, the minisign-signed description of a release (version, channel, per-platform installer URL, signature and SHA-256) / the highest version a verified manifest ever offered this installation; anything lower is refused as a replay (ADR-033) |
 
 Use these words consistently in code, UI, commits and docs. Docs use British
@@ -197,8 +207,9 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   session bus, no StatusNotifierWatcher, no StatusNotifierHost). Any other tray
   error → `exit(1)`. Platform checks stay in `unavailable_reason()`; other code
   sees only the mode.
-- **Window lifecycle:** close is turned into hide in tray mode and into `exit(0)`
-  in dashboard-only mode; implicit exits (`ExitRequested { code: None }`) are
+- **Window lifecycle:** the dashboard's close is turned into hide in tray
+  mode and into `exit(0)` in dashboard-only mode (the notes overlay's close
+  hides it in both); implicit exits (`ExitRequested { code: None }`) are
   blocked; only `exit(code)` ends the process.
 - **Tray:** `src-tauri/src/tray.rs`, "Open Dashboard" → `show_dashboard()`,
   "Quit" → `exit(0)`. Exists in tray mode only.
@@ -384,6 +395,20 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   (`automation.sqlite3`), the built-in feature `autoclicker` (off by
   default), page `src/Autoclicker.svelte` (its own JS chunk) with its tabs,
   the sidebar's indicator through `src/automationModel.svelte.ts`.
+- **Gaming notes overlay** (ADR-052, [notes-overlay.md](docs/architecture/notes-overlay.md)):
+  `src-tauri/src/overlay/` (`model.rs` pure rules: notes, order, limits,
+  settings, state, links; `placement.rs`: corners, scaling, restore;
+  `host.rs`: `OverlayHost` on Tauri, the window built at runtime;
+  `focus.rs`: Windows foreground and stacking; `mod.rs`: `NotesOverlay`
+  managed state, `NotesStore`, the shortcuts through a second instance
+  of the automation `Backend`, the status on a channel, 19 commands),
+  `src-tauri/src/storage/notes.rs` (`notes.sqlite3`),
+  `src-tauri/src/automation/claims.rs` (which feature holds which chord),
+  the built-in feature `notes-overlay` (off by default), the capability
+  `notes-overlay` (`capabilities/overlay.json`, the overlay's window
+  only), page `overlay.html` (`src/overlayMain.ts`,
+  `src/NotesOverlay.svelte`, `src/NoteView.svelte`, `src/noteMarkdown.ts`,
+  `src/noteAutosave.ts`), its settings `src/NotesOverlaySettings.svelte`.
 - **macOS menu bar** (ADR-037): `src-tauri/src/app_menu.rs` (Quit ⌘Q
   through `AppControl::quit`, Edit for the webview's clipboard keys,
   Window); `RunEvent::Reopen` (Dock click) shows the dashboard; credentials
@@ -450,9 +475,19 @@ Implemented today (details in [docs/architecture/](docs/architecture/overview.md
   `set_default_profile`, `save_automation_settings`, `export_automation`,
   `import_automation` (dialogs opened by Rust), `capture_cursor_position`,
   `capture_active_window`, `screen_layout`)
+  and the 19 overlay commands of ADR-052 (`watch_overlay`,
+  `unwatch_overlay`, `overlay_config`, `save_overlay_settings`,
+  `reset_overlay`, `set_overlay_visible`, `set_overlay_mode` for the
+  dashboard; `set_overlay_collapsed`, `set_overlay_opacity`,
+  `open_overlay_settings`, `open_note_link`, `list_notes`, `create_note`,
+  `save_note`, `delete_note`, `duplicate_note`, `set_note_pinned`,
+  `move_note`, `select_note` and four of the dashboard's for the overlay's
+  window only, through the capability `notes-overlay` in
+  `src-tauri/capabilities/overlay.json`, with `core:window:allow-start-dragging`
+  and `core:window:allow-start-resize-dragging`)
   (one `allow-<command>` permission each in
   `src-tauri/capabilities/default.json`; typed wrappers in `src/features.ts`,
-  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts`, `src/folderSync.ts`, `src/githubPage.ts` and `src/automation.ts`) and, in tray mode only, `getCurrentWindow().hide()`
+  `src/cloud.ts`, `src/cloudFiles.ts`, `src/cloudRecovery.ts`, `src/cloudUsage.ts`, `src/backup.ts`, `src/account.ts`, `src/updates.ts`, `src/folderSync.ts`, `src/githubPage.ts`, `src/automation.ts` and `src/notesOverlay.ts`) and, in tray mode only, `getCurrentWindow().hide()`
   (`core:window:allow-hide`, granted at runtime by the `tray-mode` capability in
   `setup`), `getCurrentWindow().setTheme()` (`core:window:allow-set-theme`,
   ADR-035) and `isDecorated()` (`core:window:allow-is-decorated`), and on
@@ -491,7 +526,8 @@ persistence other than the feature enabled/disabled choices, the cloud
 storage accounts and their favorites and recent items, the operation
 journal, the backup jobs, the account state, the update state, the window
 placement, the storage usage measurements, the folder syncs with their
-synced state and the autoclicker's settings, profiles and macros, no
+synced state, the autoclicker's settings, profiles and macros and the
+notes overlay's notes, settings and state, no
 settings, autostart,
 third-party plugin system, feature-management UI, a second account service instance or failover, XEmbed
 tray fallback, overwriting uploads (other than folder sync replacing the
@@ -508,8 +544,9 @@ console snapshots (no API), Windows 11 Snap Layouts on the page's maximize
 button, custom event, background (periodic) sync of the sotyware account, an
 input backend for macOS or Wayland, typing text as text, scheduled or
 conditional automation (screen content, variables), relative mouse movement
-for games, or custom command besides
-the 129 listed above. Never describe these as existing.
+for games, several overlay windows, images or timers in notes, see-through
+windows or shortcuts for the overlay on macOS, or custom command besides
+the 148 listed above. Never describe these as existing.
 
 ## Coding conventions
 
@@ -624,6 +661,8 @@ Every coding agent must:
    `Destination`/`UploadOptions` (folder sync), `Automation`, the
    `Backend` trait and `Output`, the automation `model`, `keys` and engines
    (`clicker`, `recorder`, `player`) and `Clock`/`Control` (autoclicker),
+   `NotesOverlay`, `OverlayHost`, `NotesStore`, the overlay `model` and
+   `placement`, and `automation::claims` (notes overlay),
    `Updates`/`release_resources` (updates), `WindowStates`/`window_state`
    and `title_bar` (placement and Windows chrome), `StorageUsage`/`usage`
    and `pricing` (usage and estimates), the frontend shell and design

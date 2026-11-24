@@ -2957,3 +2957,150 @@ Status: Accepted (2026-11-19). Code: `engine::snapshot_time` and
   remaining snapshots' dates
   ([limitations](../status/limitations.md#backups-adr-031)). No schema
   change: older builds read the same databases and repositories.
+
+## ADR-052: The gaming notes overlay is a second window created at runtime, with its notes in SQLite and its own native shortcuts, behind an opt-in feature
+
+Status: Accepted (2026-11-23). Code: `src-tauri/src/overlay/`,
+`src-tauri/src/storage/notes.rs`, `src-tauri/src/features/notes_overlay.rs`,
+`src-tauri/src/automation/claims.rs`, `src-tauri/capabilities/overlay.json`,
+`overlay.html`, `src/overlayMain.ts`, `src/NotesOverlay.svelte`,
+`src/NoteView.svelte`, `src/noteMarkdown.ts`, `src/noteAutosave.ts`,
+`src/notesOverlay.ts`, `src/NotesOverlaySettings.svelte`,
+`src/overlayModel.svelte.ts`. Details: [notes-overlay.md](notes-overlay.md).
+
+- **Context:** the maintainer asked for a gaming notes overlay: a compact
+  window of several notes (Markdown, checklists, links) that stays above a
+  game or any other program, can be moved, resized, made see-through,
+  collapsed and hidden, remembers its place across monitors and scalings,
+  has an interactive mode and a passive one in which clicks go through to
+  the game, global shortcuts (show/hide, interactive/passive, new note,
+  next/previous note), a section in Settings, autosaved notes that survive
+  crashes and restarts, and no effect on the game's input or speed while
+  nobody uses it. ADR-002 made the dashboard sotyware's one window, never
+  destroyed; ADR-050 gave the autoclicker native global shortcuts.
+- **Decision:**
+  - **A second webview window**, label `overlay`, **created at runtime**
+    by Rust the first time the overlay is shown and **destroyed when the
+    feature stops**; `tauri.conf.json` keeps the dashboard as its only
+    window. While the feature is off there is no overlay webview at all;
+    while it is on and hidden the window stays (showing it is instant and
+    keeps the page's state). It loads its own page, `overlay.html`, a
+    second entry of the Vite build with its own small chunk. It has no
+    frame (the page draws a title bar that drags the window and a corner
+    that resizes it; Windows keeps its native resize border), a
+    transparent background (the page paints its panel at the chosen
+    opacity, the text stays opaque), stays above other windows, has no
+    taskbar button, cannot be maximized or minimized, takes no dropped
+    files, is always dark and is created hidden. Its close (button, Alt+F4,
+    the window manager's) hides it in both operating modes.
+  - **Its own capability** `notes-overlay` (window `overlay`): its 16
+    commands, `core:window:allow-start-dragging` and
+    `core:window:allow-start-resize-dragging`, nothing of the dashboard's.
+    The dashboard's capability gets the 7 commands that watch, configure,
+    reset, show, hide and switch it. 19 new commands in all.
+  - **Passive** lets clicks through and never takes the keyboard: on
+    Windows the window's extended style `WS_EX_TRANSPARENT | WS_EX_LAYERED
+    | WS_EX_NOACTIVATE` (what tao's `set_ignore_cursor_events` and
+    `set_focusable(false)` set); on X11 those two calls (an input shape
+    without the window, no input focus). The page then shows the note only
+    (no tab, field or button) and drops the keyboard. Going passive gives
+    the keyboard back if the overlay had it: on Windows to the window the
+    overlay took it from, else the first usable window below it.
+  - **Showing never takes the keyboard** from the game. On Windows, after
+    creating the window, sotyware shows and hides it itself
+    (`SetWindowPos` with `SWP_SHOWWINDOW | SWP_NOACTIVATE`, at the top of
+    the topmost windows, and `SWP_HIDEWINDOW`), sets its extended style
+    itself (a tool window: no taskbar button, not in Alt+Tab) and never
+    changes tao's window flags again: tao shows a window with
+    `ShowWindow(SW_SHOW)`, which activates it even with `WS_EX_NOACTIVATE`
+    (seen on Windows 11 on 2026-11-23), and rewrites the extended style
+    from its flags whenever they change. The overlay takes the keyboard
+    with `SetForegroundWindow` alone (tao's `set_focus` presses Alt when
+    Windows refuses, which the game would get). Elsewhere the window is
+    made unfocusable for the show and focusable again when interactive.
+    Should a system activate it anyway, the keyboard goes straight back
+    (logged). Only switching to interactive or creating a note by
+    shortcut, or a click, gives it the keyboard.
+  - **Never stuck in passive**: the mode shortcut, Settings › Notes overlay
+    (Make interactive), the Overview's card (show/hide), a restart (the
+    default mode) and turning the feature off each bring it back; the
+    passive badge names the shortcut, or says to switch back from sotyware
+    when none is registered.
+  - **Shortcuts through a second instance of the autoclicker's platform
+    backend** (ADR-050: `RegisterHotKey` on its input thread on Windows,
+    `XGrabKey` on X11; none on Wayland and macOS, where the overlay works
+    without them and says why), of which only the shortcut methods are
+    used, with their own dispatcher thread. Not
+    `tauri-plugin-global-shortcut`, for ADR-050's reasons (a dependency
+    tree on every platform for no platform the backends do not cover, a
+    handler on the event loop, an X display at initialisation). Not the
+    autoclicker's instance: the overlay must work with the autoclicker off.
+    Because the system would refuse the second of two sotyware features
+    wanting one chord as if "another program" held it, both record the
+    chords they hold in a shared registry (`automation::claims`): each
+    refuses a chord the other holds with its name, and retries its refused
+    shortcuts when the other gives one up. **Suggested chords
+    Ctrl+Shift+F1 to F5**: games rarely use Ctrl+Shift with a function key
+    (they take plain function keys; Alt+F1–F10 is NVIDIA's overlay,
+    Shift+Tab Steam's, Win+G the Xbox Game Bar), Ctrl+Shift never types an
+    AltGr character (Ctrl+Alt would on many keyboards), and the
+    autoclicker's suggestions (F6–F10, Shift+F11) stay free; every one can
+    be changed or switched off.
+  - **Notes in `notes.sqlite3`**: one row per note (title, Markdown text,
+    pin, place, times, a revision), the settings and the overlay's state
+    (collapsed, the note shown, its place) as JSON documents with their own
+    format version; schema in `PRAGMA user_version`, append-only
+    migrations, a database that cannot be used left untouched. Every save
+    names the revision it edited. The page saves half a second after
+    typing stops and at least every two seconds while it goes on, one save
+    at a time per note, and at once on a tick, a note switch, hiding, a
+    mode change, the window losing the focus and the page going away; the
+    state is written only when it changed, on hide, focus loss and exit.
+    Rust keeps the notes' order and titles in memory, never their text.
+  - **Markdown, rendered safely, edited without a mode switch**: a small
+    subset (headings, paragraphs with their line breaks, nested bulleted
+    and numbered lists, checklists, quotes, fenced code, rules, bold,
+    italic, struck, inline code, links) parsed in the page into a tree that
+    Svelte renders as its own elements, never as HTML. The note shows
+    rendered; a click on it opens a plain-text editor at the line clicked
+    (Escape or Done closes it). In the editor Enter continues a list or a
+    checklist, Tab indents list lines, Ctrl+B, Ctrl+I, Ctrl+Shift+X and
+    Ctrl+K format, Ctrl+Enter ticks the line's checkbox; checkboxes tick
+    in the rendered note too.
+  - **Links** open in the browser only when the note holds that `http` or
+    `https` address (Rust checks the stored text): the page can still not
+    make sotyware open an address of its choosing (ADR-049's rule).
+  - **The window is driven from worker threads only**, one operation at a
+    time and never while the service's state is locked: a window call can
+    wait for the event loop, whose handlers only record where the window
+    is. At exit (which runs on the event loop's thread) the window is left
+    to the process; the shortcuts are unregistered and the state saved.
+  - **Placement** reuses the dashboard's rules (ADR-040,
+    `window_state::restore_placement`): a remembered place is used where it
+    still overlaps a connected monitor, moved inside it and rescaled for a
+    changed scaling; otherwise the overlay opens at the chosen corner (or
+    the centre) of the monitor the pointer is on, 24 logical pixels in, at
+    the default size in logical pixels. Collapsed, it is as high as its
+    title bar and remembers its expanded height. On X11, for 1.5 s after
+    each show, a position elsewhere than asked is never remembered and the
+    first is answered with a move back: openbox may place a window mapped
+    again anew, and the first position reported after a window is mapped
+    can be one it never had (both found by the Linux desktop test).
+  - **The built-in feature `notes-overlay` is off by default**: until the
+    user turns it on, no shortcut is registered and no window exists.
+    Turned on by the user, the overlay shows at once; at startup only if
+    its settings ask for it.
+- **Consequences:** 19 more commands (148) and permissions; a second Vite
+  entry; one more database in the test-profile acknowledgement (the
+  drivers' store lists include it). A shown or hidden overlay costs one
+  more webview renderer while the feature runs. A game in exclusive
+  fullscreen owns the screen and shows no window above it; above a
+  borderless fullscreen game the overlay makes Windows compose the screen
+  while it is shown. Wayland sessions get no global shortcut and no
+  guarantee of staying on top; macOS gets no shortcut and an opaque
+  background (the private API transparency needs is not enabled). Notes
+  are plain text on this computer, not encrypted and not synced. A game
+  that reads the keyboard below Windows' shortcut handling can keep the
+  shortcuts from arriving. Each is stated in
+  [limitations.md](../status/limitations.md#gaming-notes-overlay-adr-052)
+  and the [user guide](../user/notes-overlay.md).

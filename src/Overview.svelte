@@ -6,11 +6,13 @@
   import { CHECK_LABELS, checkTone } from "./cloudMessages";
   import Icon from "./Icon.svelte";
   import type { Section } from "./navigation";
+  import type { OverlayModel } from "./overlayModel.svelte";
   import type { UpdatesModel } from "./updatesModel.svelte";
 
   // The dashboard's first page: how sotyware runs (tray or dashboard-only),
-  // and one card each for storage accounts, backups and updates, each
-  // leading to its page. It reads only; every action is on those pages.
+  // and one card each for storage accounts, backups, the gaming notes
+  // overlay and updates, each leading to its page. It reads only; every
+  // action is on those pages, except showing or hiding the overlay.
 
   type OperatingMode = "tray" | "dashboard-only";
 
@@ -20,14 +22,27 @@
     accounts: AccountInfo[] | null;
     accountsError: string | null;
     updates: UpdatesModel;
+    overlay: OverlayModel;
     onnavigate: (section: Section) => void;
     onopenaccount: (id: string) => void;
     onaddaccount: () => void;
     onopenupdates: () => void;
+    onopenoverlay: () => void;
   }
 
-  let { mode, modeError, accounts, accountsError, updates, onnavigate, onopenaccount, onaddaccount, onopenupdates }: Props =
-    $props();
+  let {
+    mode,
+    modeError,
+    accounts,
+    accountsError,
+    updates,
+    overlay,
+    onnavigate,
+    onopenaccount,
+    onaddaccount,
+    onopenupdates,
+    onopenoverlay,
+  }: Props = $props();
 
   const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
   const trayName = mac ? "menu bar" : "system tray";
@@ -40,6 +55,17 @@
   const attention = $derived(jobs === null ? 0 : jobs.filter((j) => !GOOD.includes(j.health) && j.health !== "never-run").length);
   const connected = $derived(accounts === null ? 0 : accounts.filter((a) => a.lastCheck?.status === "connected").length);
   const updateStatus = $derived(updates.status);
+  const overlayStatus = $derived(overlay.status);
+  const overlayKeys = $derived(overlayStatus?.hotkeys.find((h) => h.action === "toggle-visible" && h.registered)?.keys ?? null);
+
+  async function showOverlay(visible: boolean): Promise<void> {
+    error = null;
+    try {
+      await overlay.setVisible(visible);
+    } catch (e) {
+      error = `Could not ${visible ? "show" : "hide"} the notes overlay: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
 
   // Hiding only affects the window; the Rust process and tray icon keep running.
   async function hideDashboard(): Promise<void> {
@@ -152,6 +178,35 @@
       {/if}
       <div class="card-foot">
         <button type="button" class="ghost" onclick={() => onnavigate("backups")}>Open Backups<Icon name="chevron-right" size={14} /></button>
+      </div>
+    </section>
+
+    <section class="card summary" aria-labelledby="overview-overlay">
+      <div class="card-head">
+        <span class="card-icon" aria-hidden="true"><Icon name="note" size={18} /></span>
+        <h2 id="overview-overlay">Notes overlay</h2>
+      </div>
+      {#if overlayStatus === null}
+        <p class="muted small-text">Loading…</p>
+      {:else if !overlayStatus.running}
+        <p class="muted small-text">Notes and checklists in a small window above your game. Off until you turn it on.</p>
+      {:else}
+        <p class="figure">
+          {overlayStatus.visible ? "Shown" : "Hidden"}
+          <span class="muted">· {overlayStatus.noteCount} note{overlayStatus.noteCount === 1 ? "" : "s"}</span>
+          {#if overlayStatus.mode === "passive"}<span class="badge">Passive</span>{/if}
+        </p>
+        {#if overlayKeys !== null}<p class="muted small-text">{overlayKeys} shows and hides it.</p>{/if}
+      {/if}
+      <div class="card-foot foot-row">
+        {#if overlayStatus?.running}
+          <button type="button" class="small" onclick={() => void showOverlay(!overlayStatus.visible)}
+            >{overlayStatus.visible ? "Hide overlay" : "Show overlay"}</button
+          >
+        {/if}
+        <button type="button" class="ghost" onclick={onopenoverlay}
+          >{overlayStatus?.running ? "Settings" : "Set up"}<Icon name="chevron-right" size={14} /></button
+        >
       </div>
     </section>
 
@@ -277,5 +332,15 @@
   .card-foot .ghost {
     margin-left: calc(-1 * var(--space-3));
     color: var(--text-muted);
+  }
+
+  .foot-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .foot-row .small + .ghost {
+    margin-left: 0;
   }
 </style>

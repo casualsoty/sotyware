@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AccountInfo } from "./cloud";
 import CloudSync from "./CloudSync.svelte";
 import { overallSummary, parseChoice, parseOverview, parseStatus, stateLabel, type SyncOverview } from "./folderSync";
+import { withDefaultLocale } from "./testLocale";
 
 interface FakeChannel {
   onmessage: (message: unknown) => void;
@@ -277,6 +278,33 @@ describe("the Sync tab with a sync", () => {
     );
     expect(text(root)).toContain("Changes in the folder are noticed as they happen.");
     expect(sent("folder_sync_details")).toEqual([{ id: "b2-photos-1a2b3c4d" }]);
+  });
+
+  it("writes its figures in en-US whatever the webview's language", async () => {
+    // Until 2026-11-24 the counts followed the webview's language and the
+    // sizes did not: "5.00 GB in 1 234 files" in fr-FR, "5.00 GB in 1.234
+    // files" in de-DE.
+    for (const language of ["fr-FR", "de-DE"]) {
+      await withDefaultLocale(language, async () => {
+        overview = withSync(status({ pendingUploads: 1234, pendingUploadBytes: 3_000_000 }));
+        const root = await render();
+        const tiles = [...root.querySelectorAll(".tile")].map(text);
+        expect(tiles[0], language).toBe("Files in step 1,234 12 folders");
+        expect(tiles[2], language).toBe("In the bucket 5.00 GB 1,234 files, current versions");
+        expect(text(root.querySelector("[data-sync-pending]")), language).toBe("To upload: 1,234 (3.00 MB). To download: 0 (0 bytes).");
+        unmount(app!);
+        document.body.innerHTML = "";
+
+        overview = withSync(null);
+        const choosing = await render();
+        button(choosing, "Choose folder…").click();
+        await settle();
+        expect(text(choosing.querySelector("[data-sync-choice]")), language).toContain("5.00 GB in 1,234 files");
+        unmount(app!);
+        app = undefined;
+        document.body.innerHTML = "";
+      });
+    }
   });
 
   it("follows the live status from the channel, with running transfers", async () => {

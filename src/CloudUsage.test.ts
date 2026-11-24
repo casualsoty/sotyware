@@ -8,6 +8,7 @@ import type { AccountInfo } from "./cloud";
 import CloudUsage from "./CloudUsage.svelte";
 import { formatMoney, parseUsageEvent, parseUsageOverview, storedBytes, type Measurement } from "./cloudUsage";
 import { formatAgo, formatDecimalSize } from "./format";
+import { withDefaultLocale } from "./testLocale";
 import { DOWNLOADS_KEY, loadDownloads, saveDownloads } from "./usagePrefs";
 
 interface FakeChannel {
@@ -227,7 +228,10 @@ describe("the Usage & costs tab", () => {
     const tiles = [...root.querySelectorAll(".tile")].map(text);
     expect(tiles[0]).toBe("Stored 210 GB everything kept in the bucket");
     expect(tiles[1]).toBe("Files 1,234 10 older versions");
-    expect(tiles[2]).toContain(formatMoney(1.39, "USD"));
+    // The amount is the formatter's string as it is, its own spaces included
+    // (U+00A0 before "$US" in fr-FR), so it is compared before text() turns
+    // every space into U+0020.
+    expect(root.querySelectorAll(".tile")[2]?.querySelector(".tile-value")?.textContent).toBe(formatMoney(1.39, "USD"));
     expect(tiles[2]).toContain("estimate");
     const parts = [...root.querySelectorAll(".parts li")].map((li) => [li.getAttribute("data-part"), text(li)]);
     expect(parts).toEqual([
@@ -266,9 +270,35 @@ describe("the Usage & costs tab", () => {
     const rows = [...card.querySelectorAll("tbody tr")].map((tr) => tr.getAttribute("data-component"));
     expect(rows).toEqual(["storage", "egress", "transactions"]);
     expect(text(card.querySelector("tfoot th"))).toBe("Total for 30 days, without taxes");
-    expect(text(card.querySelector("tfoot td"))).toBe(formatMoney(1.39, "USD"));
+    // As written, like the tile: text() would change the formatter's spaces.
+    expect(card.querySelector("tfoot td")?.textContent).toBe(formatMoney(1.39, "USD"));
     expect(text(card.querySelector(".assumptions"))).toContain("as published on 2026-11-15");
     expect(text(card.querySelector(".assumptions"))).toContain("Price list: Backblaze B2, pay as you go, checked 2026-11-15.");
+  });
+
+  it("writes its figures in en-US whatever the webview's language", async () => {
+    // Until 2026-11-24 a French webview showed the cost as "1,39 $US" in the
+    // row whose detail, written by Rust, says "at USD 6.95 per TB", and the
+    // counts as "1 234".
+    for (const language of ["fr-FR", "de-DE"]) {
+      await withDefaultLocale(language, async () => {
+        const m = measurement();
+        overview = overviewWith(m);
+        const root = await render();
+        const tiles = root.querySelectorAll(".tile");
+        expect(text(tiles[1]), language).toBe("Files 1,234 10 older versions");
+        expect(tiles[2]?.querySelector(".tile-value")?.textContent, language).toBe("$1.39");
+        const storage = root.querySelector('.estimate tbody tr[data-component="storage"]');
+        expect(storage?.querySelector("td")?.textContent, language).toBe("$1.39");
+        expect(text(storage?.querySelector(".component-detail")), language).toContain("at USD 6.95 per TB for 30 days");
+        expect(root.querySelector(".estimate tfoot td")?.textContent, language).toBe("$1.39");
+        const measured = text(document.createTextNode(new Date(m.measuredMs).toLocaleString("en-US")));
+        expect(text(root), language).toContain(`Measured 5 minutes ago (${measured}) in 1.5 s with 4 listing requests.`);
+        unmount(app!);
+        app = undefined;
+        document.body.innerHTML = "";
+      });
+    }
   });
 
   it("sends the downloads the user expects, remembered on this computer", async () => {

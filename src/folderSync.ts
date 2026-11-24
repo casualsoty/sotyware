@@ -8,6 +8,7 @@
 // loudly.
 import { Channel } from "@tauri-apps/api/core";
 import { call, ERROR_KINDS, type ErrorKind } from "./cloud";
+import { formatCount } from "./format";
 
 export const LIST_FOLDER_SYNCS = "list_folder_syncs";
 export const WATCH_FOLDER_SYNCS = "watch_folder_syncs";
@@ -550,7 +551,7 @@ export function overallSummary(o: SyncOverview | null): { tone: "success" | "war
   const busy = o.syncs.filter((s) => ["starting", "scanning", "syncing", "moving"].includes(s.state));
   if (busy.length > 0) {
     const files = busy.reduce((t, s) => t + s.pendingUploads + s.pendingDownloads, 0);
-    return { tone: "info", text: files > 0 ? `Syncing ${files.toLocaleString()} file${files === 1 ? "" : "s"}…` : "Syncing…" };
+    return { tone: "info", text: files > 0 ? `Syncing ${formatCount(files)} file${files === 1 ? "" : "s"}…` : "Syncing…" };
   }
   if (waiting > 0) {
     return { tone: "warning", text: waiting === 1 ? "A folder sync waits for you" : `${waiting} folder syncs wait for you` };

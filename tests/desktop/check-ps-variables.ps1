@@ -23,11 +23,11 @@
 # overflowed.
 #
 # usage: powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\check-ps-variables.ps1 [<script.ps1> ...]
-#   (default: windows.ps1, windows-isolated.ps1, windows-cloud-ui.ps1, windows-autoclicker.ps1)
+#   (default: windows.ps1, windows-isolated.ps1, windows-cloud-ui.ps1, windows-autoclicker.ps1, windows-overlay.ps1)
 # Exit code: 0 no clash, 1 a clash, a hidden name or a parse error.
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Paths)
 $ErrorActionPreference = "Stop"
-if (-not $Paths) { $Paths = "windows.ps1", "windows-isolated.ps1", "windows-cloud-ui.ps1", "windows-autoclicker.ps1" | ForEach-Object { Join-Path $PSScriptRoot $_ } }
+if (-not $Paths) { $Paths = "windows.ps1", "windows-isolated.ps1", "windows-cloud-ui.ps1", "windows-autoclicker.ps1", "windows-overlay.ps1" | ForEach-Object { Join-Path $PSScriptRoot $_ } }
 
 $Automatic = @("_", "true", "false", "null", "args", "input", "matches", "this", "error", "host",
   "lastexitcode", "psscriptroot", "pscommandpath", "psitem", "erroractionpreference", "pwd", "home", "pid")

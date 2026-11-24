@@ -5,7 +5,8 @@ Status: implemented 2026-11-15
 The dashboard is one Svelte 5 page (plain Vite, no router, ADR-001) in the
 window `main`. It reaches Rust only through the commands listed in
 [overview.md](overview.md#components-and-boundaries); this page describes
-what it shows and how it is built.
+what it shows and how it is built. The gaming notes overlay has a page of
+its own in its own window ([below](#the-notes-overlays-page)).
 
 ## Shell
 
@@ -62,13 +63,35 @@ the tray.
 
 | Page | File | Notes |
 | --- | --- | --- |
-| Overview | `src/Overview.svelte` | Tray mode: the hint where sotyware keeps running ("system tray", "menu bar" on a Mac) and **Hide dashboard**; dashboard-only mode: the no-tray note. Three summary cards: storage accounts and their last check, backup jobs and how many need attention (`list_backups`), version and update state. Reads only. |
+| Overview | `src/Overview.svelte` | Tray mode: the hint where sotyware keeps running ("system tray", "menu bar" on a Mac) and **Hide dashboard**; dashboard-only mode: the no-tray note. Four summary cards: storage accounts and their last check, backup jobs and how many need attention (`list_backups`), the notes overlay (off, or shown/hidden with its notes and shortcut; **Show/Hide overlay** and **Settings**, ADR-052), version and update state. Reads only, but for showing and hiding the overlay. |
 | Cloud Storage | `src/CloudStorage.svelte`, `CloudAccountForm.svelte`, `CloudRecovery.svelte` | Account cards in a grid (status badge, bucket, region, endpoint, **Open bucket**, **Check connection**, Edit, Remove with confirmation), the add/edit form, interrupted work. Every account's connection is checked once at startup by the shell (`startupChecks.svelte.ts`, ADR-046). |
 | Bucket browser | `src/CloudBrowser.svelte` and its panels | Full width. Back link, title and bucket/folder line, then four tabs (ADR-041, ADR-043): **Files** (everything below; kept mounted while another tab shows, so transfers go on), **Usage & costs** (`CloudUsage.svelte`; with a sync, also what it keeps on this computer), **Snapshots & backups** (`CloudSnapshots.svelte`) and **Sync** (`CloudSync.svelte`: the bucket kept in step with a folder on this computer, [folder-sync.md](folder-sync.md#status-and-the-sync-tab)), mounted when first opened ([cloud-storage.md](cloud-storage.md#storage-usage-and-cost-estimates)); the file manager's shortcuts act only on the Files tab. Files: breadcrumb, toolbar (Up one folder, Refresh, **Upload files…**, Upload folder…, New folder…, paste, Deleted items), search row, favourites and recent items, sort and filter bar, a sticky selection bar, the file table, a context menu (also from the ⋯ button and the keyboard), transfer panels (`CloudUpload`, `CloudOperation`, `CloudBulkDownload`, the download panel), a toast for the last action, dialogs (`Modal`): new folder, rename, destination picker (`CloudFolderPicker`), review of plans, properties and preview as a side sheet (`CloudProperties`). |
 | Backups | `src/Backup.svelte` | Job cards with a health badge, the job form, task progress and results, snapshots and restore. |
 | Autoclicker | `src/Autoclicker.svelte` and its tabs `AutoclickerOverview.svelte`, `AutoclickerClicker.svelte`, `AutoclickerRecorder.svelte`, `AutoclickerMacros.svelte` (with `AutoclickerEditor.svelte`), `AutoclickerProfiles.svelte`, `AutoclickerSettings.svelte`; `HotkeyInput.svelte`, `PlaybackForm.svelte` | ADR-050, [automation.md](automation.md). A wider column (72rem). Header with the profile switcher; banners when the feature is off (with **Turn on**) or the system has no input automation; a sticky bar with the running session, Pause/Resume and Stop on every tab; tabs **Overview** (status with metrics and controls, the profile, the shortcuts and whether each is registered, the program in front), **Clicker** (simple or advanced, saved to the profile as it changes), **Recorder** (record, live list, save or discard, options), **Macros** (library and the editor: details, shortcut, program, playback, timeline with a preview that sends nothing, paged action table with inline editing and bulk changes), **Profiles**, **Settings** (shortcuts by key capture, safety). Its own JavaScript chunk, loaded right after startup. |
 | Account | `src/Account.svelte` | The optional sotyware account (ADR-032). |
-| Settings | `src/Settings.svelte` | Tabs down the left (across the top when narrow): **General** (Appearance: System, Light, Dark; how closing the window behaves; keyboard shortcuts), **Features** (`Features.svelte`), **About & updates** (`Updates.svelte`). |
+| Settings | `src/Settings.svelte` | Tabs down the left (across the top when narrow): **General** (Appearance: System, Light, Dark; how closing the window behaves; keyboard shortcuts), **Features** (`Features.svelte`), **Notes overlay** (`NotesOverlaySettings.svelte`, ADR-052: on/off, show/hide, interactive/passive, look, size and place, note options, shortcuts by key capture with their registration, fullscreen games, reset; every change saved at once, one after another), **About & updates** (`Updates.svelte`). The shell's one `OverlayModel` (`overlayModel.svelte.ts`) watches the overlay for this tab and the Overview, and opens this tab when the overlay asks for its settings. |
+
+## The notes overlay's page
+
+ADR-052, [notes-overlay.md](notes-overlay.md). `overlay.html` is a second
+entry of the Vite build (`vite.config.ts`, `build.rolldownOptions.input`)
+loaded by the overlay's window: `src/overlayMain.ts` mounts
+`src/NotesOverlay.svelte` with the same tokens and base styles, always in
+the dark palette (`data-theme="dark"`), on a transparent page; its own
+chunk is about 37 KB beside the runtime it shares with the dashboard. A
+rounded panel whose background takes the chosen opacity (the text stays
+opaque, with a text shadow below 75 %) holds: a 36 px title bar (drag to
+move, double-click to collapse; the note's name and checklist progress, or
+the next unchecked item when collapsed; passive, opacity, collapse,
+settings and hide buttons with tooltips; in passive mode a "Click-through"
+badge instead), an alert line, a tab strip (pinned tabs first and sticky,
+drag to reorder, arrows, Alt+Shift+arrows to move) with search and new
+note, the note (its title field, Edit, a ⋯ menu: pin, duplicate, move,
+delete with a confirmation) rendered by `NoteView.svelte` or edited in a
+plain-text editor with a formatting bar and the save state, and a resize
+grip. Passive, it shows the note only and keeps no focus. Pure logic is in
+`noteMarkdown.ts` (the Markdown subset and the editor's keys) and
+`noteAutosave.ts` (the autosave), commands in `notesOverlay.ts`.
 
 ## Design system
 
@@ -163,6 +186,38 @@ Quit as after a kill), and a sotyware started again at once still read it
 (seen after a kill;
 [status](../status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 
+## Numbers and dates
+
+Since 2026-11-24 the page writes every number and date in **en-US**, the
+language of its text, whatever the webview's language: `LOCALE` in
+`src/format.ts`, chosen by the maintainer over following the webview's
+language ([status](../status/status.md#numbers-and-dates-in-en-us-2026-11-24)).
+The webview's language is not the user's number format anyway: WebView2
+follows the Windows display language, not the regional format, and
+WebKitGTK the environment's locale (under `C.UTF-8` en-US-POSIX: "1234",
+"$ 1.39"). Left to it, counts, amounts and dates mixed with what never
+followed it (the sizes, the autoclicker's counts, the details Rust writes):
+"5.00 GB in 1 234 files" in French, "1,39 $US" beside "at USD 6.95 per TB".
+
+- **Counts:** `formatCount` ("1,234", rounded to a whole number).
+- **Sizes:** `formatSize` ("3.0 MiB") and `formatDecimalSize` ("1.23 GB"),
+  with a decimal point by construction (`toFixed`).
+- **Amounts:** `formatMoney` in `src/cloudUsage.ts` ("$1.39", "€6.49").
+- **Dates and times:** `formatDateTime`, `formatDate` and `formatTime`,
+  with a page's own options where it gives them ("3/4/2026, 2:05:06 PM",
+  "Mar 4, 2026, 02:05 PM" in the bucket browser, "March 4, 2026" for a
+  release).
+- **The rule:** every locale-sensitive formatting call in `src/` names
+  `LOCALE` (`toLocaleString` and its date and time forms, the `Intl`
+  formatters). `src/format.test.ts` fails on one that does not, and checks
+  the helpers as a webview in other languages would run them
+  ([testing.md](../development/testing.md#frontend-tests)).
+- **Not covered:** sorting follows the webview's language (`fileList.ts`'s
+  collator, the macro library's `localeCompare`); Rust's own text writes
+  amounts as `USD 6.95` and its counts without grouping, as the page does
+  with numbers it puts straight into a sentence ("1000 items shown")
+  ([limitations](../status/limitations.md#dashboard-adr-035)).
+
 ## Interaction
 
 - **Keyboard:** Ctrl+1/2/3/4 (⌘ on a Mac) Overview, Cloud Storage, Backups, Autoclicker;
@@ -201,6 +256,7 @@ first three columns (Name, Size, Last modified). Changed on purpose:
 | features on the Overview | Settings › Features |
 | page titles `h2` (`h3` in the browser) | `h1` |
 | the sidebar adds "Add storage account" and one link per account | |
+| | Settings › Notes overlay and the overlay's page (ADR-052): "Turn on", "Show overlay", "Hide overlay", "Make interactive", "Make passive", "New note", "New note (Ctrl+N)", "Edit the note", "More actions for this note", "Collapse to the title bar", "Expand", "Hide the overlay (notes are kept)", "Passive: let clicks through to the game", the "Note title" and "Note text (Markdown)" fields, the selects "Opens at" and the rest by their labels, checkboxes named by their item's text, "Click-through" in the passive badge |
 
 ## Adding a page
 

@@ -16,7 +16,7 @@
     type PlanSummary,
   } from "./cloudFiles";
   import { describeOperationError, describeOperationFailure } from "./cloudMessages";
-  import { formatSize, shownName } from "./format";
+  import { formatCount, formatSize, shownName } from "./format";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -407,14 +407,14 @@
     <div class="review" data-plan-kind={p.kind}>
       {#if p.kind !== "rename" || usable.length !== 1}
         <p>
-          {p.objects.toLocaleString()} object{p.objects === 1 ? "" : "s"} ({formatSize(p.bytes)}) in {usable.length} item{usable.length === 1
+          {formatCount(p.objects)} object{p.objects === 1 ? "" : "s"} ({formatSize(p.bytes)}) in {usable.length} item{usable.length === 1
             ? ""
             : "s"}.
         </p>
       {:else if usable[0] !== undefined}
         <p>
           From <span class="key">{usable[0].source}</span> to <span class="key">{usable[0].destination}</span>
-          {#if usable[0].folder}({usable[0].objects.toLocaleString()} objects){/if}.
+          {#if usable[0].folder}({formatCount(usable[0].objects)} objects){/if}.
         </p>
       {/if}
       {#if p.kind === "delete"}
@@ -437,7 +437,7 @@
             <strong class="key">{shownName(item.name)}</strong>
             {#if item.problem === null}
               <span class="detail">
-                {item.folder ? `${item.objects.toLocaleString()} objects, ` : ""}{formatSize(item.bytes)}
+                {item.folder ? `${formatCount(item.objects)} objects, ` : ""}{formatSize(item.bytes)}
               </span>
             {/if}
             {#if item.problem !== null}
@@ -497,15 +497,15 @@
     {#if phase.step === "running"}
       <progress max="100" value={percent} aria-label={`${VERBS[phase.kind]} progress`}>{percent}%</progress>
       <p role="status">
-        {phase.cancel ? "Cancelling after the requests in flight…" : `${phase.progress.done.toLocaleString()} of ${phase.progress.total.toLocaleString()} objects`}
+        {phase.cancel ? "Cancelling after the requests in flight…" : `${formatCount(phase.progress.done)} of ${formatCount(phase.progress.total)} objects`}
       </p>
     {/if}
     {#if phase.summary !== null}
       <p role="status" class="result">{summaryText(phase.summary)}</p>
       {#if phase.summary.kind === "delete" && (phase.summary.hidden > 0 || phase.summary.removed > 0)}
         <p class="note">
-          {#if phase.summary.hidden > 0}{phase.summary.hidden.toLocaleString()} object{phase.summary.hidden === 1 ? "" : "s"} can be restored from Deleted items.{/if}
-          {#if phase.summary.removed > 0}{phase.summary.removed.toLocaleString()} object{phase.summary.removed === 1 ? " is" : "s are"} gone for good.{/if}
+          {#if phase.summary.hidden > 0}{formatCount(phase.summary.hidden)} object{phase.summary.hidden === 1 ? "" : "s"} can be restored from Deleted items.{/if}
+          {#if phase.summary.removed > 0}{formatCount(phase.summary.removed)} object{phase.summary.removed === 1 ? " is" : "s are"} gone for good.{/if}
         </p>
       {/if}
       {#if phase.summary.error !== null}

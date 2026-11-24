@@ -8,6 +8,7 @@
     type RecordingOptions,
   } from "./automation";
   import { BUTTON_LABELS, describeAction, formatClock, formatDuration, keyLabel, numberOf } from "./automationFormat";
+  import { formatCount } from "./format";
   import type { AutomationModel } from "./automationModel.svelte";
   import Icon from "./Icon.svelte";
 
@@ -118,7 +119,7 @@
     <div class="card draft">
       <h3>Recording ready</h3>
       <p class="muted small-text">
-        {draft.actions.toLocaleString("en-US")} actions, {formatDuration(draft.durationMs)}{draft.window
+        {formatCount(draft.actions)} actions, {formatDuration(draft.durationMs)}{draft.window
           ? `, first input in ${draft.window.process || draft.window.title}`
           : ""}.
         {draft.skipped > 0 ? `${draft.skipped} inputs were left out (sotyware's window, ignored keys, keys it cannot replay).` : ""}
@@ -175,7 +176,7 @@
         <span class="clock">{formatClock(session.elapsedMs)}</span>
       </div>
       <p class="muted small-text">
-        {session.actions.toLocaleString("en-US")} actions{session.skipped > 0 ? `, ${session.skipped} left out` : ""}.
+        {formatCount(session.actions)} actions{session.skipped > 0 ? `, ${session.skipped} left out` : ""}.
         {stopKeys ? `Press ${stopKeys} to stop from any program.` : ""}
       </p>
       <div class="actions">

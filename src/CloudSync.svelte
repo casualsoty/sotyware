@@ -27,7 +27,7 @@
     type SyncStatus,
   } from "./folderSync";
   import { FolderSyncModel } from "./folderSyncModel.svelte";
-  import { formatAgo, formatDecimalSize } from "./format";
+  import { formatAgo, formatCount, formatDateTime, formatDecimalSize } from "./format";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -205,7 +205,7 @@
   }
 
   function when(ms: number): string {
-    return new Date(ms).toLocaleString();
+    return formatDateTime(new Date(ms));
   }
 
   function minutesUntil(ms: number | null): string | null {
@@ -340,7 +340,7 @@
           {:else if status.state === "scanning" || status.state === "starting"}
             Looking for changes…
           {:else if status.transfers.length > 0 || status.pendingUploads + status.pendingDownloads > 0}
-            Passing changes on: {(status.pendingUploads + status.pendingDownloads).toLocaleString()} file{status.pendingUploads +
+            Passing changes on: {formatCount(status.pendingUploads + status.pendingDownloads)} file{status.pendingUploads +
               status.pendingDownloads ===
             1
               ? ""
@@ -365,7 +365,7 @@
         {@const m = status.migration}
         <div class="migration" role="status">
           <p class="small-text">
-            {m.copying ? "Copying and checking" : "Moving"} files to {m.to}: {m.filesDone.toLocaleString()} of {m.filesTotal.toLocaleString()}
+            {m.copying ? "Copying and checking" : "Moving"} files to {m.to}: {formatCount(m.filesDone)} of {formatCount(m.filesTotal)}
             ({formatDecimalSize(m.bytesDone)} of {formatDecimalSize(m.bytesTotal)})
           </p>
           <progress max={Math.max(1, m.bytesTotal)} value={m.bytesDone} aria-label="Moving the sync folder"></progress>
@@ -378,9 +378,9 @@
       <div class="callout warning held" role="alert">
         <p><strong>Many files would be deleted at once, so sync asks first.</strong></p>
         <p>
-          {#if h.local > 0}{h.local.toLocaleString()} file{h.local === 1 ? "" : "s"} deleted in the bucket would be removed from this folder (into the sync trash).{/if}
-          {#if h.remote > 0}{h.remote.toLocaleString()} file{h.remote === 1 ? "" : "s"} deleted in this folder would be deleted in the bucket.{/if}
-          That is more than half of the {h.synced.toLocaleString()} synced files. If you did not mean it (a disconnected drive,
+          {#if h.local > 0}{formatCount(h.local)} file{h.local === 1 ? "" : "s"} deleted in the bucket would be removed from this folder (into the sync trash).{/if}
+          {#if h.remote > 0}{formatCount(h.remote)} file{h.remote === 1 ? "" : "s"} deleted in this folder would be deleted in the bucket.{/if}
+          That is more than half of the {formatCount(h.synced)} synced files. If you did not mean it (a disconnected drive,
           another program, a mistake), restore them.
         </p>
         <div class="actions">
@@ -421,8 +421,8 @@
     <div class="tiles">
       <div class="tile">
         <p class="tile-label">Files in step</p>
-        <p class="tile-value">{status.files.toLocaleString()}</p>
-        <p class="tile-sub">{status.folders.toLocaleString()} folder{status.folders === 1 ? "" : "s"}</p>
+        <p class="tile-value">{formatCount(status.files)}</p>
+        <p class="tile-sub">{formatCount(status.folders)} folder{status.folders === 1 ? "" : "s"}</p>
       </div>
       <div class="tile">
         <p class="tile-label">On this computer</p>
@@ -433,7 +433,7 @@
         <p class="tile-label">In the bucket</p>
         <p class="tile-value">{status.lastCheckedMs === null ? "—" : formatDecimalSize(status.remoteBytes)}</p>
         <p class="tile-sub">
-          {status.lastCheckedMs === null ? "not listed yet" : `${status.remoteFiles.toLocaleString()} files, current versions`}
+          {status.lastCheckedMs === null ? "not listed yet" : `${formatCount(status.remoteFiles)} files, current versions`}
         </p>
       </div>
       <div class="tile">
@@ -447,8 +447,8 @@
       {#if status.pendingUploads + status.pendingDownloads === 0}
         Nothing waits to be transferred.
       {:else}
-        To upload: {status.pendingUploads.toLocaleString()} ({formatDecimalSize(status.pendingUploadBytes)}). To download:
-        {status.pendingDownloads.toLocaleString()} ({formatDecimalSize(status.pendingDownloadBytes)}).
+        To upload: {formatCount(status.pendingUploads)} ({formatDecimalSize(status.pendingUploadBytes)}). To download:
+        {formatCount(status.pendingDownloads)} ({formatDecimalSize(status.pendingDownloadBytes)}).
       {/if}
     </p>
 
@@ -591,7 +591,7 @@
         {#if status.trashFiles === 0}
           empty. Files deleted in the bucket are moved there from this folder and kept 30 days.
         {:else}
-          {status.trashFiles.toLocaleString()} file{status.trashFiles === 1 ? "" : "s"} ({formatDecimalSize(status.trashBytes)}) deleted in the bucket
+          {formatCount(status.trashFiles)} file{status.trashFiles === 1 ? "" : "s"} ({formatDecimalSize(status.trashBytes)}) deleted in the bucket
           and removed from this folder, kept 30 days.
           <button type="button" class="link" onclick={() => void act("trash", () => openSyncFolder(status.id, "trash"))}>Open the sync trash</button>
         {/if}
@@ -630,14 +630,14 @@
       <dt>Folder</dt>
       <dd class="mono path" data-choice-path>{c.path}</dd>
       <dt>In it now</dt>
-      <dd>{c.files === 0 && !c.more ? "Empty" : `${c.files.toLocaleString()}${c.more ? "+" : ""} files, ${formatDecimalSize(c.bytes)}`}</dd>
+      <dd>{c.files === 0 && !c.more ? "Empty" : `${formatCount(c.files)}${c.more ? "+" : ""} files, ${formatDecimalSize(c.bytes)}`}</dd>
       <dt>Free on its drive</dt>
       <dd>{c.freeBytes === null ? "Unknown" : formatDecimalSize(c.freeBytes)}</dd>
       <dt>The bucket</dt>
       <dd>
         {c.bucketBytes === null || c.bucketMeasuredMs === null
           ? "Not measured yet (see Usage & costs)"
-          : `${formatDecimalSize(c.bucketBytes)} in ${(c.bucketObjects ?? 0).toLocaleString()} files, measured ${formatAgo(c.bucketMeasuredMs)}`}
+          : `${formatDecimalSize(c.bucketBytes)} in ${formatCount(c.bucketObjects ?? 0)} files, measured ${formatAgo(c.bucketMeasuredMs)}`}
       </dd>
       <dt>Earlier versions</dt>
       <dd>{versioningText(c.versioning)}</dd>

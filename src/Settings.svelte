@@ -3,12 +3,15 @@
   import Feedback from "./Feedback.svelte";
   import Icon, { type IconName } from "./Icon.svelte";
   import type { SettingsTab } from "./navigation";
+  import NotesOverlaySettings from "./NotesOverlaySettings.svelte";
+  import type { OverlayModel } from "./overlayModel.svelte";
   import { applyTheme, applyWindowTheme, loadTheme, saveTheme, THEME_CHOICES, type ThemeChoice } from "./theme";
   import Updates from "./Updates.svelte";
   import type { UpdatesModel } from "./updatesModel.svelte";
 
-  // Settings: appearance (this device only), the built-in features, and
-  // About & updates (with the feedback buttons). Tabs down the left like a desktop settings window,
+  // Settings: appearance (this device only), the built-in features, the
+  // gaming notes overlay (ADR-052), and About & updates (with the feedback
+  // buttons). Tabs down the left like a desktop settings window,
   // across the top in a narrow window.
 
   type OperatingMode = "tray" | "dashboard-only";
@@ -18,13 +21,15 @@
     ontab: (tab: SettingsTab) => void;
     updates: UpdatesModel;
     mode: OperatingMode | null;
+    overlay: OverlayModel;
   }
 
-  let { tab, ontab, updates, mode }: Props = $props();
+  let { tab, ontab, updates, mode, overlay }: Props = $props();
 
   const TABS: { id: SettingsTab; title: string; icon: IconName }[] = [
     { id: "general", title: "General", icon: "settings" },
     { id: "features", title: "Features", icon: "feature" },
+    { id: "overlay", title: "Notes overlay", icon: "note" },
     { id: "about", title: "About & updates", icon: "info" },
   ];
 
@@ -126,6 +131,8 @@
         </section>
       {:else if tab === "features"}
         <Features />
+      {:else if tab === "overlay"}
+        <NotesOverlaySettings model={overlay} />
       {:else}
         <Updates model={updates} />
         <Feedback />

@@ -64,11 +64,12 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 | --- | --- | --- |
 | Binary entry point | `src-tauri/src/main.rs` | Calls `sotyware_lib::run()`. Nothing else. |
 | Runtime and lifecycle | `src-tauri/src/lib.rs` | Builds the Tauri app: registers the single-instance plugin, creates the tray in `setup` and picks the `OperatingMode`, turns window close into hide (tray mode) or exit (dashboard-only mode), adds the hide capability in tray mode only, serves the `operating_mode` command, blocks implicit exits. Owns `show_dashboard()`, `DASHBOARD_LABEL` and the `AppControl` trait (show dashboard / quit). The lifecycle decisions are plain functions (`select_mode`, `close_action`, `frontend_may_hide`, `exit_allowed`, `on_second_launch`, `reveal`) that the handlers call, so they are unit-tested ([ADR-009](decisions.md#adr-009-lifecycle-decisions-are-plain-functions-behind-small-traits)). |
-| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the features (`backup.rs`, `updates.rs`, `folder_sync.rs`, `autoclicker.rs`). Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
+| Built-in features | `src-tauri/src/features/` | `Feature` trait and metadata, the `builtin()` list, `FeatureRegistry` (registration, lifecycle, error isolation), `FeaturePreferences` and the `PreferenceStore` trait (stored choices: startup decision, save after a switch, failure policy), the `list_features` and `set_feature_enabled` commands, and the features (`backup.rs`, `updates.rs`, `folder_sync.rs`, `autoclicker.rs`, `notes_overlay.rs`). Started from `setup`, stopped on `RunEvent::Exit` ([features.md](features.md), [ADR-014](decisions.md#adr-014-built-in-features-are-rust-modules-in-a-fixed-registry)). |
 | Storage | `src-tauri/src/storage.rs` | `SqliteStore`, the `PreferenceStore` implementation: opens `preferences.sqlite3` in the app's local data folder, checks it, runs the schema migrations (`MIGRATIONS`, `PRAGMA user_version`), loads and saves feature choices. The only code that uses SQLite (`rusqlite`, bundled) ([features.md](features.md#persistence), [ADR-015](decisions.md#adr-015-feature-preferences-are-stored-in-sqlite-behind-a-narrow-store-trait)). |
 | Cloud storage | `src-tauri/src/cloud/` | Provider profiles (data), storage accounts without secrets, credentials by account id in the OS credential store (`OsCredentialStore`, ADR-017), and `S3Store`, the one S3 adapter (`aws-sdk-s3`) with end-to-end SHA-256 and a transfer queue per account. Account configurations in `cloud-accounts.sqlite3` through `SqliteAccountStore` in `storage.rs`. `dashboard.rs`: `CloudAccounts` (managed state) and the six account commands; `browser.rs`: `list_cloud_folder`; `download.rs`: `CloudDownloads` (managed state, one download at a time) and the three download commands, with the native save dialog opened from Rust (`tauri-plugin-dialog`); `upload.rs`: `CloudUploads` (managed state, one upload batch at a time in its own slot) and the three upload commands, with the native multi-file dialog opened from Rust; the browser's upload panel (`src/CloudUpload.svelte`) calls them. No other changes to objects are reachable ([ADR-022](decisions.md#adr-022-upload-batches-run-one-file-after-another-in-their-own-slot-with-paths-kept-in-rust), [cloud-storage.md](cloud-storage.md#dashboard), [ADR-016](decisions.md#adr-016-cloud-storage-goes-through-one-generic-s3-adapter), [ADR-018](decisions.md#adr-018-the-dashboard-manages-cloud-accounts-through-six-narrow-commands)). |
 | Folder sync | `src-tauri/src/folder_sync/`, `src-tauri/src/storage/folder_sync.rs`, `src-tauri/src/features/folder_sync.rs` | `FolderSyncs` (managed state): syncs of an account's bucket with a folder on this computer, in both directions, one background engine per sync while the `folder-sync` feature runs; three-way comparison against the synced state in `folder-sync.sqlite3`, file watcher (`notify`), periodic listing, live checks before every change, sync trash, deletion guard, conflicts kept twice; the 16 folder sync commands ([folder-sync.md](folder-sync.md), [ADR-043](decisions.md#adr-043-folder-sync-keeps-a-chosen-folder-and-a-bucket-in-step-by-a-three-way-comparison-with-guarded-deletions-and-one-background-engine-per-sync)). |
 | Autoclicker and macros | `src-tauri/src/automation/`, `src-tauri/src/storage/automation.rs`, `src-tauri/src/features/autoclicker.rs` | `Automation` (managed state): the autoclicker, recording and macro playback, one session at a time, global shortcuts, profiles and the macro library in `automation.sqlite3`, only while the built-in feature `autoclicker` (off by default) runs; native input through the `Backend` trait: Windows (`SendInput`, low-level hooks, `RegisterHotKey`), X11 (XTest, RECORD, `XGrabKey`); the 29 automation commands ([automation.md](automation.md), [ADR-050](decisions.md#adr-050-the-autoclicker-sends-and-records-input-in-rust-through-native-apis-one-session-at-a-time-behind-an-opt-in-feature)). |
+| Gaming notes overlay | `src-tauri/src/overlay/`, `src-tauri/src/storage/notes.rs`, `src-tauri/src/features/notes_overlay.rs`, `src-tauri/capabilities/overlay.json`, `overlay.html` | `NotesOverlay` (managed state): a second window, label `overlay`, created at runtime while the built-in feature `notes-overlay` (off by default) runs: frameless, transparent, always on top, interactive or passive (click-through), with several Markdown notes in `notes.sqlite3`, its own global shortcuts (a second instance of the autoclicker's platform backend; which feature holds which chord is shared in `automation::claims`) and its own page; the 19 overlay commands ([notes-overlay.md](notes-overlay.md), [ADR-052](decisions.md#adr-052-the-gaming-notes-overlay-is-a-second-window-created-at-runtime-with-its-notes-in-sqlite-and-its-own-native-shortcuts-behind-an-opt-in-feature)). |
 | macOS menu bar | `src-tauri/src/app_menu.rs` | macOS only: the application, Edit and Window menus; its Quit calls `AppControl::quit` like the tray's, and the Edit menu is what gives the webview ⌘C/⌘V ([ADR-037](decisions.md#adr-037-macos-is-a-supported-build-target-keychain-a-menu-bar-separate-apple-silicon-and-intel-builds)). A Dock click (`RunEvent::Reopen`) shows the dashboard. |
 | System tray | `src-tauri/src/tray.rs` | Creates the tray icon and menu from `MENU_ITEMS`, maps menu ids and icon clicks to `TrayAction`, which calls `AppControl` (implemented by `AppHandle`: `show_dashboard()` or `exit(0)`). `unavailable_reason()` tells a missing Linux tray host apart from other tray errors. |
 | Build script | `src-tauri/build.rs` | `tauri_build` with an app manifest that declares the app's commands (`operating_mode`, `list_features`, `set_feature_enabled`, the six cloud account commands, `list_cloud_folder`, the three download and the three upload commands), so each needs a permission. |
@@ -78,7 +79,7 @@ chosen once at startup ([lifecycle.md](lifecycle.md#operating-modes)).
 
 Boundaries that hold today:
 
-- **Frontend ↔ Rust.** The frontend reaches Rust through 129 custom commands
+- **Frontend ↔ Rust.** The frontend reaches Rust through 148 custom commands
   and Tauri's window API. The commands are `operating_mode` (read-only, returns
   `"tray"` or `"dashboard-only"`), `list_features` (read-only),
   `set_feature_enabled` (switches one feature through the registry's lifecycle
@@ -150,7 +151,16 @@ Boundaries that hold today:
   `import_automation` (both through dialogs Rust opens),
   `capture_cursor_position`, `capture_active_window`, `screen_layout`
   (the page sends ids and documents; input is sent and recorded only by
-  Rust, [automation.md](automation.md#commands));
+  Rust, [automation.md](automation.md#commands)), and the 19 commands of
+  the gaming notes overlay of ADR-052: `watch_overlay`, `unwatch_overlay`,
+  `overlay_config`, `save_overlay_settings`, `reset_overlay`,
+  `set_overlay_visible`, `set_overlay_mode` (the dashboard; the first two
+  and the last two also the overlay), `set_overlay_collapsed`,
+  `set_overlay_opacity`, `open_overlay_settings`, `open_note_link` (only an
+  `http`/`https` address the note holds), `list_notes`, `create_note`,
+  `save_note`, `delete_note`, `duplicate_note`, `set_note_pinned`,
+  `move_note`, `select_note` (the overlay's window only, capability
+  `notes-overlay`; [notes-overlay.md](notes-overlay.md#commands));
   none returns a stored credential (a share link carries the access key
   id, never the secret), none accepts a local path, and only the folder
   sync commands return one: the sync folder the user chose, to show it. The built-in calls are Tauri's window API:
@@ -170,8 +180,12 @@ Boundaries that hold today:
 - **Lifecycle lives in `lib.rs`.** Window, exit and single-instance handling are
   registered once on the builder. `tray.rs` does not decide lifecycle policy; it
   calls `show_dashboard()` or `AppHandle::exit(0)`.
-- **One window.** All code that shows the dashboard looks up the existing window
-  by `DASHBOARD_LABEL` and never creates one.
+- **One dashboard window.** All code that shows the dashboard looks up the
+  existing window by `DASHBOARD_LABEL` and never creates one. The only
+  window created at runtime is the gaming notes overlay's (label
+  `overlay`, ADR-052), by its service, and only while its feature runs;
+  its page calls only its own commands and `startDragging` /
+  `startResizeDragging`.
 - **Features live behind the registry.** Lifecycle code (`lib.rs`) calls only
   `start_all` and `stop_all`, and the frontend uses the two feature commands.
   Nothing else reaches a feature, and a feature's error never affects the mode,
@@ -185,8 +199,10 @@ Boundaries that hold today:
   watches each sync folder, ADR-043), and the autoclicker (ADR-050: off
   by default; while on, one input thread waits for shortcut presses, and a
   session's thread runs only while the user's autoclicker, recording or
-  macro runs), everything is driven by Tauri events
-  and user actions.
+  macro runs), and the gaming notes overlay (ADR-052: off by default;
+  while on, an input thread and a dispatcher thread wait for its shortcut
+  presses, and its webview exists once it was first shown), everything is
+  driven by Tauri events and user actions.
   `set_feature_enabled` (an `async` command)
   runs on Tauri's async runtime, off the event loop, and so does the
   preference save it makes. The cloud account and folder commands run their SQLite and

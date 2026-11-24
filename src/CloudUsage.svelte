@@ -15,7 +15,7 @@
     type UsageProgress,
   } from "./cloudUsage";
   import type { SyncStatus } from "./folderSync";
-  import { formatAgo, formatDecimalSize } from "./format";
+  import { formatAgo, formatCount, formatDate, formatDateTime, formatDecimalSize } from "./format";
   import Icon from "./Icon.svelte";
   import { loadDownloads, saveDownloads } from "./usagePrefs";
 
@@ -150,7 +150,7 @@
 
   function when(ms: number): string {
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? "" : formatDateTime(d);
   }
 
   /** The parts of what is stored, for the segmented bar and its list. */
@@ -223,7 +223,7 @@
       <p class="muted small-text">
         {#if latest}
           Measured {formatAgo(latest.measuredMs)} ({when(latest.measuredMs)}) in {(latest.durationMs / 1000).toFixed(1)} s with
-          {latest.requests.toLocaleString()} listing request{latest.requests === 1 ? "" : "s"}.
+          {formatCount(latest.requests)} listing request{latest.requests === 1 ? "" : "s"}.
         {:else if overview}
           Not measured yet.
         {:else}
@@ -262,8 +262,8 @@
     <div class="progress-line" role="status">
       <span class="spinner" aria-hidden="true"></span>
       {#if progress}
-        {PHASES[progress.phase] ?? "Measuring"}: {progress.entries.toLocaleString()} found, {formatDecimalSize(progress.bytes)} so far
-        ({progress.requests.toLocaleString()} request{progress.requests === 1 ? "" : "s"}).
+        {PHASES[progress.phase] ?? "Measuring"}: {formatCount(progress.entries)} found, {formatDecimalSize(progress.bytes)} so far
+        ({formatCount(progress.requests)} request{progress.requests === 1 ? "" : "s"}).
       {:else}
         Measuring… Every version in the bucket is listed (one request per 1,000; reads only).
       {/if}
@@ -290,8 +290,8 @@
       </div>
       <div class="tile">
         <p class="tile-label">Files</p>
-        <p class="tile-value">{latest.objects.toLocaleString()}</p>
-        <p class="tile-sub">{latest.versionsListed ? `${latest.noncurrentVersions.toLocaleString()} older versions` : "versions not listed"}</p>
+        <p class="tile-value">{formatCount(latest.objects)}</p>
+        <p class="tile-sub">{latest.versionsListed ? `${formatCount(latest.noncurrentVersions)} older versions` : "versions not listed"}</p>
       </div>
       <div class="tile">
         <p class="tile-label">Estimated cost, {group?.estimate?.period ?? "30 days"}</p>
@@ -326,14 +326,14 @@
           <li data-part={p.id}>
             <span class="swatch" style="background: {p.swatch}" aria-hidden="true"></span>
             <span class="part-label">{p.label}</span>
-            <span class="part-count">{p.count.toLocaleString()}</span>
+            <span class="part-count">{formatCount(p.count)}</span>
             <span class="part-bytes">{formatDecimalSize(p.bytes)}</span>
           </li>
         {/each}
       </ul>
       <p class="muted small-text">
         {#if latest.versionsListed}
-          {latest.deleteMarkers.toLocaleString()} delete marker{latest.deleteMarkers === 1 ? "" : "s"} (they store nothing).
+          {formatCount(latest.deleteMarkers)} delete marker{latest.deleteMarkers === 1 ? "" : "s"} (they store nothing).
           {#if account.provider === "backblaze-b2"}
             Backblaze keeps older versions and deleted (hidden) files in every bucket until a lifecycle rule removes them, and
             bills them as storage.
@@ -394,8 +394,8 @@
             {/each}
             <text class="tick" x={PAD.left} y={chart.top - 7}>{formatDecimalSize(chart.max)}</text>
             <text class="tick" x={PAD.left} y={chart.baseline - 6}>0</text>
-            <text class="tick" x={PAD.left} y={H - 6}>{new Date(chart.first.measuredMs).toLocaleDateString()}</text>
-            <text class="tick end" x={W - PAD.right} y={H - 6}>{new Date(chart.last.measuredMs).toLocaleDateString()}</text>
+            <text class="tick" x={PAD.left} y={H - 6}>{formatDate(new Date(chart.first.measuredMs))}</text>
+            <text class="tick end" x={W - PAD.right} y={H - 6}>{formatDate(new Date(chart.last.measuredMs))}</text>
           </svg>
         </div>
         <details>
@@ -404,7 +404,7 @@
             <thead><tr><th>Measured</th><th class="num">Stored</th><th class="num">Files</th></tr></thead>
             <tbody>
               {#each [...(mine?.history ?? [])].reverse() as h (h.measuredMs)}
-                <tr><td>{when(h.measuredMs)}</td><td class="num">{formatDecimalSize(h.storedBytes)}{h.complete ? "" : "+"}</td><td class="num">{h.objects.toLocaleString()}</td></tr>
+                <tr><td>{when(h.measuredMs)}</td><td class="num">{formatDecimalSize(h.storedBytes)}{h.complete ? "" : "+"}</td><td class="num">{formatCount(h.objects)}</td></tr>
               {/each}
             </tbody>
           </table>
@@ -479,14 +479,14 @@
       </p>
       <dl class="meta-list">
         <dt>Synced here</dt>
-        <dd>{formatDecimalSize(sync.bytes)} in {sync.files.toLocaleString()} files</dd>
+        <dd>{formatDecimalSize(sync.bytes)} in {formatCount(sync.files)} files</dd>
         <dt>Waiting to upload</dt>
-        <dd>{sync.pendingUploads.toLocaleString()} files, {formatDecimalSize(sync.pendingUploadBytes)}</dd>
+        <dd>{formatCount(sync.pendingUploads)} files, {formatDecimalSize(sync.pendingUploadBytes)}</dd>
         <dt>Waiting to download</dt>
-        <dd>{sync.pendingDownloads.toLocaleString()} files, {formatDecimalSize(sync.pendingDownloadBytes)}</dd>
+        <dd>{formatCount(sync.pendingDownloads)} files, {formatDecimalSize(sync.pendingDownloadBytes)}</dd>
         {#if sync.trashFiles > 0}
           <dt>Sync trash</dt>
-          <dd>{formatDecimalSize(sync.trashBytes)} in {sync.trashFiles.toLocaleString()} files (kept 30 days)</dd>
+          <dd>{formatDecimalSize(sync.trashBytes)} in {formatCount(sync.trashFiles)} files (kept 30 days)</dd>
         {/if}
       </dl>
     </div>

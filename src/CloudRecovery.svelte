@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import type { AccountInfo } from "./cloud";
   import { describeOperationError } from "./cloudMessages";
+  import { formatDateTime } from "./format";
   import {
     abortIncompleteUpload,
     dismissRecovery,
@@ -65,7 +66,7 @@
 
   function when(ms: number): string {
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? "" : formatDateTime(d);
   }
 
   async function run(key: string, f: () => Promise<void>): Promise<void> {

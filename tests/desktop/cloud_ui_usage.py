@@ -34,8 +34,9 @@ def decimal_size(n):
 
 def cost_rows():
     """The Estimated cost table, the only table shown on the tab: each row as
-    (row header with its sentence, amount without white space). The amount's
-    spacing follows the locale: "$ 0.00" here, under C.UTF-8."""
+    (row header with its sentence, amount without white space). The page
+    writes amounts in en-US whatever the webview's language ("$0.00"; before
+    2026-11-24 WebKitGTK's language under C.UTF-8 made it "$ 0.00")."""
     out = []
     for role, _, _, node in nodes(pid):
         if role == Atspi.Role.TABLE_ROW and node.get_child_count() >= 2:

@@ -958,12 +958,12 @@ function FormatSize([long]$n) {
   "{0} {1}" -f $v.ToString("F$digits", [Globalization.CultureInfo]::InvariantCulture), $units[$u]
 }
 # The page's formatDate for each RFC 3339 string, by the same Intl call in
-# node, in the same time zone. WebView2's default locale is the Windows display
-# language, while node's is the regional format (they can differ: en-US vs
-# fr-FR seen 2026-11-11), so the display language is passed explicitly.
+# node, in the same time zone. The page writes every date in en-US whatever
+# WebView2's language (the Windows display language; since 2026-11-24), while
+# node's default is the regional format (en-US vs fr-FR seen 2026-11-11), so
+# en-US is passed explicitly.
 function FormatDates($dates) {
-  $locale = (Get-UICulture).Name
-  $js = "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString(['$locale'],{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).replace(/[\u202f\u00a0]/g,' '))))"
+  $js = "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString(['en-US'],{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).replace(/[\u202f\u00a0]/g,' '))))"
   $f = Join-Path $env:TEMP "sotyware-dates-$run.js"; Set-Content $f $js -Encoding ASCII
   $out = (ConvertTo-Json @($dates) -Compress) | & node $f
   Remove-Item $f
@@ -1564,9 +1564,10 @@ function UsageShapes([string]$name) {
   $sec = UsageSection $name; if (-not $sec) { return "no section '$name'" }
   @($sec.FindAll($S::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -ne $CT::Text } | Select-Object -First 45 | ForEach-Object { $nm = "$($_.Current.Name)"; if ($nm.Length -gt 24) { $nm = $nm.Substring(0, 24) }; "$($_.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '')/$($_.Current.LocalizedControlType)/$($_.Current.AriaRole) '$nm'" }) -join "; "
 }
-# A US dollar amount in any of the page's locales: $7.00, US$7.00, 7,00 $US.
+# A US dollar amount as the page writes it, in en-US whatever WebView2's
+# language (since 2026-11-24; before, "7,00 $US" under French): $7.00.
 # Single quotes: in a double-quoted string `$?` is PowerShell's last-status variable.
-function IsUsd([string]$a, [string]$whole) { $a.Contains('$') -and $a -match ('^(?:US\$|\$US|\$)?' + $whole + '[.,]00(?:US\$|\$US|\$)?$') }
+function IsUsd([string]$a, [string]$whole) { $a -ceq ('$' + $whole + '.00') }
 # The page's viewport in CSS pixels, and the window's scale.
 function UsageViewport {
   $h = Hwnd (Dash); $c = [CloudUiW]::Client($h); if ($null -eq $c) { return $null }

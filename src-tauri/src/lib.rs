@@ -50,6 +50,7 @@ mod features;
 pub(crate) mod folder_sync;
 mod github_page;
 pub(crate) mod journal;
+pub(crate) mod overlay;
 mod storage;
 #[cfg(any(test, feature = "test-profile"))]
 mod test_profile;
@@ -180,6 +181,36 @@ fn persist_window_state<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
+/// Records the overlay's bounds after it moved or was resized (event
+/// loop: only the tracking lock). A hidden or minimized window says
+/// nothing about where the user wants it.
+fn track_overlay<R: Runtime>(window: &tauri::Window<R>) {
+    if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    if let Some(notes) = window.try_state::<Arc<overlay::NotesOverlay>>()
+        && let Some((x, y)) = notes.window_changed(
+            window_state::Rect {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            },
+            window.scale_factor().unwrap_or(1.0),
+        )
+        && let Err(e) = window.set_position(tauri::PhysicalPosition::new(x, y))
+    {
+        // Right after a show on X11, somewhere else than asked (the window
+        // manager placed it anew, or the first report was not settled): it
+        // goes back where it was asked to be (a setter: never waits for
+        // this loop).
+        eprintln!("sotyware: cannot put the overlay back: {e}");
+    }
+}
+
 /// Un-minimizes, shows and focuses `window`, in that order. Each step is attempted
 /// even if an earlier one fails: a window that is shown but not focused is still
 /// usable, so failures are only logged.
@@ -203,11 +234,17 @@ enum CloseAction {
     /// End the process with `exit(EXIT_QUIT)`: nothing could bring a closed
     /// dashboard back.
     Quit,
+    /// Keep the notes overlay and hide it (ADR-052): its notes and settings
+    /// stay, a shortcut or the dashboard shows it again. In both modes.
+    HideOverlay,
     /// Let the runtime close it.
     Allow,
 }
 
 fn close_action(label: &str, mode: OperatingMode) -> CloseAction {
+    if label == overlay::OVERLAY_LABEL {
+        return CloseAction::HideOverlay;
+    }
     match (label == DASHBOARD_LABEL, mode) {
         (false, _) => CloseAction::Allow,
         (true, OperatingMode::Tray) => CloseAction::HideInstead,
@@ -308,6 +345,12 @@ pub fn run() {
     }
     #[cfg(feature = "test-profile")]
     let webview_dir = profile.webview_dir();
+    // The notes overlay's webview keeps its data where the dashboard's
+    // does: in a test profile, the profile's folder (ADR-027).
+    #[cfg(feature = "test-profile")]
+    let overlay_webview_dir = Some(webview_dir.clone());
+    #[cfg(not(feature = "test-profile"))]
+    let overlay_webview_dir: Option<std::path::PathBuf> = None;
 
     #[allow(unused_mut)] // only mutated on desktop
     let mut builder = tauri::Builder::default();
@@ -485,6 +528,25 @@ pub fn run() {
             automation::capture_cursor_position,
             automation::capture_active_window,
             automation::screen_layout,
+            overlay::watch_overlay,
+            overlay::unwatch_overlay,
+            overlay::overlay_config,
+            overlay::save_overlay_settings,
+            overlay::reset_overlay,
+            overlay::set_overlay_visible,
+            overlay::set_overlay_mode,
+            overlay::set_overlay_collapsed,
+            overlay::set_overlay_opacity,
+            overlay::open_overlay_settings,
+            overlay::open_note_link,
+            overlay::list_notes,
+            overlay::create_note,
+            overlay::save_note,
+            overlay::delete_note,
+            overlay::duplicate_note,
+            overlay::set_note_pinned,
+            overlay::move_note,
+            overlay::select_note,
         ])
         // `setup` runs exactly once, so the tray and its handlers are registered once,
         // and the mode is chosen once. Without a tray host the tray is not retried.
@@ -515,6 +577,15 @@ pub fn run() {
                         )?;
                     }
                     app.manage(mode);
+                    // The notes overlay's window (ADR-052) is created by
+                    // its service when first shown; the host must exist
+                    // before the features start.
+                    if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>() {
+                        notes.attach(Box::new(overlay::TauriHost::new(
+                            app.handle().clone(),
+                            overlay_webview_dir.clone(),
+                        )));
+                    }
                     // After the mode, so a fatal tray error never starts a feature.
                     // A failing feature is recorded in its state; the app runs on.
                     // The preferences were loaded before the event loop started,
@@ -541,6 +612,11 @@ pub fn run() {
                         }
                         reveal(&window);
                     }
+                    // From now on a start of the overlay is the user's
+                    // doing; at startup it shows only if its settings ask.
+                    if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>() {
+                        notes.startup_finished();
+                    }
                 }
                 Err(code) => app.handle().exit(code),
             }
@@ -554,6 +630,34 @@ pub fn run() {
                     drops.dropped(paths.clone());
                 }
                 return;
+            }
+            // Where the user puts the notes overlay (ADR-052): tracked in
+            // memory as it moves, saved when it loses focus or hides. Only
+            // the tracking lock is taken here; anything that drives the
+            // window runs on a worker thread.
+            if window.label() == overlay::OVERLAY_LABEL {
+                match event {
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        track_overlay(window);
+                        return;
+                    }
+                    WindowEvent::Focused(false) => {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>() {
+                                notes.persist_state();
+                            }
+                        });
+                        return;
+                    }
+                    WindowEvent::Destroyed => {
+                        if let Some(notes) = window.try_state::<Arc<overlay::NotesOverlay>>() {
+                            notes.window_destroyed();
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
             }
             // Where the user puts the dashboard: tracked in memory as it
             // moves, saved when it is hidden or loses focus (ADR-040).
@@ -594,6 +698,19 @@ pub fn run() {
                     // An explicit exit code, so `exit_allowed` lets it through.
                     api.prevent_close();
                     window.app_handle().exit(EXIT_QUIT);
+                }
+                CloseAction::HideOverlay => {
+                    // Alt+F4 on the overlay hides it like its own close
+                    // button; the service drives the window off this loop.
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>()
+                            && let Err(e) = notes.set_visible(false)
+                        {
+                            eprintln!("sotyware: failed to hide the overlay: {}", e.message);
+                        }
+                    });
                 }
                 CloseAction::Allow => {}
             }
@@ -757,6 +874,17 @@ pub fn run() {
     let automation =
         automation::Automation::load(storage::open_automation_store(clone_dir(&data_dir)));
     let _ = automation::LINK.set(Arc::clone(&automation));
+    // The gaming notes overlay (ADR-052): its notes, settings and state in
+    // their own database; the `notes-overlay` feature (off by default)
+    // registers its shortcuts and lets the window exist through this link.
+    // Which feature holds which global shortcut is shared with the
+    // autoclicker, so neither mistakes the other for "another program".
+    let notes = overlay::NotesOverlay::load(storage::open_notes_store(clone_dir(&data_dir)));
+    let claims = automation::claims::Claims::new();
+    automation.share_claims(Arc::clone(&claims));
+    notes.share_claims(claims);
+    let _ = overlay::LINK.set(Arc::clone(&notes));
+    app.manage(notes);
     app.manage(automation);
     // Where the dashboard was last (ADR-040): read now, applied in `setup`
     // before the window is first shown.
@@ -782,6 +910,7 @@ pub fn run() {
             storage::USAGE_FILE_NAME,
             storage::SYNC_FILE_NAME,
             storage::AUTOMATION_FILE_NAME,
+            storage::NOTES_FILE_NAME,
         ]
         .map(|name| dir.join(name));
         if let Err(e) = test_profile::write_ack(&profile, &stores) {
@@ -812,6 +941,11 @@ pub fn run() {
 /// the updater just before it ends the process to install (Windows,
 /// ADR-033). Stopping here is not a user choice, so no preference changes.
 pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    // The notes overlay's window goes with the process: its feature's stop
+    // below must not drive it from the event loop's thread (ADR-052).
+    if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>() {
+        notes.exiting();
+    }
     if let Some(registry) = app.try_state::<features::FeatureRegistry>() {
         registry.stop_all();
     }
@@ -820,6 +954,12 @@ pub(crate) fn release_resources<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     // done it if it ran.
     if let Some(automation) = app.try_state::<Arc<automation::Automation>>() {
         automation.shutdown();
+    }
+    // The overlay's shortcuts are unregistered and its place and note
+    // remembered; the `notes-overlay` feature's stop above has done it if
+    // it ran (ADR-052).
+    if let Some(notes) = app.try_state::<Arc<overlay::NotesOverlay>>() {
+        notes.shutdown();
     }
     if let Some(prefs) = app.try_state::<features::FeaturePreferences>() {
         prefs.close();
@@ -995,7 +1135,21 @@ mod tests {
             assert_eq!(close_action("other", mode), CloseAction::Allow);
             // Labels are case-sensitive in Tauri; only the exact dashboard label is kept.
             assert_eq!(close_action("Main", mode), CloseAction::Allow);
+            assert_eq!(close_action("Overlay", mode), CloseAction::Allow);
         }
+    }
+
+    #[test]
+    fn closing_the_notes_overlay_hides_it_in_both_modes() {
+        // Its close button and Alt+F4 never destroy it nor end sotyware
+        // (ADR-052); in dashboard-only mode the dashboard still quits.
+        for mode in MODES {
+            assert_eq!(
+                close_action(overlay::OVERLAY_LABEL, mode),
+                CloseAction::HideOverlay
+            );
+        }
+        assert_eq!(overlay::OVERLAY_LABEL, "overlay");
     }
 
     #[test]
@@ -1144,7 +1298,7 @@ mod tests {
         let cap = read_json("capabilities/default.json");
         assert_eq!(cap["windows"], serde_json::json!([DASHBOARD_LABEL]));
         // Widening the frontend's permissions is a design decision (ADR-013,
-        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041, ADR-043, ADR-049, ADR-050); update this test together with decisions.md. Hiding is granted
+        // ADR-014, ADR-018, ADR-019, ADR-020, ADR-022, ADR-030, ADR-031, ADR-032, ADR-033, ADR-035, ADR-036, ADR-040, ADR-041, ADR-043, ADR-049, ADR-050, ADR-052); update this test together with decisions.md. Hiding is granted
         // at runtime, in tray mode only (TRAY_MODE_CAPABILITY), and the window controls on Windows only
         // (title_bar::CAPABILITY).
         assert_eq!(
@@ -1279,10 +1433,84 @@ mod tests {
                 "allow-capture-cursor-position",
                 "allow-capture-active-window",
                 "allow-screen-layout",
+                "allow-watch-overlay",
+                "allow-unwatch-overlay",
+                "allow-overlay-config",
+                "allow-save-overlay-settings",
+                "allow-reset-overlay",
+                "allow-set-overlay-visible",
+                "allow-set-overlay-mode",
                 "core:window:allow-set-theme",
                 "core:window:allow-is-decorated",
             ])
         );
         assert_eq!(HIDE_PERMISSION, "core:window:allow-hide");
+    }
+
+    #[test]
+    fn the_overlay_capability_allows_only_the_overlays_commands() {
+        // The overlay's page (ADR-052) edits notes and drives its own
+        // window; it can reach nothing of the dashboard's.
+        let cap = read_json("capabilities/overlay.json");
+        assert_eq!(cap["windows"], serde_json::json!([overlay::OVERLAY_LABEL]));
+        assert_eq!(cap["identifier"], serde_json::json!("notes-overlay"));
+        assert_eq!(
+            cap["permissions"],
+            serde_json::Value::from(vec![
+                "allow-watch-overlay",
+                "allow-unwatch-overlay",
+                "allow-set-overlay-visible",
+                "allow-set-overlay-mode",
+                "allow-set-overlay-collapsed",
+                "allow-set-overlay-opacity",
+                "allow-open-overlay-settings",
+                "allow-open-note-link",
+                "allow-list-notes",
+                "allow-create-note",
+                "allow-save-note",
+                "allow-delete-note",
+                "allow-duplicate-note",
+                "allow-set-note-pinned",
+                "allow-move-note",
+                "allow-select-note",
+                "core:window:allow-start-dragging",
+                "core:window:allow-start-resize-dragging",
+            ])
+        );
+    }
+
+    #[test]
+    fn every_permission_names_a_declared_command_and_every_command_has_one() {
+        // build.rs declares the app's commands; a command a capability
+        // does not grant could never be called, and a grant of a command
+        // build.rs does not declare would not build.
+        let manifest =
+            std::fs::read_to_string(format!("{}/build.rs", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let start = manifest.find(".commands(&[").expect("the command list");
+        let end = start + manifest[start..].find("]))").expect("its end");
+        let declared: Vec<String> = manifest[start..end]
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect();
+        assert!(declared.len() > 140, "{}", declared.len());
+        let mut granted: Vec<String> = Vec::new();
+        for file in ["capabilities/default.json", "capabilities/overlay.json"] {
+            for p in read_json(file)["permissions"].as_array().unwrap() {
+                let p = p.as_str().unwrap();
+                if let Some(cmd) = p.strip_prefix("allow-") {
+                    let cmd = cmd.replace('-', "_");
+                    assert!(
+                        declared.contains(&cmd),
+                        "{file}: {p} grants no declared command"
+                    );
+                    granted.push(cmd);
+                }
+            }
+        }
+        for cmd in &declared {
+            assert!(granted.contains(cmd), "{cmd} is granted to no window");
+        }
     }
 }

@@ -65,7 +65,7 @@
     type SortDirection,
     type SortKey,
   } from "./fileList";
-  import { formatSize, shownName } from "./format";
+  import { formatCount, formatDateTime, formatSize, shownName } from "./format";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -1060,7 +1060,7 @@
     const date = new Date(rfc3339);
     return Number.isNaN(date.getTime())
       ? rfc3339
-      : date.toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      : formatDateTime(date, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
   onMount(() => {
@@ -1366,7 +1366,7 @@
         Searching {searched.prefix === "" ? "the whole bucket" : searched.prefix}…
       {:else}
         {hits.length} result{hits.length === 1 ? "" : "s"} for “{searched.query}” ({searched.mode === "name" ? "names containing it" : "keys starting with it"})
-        in {searched.prefix === "" ? "the whole bucket" : searched.prefix}; {scanned.toLocaleString()} objects looked at{searchNext !== null ? ", more to search" : ""}.
+        in {searched.prefix === "" ? "the whole bucket" : searched.prefix}; {formatCount(scanned)} objects looked at{searchNext !== null ? ", more to search" : ""}.
         S3 cannot search file contents.
       {/if}
     </p>
@@ -1401,7 +1401,7 @@
     {/if}
     <!-- A paragraph, not a span: WebKitGTK leaves a flex item span's text
          out of the accessibility tree. -->
-    <p class="hint">Sorting and filtering apply to the {entries.length.toLocaleString()} items loaded.</p>
+    <p class="hint">Sorting and filtering apply to the {formatCount(entries.length)} items loaded.</p>
   </div>
 
   {#if filterOpen}
@@ -1600,7 +1600,7 @@
             oncontextmenu={(e) => rowMenu(entry, e)}
           >
             <td class="name"><span class="row-icon" aria-hidden="true"><Icon name="file" size={16} /></span>{shownName(entry.name)}{#if view === "search"}<span class="where">in {(hitParents.get(id) ?? "") === "" ? bucket : hitParents.get(id)}</span>{/if}</td>
-            <td class="num" title={`${entry.size.toLocaleString()} bytes`}>{formatSize(entry.size)}</td>
+            <td class="num" title={`${formatCount(entry.size)} bytes`}>{formatSize(entry.size)}</td>
             <td>{formatDate(entry.lastModified)}</td>
             <td>{typeLabel(entry)}</td>
             <td><input type="checkbox" aria-label={`Select ${shownName(entry.name)}`} checked={isSelected} onchange={() => toggleOne(entry)} /></td>

@@ -3,7 +3,7 @@
 
 export type Section = "overview" | "cloud-storage" | "backups" | "autoclicker" | "account" | "settings";
 
-export type SettingsTab = "general" | "features" | "about";
+export type SettingsTab = "general" | "features" | "overlay" | "about";
 
 export const SECTION_TITLES: Record<Section, string> = {
   overview: "Overview",

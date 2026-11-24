@@ -1,6 +1,6 @@
 # Implementation status
 
-Last updated: 2026-11-24 (the autoclicker phase's Preview check reads only the editor's section, after once missing a preview of 1.15 s while it walked the whole page; the phase passed 103/103 five times, and with every AT-SPI call made 1 ms slower the old check failed as it had while the new one passed: [details](#the-autoclicker-phases-preview-check-reads-only-the-editor-2026-11-24)); before that 2026-11-19 (**`v0.1.3` published**, with the autoclicker and macros: run 44575613912, its `publish` approved through GitHub's API at the maintainer's request, the release verified anonymously: [details](#release-013-2026-11-19)); before that 2026-11-19 (version 0.1.3 prepared: the five version files raised as `ed74061`, whose `ci.yml`, `macos.yml` and release dry run (run 44571339185) passed on every platform: [details](#release-013-prepared-2026-11-19)); before that 2026-11-19 (every branch left merged into `main` after its fast-forward to `468d8c1`: the WebKit helper checks (`62bd45f`) and the Windows theme check's real-desktop run (`cf781a5`); `test:headless` passed on the merged tree, `isolation-guard.yml` passed at `468d8c1`: [details](#every-remaining-branch-merged-into-main-2026-11-19)); before that 2026-11-19 (the shortcut field's refusal named by its text, so UI Automation and Narrator get it inside the Settings and editor tables: WebView2 leaves an alert in a table cell unnamed, shown in Edge 157 with a page of variants; checked on a private desktop through UI Automation, Linux phase 103/0: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (the Autoclicker page's second run on Windows 11, with the driver fixed: 101 of 102 checks passed, the emergency stop with Shift held and every release of held keys among them; the one failure is the shortcut field's refusal, shown on the page but with no text for UI Automation: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (the Autoclicker page driven on Windows 11 for the first time, `windows-autoclicker.ps1` on the maintainer's desktop: 92 passed, 10 failed, every failure the driver's own or the installed 0.1.2 writing its folder; a rehearsal on a private desktop found four driver defects first, and `check-ps-variables.ps1` now finds names PowerShell hides at run time, which also caught two hollow checks of the profile self-test; the second run, with the rest fixed, waits for an idle desktop: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `c02ea7e` passed three times, 140/0/0, one run with a web process crashing at quit that the driver named instead of failing: [details](#hosted-runs-at-c02ea7e-a-crash-at-quit-named-the-run-passing-2026-11-19)); before that 2026-11-19 (at the maintainer's choice, the Linux driver counts a WebKit helper dumping core after a crash as ended and names it instead of failing, a crashed network process still failing; the workflow puts the number of WebKit core dumps in the run summary; WSL2 with simulated crashes only, not pushed: [details](#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `de254ae`, five runs: two cancelled on the Ubuntu archive's timeouts, one failed 138/2 on two web processes crashing at quit, two passed 140/0/0; systemd-coredump's stack traces put the crash in a C++ static destructor in Mesa 26.0.8's `libgallium` as the process exits, glibc finding the heap already corrupt: [details](#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `eb2a703` passed 140/0/0 with no core dump recorded: the web process's crash at quit is intermittent; the step now also prints the runner's `core_pattern`, not pushed: [details](#hosted-run-at-eb2a703-no-crash-this-time-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `8b1deac` failed 138/2: the driver showed the quitting instances' own WebKit web processes had crashed as sotyware quit (glibc: a corrupt heap) and were still dumping core into systemd-coredump 15 s later, very probably what failed at `1ef6bfa` too; not seen on WSL2; the driver now says when a helper is dumping core, and the workflow prints systemd-coredump's record; not pushed: [details](#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19)); before that 2026-11-19 (`windows.ps1` with its theme check ran on the maintainer's Windows 11 desktop: 136 passed, 0 failed; Dark chosen 3.9 s before the tray Quit was kept, through WebView2's commit as sotyware ended, and WebView2's processes ended 56 to 76 ms after sotyware: [details](#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)); before that 2026-11-19 (the Linux desktop driver tells whose WebKit helper is left: the one that failed `desktop-virtual.yml` at `1ef6bfa` was not the quitting instance's but an earlier launch's, very probably scenario 12's web process; each quit of 17 to 19 now waits for its own launch's helpers, a new check before 17 for earlier launches', and a helper left is named with its program, parent, state, start and launch; 140 checks; WSL2 only, not pushed: [details](#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)); before that 2026-11-19 (every branch not yet in `main` merged into it, with `main`'s first merge commits, and pushed as `1ef6bfa`: the follow-ups made on `37581df` and the editor's warning about the emergency stop with modifiers; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed, `desktop-virtual.yml` failed one check of 139, the new wait for WebKit's helpers: [details](#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)); before that 2026-11-19 (the editor warns about a macro's "keys" step that presses the emergency stop's key with other modifiers, which stops its own playback; headless on WSL2 only: [details](#the-editor-warns-about-the-emergency-stops-key-with-modifiers-2026-11-19)); before that 2026-11-19 (`main` pushed to `37581df`, the autoclicker and macros, as a fast-forward; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed at the first attempt: [details](#hosted-runs-at-37581df-the-autoclicker-on-main-2026-11-19)); before that 2026-11-19 (a backup's snapshot order and health no longer follow a clock set back, ADR-051: [details](#backup-order-no-longer-follows-a-clock-set-back-2026-11-19)); before that 2026-11-18 (the backup tests wait on the wall clock between backup tasks instead of a fixed sleep: [details](#backup-tests-and-backward-steps-of-the-wall-clock-2026-11-18)); before that 2026-11-18 (the Windows desktop test, `windows.ps1`, checks the theme chosen just before a tray Quit after the relaunch, each relaunch waiting for WebView2's processes, whose lifetimes it records; checked statically and in a harness, and probed on a private desktop with sotyware ended by `Stop-Process`, where WebView2 lost no choice; not run on the real desktop: [details](#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)); before that 2026-11-18 (the file-operation cancel test can no longer pass without cancelling: its hook takes the running operation's id from the slot; test code only, WSL2, not pushed: [details](#the-file-operation-cancel-test-always-cancels-2026-11-18)); before that 2026-11-18 (the virtual-display test's theme check, which failed once on GitHub at `0b79903`, explained: WebKitGTK commits a theme chosen just before Quit as sotyware ends, and a relaunch that reads the storage before that commit shows the previous one; the driver now waits for WebKit's helpers to end, the rest is a recorded limitation; WSL2 only, not pushed: [details](#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)); before that 2026-11-18 (the file-operation shutdown test that failed `ci.yml` on Windows at `0b79903` now waits for the shutdown's cancel instead of sleeping 100 ms; test code only, WSL2, not pushed: [details](#the-file-operation-shutdown-test-on-a-busy-runner-2026-11-18)); before that 2026-11-18 (the autoclicker's Windows backend with real input on the maintainer's desktop, three passes after two fixes, on the branch, not pushed: [details](#the-autoclickers-windows-backend-with-real-input-2026-11-18)); before that 2026-11-17 (the autoclicker and macros, ADR-050, on a branch, not pushed: [details](#autoclicker-and-macros-2026-11-17)); before that 2026-11-17 (**`v0.1.2` published**, the first release offering sotyware accounts: run 44036236091, approved by the maintainer, verified anonymously: [details](#release-012-2026-11-17)); before that 2026-11-17 (version 0.1.2 prepared, the privacy notice dated for its release: [details](#release-012-prepared-2026-11-17)); before that 2026-11-17 (desktop tests for folder sync with the startup check, sign-up and the GitHub pages, Linux virtual display and native Windows 11, local servers only: [details](#desktop-tests-for-folder-sync-sign-up-and-the-github-pages-2026-11-17)); before that 2026-11-17 (the maintainer reports their Windows 11 updated from 0.1.0 to 0.1.1 through Update now, the first update installed: [details](#the-first-update-through-the-app-010-to-011)); before that 2026-11-17 (the hourly purge deployed on the account service, binary checked on the VM: [details](#the-retention-purge-deployed-2026-11-17)); before that 2026-11-17 (`main` pushed to `13bf8bc`, a multi-account test's stall limit fixed after Windows CI failed at `61d8f45`; `ci.yml` and `macos.yml` passed on Ubuntu 22.04, Windows and both Macs: [details](#a-multi-account-test-on-a-slow-windows-runner-2026-11-17)); before that 2026-11-17 (the privacy notice linked from the account sign-up form and Settings, no legal review, dated on `v0.1.2`'s release day; `open_feedback_page` renamed `open_github_page`: [details](#the-privacy-notice-in-the-app-no-legal-review-2026-11-17)); before that 2026-11-17 (privacy notice's open points settled, contact `privacy@sotyware.com` working (ImprovMX forwarding, replies through Brevo, whose IP blocking is now off); Send feedback and Report a bug open GitHub issue forms, ADR-049; WSL2 headless only: [details](#privacy-notice-completed-feedback-and-bug-report-buttons-2026-11-17)); before that 2026-11-17 (the account service purges by retention period every hour, ADR-048: sessions, codes, never-verified accounts after 7 days, audit events after 365 days or 31 days after deletion; tested in process on WSL2, not deployed: [details](#retention-purges-in-the-account-service-2026-11-17)); before that 2026-11-17 (privacy notice for the account service drafted, the gate before `v0.1.2`, which the maintainer is holding; its open points are listed: [details](#privacy-notice-drafted-2026-11-17)); before that 2026-11-17 (`main` pushed to `8a670f8`; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed on Ubuntu 22.04, Windows and both Macs: [details](#hosted-runs-at-8a670f8-the-account-service-the-startup-check-and-its-backups-pushed-2026-11-17)); before that 2026-11-17 (off-host backups of the account service, ADR-047: encrypted hourly copies in Backblaze B2 behind Object Lock, set up on the VM by the maintainer; the first upload was locked in Compliance mode for 30 days, the monitor turned green and the copy decrypted and restored in WSL2: [details](#off-host-backups-of-the-account-service-2026-11-17)); before that 2026-11-16 (folder sync, ADR-043, which failed `macos.yml` on Apple Silicon at `b67d6a6`, and its two fixes, one spelling per name where the file system ignores case and nothing synced through a link, pushed as `d3a301c`, where `ci.yml` and `macos.yml` passed on Ubuntu 22.04, Windows and both Macs; headless and against test servers only: [details](#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Windows desktop test, `windows-cloud-ui.ps1 -Mode usage`: 41/41 on native Windows 11 through UI Automation, and a build without the cost table's fix fails exactly its three layout checks: [details](#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
+Last updated: 2026-11-24 (every number and date on the page in **en-US**, whatever the webview's language, as the maintainer chose: one `LOCALE` in `src/format.ts`, the autoclicker's counts and every page's dates through it, a test that fails on a formatting call without it; frontend tests 430/430 on WSL2 under four machine locales, no desktop driver run; committed on the branch `claude/exciting-pascal-b4b46e`, not pushed: [details](#numbers-and-dates-in-en-us-2026-11-24)); before that 2026-11-24 (the autoclicker phase's Preview check reads only the editor's section, after once missing a preview of 1.15 s while it walked the whole page; the phase passed 103/103 five times, and with every AT-SPI call made 1 ms slower the old check failed as it had while the new one passed: [details](#the-autoclicker-phases-preview-check-reads-only-the-editor-2026-11-24)); before that 2026-11-24 (the **gaming notes overlay**, committed as `4706140` on the branch `feat/gaming-notes-overlay`, not pushed: Linux private display 57/57 nine times after two placement fixes, native Windows 11 on a private desktop 50/50 four times after a fix for the keyboard, and with real input on the maintainer's desktop 80/80 three times: [details](#gaming-notes-overlay-2026-11-23)); before that 2026-11-23 (the frontend tests pass whatever the machine's locale: six failed on a Windows 11 whose regional format is fr-FR, Node's `Intl` following it where the webview the tests simulate formats in en-US; en-US is now every test's default locale (`src/testLocale.ts`), the app unchanged; test code and docs only, run on WSL2 and on that Windows 11, not pushed: [details](#frontend-tests-under-any-locale-2026-11-23)); before that 2026-11-21 (folder uploads and drops of up to 50,000 files, pushed to `main` as `6d43914`, where `ci.yml` and `macos.yml` passed: [details](#hosted-runs-at-6d43914-folder-uploads-of-up-to-50000-files-2026-11-21)); before that 2026-11-19 (**`v0.1.3` published**, with the autoclicker and macros: run 44575613912, its `publish` approved through GitHub's API at the maintainer's request, the release verified anonymously: [details](#release-013-2026-11-19)); before that 2026-11-19 (version 0.1.3 prepared: the five version files raised as `ed74061`, whose `ci.yml`, `macos.yml` and release dry run (run 44571339185) passed on every platform: [details](#release-013-prepared-2026-11-19)); before that 2026-11-19 (every branch left merged into `main` after its fast-forward to `468d8c1`: the WebKit helper checks (`62bd45f`) and the Windows theme check's real-desktop run (`cf781a5`); `test:headless` passed on the merged tree, `isolation-guard.yml` passed at `468d8c1`: [details](#every-remaining-branch-merged-into-main-2026-11-19)); before that 2026-11-19 (the shortcut field's refusal named by its text, so UI Automation and Narrator get it inside the Settings and editor tables: WebView2 leaves an alert in a table cell unnamed, shown in Edge 157 with a page of variants; checked on a private desktop through UI Automation, Linux phase 103/0: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (the Autoclicker page's second run on Windows 11, with the driver fixed: 101 of 102 checks passed, the emergency stop with Shift held and every release of held keys among them; the one failure is the shortcut field's refusal, shown on the page but with no text for UI Automation: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (the Autoclicker page driven on Windows 11 for the first time, `windows-autoclicker.ps1` on the maintainer's desktop: 92 passed, 10 failed, every failure the driver's own or the installed 0.1.2 writing its folder; a rehearsal on a private desktop found four driver defects first, and `check-ps-variables.ps1` now finds names PowerShell hides at run time, which also caught two hollow checks of the profile self-test; the second run, with the rest fixed, waits for an idle desktop: [details](#the-autoclicker-page-on-windows-11-the-drivers-first-runs-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `c02ea7e` passed three times, 140/0/0, one run with a web process crashing at quit that the driver named instead of failing: [details](#hosted-runs-at-c02ea7e-a-crash-at-quit-named-the-run-passing-2026-11-19)); before that 2026-11-19 (at the maintainer's choice, the Linux driver counts a WebKit helper dumping core after a crash as ended and names it instead of failing, a crashed network process still failing; the workflow puts the number of WebKit core dumps in the run summary; WSL2 with simulated crashes only, not pushed: [details](#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `de254ae`, five runs: two cancelled on the Ubuntu archive's timeouts, one failed 138/2 on two web processes crashing at quit, two passed 140/0/0; systemd-coredump's stack traces put the crash in a C++ static destructor in Mesa 26.0.8's `libgallium` as the process exits, glibc finding the heap already corrupt: [details](#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `eb2a703` passed 140/0/0 with no core dump recorded: the web process's crash at quit is intermittent; the step now also prints the runner's `core_pattern`, not pushed: [details](#hosted-run-at-eb2a703-no-crash-this-time-2026-11-19)); before that 2026-11-19 (`desktop-virtual.yml` on the branch at `8b1deac` failed 138/2: the driver showed the quitting instances' own WebKit web processes had crashed as sotyware quit (glibc: a corrupt heap) and were still dumping core into systemd-coredump 15 s later, very probably what failed at `1ef6bfa` too; not seen on WSL2; the driver now says when a helper is dumping core, and the workflow prints systemd-coredump's record; not pushed: [details](#hosted-run-at-8b1deac-webkits-web-process-crashes-as-sotyware-quits-2026-11-19)); before that 2026-11-19 (`windows.ps1` with its theme check ran on the maintainer's Windows 11 desktop: 136 passed, 0 failed; Dark chosen 3.9 s before the tray Quit was kept, through WebView2's commit as sotyware ended, and WebView2's processes ended 56 to 76 ms after sotyware: [details](#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)); before that 2026-11-19 (the Linux desktop driver tells whose WebKit helper is left: the one that failed `desktop-virtual.yml` at `1ef6bfa` was not the quitting instance's but an earlier launch's, very probably scenario 12's web process; each quit of 17 to 19 now waits for its own launch's helpers, a new check before 17 for earlier launches', and a helper left is named with its program, parent, state, start and launch; 140 checks; WSL2 only, not pushed: [details](#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)); before that 2026-11-19 (every branch not yet in `main` merged into it, with `main`'s first merge commits, and pushed as `1ef6bfa`: the follow-ups made on `37581df` and the editor's warning about the emergency stop with modifiers; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed, `desktop-virtual.yml` failed one check of 139, the new wait for WebKit's helpers: [details](#every-branch-merged-into-main-hosted-runs-at-1ef6bfa-2026-11-19)); before that 2026-11-19 (the editor warns about a macro's "keys" step that presses the emergency stop's key with other modifiers, which stops its own playback; headless on WSL2 only: [details](#the-editor-warns-about-the-emergency-stops-key-with-modifiers-2026-11-19)); before that 2026-11-19 (`main` pushed to `37581df`, the autoclicker and macros, as a fast-forward; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed at the first attempt: [details](#hosted-runs-at-37581df-the-autoclicker-on-main-2026-11-19)); before that 2026-11-19 (a backup's snapshot order and health no longer follow a clock set back, ADR-051: [details](#backup-order-no-longer-follows-a-clock-set-back-2026-11-19)); before that 2026-11-18 (the backup tests wait on the wall clock between backup tasks instead of a fixed sleep: [details](#backup-tests-and-backward-steps-of-the-wall-clock-2026-11-18)); before that 2026-11-18 (the Windows desktop test, `windows.ps1`, checks the theme chosen just before a tray Quit after the relaunch, each relaunch waiting for WebView2's processes, whose lifetimes it records; checked statically and in a harness, and probed on a private desktop with sotyware ended by `Stop-Process`, where WebView2 lost no choice; not run on the real desktop: [details](#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)); before that 2026-11-18 (the file-operation cancel test can no longer pass without cancelling: its hook takes the running operation's id from the slot; test code only, WSL2, not pushed: [details](#the-file-operation-cancel-test-always-cancels-2026-11-18)); before that 2026-11-18 (the virtual-display test's theme check, which failed once on GitHub at `0b79903`, explained: WebKitGTK commits a theme chosen just before Quit as sotyware ends, and a relaunch that reads the storage before that commit shows the previous one; the driver now waits for WebKit's helpers to end, the rest is a recorded limitation; WSL2 only, not pushed: [details](#the-theme-check-after-a-quick-quit-and-relaunch-2026-11-18)); before that 2026-11-18 (the file-operation shutdown test that failed `ci.yml` on Windows at `0b79903` now waits for the shutdown's cancel instead of sleeping 100 ms; test code only, WSL2, not pushed: [details](#the-file-operation-shutdown-test-on-a-busy-runner-2026-11-18)); before that 2026-11-18 (the autoclicker's Windows backend with real input on the maintainer's desktop, three passes after two fixes, on the branch, not pushed: [details](#the-autoclickers-windows-backend-with-real-input-2026-11-18)); before that 2026-11-17 (the autoclicker and macros, ADR-050, on a branch, not pushed: [details](#autoclicker-and-macros-2026-11-17)); before that 2026-11-17 (**`v0.1.2` published**, the first release offering sotyware accounts: run 44036236091, approved by the maintainer, verified anonymously: [details](#release-012-2026-11-17)); before that 2026-11-17 (version 0.1.2 prepared, the privacy notice dated for its release: [details](#release-012-prepared-2026-11-17)); before that 2026-11-17 (desktop tests for folder sync with the startup check, sign-up and the GitHub pages, Linux virtual display and native Windows 11, local servers only: [details](#desktop-tests-for-folder-sync-sign-up-and-the-github-pages-2026-11-17)); before that 2026-11-17 (the maintainer reports their Windows 11 updated from 0.1.0 to 0.1.1 through Update now, the first update installed: [details](#the-first-update-through-the-app-010-to-011)); before that 2026-11-17 (the hourly purge deployed on the account service, binary checked on the VM: [details](#the-retention-purge-deployed-2026-11-17)); before that 2026-11-17 (`main` pushed to `13bf8bc`, a multi-account test's stall limit fixed after Windows CI failed at `61d8f45`; `ci.yml` and `macos.yml` passed on Ubuntu 22.04, Windows and both Macs: [details](#a-multi-account-test-on-a-slow-windows-runner-2026-11-17)); before that 2026-11-17 (the privacy notice linked from the account sign-up form and Settings, no legal review, dated on `v0.1.2`'s release day; `open_feedback_page` renamed `open_github_page`: [details](#the-privacy-notice-in-the-app-no-legal-review-2026-11-17)); before that 2026-11-17 (privacy notice's open points settled, contact `privacy@sotyware.com` working (ImprovMX forwarding, replies through Brevo, whose IP blocking is now off); Send feedback and Report a bug open GitHub issue forms, ADR-049; WSL2 headless only: [details](#privacy-notice-completed-feedback-and-bug-report-buttons-2026-11-17)); before that 2026-11-17 (the account service purges by retention period every hour, ADR-048: sessions, codes, never-verified accounts after 7 days, audit events after 365 days or 31 days after deletion; tested in process on WSL2, not deployed: [details](#retention-purges-in-the-account-service-2026-11-17)); before that 2026-11-17 (privacy notice for the account service drafted, the gate before `v0.1.2`, which the maintainer is holding; its open points are listed: [details](#privacy-notice-drafted-2026-11-17)); before that 2026-11-17 (`main` pushed to `8a670f8`; `ci.yml`, `macos.yml` and `isolation-guard.yml` passed on Ubuntu 22.04, Windows and both Macs: [details](#hosted-runs-at-8a670f8-the-account-service-the-startup-check-and-its-backups-pushed-2026-11-17)); before that 2026-11-17 (off-host backups of the account service, ADR-047: encrypted hourly copies in Backblaze B2 behind Object Lock, set up on the VM by the maintainer; the first upload was locked in Compliance mode for 30 days, the monitor turned green and the copy decrypted and restored in WSL2: [details](#off-host-backups-of-the-account-service-2026-11-17)); before that 2026-11-16 (folder sync, ADR-043, which failed `macos.yml` on Apple Silicon at `b67d6a6`, and its two fixes, one spelling per name where the file system ignores case and nothing synced through a link, pushed as `d3a301c`, where `ci.yml` and `macos.yml` passed on Ubuntu 22.04, Windows and both Macs; headless and against test servers only: [details](#hosted-runs-at-d3a301c-folder-sync-passes-on-macos-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Windows desktop test, `windows-cloud-ui.ps1 -Mode usage`: 41/41 on native Windows 11 through UI Automation, and a build without the cost table's fix fails exactly its three layout checks: [details](#the-usage--costs-tab-in-the-windows-desktop-test-2026-11-16)); before that 2026-11-16 (the Usage & costs tab in the Linux desktop test, `cloud-ui.sh usage`, which found two defects, both fixed: a measurement never finished on the page, also in `v0.1.1`, and the tiles' figures were missing from the accessibility tree; its layout check fails a build without the cost table's fix; WSL2 virtual display only: [details](#the-usage--costs-tab-in-the-linux-desktop-test-2026-11-16)); before that 2026-11-16 (the Estimated cost table's row headers wrap inside their card instead of running past it; frontend checks on WSL2 and a look in headless Edge only: [details](#the-cost-table-inside-its-card-2026-11-16)); before that 2026-11-16 (**`v0.1.1` published**: run 43790165722, whose Intel Mac tests passed at the third attempt after a timing limit missed twice on slow runners (the test fixed on `main` in `a18b529`), approved by the maintainer and verified anonymously; before it, version raised to 0.1.1; the hosted runs at `5d68c0f` passed on Ubuntu, Windows and both Macs; the title bar and placement ran on native Windows 11, `windows.ps1` 130/0 and `windows-isolated.ps1` 57/0: [details](#release-011-2026-11-16)); before that 2026-11-15 (Windows title bar, window placement, usage and cost estimates, bucket snapshots and backups, automatic sync, Example feature removed; headless and virtual display on WSL2 only, not run on Windows or at a provider: [details](#desktop-ux-usage-and-costs-snapshots-and-automatic-sync-2026-11-15)); before that 2026-11-15 (the maintainer installed `v0.1.0` on their personal Windows 11 and reports it working; installer, build and update check not reported: [details](#v010-installed-by-the-maintainer-2026-11-15)); before that 2026-11-15 (**the first release, `v0.1.0`, published**: run 43749158657, `publish` failed once on the password secret and passed when re-run; the release is GitHub's latest, immutable and verified anonymously; not done: the installation test, any update: [details](#first-release-v010-2026-11-15)); before that 2026-11-15 (every release setting made and read back, `prepare` passing a real `v0.1.0` release, the final dry run at `f846bdd` passed with no warning; still to do: the installation test, the tag: [details](#release-settings-complete-and-the-final-dry-run-2026-11-15)); before that 2026-11-15 (two flaky tests the release key push met fixed: recent items recorded in one millisecond kept by name, a refused conditional write answered on a connection reset under it; WSL2 only: [details](#two-flaky-tests-after-the-release-key-push-2026-11-15)); before that 2026-11-15 (the release key's public half committed to `src-tauri/update-key.pub`, its private half and password stored in the `release` environment by the maintainer; builds now check GitHub, which has no release yet: [details](#release-key-committed-2026-11-15)); before that 2026-11-15 (the first `release.yml` dry runs: the environments created by hand, run 43729127961 at `ecf4339` failed on one test on the Intel Mac, run 43735919504 at `8125739` passed with `rehearse`, its artifact verified on WSL2; nothing published: [details](#release-dry-runs-2026-11-15)); before that 2026-11-15 (the ADR-025 late-part wait test, which failed the first release dry run on the Intel Mac, made independent of the machine's speed; test code only, WSL2: [details](#the-late-part-wait-test-on-a-busy-runner-2026-11-15)); before that 2026-11-15 (`4bf4ef0` pushed without starting a workflow; `release.yml` audited before its first dry run, which needs the `macos-signing` environment first; docs corrected, nothing run on GitHub: [details](#release-rehearsal-readiness-2026-11-15)); before that 2026-11-15 (hosted runs at `ec42d41`: `ci.yml` and `macos.yml` passed, macOS on Apple Silicon and Intel with the Keychain round trip: [details](#hosted-runs-at-ec42d41-macos-passes-2026-11-15)); before that 2026-11-15 (the test-profile path check that failed `macos.yml` fixed, headless on WSL2 only: [details](#test-profile-path-check-behind-a-symbolic-link-2026-11-15)); before that 2026-11-15 (hosted runs at `d9cf561`: `ci.yml` passed on Ubuntu 22.04 and Windows, `macos.yml` failed one test on both Macs: [details](#hosted-runs-at-d9cf561-the-redesign-macos-and-release-work-pushed-2026-11-15)); before that 2026-11-15 (desktop redesign, macOS support and GitHub Releases updates, uncommitted: [details](#desktop-redesign-macos-and-github-releases-updates-2026-11-15)); before that 2026-11-14 (file management in the bucket browser, ADR-026, headless on WSL2 and native Windows 11 only: [details](#file-management-2026-11-14); the ADR-024 Backblaze smoke test was not run after its local rehearsal acted on the user's own account: [details](#ui-test-acted-on-a-real-account-2026-11-14)). Update this file whenever
 implementation or validation changes. Never mark something validated that was
 not run on that environment.
 
@@ -107,6 +107,7 @@ verified byte for byte; the object was deleted again by its version id
 | Automatic sync of an enrolled device on startup, focus and local changes, state in the sidebar (ADR-042) | `src/accountSync.svelte.ts`, `Sidebar.svelte` |
 | Folder sync (ADR-043): an account's bucket kept in step with a folder the user chose, in both directions, in the background (`folder-sync` feature): three-way comparison against the synced state (`folder-sync.sqlite3`), file watcher and periodic listing, live checks before every change, replacements only over the synced ETag (`S3Store::upload_with`), moves as server-side copies and local renames, conflicts kept twice and settled later, deletions into the sync trash or as delete markers behind the deletion guard, the folder's marker (unplugged drives wait, foreign folders stop), moving the folder (verified copies) or starting fresh, the Sync tab, the sidebar's indicator, the local copy on the Usage & costs tab — local test servers only ([validation](#folder-sync-2026-11-16)) | `src-tauri/src/folder_sync/`, `storage/folder_sync.rs`, `features/folder_sync.rs`, `cloud/s3/upload.rs`; `src/CloudSync.svelte`, `src/folderSync.ts`, `src/folderSyncModel.svelte.ts` ([folder-sync.md](../architecture/folder-sync.md)) |
 | Autoclicker and macros (ADR-050): the clicker, recorder, editor, playback, macro library and profiles, from global shortcuts with an emergency stop, sent and recorded by Rust through native APIs on Windows and Linux X11 (`autoclicker` feature, off by default; refused on Wayland, none on macOS) — X11 with real input on private displays only; the Windows backend with real input by its opt-in test on the maintainer's Windows 11 (the page not driven there) ([validation](#autoclicker-and-macros-2026-11-17), [Windows](#the-autoclickers-windows-backend-with-real-input-2026-11-18)) | `src-tauri/src/automation/`, `storage/automation.rs`, `features/autoclicker.rs`; `src/Autoclicker*.svelte`, `src/automation.ts`, `src/automationFormat.ts`, `src/automationModel.svelte.ts` ([automation.md](../architecture/automation.md)) |
+| Gaming notes overlay (ADR-052): a second window created at runtime, frameless, transparent, always on top, interactive or passive (click-through), several Markdown notes with checklists autosaved in `notes.sqlite3`, its own global shortcuts (Ctrl+Shift+F1 to F5), Settings › Notes overlay (`notes-overlay` feature, off by default; `4706140` on a branch, not pushed) — Linux with real input on a private display only; native Windows 11 on a private desktop without input and with real input on the maintainer's desktop ([validation](#gaming-notes-overlay-2026-11-23)) | `src-tauri/src/overlay/`, `storage/notes.rs`, `features/notes_overlay.rs`, `automation/claims.rs`, `capabilities/overlay.json`; `overlay.html`, `src/NotesOverlay.svelte`, `src/NoteView.svelte`, `src/NotesOverlaySettings.svelte`, `src/noteMarkdown.ts`, `src/noteAutosave.ts` |
 
 Automated tests per platform: the "Hide dashboard" button with a real mouse
 click, and left-click-to-open, are covered only by the Windows desktop test
@@ -119,17 +120,19 @@ virtual display (Xvfb + openbox); WSLg skips them. Test categories:
 Nothing else exists: no product features (only cloud storage: accounts,
 browsing, transfers and the file management of ADR-026, the operation
 journal of ADR-030, the backups of ADR-031, usage and cost estimates and the
-snapshots tab of ADR-041, folder sync of ADR-043; and the autoclicker and
-macros of ADR-050; the example feature was removed 2026-11-15), no
+snapshots tab of ADR-041, folder sync of ADR-043; the autoclicker and
+macros of ADR-050; and the gaming notes overlay of ADR-052, on a branch;
+the example feature was removed 2026-11-15), no
 settings, no persistence other than the feature choices, the cloud storage
 accounts and their favorites and recent items, the operation journal,
 the backup jobs, the account state, the update state, the window placement,
-the storage usage measurements, the folder syncs and the autoclicker's
-settings, profiles and macros, no overwriting
+the storage usage measurements, the folder syncs, the autoclicker's
+settings, profiles and macros and the notes overlay's notes, settings and
+state, no overwriting
 uploads (other than folder sync replacing the version it synced), ZIP downloads, permanent deletion of versions, content search, transfer queue UI or download history, no
 online-only (on-demand) files, selective folder sync, bandwidth limits or exclusion
 patterns, no background (periodic) sync of the sotyware account, no billing data from a provider, no custom Tauri events, no feature-management UI, no third-party
-plugins, and no custom command other than the 129 listed in
+plugins, and no custom command other than the 148 listed in
 [overview.md](../architecture/overview.md#components-and-boundaries).
 
 ## Validation matrix
@@ -148,6 +151,91 @@ about another.
 "Native Windows 2026-11-10" means it ran on the Windows 11 machine described below.
 "Earlier run" means it was recorded in the original README from a run whose
 script or procedure is not in the repository; it was not repeated.
+
+### Numbers and dates in en-US (2026-11-24)
+
+The page writes every number and date in **en-US**, the language of its
+text, whatever the webview's language
+([frontend.md](../architecture/frontend.md#numbers-and-dates)). Until now
+counts, cost amounts and dates followed the webview's language while sizes,
+the autoclicker's counts and the estimate's details from Rust did not, so a
+line could mix them: "5.00 GB in 1 234 files" in fr-FR, "1,39 $US" in the
+row whose detail says "USD 6.95"
+([found 2026-11-23](#frontend-tests-under-any-locale-2026-11-23)). Of
+three ways laid out (en-US everywhere; everything in the webview's language,
+sizes and Rust's details included, which would have needed the estimate as
+data or a locale crate in Rust and left the price lists' notes and the
+numbers written into sentences in en-US; nothing), the maintainer chose
+en-US everywhere, dates included. Built on the change of 2026-11-23
+(`src/testLocale.ts`), copied unchanged from the worktree where it was
+made and committed first, as `0646079`; both on the branch
+`claude/exciting-pascal-b4b46e`, not pushed.
+
+**Change** (frontend and desktop drivers; Rust unchanged): `src/format.ts`
+gained `LOCALE = "en-US"`, `formatCount` (moved from `automationFormat.ts`,
+same rounding) and `formatDateTime`, `formatDate` and `formatTime` (the
+page's own options kept); `formatMoney` names `LOCALE`. Every count of the
+Cloud Storage pages and of the sidebar's sync summary, every date and time
+(the bucket browser, properties, deleted items, interrupted work,
+snapshots, backups, account, updates, the usage chart, the last connection
+check, the macro library, the autoclicker's last session) and the
+autoclicker's own `toLocaleString("en-US")` calls go through them: 23
+source files. Where the webview is en-US nothing visible changes. On Linux
+under `C.UTF-8`, where WebKitGTK's default is en-US-POSIX, counts are now
+grouped ("1,234", not "1234") and an amount reads "$1.39", not "$ 1.39".
+The desktop drivers' expectations follow: `cloud_ui.py` and
+`windows-cloud-ui.ps1` format the expected dates in en-US (the Windows
+driver passed `(Get-UICulture).Name`), and `windows-cloud-ui.ps1`'s `IsUsd`
+accepts only "$7.00", no longer "7,00 $US" or "US$7.00".
+
+**Tests:** `withDefaultLocale(locale, fn)` in `src/testLocale.ts` runs `fn`
+with another default locale, as if the webview's language were that one,
+and puts en-US back. `src/format.test.ts` (new, 6 tests) checks the
+formatters in en-US and in fr-FR, de-DE, en-GB, en-IN and ar-EG, each time
+first that the default really changed, checks the helper itself, and reads
+every source file in `src/` (`import.meta.glob`) to fail on a
+locale-sensitive formatting call that does not name `LOCALE`. One test each
+in `CloudSync.test.ts` and `CloudUsage.test.ts` mounts the tab in fr-FR and
+de-DE and finds "5.00 GB in 1,234 files", "Files 1,234 10 older versions",
+"$1.39" in the tile, the row and the total, and the measurement's date in
+en-US. `CloudBrowser.test.ts` expects the size's tooltip as written,
+"3,145,728 bytes", where it formatted the number in the default locale.
+Each new check was seen failing: `formatCount`, `formatMoney` or
+`formatDateTime` without `LOCALE`, and one page calling `toLocaleString()`
+itself, each failed the source rule and, but for the page, the formatter's
+check under another language; a tile's count, `formatMoney` and the
+measurement's date in the webview's language each failed the tab's test,
+with "1 234" and "1,39 $US" as found on 2026-11-23. A count formatter
+built once when the module loads, without a locale, failed only the source
+rule (it existed before the test changed the default), so `formatCount`
+formats on each call.
+
+**Run on WSL2** (Node 24.22.0, ICU 78.3): `npm run check` 0 errors and 0
+warnings; `npm run test:frontend` 430 passed (28 files) with `LC_ALL`
+unset (`LANG=C.UTF-8`) and set to `fr_FR.UTF-8`, `de_DE.UTF-8` and `C`.
+Through a scratch config without the setup file, under fr-FR 3 failed,
+the three of `testLocale.test.ts` that check the setup (8 before this
+change, the five count tests among them), and under `C.UTF-8` 1, the
+`PluralRules` check, as before; the three files that import
+`withDefaultLocale` run the setup through that import. The drivers were
+checked without running them: `check-ps-variables.ps1` passed on
+`windows-cloud-ui.ps1` (Windows PowerShell through WSL2), `IsUsd` gave the
+expected answer for six amounts there, both Python drivers compile, the
+Linux driver's date call gave "Nov 11, 2026, 12:30 PM" under fr-FR and
+`C`, and `check:desktop-isolation` passed.
+
+**The same calls in WebKitGTK** (2.52.6, a bare webview on a private Xvfb,
+not the app): under `C.UTF-8` `navigator.language` is "C" and the default
+locale en-US-u-va-posix; the calls as the page made them gave "1234",
+"$ 1.39" (U+00A0) and "3/4/2026, 2:05:06 PM", the calls naming en-US
+"1,234", "$1.39" and the same date. Under `fr_FR.UTF-8` and `de_DE.UTF-8`
+WebKitGTK fell back to en-US: this WSL2 has no glibc locale but C, C.utf8
+and POSIX, so no other webview language could be seen.
+
+Not run: any desktop driver (not built here: a test-profile build of
+about 2 GB and the local servers' Rust test build, on a C: drive with
+27 GB free), the app itself on Linux or Windows, WebView2 with a display
+language other than English, macOS, hosted CI.
 
 ### The autoclicker phase's Preview check reads only the editor (2026-11-24)
 
@@ -202,6 +290,190 @@ What slowed the run on 2026-11-23 is not known. Not changed: the same
 check in `windows-autoclicker.ps1`, which reads the page through UI
 Automation's `FindAll`; how long that takes during a preview was not
 measured.
+
+### Gaming notes overlay (2026-11-23)
+
+The gaming notes overlay (ADR-052, [notes-overlay.md](../architecture/notes-overlay.md),
+[user guide](../user/notes-overlay.md)) is implemented and committed as
+`4706140` on the branch `feat/gaming-notes-overlay` (on `961df6f`), **not
+pushed**. What ran, and where:
+
+- **WSL2 (Ubuntu 24.04), headless**, on the final tree: `npm run
+  test:headless` (Vitest 417 in 26 files; `cargo test` 858 passed, 0
+  failed, 32 ignored; every guard), the request-recorder build's tests (887
+  passed, 32 ignored), `npm run check` (0 errors, 0 warnings), `npm run
+  build`, `cargo fmt --check`, clippy with `-D warnings` on the default and
+  the test-profile builds. The overlay's own: 69 tests in `overlay`
+  (service with a fake window and the autoclicker's mock backend, model,
+  placement), 3 in `automation::claims`, the `storage::notes` tests, and
+  the frontend files `noteMarkdown`, `noteAutosave`, `NotesOverlay`,
+  `NotesOverlaySettings` (and `App`).
+- **Linux, the app with real input on a private display**
+  (`cloud-ui.sh overlay`: Xvfb and openbox, no compositor; 57 checks).
+  Its first runs found four defects, all fixed: the collapsed window was
+  200 px high (GTK sizes a non-resizable window to its content; now the
+  size limits pin it), WebKitGTK exposed every note tab as selected (they
+  all named the panel in `aria-controls`) and left the text of flex-item
+  `<span>`s out of the accessibility tree, and the overlay shown again
+  came back at 0, 0 (openbox places a window it maps again anew). Then
+  57/57 three times in a row; but two of the next six runs failed on "shows
+  it again where it was" (at 0, 0 again), one of them without any load.
+  Diagnostics showed the first position tao reported after the window was
+  first mapped was 0, 0 (read from the frame before openbox placed it)
+  while the window sat at its corner, and no later event corrected it:
+  remembered, it made the next show put the overlay at 0, 0 itself. Fixed:
+  for 1.5 s after every show, the first included, no position other than
+  the one asked is remembered and the first is answered with a move back;
+  two unit tests fail without it. Afterwards **nine of nine runs passed
+  57/57**: six (three of them under load: 20 busy loops and a screenshot
+  grabbing the X server every second), then three more after the show's
+  code was restructured to set the expectation right before the show. Screenshots of that display showed
+  that without a compositor the see-through parts are drawn black: the
+  pixels outside the overlay's rounded corners were 000000 above the light
+  dashboard (f2f1ee). Regression: the autoclicker phase (its shortcuts now
+  go through `automation::claims`) 103/103; its first run failed once on
+  the editor's "Preview runs along the timeline and sends nothing" with no
+  input sent, a race of the driver against a preview of about a second,
+  then passed. The virtual-display suite 140/0/0.
+- **Native Windows 11 25H2 (build 26200.9974)**, the maintainer's machine
+  (fr-FR locale, two monitors at 96 dpi), a fresh copy in `C:\dev` (the
+  maintainer's checkout untouched): `npm ci`, `npm run check`, `npm run
+  build`, `npm run build:test-profile`, `cargo fmt --check`, clippy with
+  `-D warnings` on the default and the test-profile builds, the
+  test-profile helpers' self-test, and, on the tree before that last
+  restructuring (which changes nothing on Windows, where there is no
+  expectation), `cargo test --lib` 839 passed, 0 failed, 31 ignored. Vitest passed 411 of 417: the 6
+  failures are number formats under the fr-FR locale ("1 234" with a
+  narrow no-break space) in `CloudSync.test.ts`, `CloudUpload.test.ts` and
+  `CloudUsage.test.ts`, files the overlay does not touch and that had not
+  run on a French locale before.
+- **`tests/desktop/windows-overlay.ps1` unattended on a private desktop**
+  (no input, nothing on screen; 50 checks and the isolation checks). Its
+  first run passed 46 of 47: the window had `WS_EX_APPWINDOW` (tao gives it
+  to every window without an owner, and `skip_taskbar` removed the
+  taskbar button only once, at creation, while the window was hidden). A
+  probe on a private desktop then showed that `ShowWindow(SW_SHOW)`, which
+  tao uses, activates a window even with `WS_EX_NOACTIVATE` (also with
+  `SWP_NOACTIVATE` added in `WM_WINDOWPOSCHANGING`, or the window
+  disabled), while a second `SW_SHOW` of a visible window does not; and a
+  new check of the active window of sotyware's window thread
+  (`GetGUIThreadInfo`) failed on the first show and on a show again
+  (46/4). After a shortcut press that would have taken the keyboard from
+  the game. Fixed: on Windows sotyware shows, hides and styles the window
+  itself after creating it (`SetWindowPos` with `SWP_NOACTIVATE`, a tool
+  window, its passive styles) and takes the keyboard with
+  `SetForegroundWindow` alone (tao's `set_focus` presses Alt when Windows
+  refuses). Afterwards **50/50 three times in a row**, and once more on a
+  build of the final tree; each time the user's own folders, credentials
+  and real app folder were unchanged. The
+  move onto the second monitor kept the overlay's size: both monitors are
+  at 96 dpi, so no change of scaling was exercised.
+- **`windows-overlay.ps1 -ConfirmRealInput pointer-and-keys` on the
+  maintainer's real desktop** (2026-11-24, with their go-ahead; the build
+  of the final tree, the installed sotyware not running, the desktop idle;
+  under a watchdog that waited for 10 s without input and would have
+  stopped the run after 10 minutes): **80/80 three times in a row** (30 to
+  32 s each), after three first runs that found only defects of the
+  driver: the first stopped itself after 18 s, before any shortcut was
+  sent, because its game window had opened behind the window in front (a
+  window of a program in the background does; it is now made topmost for
+  the clicks that bring it forward only); the second lost UI Automation's
+  Invoke of the sidebar's Settings link right after the launch (the page
+  stayed on the Overview; the driver now invokes it again, at most three
+  times, which the third run needed once); the third passed 78 of 80, the
+  two failures being its own (the page writes "Ctrl + Shift + F2" with
+  spaces, and PowerShell gave a one-element list back as its element,
+  whose `[0]` is a character: the game had received the click at exactly
+  the right point). What the passing runs checked with real input: turning
+  the overlay on leaves the keyboard with the dashboard; it adds no taskbar
+  entry (the taskbar's sotyware buttons read the same); a real click in its
+  title gives it the keyboard and real keys type a note, Enter continuing
+  the checklist; from the game window, Ctrl+Shift+F1 hides and shows it
+  where it was while the game keeps the keyboard; shown and passive it is
+  drawn on the screen (more than 20 % of its pixels differ from the hidden
+  overlay's); interactive, a real click stays on it; passive, the same
+  click reaches the game at that point and the game keeps the keyboard;
+  Ctrl+Shift+F2 back to interactive gives it the keyboard; Ctrl+Shift+F3
+  creates a note with the keyboard and the cursor in its title; F5 and F4
+  switch notes and leave the keyboard to the game; the game never received
+  F1 to F5 nor an Alt; sotyware's own process stayed under 3 % of a core
+  while the overlay was shown; the tray's Quit ended sotyware with 0 and
+  after a restart Ctrl+Shift+F1 showed the overlay where it was, on the
+  second monitor. Each run put the pointer back, left no key down and
+  left the user's folders unchanged.
+- **Not run**: hosted CI (`ci.yml`, `macos.yml`: the overlay's code has not
+  been built for macOS), `desktop-virtual.yml`; a real Linux desktop (a
+  compositor, GNOME, KDE), Wayland, Windows 10, a real game (exclusive and
+  borderless fullscreen, anti-cheat), a screen reader, monitors with
+  different scalings.
+
+### Frontend tests under any locale (2026-11-23)
+
+`npm run test:frontend` failed 6 of 350 tests in a fresh copy of the tree
+on a native Windows 11 whose regional format is fr-FR (2026-11-23), while
+it passes on WSL2 and on GitHub's runners. Five expected en-US grouping
+("5.00 GB in 1,234 files", "Files 1–1,000 of 2,500 listed.") and got
+fr-FR's ("1 234", with U+202F); the sixth expected the cost total
+`formatMoney(1.39, "USD")`, "1,39 $US" with U+00A0, and got it with U+0020.
+
+**Cause.** Node's `Intl` takes its default locale from the machine: on
+Windows the regional format (the Windows Node 24.14.1, ICU 78.2, started
+with `LANG`, `LC_ALL` and `LC_MESSAGES` set to en-US still resolved fr-FR),
+on Linux `LC_ALL` or `LANG`. The pages format counts with
+`toLocaleString()` and amounts with `Intl.NumberFormat` without a locale, so
+in a test they followed the machine, while the webview the tests stand in
+for formats in its own language: happy-dom's `navigator.language` is
+`en-US`, and WebView2 on that machine formats in its display language, en-US
+([seen 2026-11-11](#cloud-storage-browsing-a-temporary-dataset-at-backblaze-2026-11-11)).
+The tests therefore ran the page in a locale the app does not get there.
+The sixth failure was the test's own: its `text()` helper turns every
+space, U+00A0 included, into U+0020, while the expected value was
+`formatMoney`'s string as it is, which in en-US ("$1.39") has no space.
+
+**Fix** (test code and docs only; the app is unchanged):
+`src/testLocale.ts`, run before every test file (`setupFiles` in
+`vite.config.ts`), makes en-US the default locale of every `Intl` service
+and of the built-in methods that format, compare or change case by locale:
+each call gets the locales it names followed by en-US, so a named locale is
+kept and en-US is used when none of them is available. An environment
+variable could not do this on Windows, nor a Node or V8 option (V8 has no
+`--icu-locale`). `src/testLocale.test.ts` (5 tests) checks it without
+importing it, so it also fails if the setup did not run: three of its tests
+under fr-FR, one on an en-US machine, where `Intl.PluralRules` reports a
+default locale as it is ("en-US") but resolves en-US named to "en" (the
+pin's only visible difference, with the same rules; the app does not use
+`PluralRules`). The two cost checks of `CloudUsage.test.ts` now compare the
+page's text as written with `formatMoney`'s output. No assertion was removed
+or loosened ([testing.md](../development/testing.md#frontend-tests)).
+
+**The cost string, decided: the app formats it consistently.** The page
+writes `formatMoney`'s string unchanged: with the setup left out under
+fr-FR, the rewritten cost checks pass, the page showing "1,39 $US" with the
+U+00A0 of CLDR 48 (U+202F is fr-FR's thousands separator, as in "1 234").
+What is inconsistent is the pages' formats among themselves under a webview
+language other than English: sizes always with a decimal point, the
+estimate's details from Rust in English, the autoclicker's counts in en-US,
+everything else in that language. Not seen in the app and not changed here
+([limitation](limitations.md#dashboard-adr-035)).
+
+**Run on WSL2** (Node 24.22.0, ICU 78.3, CLDR 48.0): before the fix, under
+`LC_ALL=fr_FR.UTF-8`, the same 6 failures as on Windows (344 passed). After
+it, `npm run check` 0 errors and 0 warnings, and `npm run test:frontend`
+355 passed (23 files) with `LC_ALL` unset (`LANG=C.UTF-8`, which Node takes
+as en-US) and set to `fr_FR.UTF-8`, `de_DE.UTF-8` and `C`, in about 5 s as
+before. Through a scratch config without the setup file: 8 failed under
+fr-FR (the five count tests and three of `testLocale.test.ts`; the cost
+checks passed) and 1 under `C.UTF-8` (the `PluralRules` check).
+
+**Run on native Windows 11** (the maintainer's machine, 25H2 build 26200;
+regional format fr-FR, display language en-US; Node 24.14.1, ICU 78.2, CLDR
+48.0, which resolved fr-FR), in a fresh copy of the tree with `npm ci`,
+deleted afterwards: `npx vitest run` (what `npm run test:frontend` runs)
+355 passed (23 files, 17 s); without the setup file, the same 8 failed as on
+WSL2 under fr-FR and the cost checks passed.
+
+Not run: macOS (where Node takes its default locale from there was not
+examined), GitHub's runners, a desktop driver (nothing in the app changed).
 
 ### Hosted runs at `6d43914`: folder uploads of up to 50,000 files (2026-11-21)
 

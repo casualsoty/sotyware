@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notes-overlay",
+  "description": "The gaming notes overlay's window (ADR-052): may read and watch the overlay's status, list, create, save, delete, duplicate, pin, move and select notes, show or hide itself, switch between interactive and passive, collapse, set its opacity, ask the dashboard to open its settings, open a web address written in a note (Rust checks that the note holds it) and be dragged and resized from its own title bar and corner. Nothing else: no storage account, backup, account, update, sync or automation command, no dialog, file system or window permission beyond dragging and resizing.",
+  "windows": [
+    "overlay"
+  ],
+  "permissions": [
+    "allow-watch-overlay",
+    "allow-unwatch-overlay",
+    "allow-set-overlay-visible",
+    "allow-set-overlay-mode",
+    "allow-set-overlay-collapsed",
+    "allow-set-overlay-opacity",
+    "allow-open-overlay-settings",
+    "allow-open-note-link",
+    "allow-list-notes",
+    "allow-create-note",
+    "allow-save-note",
+    "allow-delete-note",
+    "allow-duplicate-note",
+    "allow-set-note-pinned",
+    "allow-move-note",
+    "allow-select-note",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
+  ]
+}

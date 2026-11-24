@@ -14,6 +14,7 @@ import type {
   MouseButton,
   PlaybackSettings,
 } from "./automation";
+import { formatCount } from "./format";
 
 const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
 const WINDOWS = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
@@ -60,10 +61,6 @@ export function formatClock(ms: number): string {
   const s = total % 60;
   const two = (n: number): string => n.toString().padStart(2, "0");
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
-}
-
-export function formatCount(n: number): string {
-  return Math.round(n).toLocaleString("en-US");
 }
 
 /** Clicks per second from an interval, and back (1 ms … 24 h). */
