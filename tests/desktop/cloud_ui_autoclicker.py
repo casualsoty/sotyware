@@ -454,6 +454,61 @@ def toggle_button(name):
     return act(pid, (Atspi.Role.TOGGLE_BUTTON, Atspi.Role.PUSH_BUTTON), name)
 
 
+PREVIEW_STATUS = re.compile(r"Preview \(no input is sent\): action (\d+), \S")
+
+
+def watch_preview(timeout=30):
+    """Presses the macro editor's Preview and follows the preview until it
+    ends by itself. Returns whether Stop preview was offered, the status
+    lines in the order they were seen, whether it ended, how many reads
+    that took and the seconds from the press to the end.
+
+    Reads only the children of Preview's parent, the editor's section,
+    which holds its buttons and, while the playhead is on an action, the
+    status line (WebKitGTK leaves the <div>s in between out of the tree).
+    A walk of the whole editor page, about 700 nodes, took 1.1 to 1.6 s
+    from the first preview on, as long as the preview of a short macro at
+    2× (1.15 s), and once missed its status line (2026-11-23); reading
+    these children takes 20 to 50 ms."""
+    button = next((node for n, node in by_role(pid, Atspi.Role.PUSH_BUTTON) if n.strip() == "Preview"), None)
+    section = button.get_parent() if button is not None else None
+    if section is None:
+        print(f"  no Preview button in the editor: {btns()[-30:]}", flush=True)
+        return False, [], False, 0, 0.0
+    started, seen, reads = False, [], 0
+    t0 = time.time()
+    try:
+        Atspi.Action.do_action(button, 0)
+    except GLib.Error as e:
+        # As in press(): the press was sent; the reads show whether it acted.
+        print(f"  press 'Preview': no AT-SPI reply ({e.message[:60]})", flush=True)
+    while time.time() < t0 + timeout:
+        try:
+            names, status = [], None
+            for j in range(section.get_child_count()):
+                c = section.get_child_at_index(j)
+                role = c.get_role() if c is not None else None
+                if role == Atspi.Role.PUSH_BUTTON:
+                    names.append((c.get_name() or "").strip())
+                elif role == Atspi.Role.STATUS_BAR:
+                    t = Atspi.Text.get_text(c, 0, Atspi.Text.get_character_count(c))
+                    if t.startswith("Preview (no input is sent)"):
+                        status = t
+        except GLib.Error:
+            # A child went away while it was read (Preview and Stop preview
+            # swap places): read again.
+            time.sleep(0.02)
+            continue
+        reads += 1
+        started = started or "Stop preview" in names
+        if status is not None and (not seen or seen[-1] != status):
+            seen.append(status)
+        if started and "Preview" in names and "Stop preview" not in names and status is None:
+            return True, seen, True, reads, time.time() - t0
+        time.sleep(0.02)
+    return started, seen, False, reads, time.time() - t0
+
+
 def settings_doc():
     with sqlite3.connect(f"file:{AUTO_DB}?mode=ro", uri=True) as db:
         row = db.execute("SELECT data FROM settings WHERE id = 1").fetchone()
@@ -1003,11 +1058,16 @@ try:
     ok = ok and press(pid, f"Delete action {n0 + 2}") and wait_for(lambda: f"Delete action {n0 + 3}" not in btns(), 5)
     check("the editor sets a delay, adds a wait and a click, moves one up, duplicates and deletes: unsaved",
           bool(ok) and "Unsaved changes" in text(pid), btns()[-30:])
+    # At 2× this macro's preview lasts about 1.15 s: only the editor's own
+    # section is read meanwhile (watch_preview). The playhead never goes
+    # back, so the actions its status line names only increase.
     mark = len(pump())
-    ok = press(pid, "Preview") and wait_for(lambda: "Stop preview" in btns(), 5)
-    shown = ok and wait_for(lambda: "Preview (no input is sent)" in text(pid), 5)
-    ended = ok and wait_for(lambda: "Stop preview" not in btns(), 30)
-    check("Preview runs along the timeline and sends nothing", bool(shown and ended) and not pump()[mark:],
+    started, seen, ended, reads, took = watch_preview()
+    steps = [int(m.group(1)) for m in map(PREVIEW_STATUS.match, seen) if m]
+    print(f"  preview: {reads} reads in {took:.2f} s; the status line named actions {steps}", flush=True)
+    check("Preview runs along the timeline and sends nothing",
+          started and ended and seen and len(steps) == len(seen) and steps == sorted(steps) and not pump()[mark:],
+          f"Stop preview offered: {started}, ended by itself: {ended}, status lines: {seen}; "
           f"{len(pump()) - mark} events")
     ok = press(pid, "Back to macros") and wait_for(lambda: "Leave without saving?" in text(pid), 5)
     ok = ok and press(pid, "Keep editing") and wait_for(lambda: "Leave without saving?" not in text(pid), 5)
