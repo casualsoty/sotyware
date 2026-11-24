@@ -31,8 +31,8 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 **Gaming notes overlay** (2026-11-23, ADR-052,
 [notes-overlay.md](architecture/notes-overlay.md), [user guide](user/notes-overlay.md);
-[status](status/status.md#gaming-notes-overlay-2026-11-23); **not
-committed**): a second window, created at runtime while the built-in
+[status](status/status.md#gaming-notes-overlay-2026-11-23); committed as
+`4706140` on the branch `feat/gaming-notes-overlay`, **not pushed**): a second window, created at runtime while the built-in
 feature `notes-overlay` runs (**off by default**): frameless, see-through
 (20 to 100 %), always on top, moved, resized and collapsed from its own
 title bar, remembering its place across monitors and scalings; several
@@ -568,7 +568,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- **Gaming notes overlay** (2026-11-23, not committed,
+- **Gaming notes overlay** (2026-11-23, `4706140` on a branch, not pushed,
   [status.md](status/status.md#gaming-notes-overlay-2026-11-23)): unit and
   frontend tests in `test:headless`; the Linux phase `cloud-ui.sh overlay`
   (57 checks) found four defects, all fixed (the collapsed window 200 px
