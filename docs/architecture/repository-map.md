@@ -101,6 +101,7 @@ Where things are. Generated and ignored paths are listed in
 │   ├── fileList.test.ts      Its tests
 │   ├── cloudMessages.ts      Labels and hints for check results and command error kinds; upload skip reasons, remote outcomes, upload and file-operation error summaries
 │   ├── format.ts             formatSize, formatDecimalSize, formatAgo and shownName
+│   ├── testLocale.ts         Not app code: Vitest's setup file, en-US as every frontend test's default locale whatever the machine's (+ testLocale.test.ts)
 │   ├── Features.svelte       Minimal Features section of the dashboard (state + enable checkbox per feature)
 │   ├── Features.test.ts      Tests of the Features section and of features.ts
 │   └── features.ts           Typed wrappers for list_features / set_feature_enabled; validates responses
@@ -137,7 +138,7 @@ Where things are. Generated and ignored paths are listed in
 │   └── recovery/
 │       └── sotyware-restore.py  Restores a backup snapshot without sotyware (Python standard library only, SigV4); tested against the in-process server by backup::tests (ignored by default, run in ci.yml) (ADR-031)
 ├── package-lock.json         Pinned JS dependency tree
-├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config
+├── vite.config.ts            Vite: port 1420, strictPort, ignores src-tauri/, output dist/; Vitest config (happy-dom, setup file src/testLocale.ts)
 ├── svelte.config.js          vitePreprocess (TypeScript in .svelte)
 ├── tsconfig.json             Strict TypeScript settings
 ├── src-tauri/                Rust crate and Tauri configuration

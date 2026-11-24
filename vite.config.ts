@@ -31,6 +31,9 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     include: ["src/**/*.test.ts"],
+    // en-US as every test's default locale, the simulated webview's language,
+    // whatever the machine's (src/testLocale.ts).
+    setupFiles: ["src/testLocale.ts"],
   },
   // Under Vitest, Node would otherwise resolve Svelte's server build, which
   // cannot `mount()`. Only applied in test mode; `vite build` is unaffected.

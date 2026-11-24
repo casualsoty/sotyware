@@ -227,7 +227,10 @@ describe("the Usage & costs tab", () => {
     const tiles = [...root.querySelectorAll(".tile")].map(text);
     expect(tiles[0]).toBe("Stored 210 GB everything kept in the bucket");
     expect(tiles[1]).toBe("Files 1,234 10 older versions");
-    expect(tiles[2]).toContain(formatMoney(1.39, "USD"));
+    // The amount is the formatter's string as it is, its own spaces included
+    // (U+00A0 before "$US" in fr-FR), so it is compared before text() turns
+    // every space into U+0020.
+    expect(root.querySelectorAll(".tile")[2]?.querySelector(".tile-value")?.textContent).toBe(formatMoney(1.39, "USD"));
     expect(tiles[2]).toContain("estimate");
     const parts = [...root.querySelectorAll(".parts li")].map((li) => [li.getAttribute("data-part"), text(li)]);
     expect(parts).toEqual([
@@ -266,7 +269,8 @@ describe("the Usage & costs tab", () => {
     const rows = [...card.querySelectorAll("tbody tr")].map((tr) => tr.getAttribute("data-component"));
     expect(rows).toEqual(["storage", "egress", "transactions"]);
     expect(text(card.querySelector("tfoot th"))).toBe("Total for 30 days, without taxes");
-    expect(text(card.querySelector("tfoot td"))).toBe(formatMoney(1.39, "USD"));
+    // As written, like the tile: text() would change the formatter's spaces.
+    expect(card.querySelector("tfoot td")?.textContent).toBe(formatMoney(1.39, "USD"));
     expect(text(card.querySelector(".assumptions"))).toContain("as published on 2026-11-15");
     expect(text(card.querySelector(".assumptions"))).toContain("Price list: Backblaze B2, pay as you go, checked 2026-11-15.");
   });

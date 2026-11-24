@@ -2301,6 +2301,28 @@ hashing and verifying stages in the panel (too short to be sampled; only
 npm run test:frontend
 ```
 
+Every test file runs with **en-US as its default locale**, whatever the
+machine's (since 2026-11-23): `src/testLocale.ts`, run first through
+`setupFiles` in `vite.config.ts`, makes en-US the default of every `Intl`
+service and of the built-in methods that format, compare or change case by
+locale (`toLocaleString`, `localeCompare`, …); a locale a call names is still
+used. Node's `Intl` otherwise takes the machine's locale: on Windows the
+regional format, which `LANG` and `LC_ALL` do not change, on Linux `LC_ALL` or
+`LANG`. The webview the tests simulate formats in its own language instead:
+happy-dom's `navigator.language` is `en-US`, and WebView2 follows the Windows
+display language, not the regional format (seen on a Windows 11 whose
+regional format is fr-FR,
+[status](../status/status.md#frontend-tests-under-any-locale-2026-11-23)).
+Write expected numbers and dates as en-US shows them ("1,234", "$1.39"), and
+compare a formatter's output with the page's text as written: the tests'
+`text()` helpers turn every space, a no-break one included, into U+0020.
+`src/testLocale.test.ts` checks the setup without importing it, so it fails
+if the setup did not run (also on an en-US machine). To see the tests in
+another locale on Linux, leave the setup file out of the config (for example
+through a scratch config with `setupFiles: []`) and set
+`LC_ALL=fr_FR.UTF-8`; Node brings its own locale data, so the system needs no
+French locale installed.
+
 `src/App.test.ts` mounts the real `App.svelte` (and imports `main.ts`) in
 [happy-dom](https://github.com/capricorn86/happy-dom) under Vitest, with Tauri's
 official mocks (`mockWindows`, `mockIPC` from `@tauri-apps/api/mocks`) in place of

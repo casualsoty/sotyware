@@ -1362,6 +1362,20 @@ server only; no real provider was asked.
   ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
   The desktop test names such a crash and does not fail on it
   ([Tests](#tests)).
+- **Numbers follow the webview's language only in part** (found
+  2026-11-23, from the code and Node's formatters): the page writes counts,
+  dates and cost amounts in the webview's language (`toLocaleString()`,
+  `Intl.NumberFormat` without a locale), but sizes always with a decimal
+  point (`formatSize` and `formatDecimalSize` use `toFixed`), the estimate's
+  details as Rust writes them ("at USD 6.95 per TB") and the autoclicker's
+  counts always in en-US. With a webview language other than English one line
+  can mix them: "5.00 GB in 1 234 files" (fr-FR), "5.00 GB in 1.234 files"
+  (de-DE, where "." groups thousands), "1,39 $US" in the row whose detail
+  says "USD 6.95". Not seen in the app: WebView2 follows the Windows display
+  language, English on the one Windows 11 tested, whose regional format is
+  fr-FR ([status](status.md#frontend-tests-under-any-locale-2026-11-23)); a
+  Windows display language or a Linux `LANG` other than English was not
+  tried. The frontend tests run in en-US ([Tests](#tests)).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux
@@ -1432,6 +1446,14 @@ server only; no real provider was asked.
   is being dumped (polled every 20 ms): one whose dump is quicker goes
   unnoticed by the driver, though on GitHub systemd-coredump still records
   it ([status](status.md#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)).
+- **The frontend tests run in en-US only** (since 2026-11-23):
+  `src/testLocale.ts` makes en-US their default locale whatever the
+  machine's, the language of the webview they simulate (happy-dom), so they
+  do not show how the page reads in another language
+  ([Dashboard](#dashboard-adr-035)). It differs from a real default locale in
+  one visible way: `Intl.PluralRules` reports "en" where Node reports
+  "en-US", with the same rules; the app does not use it
+  ([testing.md](../development/testing.md#frontend-tests)).
 - **No test covers screen-reader access** on either platform.
 - **The locked-keyring checks of `cloud-ui.sh local` decline the unlock
   prompt; none accepts it.** With a system-installed gnome-keyring the driver

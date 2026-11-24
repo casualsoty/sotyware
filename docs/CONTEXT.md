@@ -579,6 +579,22 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   a show that activated the overlay: tao's `SW_SHOW`); with real input on
   the maintainer's desktop it passed 80/80 three times (2026-11-24), after
   three first runs that found defects of the driver only.
+- **Frontend tests under any locale** (2026-11-23, test code and docs
+  only, [status.md](status/status.md#frontend-tests-under-any-locale-2026-11-23)):
+  `npm run test:frontend` failed 6 tests on a Windows 11 whose regional
+  format is fr-FR ("1 234" for "1,234"): Node's `Intl` follows the machine
+  (on Windows the regional format, which `LANG`/`LC_ALL` do not change),
+  while the webview the tests simulate formats in its own language
+  (happy-dom: en-US; WebView2 on that machine: the display language,
+  en-US). `src/testLocale.ts` (`setupFiles`) now makes en-US every test's
+  default locale, a named locale still kept, checked by
+  `src/testLocale.test.ts`; the cost checks compare the page's text as
+  written with `formatMoney` (the sixth failure collapsed its no-break
+  space on one side only). The app is unchanged; under a webview language
+  other than English its number formats mix
+  ([limitation](status/limitations.md#dashboard-adr-035)). WSL2: 355/355
+  under en-US, fr-FR, de-DE and C; native Windows 11 (regional format
+  fr-FR): 355/355.
 - **Whose WebKit helper the Linux driver finds left** (2026-11-19, test
   code and docs only,
   [status.md](status/status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)):
