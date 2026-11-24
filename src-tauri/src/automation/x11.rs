@@ -71,11 +71,15 @@ fn unavailable(note: &str) -> Support {
     }
 }
 
+/// Whether this is a Wayland desktop session.
+pub fn wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
+}
+
 /// Whether this session can use the X11 backend.
 pub fn support() -> Support {
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
-        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"));
-    if wayland {
+    if wayland_session() {
         return unavailable(
             "This desktop session uses Wayland, which does not let applications send or record input for other programs. Sign in to an X11 (Xorg) session to use the autoclicker.",
         );

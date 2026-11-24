@@ -5,8 +5,8 @@
 # throwaway login keyring. Never touches your display, session bus or
 # keyrings. Details: docs/development/testing.md#cloud-storage-ui-end-to-end-test
 #
-# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage sync account autoclicker b2 b2-browse
-#        (default: local hang browse download upload files usage sync account autoclicker)
+# usage: tests/desktop/cloud-ui.sh [phase...]   phases: local hang browse download upload files usage sync account autoclicker overlay b2 b2-browse
+#        (default: local hang browse download upload files usage sync account autoclicker overlay)
 #   SOTYWARE_CLOUD_UI_BIN    binary (default: src-tauri/target/test-profile/release/sotyware;
 #                            a test-profile build is required, ADR-027)
 #   SOTYWARE_GNOME_KEYRING_ROOT  folder with the gnome-keyring packages unpacked
@@ -66,6 +66,15 @@
 #        playback options, profiles, export and import through the GTK
 #        dialogs, held keys, restarts, 100 clicks per second, the Wayland
 #        message; no keyring, no server.
+# overlay: the gaming notes overlay (ADR-052) with real input through XTest,
+#        on this private display only, a window of the driver playing the
+#        game below it: off by default, turned on (the window above the
+#        others, frameless, at its corner, the shortcuts grabbed), a note
+#        typed and autosaved, a checkbox, Ctrl+Shift+F1 to F5 from the game,
+#        a click that stays on the overlay and, passive, reaches the game,
+#        collapse, a new corner, hiding by its button and the window
+#        manager, a restart, turned off (the window gone, the shortcuts
+#        released, the notes kept); no keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),
@@ -88,7 +97,7 @@ set -uo pipefail
 H=$(dirname "$(readlink -f "$0")")
 REPO=$(readlink -f "$H/../..")
 PHASES=("$@")
-[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage sync account autoclicker)
+[ ${#PHASES[@]} -gt 0 ] || PHASES=(local hang browse download upload files usage sync account autoclicker overlay)
 
 if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   BIN=$(readlink -f "${SOTYWARE_CLOUD_UI_BIN:-$REPO/src-tauri/target/test-profile/release/sotyware}")
@@ -116,7 +125,7 @@ if [ -z "${SOTYWARE_CLOUD_UI_INNER:-}" ]; then
   [ -x "${GK_BIN:-}" ] || { echo "gnome-keyring-daemon not found: install gnome-keyring or set SOTYWARE_GNOME_KEYRING_ROOT" >&2; exit 2; }
   for phase in "${PHASES[@]}"; do
     case $phase in
-      local|hang|browse|download|upload|files|usage|sync|account|autoclicker) ;;
+      local|hang|browse|download|upload|files|usage|sync|account|autoclicker|overlay) ;;
       b2)
         for v in SOTYWARE_IT_B2_BUCKET SOTYWARE_IT_B2_REGION SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY; do
           [ -n "${!v:-}" ] || { echo "the b2 phase needs $v (see testing.md)" >&2; exit 2; }
@@ -372,6 +381,9 @@ for phase in "${PHASES[@]}"; do
       # Real input through XTest, but only on this private display, which
       # no person uses; nothing else is started.
       python3 "$H/cloud_ui.py" autoclicker "$BIN" || rc=1 ;;
+    overlay)
+      # As for autoclicker: real input on this private display only.
+      python3 "$H/cloud_ui.py" overlay "$BIN" || rc=1 ;;
     upload)
       SRV_FILE=$WORK/upload-endpoint
       record_setup upload

@@ -1897,6 +1897,83 @@ and other environments (real GNOME or KDE desktops on Xorg, Windows 10,
 other monitor arrangements). The Windows driver needs the maintainer's
 go-ahead for each run, as it moves the pointer on their desktop.
 
+## Notes overlay tests
+
+The gaming notes overlay (ADR-052, [notes-overlay.md](../architecture/notes-overlay.md#testing)).
+The unit and frontend tests run in `npm run test:headless` and in CI and
+open no window: the service drives a fake window that records every call,
+and its shortcuts go through the autoclicker's mock backend.
+
+```bash
+cd src-tauri && cargo test --lib overlay automation::claims storage::notes
+npm run test:frontend -- src/noteMarkdown.test.ts src/noteAutosave.test.ts src/NotesOverlay.test.ts src/NotesOverlaySettings.test.ts src/App.test.ts
+```
+
+**The app on X11, real input on a private display** (Linux, opt-in): the
+`overlay` phase of the [Linux desktop driver](#cloud-storage-ui-end-to-end-test)
+turns the feature on in Settings › Notes overlay, checks the window
+(above others, no frame, no taskbar entry, its corner and size, the
+dashboard keeping the keyboard, the five shortcuts grabbed), types a note
+and a checklist as real keys (Enter continues the list) and reads it back
+from `notes.sqlite3`, then, from a window of the driver that plays the
+game and records the clicks it gets: Ctrl+Shift+F1 hides and shows it
+where it was while the game keeps the keyboard; interactive, a click on
+the overlay stays there; Ctrl+Shift+F2 makes it passive and the same click
+reaches the game; back to interactive it takes the keyboard; Ctrl+Shift+F3
+creates a note with the cursor in its title; Ctrl+Shift+F5 and F4 switch
+notes. Then collapse and expand, a new corner moving the open overlay,
+its close button and the window manager's close hiding it, a restart that
+keeps the notes and the place, and turning the feature off, which destroys
+the window and releases every shortcut. About 30 seconds:
+
+```bash
+npm run build:test-profile && tests/desktop/cloud-ui.sh overlay
+```
+
+**Windows** (opt-in, never in CI): `tests/desktop/windows-overlay.ps1`
+does the same through UI Automation, in two ways. Without arguments it
+runs unattended on a private desktop (as the
+[isolated-desktop test](#windows-isolated-desktop-test) does: nothing on
+screen, no input, so you can keep working; not in an elevated session):
+the window's extended styles (topmost, a tool window without
+`WS_EX_APPWINDOW`, client area the whole window), that showing does not
+activate it (the active window of sotyware's window thread, read with
+`GetGUIThreadInfo`: a private desktop has no foreground window, but a show
+that activates still makes the overlay that thread's active window, as it
+did before the fix of 2026-11-23), its corner and size at the monitor's scaling, the
+shortcuts held (the script cannot register them), a note set through the
+Value pattern and autosaved, passive (`WS_EX_TRANSPARENT`,
+`WS_EX_NOACTIVATE`) from the overlay's button and back with Make
+interactive, collapse, a new corner, hiding by its button and by
+`WM_CLOSE`, a move onto another monitor, a restart (ended with
+`Stop-Process`: a private desktop has no taskbar, so no tray) and turning
+it off. With `-ConfirmRealInput pointer-and-keys` it runs on the **real
+desktop and moves the pointer, clicks and presses keys** (virtual keys and
+Unicode text, so any layout works), with a plain window of the script as
+the game: the Linux phase's checks, plus the overlay still drawn on the
+screen in passive mode (screen captures compared with the hidden
+overlay's), the game never receiving F1 to F5 or an Alt (tao's
+`set_focus` makes up an Alt press when Windows refuses the foreground,
+which is why sotyware takes it with `SetForegroundWindow` alone),
+sotyware's own process idle while the overlay is shown, and the tray's
+Quit for the restart. Run that one on an idle desktop, with the installed
+sotyware quit (it writes to the folders whose fingerprints are compared);
+it needs `node` on PATH (the notes are read with `node:sqlite`). About
+1.5 minutes unattended (80 s on 2026-11-23), half a minute with real input
+(30 to 32 s on 2026-11-24):
+
+```powershell
+npm run build:test-profile
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-overlay.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\desktop\windows-overlay.ps1 -ConfirmRealInput pointer-and-keys
+```
+
+Left to a person: a real game (borderless and exclusive fullscreen, a game
+that reads the keyboard directly or runs anti-cheat software), how the
+see-through background reads over real scenes, and other environments
+(real GNOME or KDE desktops on Xorg or Wayland, Windows 10, macOS, mixed
+scalings across monitors where the machine has none).
+
 ## Update tests
 
 ```bash
@@ -1993,6 +2070,7 @@ sotyware's output. Account ids and labels are new for every run
 | Linux `sync`, Windows `-Mode sync` | — (Windows: **Connected**) | folder sync (ADR-043) against the in-memory versioned server of `serve_sync_for_ui` (`src-tauri/src/cloud/test_server/sync_ui.rs`, one versioned bucket seeded with `welcome.txt` and `docs/plan.txt`, made-up key), which plays a second computer on the same bucket through its `.ctl` file (`put <key> <text>`, `delete <key>`) and answers `dump` with every key's current SHA-256, versions and delete markers and the app's operations. Through the bucket's **Sync** tab: Choose folder… in the **native folder dialog** (GTK: as in `files`; Windows: the pick-folders dialog, Folder box and Select Folder by control id) → the confirmation names the empty folder → Start sync → `.sotyware-sync/root.json`; the first pass brings both files down byte for byte; a file written into the folder reaches the bucket; a file put at the server comes down (Sync now pressed every 10 s, so nothing waits for the 5-minute listing); a local rename becomes a rename in the bucket (the old key a delete marker, its version kept); a file deleted at the server leaves the folder and lands in `.sotyware-sync/trash/<day>/` with its content; a file changed on both sides is kept twice (both contents survive, one under `plan (conflicted copy …)`); then sotyware is ended and started again in the same profile (Linux: the window's close, which quits in dashboard-only mode; Windows: `Stop-Process`, as closing only hides in tray mode and the tray Quit would move the mouse), the **startup connection check** (ADR-046) must reach the server with no click (its `HeadBucket` count grows; folder sync sends none) and the account show Connected, and a file written after the restart must reach the bucket with no click; Turn sync off… changes nothing in the folder or the bucket. Every step is checked on disk and at the server. The server fails the phase if a real version was ever removed by id, the app sent a request folder sync and the check do not send, or no transfer reached it. The phase is in `cloud_ui_sync.py`, run by `cloud_ui.py` |
 | Linux `account`, Windows `-Mode account` | — (Windows: **Network error**: this mode's storage account points nowhere) | the GitHub pages of ADR-049 and the sotyware account. A test-profile build never starts a browser: `open_github_page` appends the address to `opened-pages.txt` in the run's profile, which the driver reads. Settings › About & updates: nothing recorded before a click; **Send feedback** → exactly the feedback form's URL; **Report a bug** → the bug form with `version=<x.y.z>&os=Linux%2C%20<arch>` (Windows: `Windows%2C%20<arch>`) and nothing else; **Privacy notice** → the notice on `main`. Then sign-up against a local account service, this checkout's `server/target/release/sotyware-server` (built by the script if needed; loopback, a free port, its own database in the run's folder, no mail relay, so mails stay in its outbox), reached through `SOTYWARE_ACCOUNT_SERVER`, which only debug and test-profile builds read: the age line only in Create account; its Privacy notice link records the notice and sends nothing; register (the service's database: the address, not verified); the code read with `sotyware-server outbox`; Verify and sign in (verified); Set up sync → the recovery key shown once, typed again, I saved it → the synced state (the service holds the recovery wrap and a vault containing neither the key, the password nor the address); Delete account… with the password → gone from the service. The service's database is read directly (Linux: Python's `sqlite3`; Windows: Node's built-in `node:sqlite`); the phase fails if the service logged an error or the password or recovery key reached sotyware's output. The phase is in `cloud_ui_account.py`, run by `cloud_ui.py` |
 | Linux `autoclicker` | — | the autoclicker and macros (ADR-050) with **real input through XTest, on the script's private display only**, into a plain window of the driver that records every click and key it receives (no keyring, no server; the X11 backend works because the script unsets `WAYLAND_DISPLAY`): off by default (the driver can grab F6 and F8 itself; F6 does nothing); **Turn on** → the six suggested shortcuts registered (the driver can grab none of them); the Clicker tab's At a fixed position, X, Y, Stop after 25 clicks and 20 per second, typed as real keys → saved in the profile (`automation.sqlite3`, read directly); **Start autoclicker** → no click in the countdown's first 2 s, then exactly 25 left clicks at that position; from the test window F6 starts and stops it, F7 pauses (no click while paused) and resumes it, F8 (the emergency stop) stops it, the pointer pushed into a corner stops it; with the pointer on sotyware's own window every click is skipped and counted; F9 records two clicks and the key A typed into the test window, F10 stops, **Save macro** → the database holds both clicks where they were made and the key, nothing of F9 or F10; **Play** replays them into the test window; after every stop no button or key is held (`XQueryPointer`, `XQueryKeymap`); Settings › Features turns it off → the driver can grab all six shortcuts again and F6 does nothing; in between, the page's [former manual check](#the-pages-former-manual-check-automated): buttons and speed timed by the X server, shortcut fields and the keys they refuse, the confirmation without an emergency stop, playback options (2× timed, F7, F8, Shift+F11), the editor, a restart, profiles, a macro's shortcut, export and import through the GTK dialogs, keys a macro holds released by F8, Stop and quitting, 100 clicks per second (rate, tab switches, CPU), screen-reader text (AT-SPI), the emergency stop's key refused while off, and the Wayland message (103 checks). The phase is in `cloud_ui_autoclicker.py`, run by `cloud_ui.py` |
+| Linux `overlay` | — | the gaming notes overlay (ADR-052) with **real input through XTest, on the script's private display only**, and a plain window of the driver as the game, recording the clicks it gets (no keyring, no server): off by default (the driver can grab Ctrl+Shift+F1 to F5 itself); Settings › Notes overlay › **Turn on** → the overlay at once, above other windows, without a frame or taskbar entry, at the top right, 24 px in, 360 × 440, the dashboard keeping the keyboard, the five shortcuts grabbed by sotyware; a note's title and a checklist typed as real keys, Enter continuing the list, read back from `notes.sqlite3`; a checkbox ticked and saved; from the game: Ctrl+Shift+F1 hides and shows it where it was, the game keeping the keyboard; a click on the interactive overlay stays there; Ctrl+Shift+F2 → passive, the same click reaches the game, nothing of the overlay to click; Ctrl+Shift+F2 → interactive with the keyboard; Ctrl+Shift+F3 → a new note with the cursor in its title; Ctrl+Shift+F5 / F4 switch notes, the game keeping the keyboard; collapse and expand; a new corner moving the open overlay; its close button and the window manager's close hiding it; a restart (hidden, shortcuts registered, shown where it was with its notes); Settings › Features turns it off → no overlay window, every shortcut released, the notes kept (57 checks). The phase is in `cloud_ui_overlay.py`, run by `cloud_ui.py`; Windows: [`windows-overlay.ps1`](#notes-overlay-tests) |
 | Windows `-Mode local` | **Network error**, and Open bucket shows the network error with Try again | the real Windows Credential Manager (read with `CredRead` and `cmdkey /list:<target>`; `cmdkey` never shows secrets); the same `com.sotyware.desktop` lines in `cmdkey /list` before and after |
 
 In `local` (both platforms) Open bucket must show "Could not load this
@@ -2179,7 +2257,7 @@ every `Says` read an empty page, and a block given to `WaitFor` that called
 depth overflowed; the same rule found two checks of
 `test-profile-selftest.ps1` that passed without testing what they said.
 Without arguments it checks `windows.ps1`, `windows-isolated.ps1`,
-`windows-cloud-ui.ps1` and `windows-autoclicker.ps1`.
+`windows-cloud-ui.ps1`, `windows-autoclicker.ps1` and `windows-overlay.ps1`.
 
 Keep the Windows scripts **ASCII only**, comments included; write other
 characters as `[char]0x…` or as a regex escape (`\u00b7`). Windows

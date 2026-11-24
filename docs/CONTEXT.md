@@ -29,6 +29,33 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 ## What works today
 
+**Gaming notes overlay** (2026-11-23, ADR-052,
+[notes-overlay.md](architecture/notes-overlay.md), [user guide](user/notes-overlay.md);
+[status](status/status.md#gaming-notes-overlay-2026-11-23); **not
+committed**): a second window, created at runtime while the built-in
+feature `notes-overlay` runs (**off by default**): frameless, see-through
+(20 to 100 %), always on top, moved, resized and collapsed from its own
+title bar, remembering its place across monitors and scalings; several
+Markdown notes with checklists, tabs, search and pins, autosaved in
+`notes.sqlite3`; **interactive** or **passive** (clicks go through, never
+takes the keyboard, never stuck: the mode shortcut, Make interactive, a
+restart); global shortcuts Ctrl+Shift+F1 to F5 (show/hide, mode, new
+note, previous/next) through a second instance of the autoclicker's
+backend (Windows, X11), the two features sharing who holds which chord
+(`automation::claims`); Settings › Notes overlay; 19 commands (148 in
+all). On Windows sotyware shows, hides and styles the window itself (a
+tool window, `SWP_NOACTIVATE`): tao's `SW_SHOW` activates a window even
+with `WS_EX_NOACTIVATE`, which a probe and the Windows driver showed.
+Tested headless (WSL2; Rust also on native Windows 11), with real input
+on the private display of `cloud-ui.sh overlay` (57 checks; nine of nine
+runs after two fixes of where it reopens), and by
+`tests/desktop/windows-overlay.ps1` on the maintainer's Windows 11:
+unattended on a private desktop (50 of 50 four times after the keyboard
+fix) and, with their go-ahead, with real input on their desktop against a
+window of the driver playing the game (2026-11-24: 80 of 80 three times
+after fixes of the driver only). Not run: hosted CI, macOS, real Linux
+desktops, Wayland, Windows 10, a real game.
+
 **Autoclicker and macros** (2026-11-17, ADR-050,
 [automation.md](architecture/automation.md), [user guide](user/automation.md);
 [status](status/status.md#autoclicker-and-macros-2026-11-17)): the
@@ -455,10 +482,11 @@ update server exist), all tested headless against in-process servers only.
 ## Repository at a glance
 
 ```
-src/                 Svelte frontend (Autoclicker*.svelte + automation.ts, automationFormat.ts, automationModel.svelte.ts, HotkeyInput.svelte, PlaybackForm.svelte; main.ts, App.svelte, TitleBar.svelte, CloudUsage.svelte + cloudUsage.ts, CloudSnapshots.svelte, accountSync.svelte.ts, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
+src/                 Svelte frontend (NotesOverlay.svelte, NoteView.svelte, NotesOverlaySettings.svelte + notesOverlay.ts, noteMarkdown.ts, noteAutosave.ts, overlayModel.svelte.ts, overlayMain.ts (the overlay's page, overlay.html); Autoclicker*.svelte + automation.ts, automationFormat.ts, automationModel.svelte.ts, HotkeyInput.svelte, PlaybackForm.svelte; main.ts, App.svelte, TitleBar.svelte, CloudUsage.svelte + cloudUsage.ts, CloudSnapshots.svelte, accountSync.svelte.ts, Features.svelte, features.ts, Updates.svelte + updates.ts, CloudStorage.svelte, CloudAccountForm.svelte, CloudBrowser.svelte (incl. downloads and the file manager), CloudUpload.svelte (upload panel), CloudOperation/CloudFolderPicker/CloudProperties/CloudBulkDownload/CloudDeleted/Modal.svelte, cloud.ts, cloudFiles.ts, fileList.ts, cloudMessages.ts, format.ts)
 src-tauri/src/       main.rs → lib.rs (builder, operating mode, lifecycle, single instance, operating_mode command) + tray.rs + title_bar.rs + window_state.rs + storage.rs (SQLite)
-src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), backup.rs, updates.rs, folder_sync.rs, autoclicker.rs
-src-tauri/src/automation/  autoclicker and macros (ADR-050): mod.rs (Automation service, 29 commands), model.rs, keys.rs, timing.rs, input.rs (Backend trait, held input, mock), clicker.rs, recorder.rs, player.rs, native.rs, windows.rs, x11.rs, tests.rs
+src-tauri/src/features/  built-in features: mod.rs (trait, builtin list, commands), registry.rs, preferences.rs (stored choices), backup.rs, updates.rs, folder_sync.rs, autoclicker.rs, notes_overlay.rs
+src-tauri/src/automation/  autoclicker and macros (ADR-050): mod.rs (Automation service, 29 commands), model.rs, keys.rs, timing.rs, input.rs (Backend trait, held input, mock), clicker.rs, recorder.rs, player.rs, native.rs, windows.rs, x11.rs, claims.rs (which feature holds which chord), tests.rs
+src-tauri/src/overlay/  gaming notes overlay (ADR-052): mod.rs (NotesOverlay service, 19 commands), model.rs, placement.rs, host.rs (the window, built at runtime), focus.rs (Windows), tests.rs; storage in src-tauri/src/storage/notes.rs
 src-tauri/src/cloud/     cloud storage: provider.rs, account.rs, credentials.rs, keyring.rs (OS credential store), s3.rs (+ s3/upload.rs, s3/hook_assumptions.rs), recorder.rs (feature request-recorder only), dashboard.rs (the six account commands), browser.rs (list_cloud_folder), download.rs (the three download commands), upload.rs (the upload batch commands, incl. folder uploads), operations.rs (+ operations/names.rs; file operations as plans), manage.rs (folders, properties, previews, search, deleted items, share links), bulk_download.rs, places.rs, drop.rs, s3/manage.rs, usage.rs (storage usage, ADR-041), pricing.rs (+ src-tauri/pricing/*.json); tests.rs, browser/tests.rs, download/tests.rs, upload/tests.rs, operations/tests.rs, manage/tests.rs, bulk_download/tests.rs + test_server.rs (in-process S3; test_server/versioned.rs: in-memory versioned S3), integration.rs (opt-in)
 src-tauri/           tauri.conf.json, capabilities/default.json, Cargo.toml, icons/ (generated from icons/source/*.svg, npm run icons), patches/ (rfd patched locally, ADR-023)
 src/*.test.ts        Frontend tests (Vitest, happy-dom, Tauri IPC mocks)
@@ -490,15 +518,18 @@ Full map: [repository-map.md](architecture/repository-map.md).
   usage commands of ADR-041, the eleven backup commands of ADR-031/ADR-041,
   the 20 account commands of ADR-032, the six update commands of
   ADR-033/ADR-036, the 16 folder sync commands of ADR-043,
-  `open_github_page` of ADR-049 and the 29 automation commands of ADR-050
-  (129 in all; listed in
+  `open_github_page` of ADR-049, the 29 automation commands of ADR-050
+  and the 19 overlay commands of ADR-052 (the notes ones only for the
+  overlay's own window, capability `notes-overlay`)
+  (148 in all; listed in
   [overview.md](architecture/overview.md#components-and-boundaries); one
   `allow-<command>` permission each; no `dialog:`/`fs:`/`updater:` permission) and, in tray
   mode only, `getCurrentWindow().hide()` (`core:window:allow-hide`, granted at
   runtime), `setTheme()` for the theme chosen in Settings
   (`core:window:allow-set-theme`), `isDecorated()`, and on Windows only the
   title bar's drag region, minimize, maximize and close (runtime capability
-  `window-controls`, ADR-040). No other custom command, no custom events (download progress
+  `window-controls`, ADR-040); the notes overlay's window may start a drag
+  or a resize from its title bar and corner (`notes-overlay`, ADR-052). No other custom command, no custom events (download progress
   and upload events use per-call channels). No command returns a stored
   credential or accepts a local path; only the folder sync commands return
   one, the sync folder the user chose (ADR-043).
@@ -537,6 +568,17 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Gaming notes overlay** (2026-11-23, not committed,
+  [status.md](status/status.md#gaming-notes-overlay-2026-11-23)): unit and
+  frontend tests in `test:headless`; the Linux phase `cloud-ui.sh overlay`
+  (57 checks) found four defects, all fixed (the collapsed window 200 px
+  high under GTK, every note tab read as selected and text hidden from
+  screen readers under WebKitGTK, the overlay reopening at 0, 0 after
+  openbox's or tao's first position report);
+  `windows-overlay.ps1` found two on Windows, fixed (a taskbar style, and
+  a show that activated the overlay: tao's `SW_SHOW`); with real input on
+  the maintainer's desktop it passed 80/80 three times (2026-11-24), after
+  three first runs that found defects of the driver only.
 - **Whose WebKit helper the Linux driver finds left** (2026-11-19, test
   code and docs only,
   [status.md](status/status.md#the-linux-driver-tells-whose-webkit-helper-is-left-2026-11-19)):

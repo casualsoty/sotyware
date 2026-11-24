@@ -16,6 +16,15 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Two pages: the dashboard and the gaming notes overlay's own window
+    // (ADR-052), which loads only what it needs. Paths are relative to the
+    // project root.
+    rolldownOptions: {
+      input: {
+        main: "index.html",
+        overlay: "overlay.html",
+      },
+    },
   },
   // Frontend unit tests (`npm run test:frontend`): a simulated DOM, no browser
   // and no display. See docs/development/testing.md.

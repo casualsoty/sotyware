@@ -1256,6 +1256,67 @@ server only; no real provider was asked.
   change, listed under the roadmap's ideas), relative pointer movement
   for games that read raw mouse deltas (moves are absolute).
 
+## Gaming notes overlay (ADR-052)
+
+- **Where it was tested** ([status](status.md#gaming-notes-overlay-2026-11-23)):
+  the service, its storage and its pages headless (a fake window, the
+  autoclicker's mock backend, Tauri's IPC mocks) on WSL2 and on native
+  Windows 11; the app with real input on the private Xvfb display of
+  `cloud-ui.sh overlay` (openbox, no compositor); the app on native
+  Windows 11 on a private desktop, without input, and with real input on
+  the maintainer's Windows 11 desktop, with a window of the driver playing
+  the game (`windows-overlay.ps1`, 2026-11-24). Not yet: GitHub's runners,
+  a real Linux desktop (GNOME, KDE, a compositor), Wayland, macOS,
+  Windows 10, a real game, a screen reader, monitors with different
+  scalings.
+- **The keyboard**: showing never takes it, switching to interactive or
+  creating a note by shortcut does (`SetForegroundWindow`, which Windows
+  allows right after the user's input reached sotyware; if it refused, the
+  overlay would stay without the keyboard: click it). Checked with real
+  input on X11 and on the maintainer's Windows 11 desktop against a plain
+  window of the driver, not against a real game.
+- **Passive mode on Windows** is `WS_EX_TRANSPARENT | WS_EX_LAYERED` without
+  layered-window attributes, as tao sets it; the overlay stayed drawn (the
+  real-input run's screen captures), on Windows 11 25H2 only.
+- **Exclusive fullscreen**: no window shows above a game in exclusive
+  (true) fullscreen; borderless and windowed games show it. Above a
+  fullscreen game, Windows composes the screen, which can cost the game
+  some speed.
+- **Shortcuts** need a native backend: Windows and Linux on X11 only. On
+  Wayland and macOS there are none (the settings say why); the overlay is
+  shown, hidden and switched from the dashboard. A game that reads the
+  keyboard directly, or anti-cheat software, can keep them from reaching
+  sotyware. A chord another program holds is not registered; one the
+  autoclicker holds is refused with its name, and the two features cannot
+  share a chord.
+- **Linux**: on Wayland the compositor decides whether the overlay stays
+  on top and where a window may be placed. On X11 without a compositor
+  the see-through parts are drawn black and the panel is opaque (seen on
+  the private Xvfb display with openbox: the pixels outside its rounded
+  corners are 000000 above the light dashboard). A window manager may
+  place a window it maps again anew, and the first position reported
+  after a window is mapped can be one it never had: for 1.5 s after a
+  show sotyware remembers no other position and moves the window back
+  once; a drag begun in that time can be moved back once and is not
+  remembered.
+- **macOS**: the window's background is not see-through (Tauri's
+  transparent windows on macOS need its private API, which sotyware does
+  not enable); no shortcuts.
+- **Notes**: up to 500 notes, a title of 120 characters, 50,000 characters
+  of text; a Markdown subset (headings, lists, checklists, bold, italic,
+  strike, code, links, quotes, rules), no tables, images or HTML. Links
+  open only `http` and `https` addresses written in the note. Saved in
+  plain text in `notes.sqlite3` on this computer: not encrypted, not
+  synced, not part of backups. A crash loses at most the last moment of
+  typing (saved half a second after typing stops, at most two seconds
+  behind).
+- **One overlay window**, of one note at a time; no per-game profiles, no
+  images, no timers.
+- **Not implemented** although asked for "launch at startup": sotyware
+  cannot start itself at login (no autostart, an app-wide change listed
+  under the roadmap's ideas); the overlay can only be shown when sotyware
+  starts.
+
 ## Dashboard (ADR-035)
 
 - **The theme is per webview profile:** it lives in the webview's

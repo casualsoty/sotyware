@@ -81,7 +81,7 @@ pub async fn open_github_page(page: GithubPage) -> Result<(), String> {
 /// address to `opened-pages.txt` in the run's profile, where the driver
 /// reads it.
 #[cfg(feature = "test-profile")]
-fn open_in_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     use std::io::Write;
     let profile = crate::test_profile::from_env(std::env::var_os(crate::test_profile::ENV))
         .map_err(|e| format!("the test profile is not usable: {e}"))?;
@@ -98,7 +98,7 @@ fn open_in_browser(url: &str) -> Result<(), String> {
 const OPENED_PAGES: &str = "opened-pages.txt";
 
 #[cfg(all(desktop, not(feature = "test-profile")))]
-fn open_in_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_in_browser(url: &str) -> Result<(), String> {
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| {
         eprintln!("sotyware: failed to open the browser: {e}");
         format!("The browser could not be opened. The page is {url}")
@@ -106,7 +106,7 @@ fn open_in_browser(url: &str) -> Result<(), String> {
 }
 
 #[cfg(all(not(desktop), not(feature = "test-profile")))]
-fn open_in_browser(_: &str) -> Result<(), String> {
+pub(crate) fn open_in_browser(_: &str) -> Result<(), String> {
     Err("opening a browser is not available here".to_owned())
 }
 

@@ -2,7 +2,7 @@
 release binary through AT-SPI (finding and pressing controls) and XTest
 (typing: this WebKitGTK exposes no AT-SPI EditableText).
 
-usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage|sync|account|autoclicker <binary>   (run by cloud-ui.sh, which
+usage: cloud_ui.py local|hang|b2|browse|download|upload|files|usage|sync|account|autoclicker|overlay <binary>   (run by cloud-ui.sh, which
 sets up Xvfb + openbox, a private D-Bus session and the Secret Service)
 
 Phases:
@@ -41,6 +41,12 @@ Phases:
          playback, the editor, profiles, export and import, held keys, a
          restart and the page's other checks a person did by hand
          (cloud_ui_autoclicker.py)
+  overlay the gaming notes overlay (ADR-052) with real input through XTest
+         on this private display only, a window of the driver playing the
+         game: turning it on and off, the window's properties and place,
+         notes typed and autosaved, a checkbox, the shortcuts from the
+         game, clicks through it in passive mode, collapse, hiding, the
+         settings, a restart (cloud_ui_overlay.py)
   b2     a real GNOME Keyring and the real Backblaze B2 test bucket, with the
          key from SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY and
          SOTYWARE_IT_B2_BUCKET / _REGION (the opt-in integration test's
@@ -1130,7 +1136,7 @@ try:
             check("the usage phase ran to its end", False, f"{type(e).__name__}: {e}")
             traceback.print_exc()
 
-    elif PHASE in ("sync", "account", "autoclicker"):
+    elif PHASE in ("sync", "account", "autoclicker", "overlay"):
         # As for files: a phase that stops early is a failure.
         try:
             exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"cloud_ui_{PHASE}.py"),

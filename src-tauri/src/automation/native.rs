@@ -31,6 +31,34 @@ pub fn open(sink: HotkeySink) -> Result<Arc<dyn Backend>, String> {
     super::x11::open(sink)
 }
 
+/// Why global shortcuts cannot be registered on this system, for the
+/// notes overlay (ADR-052), which uses the backend only for them; `None`
+/// where they can.
+#[cfg(windows)]
+pub fn shortcuts_unavailable() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+pub fn shortcuts_unavailable() -> Option<String> {
+    if super::x11::wayland_session() {
+        return Some(
+            "this desktop session uses Wayland, which does not let applications register global shortcuts; use the dashboard, or sign in to an X11 (Xorg) session"
+                .to_owned(),
+        );
+    }
+    let s = support();
+    (!s.available).then(|| {
+        s.note
+            .unwrap_or_else(|| "global shortcuts are not available here".to_owned())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn shortcuts_unavailable() -> Option<String> {
+    Some("global shortcuts are available on Windows and on Linux desktops running X11; not on this system yet".to_owned())
+}
+
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn support() -> Support {
     Support {

@@ -21,11 +21,12 @@
 //!
 //! Design: docs/architecture/automation.md.
 
+pub mod claims;
 pub mod clicker;
 pub mod input;
 pub mod keys;
 pub mod model;
-mod native;
+pub(crate) mod native;
 pub mod player;
 pub mod recorder;
 pub mod timing;
@@ -378,10 +379,47 @@ pub struct Automation {
     next_subscriber: AtomicU64,
     seq: AtomicU64,
     self_ref: OnceLock<Weak<Automation>>,
+    /// The chords other features hold (ADR-052); none in most tests.
+    claims: OnceLock<Arc<claims::Claims>>,
 }
 
 /// The link the `autoclicker` feature uses; set once in `run()`.
 pub static LINK: OnceLock<Arc<Automation>> = OnceLock::new();
+
+impl claims::Retry for Automation {
+    /// Another feature gave a chord up: shortcuts it refused are tried
+    /// again (ADR-052).
+    fn retry_shortcuts(&self) {
+        let mut inner = self.lock();
+        self.sync_hotkeys(&mut inner);
+        drop(inner);
+        self.touch();
+    }
+}
+
+/// Every key sotyware knows, named as on this keyboard where `backend`
+/// says (else in English), for the pages' shortcut fields: the
+/// autoclicker's and the notes overlay's (ADR-052).
+pub fn key_views(backend: Option<&Arc<dyn Backend>>) -> Vec<KeyView> {
+    keys::KEYS
+        .iter()
+        .filter_map(|info| Key::from_code(info.code))
+        .map(|k| KeyView {
+            code: k.code(),
+            label: backend
+                .and_then(|b| b.key_name(k))
+                .unwrap_or_else(|| k.label().to_owned()),
+            kind: match k.class() {
+                keys::KeyClass::Modifier(_) => "modifier",
+                keys::KeyClass::Layout => "layout",
+                keys::KeyClass::Function => "function",
+                keys::KeyClass::Media => "media",
+                keys::KeyClass::Quiet => "quiet",
+                keys::KeyClass::Other => "other",
+            },
+        })
+        .collect()
+}
 
 fn parse_or<T: for<'de> Deserialize<'de>>(text: &str, what: &str) -> Option<T> {
     match serde_json::from_str(text) {
@@ -505,9 +543,23 @@ impl Automation {
             next_subscriber: AtomicU64::new(1),
             seq: AtomicU64::new(1),
             self_ref: OnceLock::new(),
+            claims: OnceLock::new(),
         });
         let _ = this.self_ref.set(Arc::downgrade(&this));
         this
+    }
+
+    /// Shares the record of which feature holds which shortcut with the
+    /// notes overlay (ADR-052): a chord the overlay holds is refused with
+    /// its name, and the shortcuts are tried again when it gives one up.
+    pub fn share_claims(self: &Arc<Self>, shared: Arc<claims::Claims>) {
+        shared.on_release(
+            claims::Owner::Autoclicker,
+            Arc::downgrade(self) as Weak<dyn claims::Retry>,
+        );
+        let _ = self.claims.set(shared);
+        let mut inner = self.lock();
+        self.sync_hotkeys(&mut inner);
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -660,6 +712,9 @@ impl Automation {
                     alias,
                 })
                 .collect();
+            if let Some(c) = self.claims.get() {
+                c.publish(claims::Owner::Autoclicker, &[]);
+            }
             return;
         };
         let mut keep: Vec<Registration> = Vec::new();
@@ -682,10 +737,19 @@ impl Automation {
                 out.push(keep.remove(i));
                 continue;
             }
+            let held_by = self
+                .claims
+                .get()
+                .and_then(|c| c.holder(chord, claims::Owner::Autoclicker));
             let result = if let Some(other) = out.iter().find(|r| r.chord == chord) {
                 Err(format!(
                     "Not registered: \"{}\" has the same shortcut",
                     other.owner.label()
+                ))
+            } else if let Some(feature) = held_by {
+                Err(format!(
+                    "Not registered: {} uses this shortcut",
+                    feature.label()
                 ))
             } else if let Some(p) = chord.problem() {
                 Err(format!("Not registered: {p}"))
@@ -720,6 +784,15 @@ impl Automation {
             });
         }
         inner.registrations = out;
+        if let Some(c) = self.claims.get() {
+            let held: Vec<Chord> = inner
+                .registrations
+                .iter()
+                .filter(|r| r.result.is_ok() && !r.alias)
+                .map(|r| r.chord)
+                .collect();
+            c.publish(claims::Owner::Autoclicker, &held);
+        }
     }
 
     fn hotkey_views(&self, inner: &Inner) -> Vec<HotkeyView> {
@@ -966,26 +1039,7 @@ impl Automation {
 
     pub fn config(&self) -> AutomationConfig {
         let inner = self.lock();
-        let backend = inner.backend.clone();
-        let keys = keys::KEYS
-            .iter()
-            .filter_map(|info| Key::from_code(info.code))
-            .map(|k| KeyView {
-                code: k.code(),
-                label: backend
-                    .as_ref()
-                    .and_then(|b| b.key_name(k))
-                    .unwrap_or_else(|| k.label().to_owned()),
-                kind: match k.class() {
-                    keys::KeyClass::Modifier(_) => "modifier",
-                    keys::KeyClass::Layout => "layout",
-                    keys::KeyClass::Function => "function",
-                    keys::KeyClass::Media => "media",
-                    keys::KeyClass::Quiet => "quiet",
-                    keys::KeyClass::Other => "other",
-                },
-            })
-            .collect();
+        let keys = key_views(inner.backend.as_ref());
         let suggestions = HotkeyAction::PROFILE
             .iter()
             .chain([&HotkeyAction::StopAll])

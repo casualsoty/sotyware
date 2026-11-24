@@ -15,6 +15,7 @@
   import Icon from "./Icon.svelte";
   import { SECTION_TITLES, shellShortcut, type Section, type SettingsTab } from "./navigation";
   import Overview from "./Overview.svelte";
+  import { OverlayModel } from "./overlayModel.svelte";
   import Settings from "./Settings.svelte";
   import Sidebar from "./Sidebar.svelte";
   import TitleBar from "./TitleBar.svelte";
@@ -74,6 +75,11 @@
   /** The Autoclicker page is its own chunk (it is large and used by few),
    * loaded right after startup so opening it stays instant. */
   let autoclickerPage = $state<Promise<typeof import("./Autoclicker.svelte")> | null>(null);
+  /** The gaming notes overlay's live state (ADR-052): Settings › Notes
+   * overlay and the Overview's card. The overlay asking for its settings
+   * opens them here. */
+  const overlay = new OverlayModel();
+  overlay.onsettings = () => openSettings("overlay");
   const ustatus = $derived(updates.status);
   const uinstall = $derived(updates.install);
 
@@ -134,7 +140,11 @@
   }
 
   function openUpdates(): void {
-    settingsTab = "about";
+    openSettings("about");
+  }
+
+  function openSettings(tab: SettingsTab): void {
+    settingsTab = tab;
     void navigate("settings");
   }
 
@@ -207,10 +217,12 @@
     void sync("startup");
     void folderSyncs.start();
     void automation.start();
+    void overlay.start();
     autoclickerPage = import("./Autoclicker.svelte");
     return () => {
       folderSyncs.stop();
       automation.stop();
+      overlay.stop();
     };
   });
 </script>
@@ -324,10 +336,12 @@
         {accounts}
         {accountsError}
         {updates}
+        {overlay}
         onnavigate={(s) => void navigate(s)}
         onopenaccount={openAccount}
         onaddaccount={addAccount}
         onopenupdates={openUpdates}
+        onopenoverlay={() => openSettings("overlay")}
       />
     {:else if section === "cloud-storage"}
       <CloudStorage
@@ -359,7 +373,7 @@
     {:else if section === "account"}
       <Account />
     {:else}
-      <Settings tab={settingsTab} ontab={(t) => (settingsTab = t)} {updates} {mode} />
+      <Settings tab={settingsTab} ontab={(t) => (settingsTab = t)} {updates} {mode} {overlay} />
     {/if}
   </main>
 </div>
