@@ -274,8 +274,6 @@ ADR-026; public ACLs do not).
 
 ## Gaming notes overlay (after ADR-052)
 
-- Hosted CI on the branch (`ci.yml`, `macos.yml`: the overlay's code has
-  not been built on macOS), and `desktop-virtual.yml`.
 - A real game in borderless and exclusive fullscreen on Windows; a real
   Linux desktop with a compositor (GNOME on Xorg, KDE), and Wayland;
   monitors with different scalings.

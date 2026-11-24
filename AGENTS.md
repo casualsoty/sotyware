@@ -74,8 +74,9 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   window, frameless, transparent, always on top, interactive or passive
   (click-through), with several Markdown notes and checklists in
   `notes.sqlite3` and its own global shortcuts, while the built-in feature
-  `notes-overlay` runs, which is off by default; committed as `4706140` on
-  the branch `feat/gaming-notes-overlay`, not pushed; tested
+  `notes-overlay` runs, which is off by default; `4706140`, pushed as the
+  branch `feat/gaming-notes-overlay` on 2026-11-25, where every hosted
+  workflow passed, macOS built for the first time; tested
   with real input on a private Xvfb and on the maintainer's Windows 11
   desktop (80/80 three times on 2026-11-24), and on a Windows private
   desktop without input). No other product features exist yet. Current milestone and status:

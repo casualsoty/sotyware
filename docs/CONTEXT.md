@@ -31,8 +31,12 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 **Gaming notes overlay** (2026-11-23, ADR-052,
 [notes-overlay.md](architecture/notes-overlay.md), [user guide](user/notes-overlay.md);
-[status](status/status.md#gaming-notes-overlay-2026-11-23); committed as
-`4706140` on the branch `feat/gaming-notes-overlay`, **not pushed**): a second window, created at runtime while the built-in
+[status](status/status.md#gaming-notes-overlay-2026-11-23); `4706140`,
+pushed as the branch `feat/gaming-notes-overlay` on 2026-11-25, where
+`ci.yml` (Ubuntu 22.04, Windows), `macos.yml` (both Macs, its first macOS
+build), `isolation-guard.yml`, `release-build.yml` and `desktop-virtual.yml`
+(140/0/0) passed:
+[runs](status/status.md#hosted-runs-at-f109fb2-the-gaming-notes-overlay-branch-passes-on-every-platform-2026-11-25)): a second window, created at runtime while the built-in
 feature `notes-overlay` runs (**off by default**): frameless, see-through
 (20 to 100 %), always on top, moved, resized and collapsed from its own
 title bar, remembering its place across monitors and scalings; several
@@ -53,8 +57,8 @@ runs after two fixes of where it reopens), and by
 unattended on a private desktop (50 of 50 four times after the keyboard
 fix) and, with their go-ahead, with real input on their desktop against a
 window of the driver playing the game (2026-11-24: 80 of 80 three times
-after fixes of the driver only). Not run: hosted CI, macOS, real Linux
-desktops, Wayland, Windows 10, a real game.
+after fixes of the driver only). Not run: real Linux desktops, Wayland,
+Windows 10, a real game, a Mac a person used.
 
 **Autoclicker and macros** (2026-11-17, ADR-050,
 [automation.md](architecture/automation.md), [user guide](user/automation.md);
@@ -568,7 +572,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
-- **Gaming notes overlay** (2026-11-23, `4706140` on a branch, not pushed,
+- **Gaming notes overlay** (2026-11-23, `4706140`; its branch's hosted runs passed on 2026-11-25,
   [status.md](status/status.md#gaming-notes-overlay-2026-11-23)): unit and
   frontend tests in `test:headless`; the Linux phase `cloud-ui.sh overlay`
   (57 checks) found four defects, all fixed (the collapsed window 200 px
