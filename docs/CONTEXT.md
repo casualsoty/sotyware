@@ -31,8 +31,9 @@ built with `npm run build:release`, which keeps the build machine's paths out
 
 **Gaming notes overlay** (2026-11-23, ADR-052,
 [notes-overlay.md](architecture/notes-overlay.md), [user guide](user/notes-overlay.md);
-[status](status/status.md#gaming-notes-overlay-2026-11-23); committed as
-`4706140` on the branch `feat/gaming-notes-overlay`, **not pushed**): a second window, created at runtime while the built-in
+[status](status/status.md#gaming-notes-overlay-2026-11-23); on `main`
+since 2026-11-24, merged as `fe816d1`,
+[hosted runs](status/status.md#hosted-runs-at-fe816d1-the-notes-overlay-and-en-us-numbers-on-main-2026-11-24)): a second window, created at runtime while the built-in
 feature `notes-overlay` runs (**off by default**): frameless, see-through
 (20 to 100 %), always on top, moved, resized and collapsed from its own
 title bar, remembering its place across monitors and scalings; several
@@ -53,8 +54,9 @@ runs after two fixes of where it reopens), and by
 unattended on a private desktop (50 of 50 four times after the keyboard
 fix) and, with their go-ahead, with real input on their desktop against a
 window of the driver playing the game (2026-11-24: 80 of 80 three times
-after fixes of the driver only). Not run: hosted CI, macOS, real Linux
-desktops, Wayland, Windows 10, a real game.
+after fixes of the driver only). Hosted CI passed at `fe816d1`
+(2026-11-24), the overlay's first build on both Macs. Not run: a Mac a
+person used, real Linux desktops, Wayland, Windows 10, a real game.
 
 **Autoclicker and macros** (2026-11-17, ADR-050,
 [automation.md](architecture/automation.md), [user guide](user/automation.md);
@@ -569,7 +571,7 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 ## Tests
 
 - **Numbers and dates in en-US** (2026-11-24, frontend, drivers and docs,
-  committed on the branch `claude/exciting-pascal-b4b46e`, not pushed,
+  on `main` since that day as part of `fe816d1`,
   [status.md](status/status.md#numbers-and-dates-in-en-us-2026-11-24)):
   the maintainer chose that the page write every number and date in en-US
   whatever the webview's language (`LOCALE` in `src/format.ts`:
@@ -585,8 +587,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   `npm run test:frontend` 430/430 under four machine locales; the same calls
   in a bare WebKitGTK under `C.UTF-8` grouped "1,234" where the page had
   written "1234". No desktop driver run; their date and amount checks now
-  expect en-US.
-- **Gaming notes overlay** (2026-11-23, `4706140` on a branch, not pushed,
+  expect en-US. Hosted CI passed at `fe816d1` (Vitest 430/430 on Linux,
+  Windows and both Macs).
+- **Gaming notes overlay** (2026-11-23, on `main` since 2026-11-24 as part of `fe816d1`,
   [status.md](status/status.md#gaming-notes-overlay-2026-11-23)): unit and
   frontend tests in `test:headless`; the Linux phase `cloud-ui.sh overlay`
   (57 checks) found four defects, all fixed (the collapsed window 200 px
