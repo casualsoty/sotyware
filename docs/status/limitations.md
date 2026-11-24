@@ -1362,20 +1362,27 @@ server only; no real provider was asked.
   ([status](status.md#hosted-runs-at-de254ae-where-the-web-process-crashes-2026-11-19)).
   The desktop test names such a crash and does not fail on it
   ([Tests](#tests)).
-- **Numbers follow the webview's language only in part** (found
-  2026-11-23, from the code and Node's formatters): the page writes counts,
-  dates and cost amounts in the webview's language (`toLocaleString()`,
-  `Intl.NumberFormat` without a locale), but sizes always with a decimal
-  point (`formatSize` and `formatDecimalSize` use `toFixed`), the estimate's
-  details as Rust writes them ("at USD 6.95 per TB") and the autoclicker's
-  counts always in en-US. With a webview language other than English one line
-  can mix them: "5.00 GB in 1 234 files" (fr-FR), "5.00 GB in 1.234 files"
-  (de-DE, where "." groups thousands), "1,39 $US" in the row whose detail
-  says "USD 6.95". Not seen in the app: WebView2 follows the Windows display
-  language, English on the one Windows 11 tested, whose regional format is
-  fr-FR ([status](status.md#frontend-tests-under-any-locale-2026-11-23)); a
-  Windows display language or a Linux `LANG` other than English was not
-  tried. The frontend tests run in en-US ([Tests](#tests)).
+- **Numbers and dates are always in en-US** (since 2026-11-24,
+  [frontend.md](../architecture/frontend.md#numbers-and-dates)), whatever
+  the webview's language: with a Windows display language or a Linux
+  `LANG` other than English the page still writes "1,234" and "$1.39", and
+  dates with the month first and a 12-hour clock ("3/4/2026, 2:05:06 PM"),
+  which a day-first reader can take for 3 April. This replaced formats
+  that followed the webview's language only in part (found 2026-11-23:
+  "5.00 GB in 1 234 files" in fr-FR, "5.00 GB in 1.234 files" in de-DE,
+  "1,39 $US" in the cost row whose detail says "USD 6.95";
+  [status](status.md#frontend-tests-under-any-locale-2026-11-23)), and,
+  under `C.UTF-8` on Linux, counts without grouping ("1234") and "$ 1.39"
+  (WebKitGTK's en-US-POSIX). Left as they were: the estimate's details,
+  written by Rust, give amounts as "USD 6.95" beside the page's "$1.39";
+  counts Rust writes or the page puts straight into a sentence are not
+  grouped ("1000 items shown" above "the 1,000 items loaded" in the bucket
+  browser); sorting follows the webview's language. Seen in the frontend
+  tests (Node) and, for the same calls in a bare WebKitGTK 2.52.6, under
+  `C.UTF-8` only; not in the app, and not with WebView2 in a display
+  language other than English or WebKitGTK in another language (the WSL2
+  tried has no glibc locale but C and POSIX)
+  ([status](status.md#numbers-and-dates-in-en-us-2026-11-24)).
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux
@@ -1446,11 +1453,15 @@ server only; no real provider was asked.
   is being dumped (polled every 20 ms): one whose dump is quicker goes
   unnoticed by the driver, though on GitHub systemd-coredump still records
   it ([status](status.md#the-linux-driver-names-a-crash-at-quit-instead-of-failing-2026-11-19)).
-- **The frontend tests run in en-US only** (since 2026-11-23):
-  `src/testLocale.ts` makes en-US their default locale whatever the
-  machine's, the language of the webview they simulate (happy-dom), so they
-  do not show how the page reads in another language
-  ([Dashboard](#dashboard-adr-035)). It differs from a real default locale in
+- **The frontend tests run in en-US unless a test asks otherwise** (since
+  2026-11-23): `src/testLocale.ts` makes en-US their default locale
+  whatever the machine's, the language of the webview they simulate
+  (happy-dom). Another webview language is stood in for only where a test
+  asks for it with `withDefaultLocale` (since 2026-11-24: `format.test.ts`
+  in fr-FR, de-DE, en-GB, en-IN and ar-EG, and one test each of the Sync
+  and Usage & costs tabs in fr-FR and de-DE), and `navigator.language`
+  stays "en-US" there
+  ([Dashboard](#dashboard-adr-035)). The default differs from a real one in
   one visible way: `Intl.PluralRules` reports "en" where Node reports
   "en-US", with the same rules; the app does not use it
   ([testing.md](../development/testing.md#frontend-tests)).

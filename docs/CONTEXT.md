@@ -568,6 +568,24 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
 
 ## Tests
 
+- **Numbers and dates in en-US** (2026-11-24, frontend, drivers and docs,
+  committed on the branch `claude/exciting-pascal-b4b46e`, not pushed,
+  [status.md](status/status.md#numbers-and-dates-in-en-us-2026-11-24)):
+  the maintainer chose that the page write every number and date in en-US
+  whatever the webview's language (`LOCALE` in `src/format.ts`:
+  `formatCount`, `formatDateTime`, `formatDate`, `formatTime`;
+  `formatMoney` too; [frontend.md](architecture/frontend.md#numbers-and-dates)),
+  ending lines that mixed formats under another language ("5.00 GB in
+  1 234 files"); readers in another language now get US formats
+  ([limitation](status/limitations.md#dashboard-adr-035)).
+  `src/format.test.ts` checks the formatters in five other languages
+  through `withDefaultLocale` (`src/testLocale.ts`) and fails on a
+  formatting call that does not name `LOCALE`; the Sync and Usage & costs
+  tabs are mounted in fr-FR and de-DE. WSL2: `npm run check` clean,
+  `npm run test:frontend` 430/430 under four machine locales; the same calls
+  in a bare WebKitGTK under `C.UTF-8` grouped "1,234" where the page had
+  written "1234". No desktop driver run; their date and amount checks now
+  expect en-US.
 - **Gaming notes overlay** (2026-11-23, `4706140` on a branch, not pushed,
   [status.md](status/status.md#gaming-notes-overlay-2026-11-23)): unit and
   frontend tests in `test:headless`; the Linux phase `cloud-ui.sh overlay`
@@ -590,9 +608,9 @@ More: [workflow.md](development/workflow.md), [testing.md](development/testing.m
   default locale, a named locale still kept, checked by
   `src/testLocale.test.ts`; the cost checks compare the page's text as
   written with `formatMoney` (the sixth failure collapsed its no-break
-  space on one side only). The app is unchanged; under a webview language
-  other than English its number formats mix
-  ([limitation](status/limitations.md#dashboard-adr-035)). WSL2: 355/355
+  space on one side only). The app was unchanged; under a webview language
+  other than English its number formats mixed, until it wrote them all in
+  en-US (2026-11-24, above). WSL2: 355/355
   under en-US, fr-FR, de-DE and C; native Windows 11 (regional format
   fr-FR): 355/355.
 - **Whose WebKit helper the Linux driver finds left** (2026-11-19, test

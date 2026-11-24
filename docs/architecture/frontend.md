@@ -186,6 +186,38 @@ Quit as after a kill), and a sotyware started again at once still read it
 (seen after a kill;
 [status](../status/status.md#the-theme-check-on-windows-webview2-after-a-quick-quit-2026-11-18)).
 
+## Numbers and dates
+
+Since 2026-11-24 the page writes every number and date in **en-US**, the
+language of its text, whatever the webview's language: `LOCALE` in
+`src/format.ts`, chosen by the maintainer over following the webview's
+language ([status](../status/status.md#numbers-and-dates-in-en-us-2026-11-24)).
+The webview's language is not the user's number format anyway: WebView2
+follows the Windows display language, not the regional format, and
+WebKitGTK the environment's locale (under `C.UTF-8` en-US-POSIX: "1234",
+"$ 1.39"). Left to it, counts, amounts and dates mixed with what never
+followed it (the sizes, the autoclicker's counts, the details Rust writes):
+"5.00 GB in 1 234 files" in French, "1,39 $US" beside "at USD 6.95 per TB".
+
+- **Counts:** `formatCount` ("1,234", rounded to a whole number).
+- **Sizes:** `formatSize` ("3.0 MiB") and `formatDecimalSize` ("1.23 GB"),
+  with a decimal point by construction (`toFixed`).
+- **Amounts:** `formatMoney` in `src/cloudUsage.ts` ("$1.39", "€6.49").
+- **Dates and times:** `formatDateTime`, `formatDate` and `formatTime`,
+  with a page's own options where it gives them ("3/4/2026, 2:05:06 PM",
+  "Mar 4, 2026, 02:05 PM" in the bucket browser, "March 4, 2026" for a
+  release).
+- **The rule:** every locale-sensitive formatting call in `src/` names
+  `LOCALE` (`toLocaleString` and its date and time forms, the `Intl`
+  formatters). `src/format.test.ts` fails on one that does not, and checks
+  the helpers as a webview in other languages would run them
+  ([testing.md](../development/testing.md#frontend-tests)).
+- **Not covered:** sorting follows the webview's language (`fileList.ts`'s
+  collator, the macro library's `localeCompare`); Rust's own text writes
+  amounts as `USD 6.95` and its counts without grouping, as the page does
+  with numbers it puts straight into a sentence ("1000 items shown")
+  ([limitations](../status/limitations.md#dashboard-adr-035)).
+
 ## Interaction
 
 - **Keyboard:** Ctrl+1/2/3/4 (⌘ on a Mac) Overview, Cloud Storage, Backups, Autoclicker;

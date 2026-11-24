@@ -55,7 +55,7 @@ Where things are. Generated and ignored paths are listed in
 │   ├── CloudRecovery.svelte  Interrupted work from the operation journal (inspect, dismiss, abort an incomplete upload) and the per-bucket list of unfinished large uploads (ADR-030)
 │   ├── CloudRecovery.test.ts Tests of the recovery view (mocked recovery commands)
 │   ├── CloudUsage.svelte     The bucket view's Usage & costs tab (ADR-041): measure, progress, tiles, parts bar, included-storage meter, history chart and table, the estimate with components and assumptions; CloudUsage.test.ts its tests
-│   ├── cloudUsage.ts         Typed wrappers for the three usage commands; validates responses and events; formatMoney
+│   ├── cloudUsage.ts         Typed wrappers for the three usage commands; validates responses and events; formatMoney (en-US)
 │   ├── usagePrefs.ts         The downloads per 30 days assumed per provider account (webview storage)
 │   ├── CloudSnapshots.svelte The bucket view's Snapshots & backups tab (ADR-041): the provider's snapshots explained, sotyware backup snapshots of the bucket (details, Back up now, Verify, Delete with typed confirmation); CloudSnapshots.test.ts its tests
 │   ├── CloudSync.svelte      The bucket view's Sync tab (ADR-043): choose a folder (dialog opened by Rust) and confirm what was found, the live state, folder, figures, transfers, the deletion guard's question, conflicts, activity, problems, not synced, interval, sync trash, pause, change folder, turn off; CloudSync.test.ts its tests
@@ -100,8 +100,9 @@ Where things are. Generated and ignored paths are listed in
 │   ├── fileList.ts           Pure list logic: entries, sorting, filters, selection model, keyboard shortcuts
 │   ├── fileList.test.ts      Its tests
 │   ├── cloudMessages.ts      Labels and hints for check results and command error kinds; upload skip reasons, remote outcomes, upload and file-operation error summaries
-│   ├── format.ts             formatSize, formatDecimalSize, formatAgo and shownName
-│   ├── testLocale.ts         Not app code: Vitest's setup file, en-US as every frontend test's default locale whatever the machine's (+ testLocale.test.ts)
+│   ├── format.ts             The page's formatting in en-US whatever the webview's language (LOCALE): formatSize, formatDecimalSize, formatCount, formatDateTime, formatDate, formatTime, formatAgo and shownName
+│   ├── format.test.ts        Its tests under other webview languages, and the rule that every locale-sensitive formatting call in src/ names LOCALE
+│   ├── testLocale.ts         Not app code: Vitest's setup file, en-US as every frontend test's default locale whatever the machine's, and withDefaultLocale to stand in for another webview language (+ testLocale.test.ts)
 │   ├── Features.svelte       Minimal Features section of the dashboard (state + enable checkbox per feature)
 │   ├── Features.test.ts      Tests of the Features section and of features.ts
 │   └── features.ts           Typed wrappers for list_features / set_feature_enabled; validates responses

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { clickerSummary, formatClock, formatCount, formatDuration, formatRate, playbackSummary } from "./automationFormat";
+  import { clickerSummary, formatClock, formatDuration, formatRate, playbackSummary } from "./automationFormat";
+  import { formatCount, formatTime } from "./format";
   import type { AutomationModel } from "./automationModel.svelte";
   import Icon from "./Icon.svelte";
 
@@ -88,7 +89,7 @@
       {@const l = status.last}
       <p class="callout {OUTCOME_TONE[l.outcome]} last">
         {l.kind === "clicker" ? "Autoclicker" : l.kind === "playback" ? "Playback" : "Recording"}: {l.message}
-        <span class="muted">({new Date(l.atMs).toLocaleTimeString()})</span>
+        <span class="muted">({formatTime(new Date(l.atMs))})</span>
       </p>
     {/if}
 

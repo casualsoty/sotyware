@@ -324,9 +324,7 @@ describe("opening a bucket", () => {
     expect(shown.slice(0, 3)).toEqual(["2024 | Folder | —", "a/ | Folder | —", "Ferien 2024 ü | Folder | —"]);
     expect(shown[3]).toMatch(/^readme\.txt \| 12 B \| .*2026/);
     expect(shown[4]).toMatch(/^big\.bin \| 3\.0 MiB \| /);
-    expect(b.querySelector('tr[data-key="big.bin"] td.num')?.getAttribute("title")).toBe(
-      `${(3 * 1024 * 1024).toLocaleString()} bytes`,
-    );
+    expect(b.querySelector('tr[data-key="big.bin"] td.num')?.getAttribute("title")).toBe("3,145,728 bytes");
     expect(text(b.querySelector(".count"))).toBe("5 items shown.");
     expect(buttons(b).map((x) => text(x))).not.toContain("Load more");
   });

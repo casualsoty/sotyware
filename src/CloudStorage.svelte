@@ -16,6 +16,7 @@
     type ProviderInfo,
   } from "./cloud";
   import { CHECK_HINTS, CHECK_LABELS, checkTone, describeError } from "./cloudMessages";
+  import { formatTime } from "./format";
 
   // Cloud storage accounts: list, add, edit, check and remove, and the
   // browser of each account's bucket (CloudBrowser.svelte). Every operation
@@ -219,7 +220,7 @@
         : "Windows Credential Manager, the macOS Keychain or the desktop keyring";
 
   function checkedAt(ms: number): string {
-    return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return formatTime(new Date(ms), { hour: "2-digit", minute: "2-digit" });
   }
 
   onMount(() => {

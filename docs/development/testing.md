@@ -2276,9 +2276,11 @@ minutes, most of it creating the 1,040 objects. Run one Backblaze test at a time
 (on one machine or two): the fingerprint covers all of `sotyware-it/`, so a
 second run's dataset makes the before/after checks fail (seen 2026-11-11 when
 a Linux and a Windows run overlapped; each run's own cleanup was still
-complete). On Windows the page's dates follow the Windows display language
-(WebView2), not the regional format that `node` would use by default, so the
-script passes `(Get-UICulture).Name` to the same `toLocaleString` call.
+complete). The page writes its dates in en-US whatever the webview's
+language (since 2026-11-24; before, WebView2's followed the Windows display
+language), while `node` would use the machine's locale (on Windows the
+regional format), so both scripts pass `en-US` to the same `toLocaleString`
+call.
 
 Not covered by either: an unlock prompt answered by a person, KWallet,
 Windows 10, the connection check against Hetzner, browsing at Hetzner,
@@ -2321,7 +2323,25 @@ if the setup did not run (also on an en-US machine). To see the tests in
 another locale on Linux, leave the setup file out of the config (for example
 through a scratch config with `setupFiles: []`) and set
 `LC_ALL=fr_FR.UTF-8`; Node brings its own locale data, so the system needs no
-French locale installed.
+French locale installed. A test file that imports `withDefaultLocale` from
+`src/testLocale.ts` runs the setup through that import, with or without the
+config.
+
+The page writes every number and date in en-US whatever the webview's
+language ([frontend.md](../architecture/frontend.md#numbers-and-dates)),
+which a test can only show with a default other than en-US: inside
+`withDefaultLocale("de-DE", fn)` (from `src/testLocale.ts`, since
+2026-11-24) the default locale is de-DE, as if the webview's language were
+German, and en-US again afterwards, also when `fn` fails; a locale a call
+names is still honoured, and a locale Node has no data for is refused.
+`src/format.test.ts` runs the formatters that way in fr-FR, de-DE, en-GB,
+en-IN and ar-EG, first checking that the default really changed (a plain
+date no longer reads as en-US), and reads every `.ts` and `.svelte` file in
+`src/` but the tests (`import.meta.glob`, `?raw`) to fail on a
+locale-sensitive formatting call that does not name `LOCALE`. The Sync and
+Usage & costs tabs are mounted that way in fr-FR and de-DE
+(`CloudSync.test.ts`, `CloudUsage.test.ts`): their counts, amounts and
+dates read as in en-US.
 
 `src/App.test.ts` mounts the real `App.svelte` (and imports `main.ts`) in
 [happy-dom](https://github.com/capricorn86/happy-dom) under Vitest, with Tauri's

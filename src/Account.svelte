@@ -3,6 +3,7 @@
   import * as acc from "./account";
   import type { AccountStatus, DeviceInfo, EnrollmentInfo } from "./account";
   import { describeError } from "./cloudMessages";
+  import { formatDateTime } from "./format";
   import { openGithubPage } from "./githubPage";
 
   // The optional sotyware account (ADR-032): sign in on several computers
@@ -226,7 +227,7 @@
     });
 
   function when(ms: number | null): string {
-    return ms === null ? "never" : new Date(ms).toLocaleString();
+    return ms === null ? "never" : formatDateTime(new Date(ms));
   }
 
   onMount(() => {

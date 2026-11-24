@@ -10,7 +10,8 @@
     startRecording,
     stopAutomation,
   } from "./automation";
-  import { formatClock, formatCount, formatRate } from "./automationFormat";
+  import { formatClock, formatRate } from "./automationFormat";
+  import { formatCount } from "./format";
   import type { AutomationModel } from "./automationModel.svelte";
   import AutoclickerClicker from "./AutoclickerClicker.svelte";
   import AutoclickerMacros from "./AutoclickerMacros.svelte";

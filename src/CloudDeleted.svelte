@@ -3,7 +3,7 @@
   import { type AccountInfo } from "./cloud";
   import { listDeleted, type DeletedEntry, type RestoreRef } from "./cloudFiles";
   import { describeError } from "./cloudMessages";
-  import { formatSize, shownName } from "./format";
+  import { formatDateTime, formatSize, shownName } from "./format";
 
   // Deleted items under the folder shown (ADR-026): keys whose latest
   // version is a delete marker, read from the provider's version listing.
@@ -85,7 +85,7 @@
       return "—";
     }
     const d = new Date(rfc3339);
-    return Number.isNaN(d.getTime()) ? rfc3339 : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? rfc3339 : formatDateTime(d);
   }
 </script>
 

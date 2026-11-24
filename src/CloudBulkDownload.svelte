@@ -14,7 +14,7 @@
     type ItemRef,
   } from "./cloudFiles";
   import { describeOperationError, describeOperationFailure } from "./cloudMessages";
-  import { formatSize, shownName } from "./format";
+  import { formatCount, formatSize, shownName } from "./format";
 
   // Downloads several files and whole folders (ADR-026): Rust opens the
   // folder dialog, keeps the path, downloads into a hidden staging folder
@@ -196,7 +196,7 @@
           : s.state === "cancelled"
             ? "Download cancelled"
             : "Download stopped after an error";
-    return `${head}: ${parts.join(", ")} (${s.filesCompleted.toLocaleString()} files, ${formatSize(s.bytes)}).`;
+    return `${head}: ${parts.join(", ")} (${formatCount(s.filesCompleted)} files, ${formatSize(s.bytes)}).`;
   }
 
   function itemLine(i: BulkItem): string {
@@ -240,7 +240,7 @@
           {#if batch.cancel}
             Cancelling…
           {:else}
-            {totals.filesDone.toLocaleString()} of {totals.files.toLocaleString()} files · {formatSize(totals.done)} of {formatSize(totals.total)}
+            {formatCount(totals.filesDone)} of {formatCount(totals.files)} files · {formatSize(totals.done)} of {formatSize(totals.total)}
             {#if current !== null}· {shownName(current.name)}{/if}
           {/if}
         </p>

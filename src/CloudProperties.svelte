@@ -12,7 +12,7 @@
     type ShareLink,
   } from "./cloudFiles";
   import { describeOperationError } from "./cloudMessages";
-  import { formatSize, shownName } from "./format";
+  import { formatCount, formatDateTime, formatSize, shownName } from "./format";
   import Modal from "./Modal.svelte";
 
   // A file's properties, a size-limited preview and a temporary share link
@@ -113,7 +113,7 @@
       return "—";
     }
     const d = new Date(rfc3339);
-    return Number.isNaN(d.getTime()) ? rfc3339 : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? rfc3339 : formatDateTime(d);
   }
 
   onMount(async () => {
@@ -142,7 +142,7 @@
         <dt>Object key</dt>
         <dd class="key">{info.key}</dd>
         <dt>Size</dt>
-        <dd>{formatSize(info.size)} ({info.size.toLocaleString()} bytes)</dd>
+        <dd>{formatSize(info.size)} ({formatCount(info.size)} bytes)</dd>
         <dt>Last modified</dt>
         <dd>{formatDate(info.lastModified)}</dd>
         <dt>Content type</dt>

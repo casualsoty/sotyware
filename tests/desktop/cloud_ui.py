@@ -643,9 +643,10 @@ def format_size(n):
 
 def format_dates(dates):
     """The page's formatDate for each RFC 3339 string, by the same Intl call
-    in Node (same locale and time zone as the app's environment)."""
+    in Node: in en-US, as the page writes every date whatever the webview's
+    language (since 2026-11-24), in the time zone of the app's environment."""
     js = ("const a=JSON.parse(require('fs').readFileSync(0,'utf8'));"
-          "console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString([],{year:'numeric',month:'short',"
+          "console.log(JSON.stringify(a.map(s=>new Date(s).toLocaleString('en-US',{year:'numeric',month:'short',"
           "day:'numeric',hour:'2-digit',minute:'2-digit'}).replace(/[\\u202f\\u00a0]/g,' '))))")
     out = subprocess.run(["node", "-e", js], input=json.dumps(dates), capture_output=True, text=True, check=True)
     return dict(zip(dates, json.loads(out.stdout)))

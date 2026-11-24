@@ -24,7 +24,7 @@
   } from "./backup";
   import { listAccounts, type AccountInfo } from "./cloud";
   import { describeOperationError } from "./cloudMessages";
-  import { formatSize } from "./format";
+  import { formatDateTime, formatSize } from "./format";
   import Icon from "./Icon.svelte";
 
   // Backups (ADR-031): jobs that keep an independent, verified copy of an
@@ -80,7 +80,7 @@
       return "—";
     }
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? "—" : formatDateTime(d);
   }
 
   function newJob(): void {
@@ -482,7 +482,7 @@
               <ul>
                 {#each snapshots.list as s (s.key)}
                   <li data-snapshot={s.key}>
-                    {new Date(s.created).toLocaleString()}
+                    {formatDateTime(new Date(s.created))}
                     <button type="button" disabled={active !== null} onclick={() => void restoreLocal(j.config.id, s.key)}>Restore to a folder…</button>
                     <button type="button" disabled={active !== null || restoreAccount === ""} onclick={() => void restoreBucket(j.config.id, s.key)}
                       >Restore to the bucket</button

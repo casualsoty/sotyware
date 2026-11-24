@@ -10,6 +10,7 @@
     type MacroSummary,
   } from "./automation";
   import { formatChord, formatDuration } from "./automationFormat";
+  import { formatCount, formatDate } from "./format";
   import type { AutomationModel } from "./automationModel.svelte";
   import AutoclickerEditor from "./AutoclickerEditor.svelte";
   import Icon from "./Icon.svelte";
@@ -266,9 +267,9 @@
                   {#if m.target !== null}<span class="badge info" title="Plays in {m.target}">{m.target}</span>{/if}
                   {#if m.description !== ""}<p class="desc">{m.description}</p>{/if}
                 </td>
-                <td class="num">{m.actions.toLocaleString("en-US")}</td>
+                <td class="num">{formatCount(m.actions)}</td>
                 <td class="num">{formatDuration(m.durationMs)}</td>
-                <td class="num">{new Date(m.modifiedMs).toLocaleDateString()}</td>
+                <td class="num">{formatDate(new Date(m.modifiedMs))}</td>
                 <td>
                   {#if m.shortcut.chord !== null}
                     <kbd class:off={!m.shortcut.enabled}>{formatChord(m.shortcut.chord, keys)}</kbd>{#if !m.shortcut.enabled}<span class="visually-hidden">(off)</span>{/if}
@@ -295,7 +296,7 @@
 {#if confirmDelete !== null}
   {@const d = confirmDelete}
   <Modal title="Delete “{d.name}”?" onclose={() => (confirmDelete = null)} locked={busy}>
-    <p>Its {d.actions.toLocaleString("en-US")} actions are deleted from this computer. Profiles that play it will play nothing.</p>
+    <p>Its {formatCount(d.actions)} actions are deleted from this computer. Profiles that play it will play nothing.</p>
     <p class="small-text muted">Export it first if you might want it back.</p>
     {#snippet footer()}
       <button type="button" class="primary danger" disabled={busy} onclick={() => void remove(d)}>Delete macro</button>

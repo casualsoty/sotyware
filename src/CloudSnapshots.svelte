@@ -20,7 +20,7 @@
   } from "./backup";
   import { listAccounts, type AccountInfo } from "./cloud";
   import { describeError } from "./cloudMessages";
-  import { formatDecimalSize } from "./format";
+  import { formatCount, formatDateTime, formatDecimalSize } from "./format";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -140,7 +140,7 @@
         tone: s.state === "completed" ? "success" : "warning",
         text:
           s.state === "completed" && st !== null
-            ? `New snapshot written: ${st.objects.toLocaleString()} files, ${formatDecimalSize(st.bytes)}; ${st.transferred.toLocaleString()} transferred.${s.verification?.passed ? " Verified." : ""}`
+            ? `New snapshot written: ${formatCount(st.objects)} files, ${formatDecimalSize(st.bytes)}; ${formatCount(st.transferred)} transferred.${s.verification?.passed ? " Verified." : ""}`
             : "The backup did not complete; no new snapshot was written.",
       };
     } else if (s.kind === "verify" || s.kind === "verify-full") {
@@ -154,7 +154,7 @@
         text:
           p === null
             ? "Snapshot deleted."
-            : `Snapshot deleted. ${p.blobsDeleted.toLocaleString()} piece${p.blobsDeleted === 1 ? "" : "s"} of data no other snapshot used ${p.blobsDeleted === 1 ? "was" : "were"} removed (${formatDecimalSize(p.bytesDeleted)}); newer unused data is removed by a later deletion or retention, once it is a day old.`,
+            : `Snapshot deleted. ${formatCount(p.blobsDeleted)} piece${p.blobsDeleted === 1 ? "" : "s"} of data no other snapshot used ${p.blobsDeleted === 1 ? "was" : "were"} removed (${formatDecimalSize(p.bytesDeleted)}); newer unused data is removed by a later deletion or retention, once it is a day old.`,
       };
     }
     void load().then(() => loadSnapshots(job));
@@ -217,7 +217,7 @@
 
   function when(rfc3339: string): string {
     const d = new Date(rfc3339);
-    return Number.isNaN(d.getTime()) ? rfc3339 : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? rfc3339 : formatDateTime(d);
   }
 
   function whenMs(ms: number | null): string {
@@ -225,7 +225,7 @@
       return "";
     }
     const d = new Date(ms);
-    return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? "" : formatDateTime(d);
   }
 
   function destination(j: JobStatus): string {
@@ -340,7 +340,7 @@
             ><span class="spinner" aria-hidden="true"></span>
             {running.kind === "backup" ? "Backing up" : running.kind === "verify" ? "Verifying" : "Deleting the snapshot"}{running.progress &&
             running.progress.total > 0
-              ? `: ${running.progress.done.toLocaleString()} of ${running.progress.total.toLocaleString()}`
+              ? `: ${formatCount(running.progress.done)} of ${formatCount(running.progress.total)}`
               : "…"}</span
           >
           {#if running.kind !== "delete-snapshot"}
@@ -400,11 +400,11 @@
                 {:else}
                   <dl class="meta-list details">
                     <dt>Files</dt>
-                    <dd>{d.value.stats.objects.toLocaleString()}, {formatDecimalSize(d.value.stats.bytes)}</dd>
+                    <dd>{formatCount(d.value.stats.objects)}, {formatDecimalSize(d.value.stats.bytes)}</dd>
                     <dt>Since the previous</dt>
                     <dd>
-                      {d.value.stats.new.toLocaleString()} new, {d.value.stats.changed.toLocaleString()} changed, {d.value.stats.deleted.toLocaleString()}
-                      gone; {d.value.stats.transferred.toLocaleString()} transferred ({formatDecimalSize(d.value.stats.transferredBytes)})
+                      {formatCount(d.value.stats.new)} new, {formatCount(d.value.stats.changed)} changed, {formatCount(d.value.stats.deleted)}
+                      gone; {formatCount(d.value.stats.transferred)} transferred ({formatDecimalSize(d.value.stats.transferredBytes)})
                     </dd>
                     <dt>Source</dt>
                     <dd>bucket {d.value.sourceBucket}{d.value.sourcePrefix === "" ? "" : `, folder ${d.value.sourcePrefix}`}</dd>
