@@ -9,9 +9,12 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.4, **released on 2026-11-25** as `v0.1.4`, with
-the gaming notes overlay
-([status](status/status.md#release-014-2026-11-25)), after `v0.1.3` on
+TypeScript. Version 0.1.5, **released on 2026-11-25** as `v0.1.5`, with
+four more places for the notes overlay to open at and settings that keep
+the keyboard while a change is saved
+([status](status/status.md#release-015-2026-11-25)), after `v0.1.4` the
+same day, with the gaming notes overlay
+([status](status/status.md#release-014-2026-11-25)), `v0.1.3` on
 2026-11-19, with the autoclicker and macros
 ([status](status/status.md#release-013-2026-11-19)), `v0.1.2` on
 2026-11-17, the first release offering sotyware accounts
