@@ -566,12 +566,13 @@ function FeatureBox([string]$label) { NamedIn (Dash) $label $CT::CheckBox }
 # ignores the Value pattern's SetValue on a select and shows its options
 # only while open; windows-autoclicker.ps1): focus, Home, then Down until
 # its Value reads the option. Real keys on the real desktop; on the private
-# desktop the keys are posted to the page's render widget. The settings
-# disable their controls while a change is saved, which can take the
-# keyboard focus from the select or drop a key sent meanwhile (the Linux
-# driver saw both): each key goes to the select focused again, and a Down
-# that changed nothing is sent again, up to three times (which also ends
-# the list).
+# desktop the keys are posted to the page's render widget. Each key goes to
+# the select focused again, and a Down that changed nothing is sent again,
+# up to three times (which also ends the list): until 2026-11-25 the
+# settings disabled their controls while a change was saved, which took
+# the keyboard focus from the select in WebKitGTK and dropped the next key
+# (the Linux driver saw both). They no longer do; this driver has not been
+# run since, so it keeps both.
 function Choose([string]$label, [string]$option) {
   $script:cb = $null
   WaitFor { $d = Dash; $script:cb = if ($d) { @($d.FindAll($TS::Descendants, (PCT $CT::ComboBox)) | Where-Object { $_.Current.Name.StartsWith($label, [StringComparison]::Ordinal) })[0] } else { $null }; $null -ne $script:cb } 5 | Out-Null

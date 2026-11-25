@@ -62,7 +62,8 @@
 #        Clicker tab, F6, F7, F8 and a screen corner from another program,
 #        no click on sotyware's own window, recording with F9 and F10,
 #        saving and playing the macro, then what a person used to check
-#        by hand: buttons and speed timed, shortcut fields, the editor,
+#        by hand: buttons and speed timed, shortcut fields, several keys
+#        in a row on a select of the Settings tab, the editor,
 #        playback options, profiles, export and import through the GTK
 #        dialogs, held keys, restarts, 100 clicks per second, the Wayland
 #        message; no keyring, no server.
@@ -73,9 +74,10 @@
 #        typed and autosaved, a checkbox, Ctrl+Shift+F1 to F5 from the game,
 #        a click that stays on the overlay and, passive, reaches the game,
 #        collapse, three new places (Centre left, Mid centre right, Top
-#        left), hiding by its button and the window manager, a restart,
-#        turned off (the window gone, the shortcuts released, the notes
-#        kept); no keyring, no server.
+#        left), several Downs in a row on the place select focused once,
+#        hiding by its button and the window manager, a restart, turned
+#        off (the window gone, the shortcuts released, the notes kept); no
+#        keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),

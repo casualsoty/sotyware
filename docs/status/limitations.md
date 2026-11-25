@@ -1390,21 +1390,29 @@ server only; no real provider was asked.
   language other than English or WebKitGTK in another language (the WSL2
   tried has no glibc locale but C and POSIX)
   ([status](status.md#numbers-and-dates-in-en-us-2026-11-24)).
-- **A setting changed with the keyboard loses the focus while it is
-  saved** (WebKitGTK 2.52.6 on the Linux desktop test's private display,
-  2026-11-25): Settings › Notes overlay saves each change at once and
-  disables its controls until the save is done, and WebKitGTK moves the
-  keyboard focus off a disabled control. A select changed with an arrow
-  key therefore moves one option, then loses the focus (within 0.3 s);
-  the next arrow key changes nothing until the select is focused again
-  (Tab or a click). The mouse is not affected: choosing an option from
-  the opened list saves once. The Autoclicker page's Settings tab
-  disables its shortcut fields, checkboxes and countdown select the same
-  way (not tried there). Found when the overlay's desktop test, pressing Home and
-  then Down to reach Centre left, stopped one or two options short
-  ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25));
-  the test now focuses the select again for each key. Not examined in
-  WebView2 or WKWebView.
+- **In `v0.1.3` and `v0.1.4` a setting changed with the keyboard loses
+  keys, and can lose the focus, while it is saved** (WebKitGTK 2.52.6 on
+  the Linux desktop test's private display, 2026-11-25): Settings › Notes
+  overlay (`v0.1.4`) and the Autoclicker page's Settings tab (`v0.1.3`)
+  save each change at once and disable their controls until the save is
+  done. WebKitGTK ignores the keys a disabled control gets and can move
+  the keyboard focus off it: a select changed with an arrow key moves one
+  option, a key pressed during the save changes nothing, and when the
+  focus has gone (within 0.3 s, not every time) neither does the next
+  one, until the select is focused again (Tab or a click). The mouse is
+  not affected: choosing an option from the opened list saves once. Found
+  when the overlay's desktop test, pressing Home and then Down to reach
+  Centre left, stopped one or two options short
+  ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25)).
+  **Fixed on 2026-11-25, after `v0.1.4`** (branch
+  `fix/settings-keep-keyboard-focus`, not on `main` yet): both pages keep
+  their controls enabled while a change is saved, queue the saves and
+  show the changes still waiting; the desktop tests' new checks of
+  several keys in a row on a select, focused once, pass with the fix
+  (overlay phase four runs, autoclicker phase three) and fail with the
+  old pages, in both phases
+  ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)).
+  Neither the defect nor the fix was examined in WebView2 or WKWebView.
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux

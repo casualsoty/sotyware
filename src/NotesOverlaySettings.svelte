@@ -40,7 +40,6 @@
   const showKeys = $derived(status?.hotkeys.find((h) => h.action === "toggle-visible" && h.registered)?.keys ?? null);
 
   let error = $state<string | null>(null);
-  let saving = $state(false);
   let switching = $state(false);
   let confirmReset = $state(false);
   let sizeError = $state<string | null>(null);
@@ -63,26 +62,47 @@
     return e instanceof Error ? e.message : String(e);
   }
 
-  /** Saves run one after another, each computed from what the one
-   * before saved, so two quick changes never undo each other. */
-  let queue: Promise<void> = Promise.resolve();
+  type Change = (current: OverlaySettings) => OverlaySettings;
 
-  function change(next: (current: OverlaySettings) => OverlaySettings): Promise<void> {
+  /** Saves and the reset run one after another, each computed from what
+   * the one before saved, so two quick changes never undo each other. The
+   * controls stay enabled meanwhile: a disabled control ignores the keys it
+   * gets, and WebKitGTK can take the keyboard focus from it, so the next
+   * arrow keys on a select would change nothing. */
+  let queue: Promise<void> = Promise.resolve();
+  /** Changes waiting for their save, oldest first. */
+  let pending = $state.raw<Change[]>([]);
+  /** What the controls show: the saved settings with the waiting changes
+   * applied. Svelte sets a control's value whenever the value it is given
+   * changes, so a control changed again before an earlier change was saved
+   * would otherwise jump back to that earlier value when it is saved; and
+   * a change Rust refused goes back to what is saved. */
+  const shown = $derived(config === null ? null : pending.reduce((s, next) => next(s), config.settings));
+
+  /** Runs `task` after every save and reset asked for before it. */
+  function queued(task: () => Promise<void>): Promise<void> {
     queue = queue.then(async () => {
-      if (config === null) {
-        return;
-      }
-      saving = true;
       try {
-        await model.save(next($state.snapshot(config.settings) as OverlaySettings));
+        await task();
         error = null;
       } catch (e) {
         error = message(e);
-      } finally {
-        saving = false;
       }
     });
     return queue;
+  }
+
+  function change(next: Change): Promise<void> {
+    pending = [...pending, next];
+    return queued(async () => {
+      try {
+        if (config !== null) {
+          await model.save(next($state.snapshot(config.settings) as OverlaySettings));
+        }
+      } finally {
+        pending = pending.filter((p) => p !== next);
+      }
+    });
   }
 
   function set(patch: Partial<OverlaySettings>): Promise<void> {
@@ -146,18 +166,14 @@
     }
   }
 
-  async function reset(): Promise<void> {
+  /** In the queue too: a change asked for before it is saved first, one
+   * asked for after it is saved on top of the defaults. */
+  function reset(): Promise<void> {
     confirmReset = false;
-    saving = true;
-    try {
+    return queued(async () => {
       await model.reset();
-      error = null;
       sizeError = null;
-    } catch (e) {
-      error = message(e);
-    } finally {
-      saving = false;
-    }
+    });
   }
 
   onMount(() => {
@@ -219,8 +235,8 @@
     {/if}
   </div>
 
-  {#if config !== null && limits !== null}
-    {@const s = config.settings}
+  {#if config !== null && limits !== null && shown !== null}
+    {@const s = shown}
     <div class="card">
       <h3 class="section-title">Overlay</h3>
       <div class="grid">
@@ -234,7 +250,6 @@
               max={limits.maxOpacity}
               step="5"
               value={s.opacity}
-              disabled={saving}
               aria-valuetext="{s.opacity}%"
               onchange={(e) => void set({ opacity: Number((e.currentTarget as HTMLInputElement).value) })}
             />
@@ -247,7 +262,6 @@
           <select
             id="overlay-text-size"
             value={s.textSize}
-            disabled={saving}
             onchange={(e) => void set({ textSize: (e.currentTarget as HTMLSelectElement).value as TextSize })}
           >
             <option value="small">Small</option>
@@ -260,7 +274,6 @@
           <select
             id="overlay-mode"
             value={s.defaultMode}
-            disabled={saving}
             onchange={(e) => void set({ defaultMode: (e.currentTarget as HTMLSelectElement).value as Mode })}
           >
             <option value="interactive">Interactive: clicks and typing go to the overlay</option>
@@ -272,7 +285,6 @@
         <input
           type="checkbox"
           checked={s.showAtStartup}
-          disabled={saving}
           onchange={(e) => void set({ showAtStartup: (e.currentTarget as HTMLInputElement).checked })}
         />
         Show the overlay when sotyware starts
@@ -291,7 +303,6 @@
             max={limits.maxWidth}
             step="10"
             value={s.width}
-            disabled={saving}
             onchange={(e) => setSize("width", e.currentTarget as HTMLInputElement)}
           />
         </div>
@@ -304,7 +315,6 @@
             max={limits.maxHeight}
             step="10"
             value={s.height}
-            disabled={saving}
             onchange={(e) => setSize("height", e.currentTarget as HTMLInputElement)}
           />
         </div>
@@ -313,7 +323,6 @@
           <select
             id="overlay-anchor"
             value={s.anchor}
-            disabled={saving}
             onchange={(e) => void set({ anchor: (e.currentTarget as HTMLSelectElement).value as Anchor })}
           >
             {#each Object.entries(ANCHOR_LABELS) as [value, label] (value)}
@@ -332,7 +341,6 @@
         <input
           type="checkbox"
           checked={s.rememberPlacement}
-          disabled={saving}
           onchange={(e) => void set({ rememberPlacement: (e.currentTarget as HTMLInputElement).checked })}
         />
         Open where it was last, at the size it had
@@ -347,7 +355,6 @@
           <select
             id="overlay-new-note"
             value={s.newNote}
-            disabled={saving}
             onchange={(e) => void set({ newNote: (e.currentTarget as HTMLSelectElement).value as NewNoteTemplate })}
           >
             <option value="blank">Empty</option>
@@ -359,7 +366,6 @@
           <select
             id="overlay-open-note"
             value={s.openNote}
-            disabled={saving}
             onchange={(e) => void set({ openNote: (e.currentTarget as HTMLSelectElement).value as OpenNote })}
           >
             <option value="last">The note shown last</option>
@@ -392,11 +398,10 @@
                     value={b.chord}
                     {keys}
                     label={ACTION_LABELS[action]}
-                    disabled={saving}
                     onchange={(c) => setBinding(action, { chord: c, enabled: c !== null })}
                   />
                   {#if b.chord === null && suggestion !== undefined}
-                    <button type="button" class="small link suggest" disabled={saving} onclick={() => setBinding(action, { chord: suggestion, enabled: true })}
+                    <button type="button" class="small link suggest" onclick={() => setBinding(action, { chord: suggestion, enabled: true })}
                       >Use {formatChord(suggestion, keys)}</button
                     >
                   {/if}
@@ -407,7 +412,6 @@
                       ><input
                         type="checkbox"
                         checked={b.enabled}
-                        disabled={saving}
                         aria-label="{ACTION_LABELS[action]}: on"
                         onchange={(e) => setBinding(action, { chord: b.chord, enabled: (e.currentTarget as HTMLInputElement).checked })}
                       />On</label
@@ -445,7 +449,7 @@
         Puts every setting above back to its default, forgets where the overlay was and makes it interactive. Your
         notes are kept.
       </p>
-      <button type="button" class="danger" disabled={saving} onclick={() => (confirmReset = true)}>Reset overlay settings…</button>
+      <button type="button" class="danger" onclick={() => (confirmReset = true)}>Reset overlay settings…</button>
     </div>
   {:else if model.error === null}
     <p class="muted" role="status">Loading…</p>

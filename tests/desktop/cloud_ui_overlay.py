@@ -26,6 +26,9 @@
 # Ctrl+Shift+F4 switch notes. Collapse leaves only the title bar, Expand
 # brings the note back; Centre left, Mid centre right and Top left in the
 # settings each move the open overlay there (overlay::placement's numbers);
+# then, the select focused once and never again, four Downs half a second
+# apart reach Centre and four more in one burst Bottom right, each saved
+# and moving the overlay, and Home brings it back to Top left;
 # its close button, and the window manager's close (Alt+F4), hide it
 # without destroying anything; Show overlay brings it back. After a
 # restart the overlay stays hidden (it is not set to show at startup) but
@@ -356,11 +359,11 @@ def shown_option(node):
 
 def choose(label, option):
     """Chooses `option` in the <select> `label` with the keyboard, one Down
-    or Up at a time from the option shown: WebKitGTK fires the change event
-    for each key. The settings disable their controls while a change is
-    saved, and WebKitGTK then takes the keyboard focus from the select, so
-    each key goes to the select focused again and a key that changed
-    nothing (sent while it was disabled) is sent again."""
+    or Up at a time from the option shown, the select focused once:
+    WebKitGTK fires the change event for each key, and each key must change
+    the option shown. (Until 2026-11-25 the settings disabled their
+    controls while a change was saved, WebKitGTK then took the keyboard
+    focus from the select, and the next key changed nothing.)"""
     node = wait_for(lambda: combo(label), 5)
     if node is None:
         print(f"  no select {label!r}: {[n for r, n, _, _ in nodes(pid) if r == Atspi.Role.COMBO_BOX]}", flush=True)
@@ -369,25 +372,20 @@ def choose(label, option):
     if option not in names:
         print(f"  select {label!r} has no option {option!r}: {names[:20]}", flush=True)
         return False
-
-    def focus():
-        # Asked again until it holds: a select being saved is disabled.
-        if not focused(node) and node.get_state_set().contains(Atspi.StateType.ENABLED):
-            Atspi.Component.grab_focus(node)
-            time.sleep(0.1)
-        return focused(node)
-
     focus_window(pid)
-    misses = 0
+    Atspi.Component.grab_focus(node)
+    if not wait_for(lambda: focused(node), 3):
+        print(f"  select {label!r}: could not focus", flush=True)
+        return False
     while (shown := shown_option(node)) != option:
-        if shown not in names or misses == 3:
-            print(f"  select {label!r}: stuck at {shown!r} on the way to {option!r}", flush=True)
-            return False
-        if not wait_for(focus, 5):
-            print(f"  select {label!r}: could not focus", flush=True)
+        if shown not in names:
+            print(f"  select {label!r}: shows {shown!r} on the way to {option!r}", flush=True)
             return False
         key(keysym("Down" if names.index(shown) < names.index(option) else "Up"))
-        misses = 0 if wait_for(lambda: shown_option(node) != shown, 2) else misses + 1
+        if not wait_for(lambda: shown_option(node) != shown, 2):
+            print(f"  select {label!r}: a key changed nothing at {shown!r} on the way to {option!r} "
+                  f"(focused: {focused(node)})", flush=True)
+            return False
     time.sleep(0.4)
     return True
 
@@ -581,6 +579,49 @@ check("Mid centre right: its centre a third of the way across from the right, ce
 ok = choose("Opens at", "Top left")
 ok = ok and wait_for(lambda: near(geometry(overlay_window()), (24, 24, 360, 440)), 10)
 check("a new corner in the settings moves the open overlay there", bool(ok), str(geometry(overlay_window())))
+# Several keys in a row on the select, focused once and never again: half
+# a second apart, as a person presses them, then in one burst. Each change
+# is saved at once, one after another, and the select keeps the keyboard
+# (until 2026-11-25 it was disabled while a change was saved, WebKitGTK
+# took the focus from it, and the next key changed nothing).
+CENTRE = ((SCREEN[0] - 360) // 2, MIDDLE, 360, 440)
+BOTTOM_RIGHT = (SCREEN[0] - 24 - 360, SCREEN[1] - 24 - 440, 360, 440)
+anchor = combo("Opens at")
+focus_window(pid)
+ready = anchor is not None and shown_option(anchor) == "Top left" and Atspi.Component.grab_focus(anchor) and wait_for(
+    lambda: focused(anchor), 3)
+
+
+def after_keys(name, count, gap):
+    """Presses `name` `count` times on the focused select, `gap` seconds
+    apart; then waits for nothing more to change."""
+    for i in range(count):
+        if i:
+            time.sleep(gap)
+        key(keysym(name))
+    time.sleep(0.5)
+
+
+def landed(option, place):
+    """The select shows `option`, still focused, and the overlay is at `place`."""
+    return bool(ready) and wait_for(lambda: shown_option(anchor) == option, 5) and focused(anchor) and wait_for(
+        lambda: near(geometry(overlay_window()), place), 10)
+
+
+def where():
+    return (f"select shows {shown_option(anchor) if anchor else None!r}, focused {focused(anchor)}, "
+            f"overlay at {geometry(overlay_window())}")
+
+
+after_keys("Down", 4, 0.5)
+check("Opens at, focused once: four Downs half a second apart reach Centre, keep the keyboard and move the overlay",
+      landed("Centre", CENTRE), f"{where()}; want Centre at {CENTRE}")
+after_keys("Down", 4, 0)
+check("four more Downs in one burst reach Bottom right, each saved in turn, and move the overlay there",
+      landed("Bottom right", BOTTOM_RIGHT), f"{where()}; want Bottom right at {BOTTOM_RIGHT}")
+after_keys("Home", 1, 0)
+check("Home, the select still not focused again, brings it back to Top left",
+      landed("Top left", (24, 24, 360, 440)), where())
 ok = press(pid, "Hide the overlay (notes are kept)") and wait_for(lambda: overlay_shown() is None, 5)
 check("its close button hides it", bool(ok) and overlay_window() is not None)
 check("the settings say it is hidden", wait_for(lambda: settings_status().startswith("Hidden"), 5), settings_status())

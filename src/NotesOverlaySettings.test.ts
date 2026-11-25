@@ -17,6 +17,9 @@ let current: Record<string, unknown>;
 let cfg: Record<string, unknown>;
 let channel: FakeChannel | null;
 let failNext: { cmd: string; error: unknown } | null;
+/** When set, each save waits here until `answer()` answers it, oldest
+ * first; otherwise Rust's answer comes at once. */
+let held: ((error?: unknown) => void)[] | null;
 let app: ReturnType<typeof mount> | undefined;
 let model: OverlayModel;
 let root: HTMLElement;
@@ -125,6 +128,7 @@ beforeEach(() => {
   cfg = config();
   channel = null;
   failNext = null;
+  held = null;
   mockWindows("main");
   mockIPC((cmd, payload) => {
     const p = (payload ?? {}) as Record<string, unknown>;
@@ -141,9 +145,19 @@ beforeEach(() => {
         return 4;
       case "overlay_config":
         return cfg;
-      case "save_overlay_settings":
-        cfg = { ...cfg, settings: p["settings"] };
-        return p["settings"];
+      case "save_overlay_settings": {
+        const store = (): unknown => {
+          cfg = { ...cfg, settings: p["settings"] };
+          return p["settings"];
+        };
+        const waiting = held;
+        if (waiting !== null) {
+          return new Promise((resolve, reject) => {
+            waiting.push((error) => (error === undefined ? resolve(store()) : reject(error)));
+          });
+        }
+        return store();
+      }
       case "reset_overlay":
         cfg = config();
         return settings();
@@ -225,6 +239,23 @@ function choose(id: string, value: string): void {
   select.value = value;
   select.dispatchEvent(new Event("change", { bubbles: true }));
   flushSync();
+}
+
+/** Answers the oldest save still waiting: stored, or refused with `error`. */
+async function answer(error?: unknown): Promise<void> {
+  const next = held?.shift();
+  if (next === undefined) {
+    throw new Error("no save is waiting");
+  }
+  next(error);
+  await settle();
+}
+
+/** The page's controls that are disabled, by id or name. */
+function disabledControls(): string[] {
+  return [...root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, button")]
+    .filter((el) => el.disabled)
+    .map((el) => el.id || el.getAttribute("aria-label") || el.textContent?.trim() || el.tagName);
 }
 
 function rows(): string[][] {
@@ -410,5 +441,120 @@ describe("the shortcuts", () => {
     button("Use Ctrl + Shift + F5").click();
     await settle();
     expect((saved().at(-1)?.["shortcuts"] as Record<string, unknown>)["next-note"]).toEqual({ chord: "Ctrl+Shift+F5", enabled: true });
+  });
+});
+
+describe("while a change is saved", () => {
+  // WebKitGTK takes the keyboard focus from a control that becomes
+  // disabled: while the page disabled its controls for each save, a select
+  // changed with an arrow key lost the focus and the next key changed
+  // nothing. The controls now stay enabled, and the queue keeps the order.
+  it("keeps a select enabled and focused through two quick changes, saved one after another", async () => {
+    await render();
+    held = [];
+    const select = root.querySelector<HTMLSelectElement>("#overlay-anchor");
+    if (!select) {
+      throw new Error("no select");
+    }
+    select.focus();
+    choose("overlay-anchor", "center-left");
+    await settle();
+    expect(saved().map((s) => s["anchor"])).toEqual(["center-left"]);
+    expect(disabledControls()).toEqual([]);
+    expect(document.activeElement).toBe(select);
+    // The next key, before the first change is saved: it waits for it.
+    choose("overlay-anchor", "mid-center-left");
+    await settle();
+    expect(saved()).toHaveLength(1);
+    await answer();
+    // The first answer does not put the select back on the first choice.
+    expect(select.value).toBe("mid-center-left");
+    expect(saved()).toEqual([settings({ anchor: "center-left" }), settings({ anchor: "mid-center-left" })]);
+    expect(disabledControls()).toEqual([]);
+    await answer();
+    expect(model.config?.settings.anchor).toBe("mid-center-left");
+    expect(select.value).toBe("mid-center-left");
+    expect(document.activeElement).toBe(select);
+    expect(root.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("saves quick changes of different controls each on top of the one before", async () => {
+    await render();
+    held = [];
+    choose("overlay-text-size", "large");
+    root.querySelector<HTMLInputElement>("label.check.top input")?.click();
+    const width = root.querySelector<HTMLInputElement>("#overlay-width");
+    if (!width) {
+      throw new Error("no width");
+    }
+    width.value = "420";
+    width.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(disabledControls()).toEqual([]);
+    await answer();
+    await answer();
+    await answer();
+    expect(saved()).toEqual([
+      settings({ textSize: "large" }),
+      settings({ textSize: "large", showAtStartup: true }),
+      settings({ textSize: "large", showAtStartup: true, width: 420 }),
+    ]);
+    expect(model.config?.settings).toEqual(settings({ textSize: "large", showAtStartup: true, width: 420 }));
+  });
+
+  it("puts a refused change back to what is saved once no later change waits, and says why", async () => {
+    await render();
+    held = [];
+    const size = root.querySelector<HTMLSelectElement>("#overlay-text-size");
+    choose("overlay-text-size", "small");
+    choose("overlay-text-size", "large");
+    await settle();
+    const refusal = { kind: "storage", message: "The overlay's settings could not be saved: the disk is full" };
+    await answer(refusal);
+    // The later change still waits: the select stays on it.
+    expect(size?.value).toBe("large");
+    expect(root.querySelector(".callout.danger")?.textContent).toContain("the disk is full");
+    await answer(refusal);
+    // Nothing waits any more: the select shows what is saved, and why.
+    expect(saved().map((s) => s["textSize"])).toEqual(["small", "large"]);
+    expect(model.config?.settings.textSize).toBe("medium");
+    expect(size?.value).toBe("medium");
+    expect(root.querySelector(".callout.danger")?.textContent).toContain("the disk is full");
+    const box = root.querySelector<HTMLInputElement>("label.check.top input");
+    box?.click();
+    await settle();
+    await answer(refusal);
+    expect(box?.checked).toBe(false);
+  });
+
+  it("resets after a change asked for before, and saves one asked for after on top of the defaults", async () => {
+    cfg = { ...config(), settings: settings({ opacity: 40 }) };
+    await render();
+    held = [];
+    choose("overlay-text-size", "large");
+    await settle();
+    const resetButton = button("Reset overlay settings…");
+    resetButton.focus();
+    resetButton.click();
+    flushSync();
+    button("Reset").click();
+    await settle();
+    // The dialog gives the keyboard back to the button, which stays enabled.
+    expect(document.activeElement).toBe(resetButton);
+    expect(disabledControls()).toEqual([]);
+    choose("overlay-anchor", "center");
+    await settle();
+    expect(calls.filter((c) => c.cmd === "reset_overlay")).toHaveLength(0);
+    await answer();
+    expect(calls.map((c) => c.cmd).filter((c) => c === "save_overlay_settings" || c === "reset_overlay")).toEqual([
+      "save_overlay_settings",
+      "reset_overlay",
+      "save_overlay_settings",
+    ]);
+    await answer();
+    expect(saved()).toEqual([settings({ opacity: 40, textSize: "large" }), settings({ anchor: "center" })]);
+    expect(root.querySelector<HTMLInputElement>("#overlay-opacity")?.value).toBe("88");
+    expect(root.querySelector<HTMLSelectElement>("#overlay-text-size")?.value).toBe("medium");
+    expect(root.querySelector<HTMLSelectElement>("#overlay-anchor")?.value).toBe("center");
   });
 });

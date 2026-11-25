@@ -1814,7 +1814,9 @@ X server's time). Besides the first macro (the table below), it does what
 the manual check of the page used to ask of a person: the right button and
 double clicks at 5 per second (timed by the X server), a shortcut changed
 by pressing it in its field and the keys the field refuses, the
-confirmation without an emergency stop, repetitions at 2× (timed), F7 and
+confirmation without an emergency stop, several keys in a row on the
+Settings tab's countdown select focused once (each change saved, the
+select keeping the keyboard), repetitions at 2× (timed), F7 and
 F8 during playback, Shift+F11, the editor (delay, add, move, duplicate,
 delete, Preview sends nothing, leaving asks, Save, Revert, the changes
 played), a restart, a second profile, a macro's own shortcut, export and
@@ -1922,10 +1924,13 @@ the overlay stays there; Ctrl+Shift+F2 makes it passive and the same click
 reaches the game; back to interactive it takes the keyboard; Ctrl+Shift+F3
 creates a note with the cursor in its title; Ctrl+Shift+F5 and F4 switch
 notes. Then collapse and expand, three new places moving the open
-overlay (Centre left, Mid centre right, Top left), its close button and
+overlay (Centre left, Mid centre right, Top left), several Downs in a row
+on the Opens at select, focused once and never again (four half a second
+apart, four in one burst, then Home), the select keeping the keyboard and
+the overlay ending where the option reached says, its close button and
 the window manager's close hiding it, a restart that keeps the notes and
 the place, and turning the feature off, which destroys the window and
-releases every shortcut. About 30 seconds:
+releases every shortcut. About 35 seconds:
 
 ```bash
 npm run build:test-profile && tests/desktop/cloud-ui.sh overlay

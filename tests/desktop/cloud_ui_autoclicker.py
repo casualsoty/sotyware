@@ -26,6 +26,8 @@
 # double clicks at 5 per second (timed by the X server); a shortcut changed
 # by pressing it in its field, and the keys the field refuses; with no
 # emergency stop an endless run asks first, and the page's Stop stops it;
+# the Settings tab's countdown select, focused once, follows several keys
+# in a row (a burst, then half a second apart), each change saved;
 # playback with repetitions at 2x speed (timed), paused with F7, stopped
 # with F8, and the profile's macro played with Shift+F11; the editor
 # (delay, add, move, duplicate, delete, Preview sends nothing, leaving
@@ -975,6 +977,44 @@ try:
     ok = page_tab("Settings") and press(pid, "Use F8")
     back = wait_for(lambda: emergency_chord() == "F8", 10) and wait_for(lambda: row_state(STOP_ALL) == "Ready", 10)
     check("Use F8 sets the emergency stop again: saved and registered", bool(ok and back), repr(row_state(STOP_ALL)))
+
+    # ---- several keys in a row on a select of the tab, focused once ----
+    # Each change is saved at once, one after another, and the select keeps
+    # the keyboard (until 2026-11-25 the tab disabled its controls while a
+    # change was saved: the keys sent meanwhile were lost, and WebKitGTK
+    # could take the focus from the select). Ends on 3 s, as it began.
+    countdown = combo("Wait before starting from this window")
+
+    def countdown_shows():
+        return next((i.get_name().strip() for i in find(countdown, Atspi.Role.MENU_ITEM)
+                     if i.get_state_set().contains(Atspi.StateType.SELECTED)), None)
+
+    def countdown_focused():
+        return countdown.get_state_set().contains(Atspi.StateType.FOCUSED)
+
+    def countdown_ms():
+        return (settings_doc() or {}).get("dashboardCountdownMs")
+
+    def countdown_state():
+        if countdown is None:
+            return "no select \"Wait before starting from this window\""
+        return f"shows {countdown_shows()!r}, focused {countdown_focused()}, saved {countdown_ms()}"
+
+    focus_window(pid)
+    countdown_ready = countdown is not None and countdown_shows() == "3 s" \
+        and Atspi.Component.grab_focus(countdown) and wait_for(countdown_focused, 3)
+    for _ in range(3):
+        key(keysym("Up"))
+    ok = bool(countdown_ready) and wait_for(lambda: countdown_shows() == "No wait" and countdown_ms() == 0, 10)
+    check("three Ups in one burst on the countdown select, focused once: No wait, saved, the select keeps the keyboard",
+          bool(ok) and countdown_focused(), countdown_state())
+    for i in range(3):
+        if i:
+            time.sleep(0.5)
+        key(keysym("Down"))
+    ok = bool(countdown_ready) and wait_for(lambda: countdown_shows() == "3 s" and countdown_ms() == 3000, 10)
+    check("three Downs half a second apart, still not focused again, bring it back to 3 s, saved",
+          bool(ok) and countdown_focused(), countdown_state())
 
     # ---- playback: repetitions at 2x speed, F7, F8, and the profile's macro on Shift+F11 ----
     ok = edit_macro("E2E clicks") and choose("Repeat", "Several times") \

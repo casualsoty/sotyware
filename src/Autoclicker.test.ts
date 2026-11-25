@@ -21,6 +21,9 @@ let macros: Record<string, unknown>[];
 let doc: Record<string, unknown>;
 let channel: FakeChannel | null;
 let failNext: { cmd: string; error: unknown } | null;
+/** When set, each save of a profile or the settings waits here until
+ * `answer()` answers it, oldest first; otherwise Rust answers at once. */
+let held: ((error?: unknown) => void)[] | null;
 let app: ReturnType<typeof mount> | undefined;
 
 const KEYS = [
@@ -182,6 +185,7 @@ beforeEach(() => {
   doc = macroDoc();
   channel = null;
   failNext = null;
+  held = null;
   mockWindows("main");
   mockIPC((cmd, payload) => {
     const p = (payload ?? {}) as Record<string, unknown>;
@@ -207,9 +211,16 @@ beforeEach(() => {
         doc = p["document"] as Record<string, unknown>;
         return { summary: summary({ actions: (doc["actions"] as unknown[]).length }), warnings: ["This macro presses F6, the shortcut of \"Start or stop the autoclicker\": playing it may trigger that shortcut"] };
       case "save_profile":
-        return p["profile"];
-      case "save_automation_settings":
-        return p["settings"];
+      case "save_automation_settings": {
+        const value = cmd === "save_profile" ? p["profile"] : p["settings"];
+        const waiting = held;
+        if (waiting !== null) {
+          return new Promise((resolve, reject) => {
+            waiting.push((error) => (error === undefined ? resolve(value) : reject(error)));
+          });
+        }
+        return value;
+      }
       case "save_recording":
         return summary({ id: "macro-2", name: p["name"], folder: p["folder"] });
       case "set_feature_enabled":
@@ -277,6 +288,16 @@ function tab(root: ParentNode, name: string): HTMLButtonElement {
 
 function sent(cmd: string): Record<string, unknown>[] {
   return calls.filter((c) => c.cmd === cmd).map((c) => c.payload);
+}
+
+/** Answers the oldest save still waiting: stored, or refused with `error`. */
+async function answer(error?: unknown): Promise<void> {
+  const next = held?.shift();
+  if (next === undefined) {
+    throw new Error("no save is waiting");
+  }
+  next(error);
+  await settle();
 }
 
 function push(over: Record<string, unknown>): void {
@@ -629,6 +650,90 @@ describe("the Settings tab", () => {
     field.dispatchEvent(new KeyboardEvent("keydown", { key: "F8", code: "F8", bubbles: true }));
     await settle();
     expect(text(root.querySelector('[role="alert"]'))).toContain("already the shortcut of \"Emergency stop\"");
+    // The field shows what is saved again.
+    expect(field.getAttribute("aria-label")).toBe("Start the autoclicker: None");
+  });
+
+  // WebKitGTK takes the keyboard focus from a control that becomes
+  // disabled: while the tab disabled its controls for each save, the next
+  // arrow key on the countdown select changed nothing. They now stay
+  // enabled, and saves queue, each computed from what the one before saved.
+  it("keeps its controls enabled while a change is saved, saving quick changes each on top of the one before", async () => {
+    const { root } = await render();
+    tab(root, "Settings").click();
+    await settle();
+    held = [];
+    const section = root.querySelector<HTMLElement>('section[aria-labelledby="automation-settings-heading"]')!;
+    const disabled = (): string[] =>
+      [...section.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input, select, button")]
+        .filter((el) => el.disabled)
+        .map((el) => text(el.closest("label, tr") ?? el));
+    const countdown = section.querySelector<HTMLSelectElement>("#automation-countdown")!;
+    countdown.focus();
+    countdown.value = "5000";
+    countdown.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(disabled()).toEqual([]);
+    expect(document.activeElement).toBe(countdown);
+    // The next key, and the corner check box, before the first change is saved.
+    countdown.value = "10000";
+    countdown.dispatchEvent(new Event("change", { bubbles: true }));
+    const corners = [...section.querySelectorAll("label.check")].find((l) => text(l).startsWith("Stop everything when the pointer"));
+    corners?.querySelector("input")?.click();
+    await settle();
+    expect(sent("save_automation_settings")).toHaveLength(1);
+    await answer();
+    // The first answer does not put the select back on the first choice.
+    expect(countdown.value).toBe("10000");
+    expect(disabled()).toEqual([]);
+    await answer();
+    await answer();
+    const saved = sent("save_automation_settings").map((s) => s["settings"] as Record<string, unknown>);
+    expect(saved.map((s) => [s["dashboardCountdownMs"], s["failsafeCorners"]])).toEqual([
+      [5000, true],
+      [10000, true],
+      [10000, false],
+    ]);
+    expect(countdown.value).toBe("10000");
+    expect(corners?.querySelector("input")?.checked).toBe(false);
+  });
+
+  it("saves quick shortcut changes of the profile each on top of the one before", async () => {
+    const { root } = await render();
+    tab(root, "Settings").click();
+    await settle();
+    held = [];
+    const field = root.querySelector<HTMLButtonElement>('[aria-label^="Start the autoclicker:"]')!;
+    field.click();
+    flushSync();
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "p", code: "KeyP", ctrlKey: true, altKey: true, bubbles: true }));
+    await settle();
+    expect(field.disabled).toBe(false);
+    const pause = [...root.querySelectorAll("table.shortcuts tr")]
+      .find((tr) => text(tr.querySelector("th")) === "Pause or resume")
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(pause?.disabled).toBe(false);
+    pause?.click();
+    await settle();
+    expect(sent("save_profile")).toHaveLength(1);
+    await answer();
+    expect(pause?.checked).toBe(false);
+    await answer();
+    const hotkeys = sent("save_profile").map((s) => (s["profile"] as Record<string, unknown>)["hotkeys"]);
+    expect(hotkeys).toEqual([
+      {
+        "toggle-clicker": { chord: "F6", enabled: true },
+        "pause-resume": { chord: "F7", enabled: true },
+        "start-recording": { chord: "F9", enabled: true },
+        "start-clicker": { chord: "Ctrl+Alt+KeyP", enabled: true },
+      },
+      {
+        "toggle-clicker": { chord: "F6", enabled: true },
+        "pause-resume": { chord: "F7", enabled: false },
+        "start-recording": { chord: "F9", enabled: true },
+        "start-clicker": { chord: "Ctrl+Alt+KeyP", enabled: true },
+      },
+    ]);
   });
 });
 

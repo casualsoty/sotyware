@@ -12,11 +12,10 @@
     keys: readonly KeyView[];
     /** What the shortcut does, for its accessible name. */
     label: string;
-    disabled?: boolean;
     onchange: (chord: string | null) => void;
   }
 
-  let { value, keys, label, disabled = false, onchange }: Props = $props();
+  let { value, keys, label, onchange }: Props = $props();
 
   let listening = $state(false);
   let held = $state("");
@@ -90,7 +89,6 @@
     class="field-button"
     class:listening
     aria-label="{label}: {listening ? 'press the keys, Escape cancels' : formatChord(value, keys)}"
-    {disabled}
     onclick={() => (listening ? stop() : start())}
     {onkeydown}
     {onkeyup}

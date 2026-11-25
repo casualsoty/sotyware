@@ -30,7 +30,64 @@
   const keys = $derived(config?.keys ?? []);
 
   let error = $state<string | null>(null);
-  let saving = $state(false);
+
+  /** A change to the settings every profile shares, or to one profile. */
+  type Change =
+    | { kind: "settings"; next: (current: Settings) => Settings }
+    | { kind: "profile"; id: string; next: (current: Profile) => Profile };
+
+  /** Saves run one after another, each computed from what the one before
+   * saved, so two quick changes never undo each other. The controls stay
+   * enabled meanwhile: a disabled control ignores the keys it gets, and
+   * WebKitGTK can take the keyboard focus from it, so the next arrow keys
+   * on a select would change nothing. */
+  let queue: Promise<void> = Promise.resolve();
+  /** Changes waiting for their save, oldest first. */
+  let pending = $state.raw<Change[]>([]);
+  /** What the controls show: what is saved with the waiting changes
+   * applied, so a control changed again before an earlier change was saved
+   * does not jump back to that earlier value when it is saved (Svelte sets
+   * a control's value whenever the value it is given changes), and a change
+   * Rust refused goes back to what is saved. */
+  const shownSettings = $derived(
+    config === null ? null : pending.reduce((s, c) => (c.kind === "settings" ? c.next(s) : s), config.settings),
+  );
+  const shownProfile = $derived(
+    profile === null ? null : pending.reduce((p, c) => (c.kind === "profile" && c.id === p.id ? c.next(p) : p), profile),
+  );
+
+  function saveChange(c: Change): void {
+    pending = [...pending, c];
+    queue = queue.then(async () => {
+      try {
+        if (c.kind === "settings") {
+          if (config !== null) {
+            model.putSettings(await saveAutomationSettings(c.next($state.snapshot(config.settings) as Settings)));
+          }
+        } else {
+          // The profile as last saved, whichever one is active now.
+          const saved = config?.profiles.find((p) => p.id === c.id);
+          if (saved !== undefined) {
+            model.putProfile(await saveProfile(c.next($state.snapshot(saved) as Profile)));
+          }
+        }
+        await model.refreshStatus();
+        error = null;
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      } finally {
+        pending = pending.filter((x) => x !== c);
+      }
+    });
+  }
+
+  function setProfileBinding(p: Profile, action: HotkeyAction, b: Binding): void {
+    saveChange({ kind: "profile", id: p.id, next: (q) => ({ ...q, hotkeys: { ...q.hotkeys, [action]: b } }) });
+  }
+
+  function setSettings(patch: Partial<Settings>): void {
+    saveChange({ kind: "settings", next: (s) => ({ ...s, ...patch }) });
+  }
 
   function stateOf(owner: (h: HotkeyView) => boolean, b: Binding): { text: string; tone: string } {
     if (b.chord === null) {
@@ -48,37 +105,6 @@
     }
     return h.registered ? { text: "Ready", tone: "success" } : { text: h.error ?? "Not registered", tone: "warning" };
   }
-
-  async function setProfileBinding(p: Profile, action: HotkeyAction, b: Binding): Promise<void> {
-    saving = true;
-    try {
-      const next = $state.snapshot(p) as Profile;
-      next.hotkeys = { ...next.hotkeys, [action]: b };
-      model.putProfile(await saveProfile(next));
-      await model.refreshStatus();
-      error = null;
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function setSettings(patch: Partial<Settings>): Promise<void> {
-    if (config === null) {
-      return;
-    }
-    saving = true;
-    try {
-      model.putSettings(await saveAutomationSettings({ ...($state.snapshot(config.settings) as Settings), ...patch }));
-      await model.refreshStatus();
-      error = null;
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      saving = false;
-    }
-  }
 </script>
 
 {#snippet row(label: string, b: Binding, suggestion: string | undefined, isOwner: (h: HotkeyView) => boolean, save: (b: Binding) => void, shared: boolean)}
@@ -89,14 +115,14 @@
       {#if shared}<span class="hint">All profiles</span>{/if}
     </th>
     <td>
-      <HotkeyInput value={b.chord} {keys} {label} disabled={saving} onchange={(c) => save({ chord: c, enabled: c !== null })} />
+      <HotkeyInput value={b.chord} {keys} {label} onchange={(c) => save({ chord: c, enabled: c !== null })} />
       {#if b.chord === null && suggestion !== undefined}
-        <button type="button" class="small link suggest" disabled={saving} onclick={() => save({ chord: suggestion, enabled: true })}>Use {formatChord(suggestion, keys)}</button>
+        <button type="button" class="small link suggest" onclick={() => save({ chord: suggestion, enabled: true })}>Use {formatChord(suggestion, keys)}</button>
       {/if}
     </td>
     <td>
       {#if b.chord !== null}
-        <label class="check"><input type="checkbox" checked={b.enabled} disabled={saving} onchange={(e) => save({ chord: b.chord, enabled: (e.currentTarget as HTMLInputElement).checked })} />On</label>
+        <label class="check"><input type="checkbox" checked={b.enabled} onchange={(e) => save({ chord: b.chord, enabled: (e.currentTarget as HTMLInputElement).checked })} />On</label>
       {/if}
     </td>
     <td class="state {st.tone}">{st.text}</td>
@@ -107,8 +133,8 @@
   <h2 id="automation-settings-heading">Settings</h2>
   {#if error !== null}<p class="callout danger" role="alert">{error}</p>{/if}
 
-  {#if config !== null && profile !== null}
-    {@const p = profile}
+  {#if config !== null && shownSettings !== null && shownProfile !== null}
+    {@const p = shownProfile}
     <div class="card">
       <h3 class="section-title">Shortcuts</h3>
       <p class="muted small-text">
@@ -120,10 +146,10 @@
           <tbody>
             {@render row(
               HOTKEY_LABELS["stop-all"],
-              config.settings.emergencyStop,
+              shownSettings.emergencyStop,
               config.suggestions["stop-all"],
               (h) => h.owner.kind === "settings",
-              (b) => void setSettings({ emergencyStop: b }),
+              (b) => setSettings({ emergencyStop: b }),
               true,
             )}
             {#each PROFILE_ACTIONS as action (action)}
@@ -132,7 +158,7 @@
                 p.hotkeys[action] ?? { chord: null, enabled: false },
                 config.suggestions[action],
                 (h) => h.owner.kind === "profile" && h.owner.action === action,
-                (b) => void setProfileBinding(p, action, b),
+                (b) => setProfileBinding(p, action, b),
                 false,
               )}
             {/each}
@@ -148,12 +174,12 @@
     <div class="card">
       <h3 class="section-title">Safety</h3>
       <label class="check">
-        <input type="checkbox" checked={config.settings.failsafeCorners} disabled={saving} onchange={(e) => void setSettings({ failsafeCorners: (e.currentTarget as HTMLInputElement).checked })} />
+        <input type="checkbox" checked={shownSettings.failsafeCorners} onchange={(e) => setSettings({ failsafeCorners: (e.currentTarget as HTMLInputElement).checked })} />
         Stop everything when the pointer is pushed into a corner of the screen
       </label>
       <div class="field countdown">
         <label for="automation-countdown">Wait before starting from this window</label>
-        <select id="automation-countdown" value={config.settings.dashboardCountdownMs} disabled={saving} onchange={(e) => void setSettings({ dashboardCountdownMs: Number((e.currentTarget as HTMLSelectElement).value) })}>
+        <select id="automation-countdown" value={shownSettings.dashboardCountdownMs} onchange={(e) => setSettings({ dashboardCountdownMs: Number((e.currentTarget as HTMLSelectElement).value) })}>
           {#each [0, 1000, 2000, 3000, 5000, 10000] as ms (ms)}
             <option value={ms}>{ms === 0 ? "No wait" : `${ms / 1000} s`}</option>
           {/each}
