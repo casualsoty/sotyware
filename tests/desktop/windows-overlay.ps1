@@ -18,11 +18,12 @@
 #   note created in the overlay, its title and checklist set, autosaved to
 #   notes.sqlite3, a checkbox ticked; passive (WS_EX_TRANSPARENT and
 #   WS_EX_NOACTIVATE) from the overlay's button and back with Make
-#   interactive; collapse and expand; a new corner in the settings moving
-#   the open overlay; its close button and WM_CLOSE (Alt+F4) hiding it, the
-#   window kept; a move onto another monitor (when there is one) at that
-#   monitor's scaling; a restart that keeps the notes and the place; and
-#   turning it off, which destroys the window and releases the shortcuts.
+#   interactive; collapse and expand; Centre left, Mid centre right and
+#   Top left in the settings each moving the open overlay there; its close
+#   button and WM_CLOSE (Alt+F4) hiding it, the window kept; a move onto
+#   another monitor (when there is one) at that monitor's scaling; a
+#   restart that keeps the notes and the place; and turning it off, which
+#   destroys the window and releases the shortcuts.
 #   What needs the input desktop is not checked there: focus, real keys
 #   and clicks, the shortcuts' effect, pixels on the screen, the tray.
 #
@@ -565,24 +566,33 @@ function FeatureBox([string]$label) { NamedIn (Dash) $label $CT::CheckBox }
 # ignores the Value pattern's SetValue on a select and shows its options
 # only while open; windows-autoclicker.ps1): focus, Home, then Down until
 # its Value reads the option. Real keys on the real desktop; on the private
-# desktop the keys are posted to the page's render widget.
+# desktop the keys are posted to the page's render widget. The settings
+# disable their controls while a change is saved, which can take the
+# keyboard focus from the select or drop a key sent meanwhile (the Linux
+# driver saw both): each key goes to the select focused again, and a Down
+# that changed nothing is sent again, up to three times (which also ends
+# the list).
 function Choose([string]$label, [string]$option) {
   $script:cb = $null
   WaitFor { $d = Dash; $script:cb = if ($d) { @($d.FindAll($TS::Descendants, (PCT $CT::ComboBox)) | Where-Object { $_.Current.Name.StartsWith($label, [StringComparison]::Ordinal) })[0] } else { $null }; $null -ne $script:cb } 5 | Out-Null
   if (-not $script:cb) { Info "no select" $label; return $false }
   try { $vp = $script:cb.GetCurrentPattern($ValueP) } catch { Info "select '$label'" "no Value pattern"; return $false }
   if ("$($vp.Current.Value)".Trim() -ceq $option) { return $true }
-  try { $script:cb.SetFocus() } catch { }
-  if (-not (WaitFor { $script:cb.Current.HasKeyboardFocus -and (-not $Real -or [OvW]::GetForegroundWindow() -eq (DashHwnd)) } 3)) { Info "select '$label'" "could not be focused"; return $false }
+  $focusIt = {
+    if (-not $script:cb.Current.HasKeyboardFocus) { try { $script:cb.SetFocus() } catch { } }
+    WaitFor { $script:cb.Current.HasKeyboardFocus -and (-not $Real -or [OvW]::GetForegroundWindow() -eq (DashHwnd)) } 3
+  }
+  if (-not (& $focusIt)) { Info "select '$label'" "could not be focused"; return $false }
   $widget = [OvW]::Child((DashHwnd), "Chrome_RenderWidgetHostHWND")
   $keyPress = { param($vk) if ($Real) { [OvW]::Tap($vk) } else { [OvW]::PostKey($widget, $vk) } }
   & $keyPress $VkHome; Start-Sleep -Milliseconds 700
   $seen = @("$($vp.Current.Value)".Trim())
-  for ($k = 0; $k -lt 20 -and $seen[-1] -cne $option; $k++) {
+  $misses = 0
+  for ($k = 0; $k -lt 40 -and $seen[-1] -cne $option -and $misses -lt 3; $k++) {
+    if (-not (& $focusIt)) { Info "select '$label'" "could not be focused"; return $false }
     & $keyPress $VkDown
     $script:sv = $seen[-1]
-    if (-not (WaitFor { $script:sv = "$($vp.Current.Value)".Trim(); $script:sv -cne $seen[-1] } 1.5)) { break }
-    $seen += $script:sv
+    if (WaitFor { $script:sv = "$($vp.Current.Value)".Trim(); $script:sv -cne $seen[-1] } 1.5) { $seen += $script:sv; $misses = 0 } else { $misses++ }
   }
   if ($seen[-1] -ceq $option) { Start-Sleep -Milliseconds 300; return $true }
   Info "select '$label'" "no option '$option' among $($seen -join ', ')"
@@ -592,12 +602,22 @@ function Choose([string]$label, [string]$option) {
 # ---- where the overlay should be ----
 function Scale([int[]]$mon) { [double]$mon[4] / 96.0 }
 function Px([double]$logical, [double]$sc) { [int][Math]::Round($logical * $sc) }
-# The default placement: a corner of the monitor's work area, 24 px in,
+# The default placement: a place on the monitor's work area (a corner, the
+# middle of an edge, a third of the way across or the centre), 24 px in,
 # 360 x 440 at that monitor's scaling (overlay::placement).
-function Expected([int[]]$mon, [string]$corner) {
+function Expected([int[]]$mon, [string]$place) {
   $sc = Scale $mon; $w = Px 360 $sc; $h = Px 440 $sc; $m = Px 24 $sc
-  $x = if ($corner -like "*right") { $mon[0] + $mon[2] - $m - $w } else { $mon[0] + $m }
-  $y = if ($corner -like "top*") { $mon[1] + $m } else { $mon[1] + $mon[3] - $m - $h }
+  # A third of the way across: the overlay's centre there, its near edge
+  # this far in from its side, at least the margin.
+  $third = [Math]::Max($m, [int][Math]::Floor((2 * $mon[2] - 3 * $w) / 6))
+  $x = if ($place -ceq "mid-center-left") { $mon[0] + $third }
+  elseif ($place -ceq "mid-center-right") { $mon[0] + $mon[2] - $w - $third }
+  elseif ($place -ceq "center") { $mon[0] + [int][Math]::Floor(($mon[2] - $w) / 2) }
+  elseif ($place -like "*right") { $mon[0] + $mon[2] - $m - $w }
+  else { $mon[0] + $m }
+  $y = if ($place -like "top*") { $mon[1] + $m }
+  elseif ($place -like "bottom*") { $mon[1] + $mon[3] - $m - $h }
+  else { $mon[1] + [int][Math]::Floor(($mon[3] - $h) / 2) }
   @($x, $y, $w, $h)
 }
 function Near([int[]]$have, [int[]]$want, [int]$slack = 2) {
@@ -921,9 +941,19 @@ try {
   $ok = (OvPress "Expand") -and (WaitFor { Near (OvRect) $og } 5)
   Check "Expand brings it back at its size" $ok "rect $((OvRect) -join ','), want $($og -join ',')"
   $here = [OvW]::MonitorOf($ov)
-  $ok = Settings
-  if ($Real) { $ok = $ok -and (FrontDash "Gaming notes overlay") }
-  $ok = $ok -and (Choose "Opens at" "Top left")
+  $inSettings = Settings
+  if ($Real) { $inSettings = $inSettings -and (FrontDash "Gaming notes overlay") }
+  # The middle row: centred vertically, at the left edge, or with its
+  # centre a third of the way across from the right.
+  $ok = $inSettings -and (Choose "Opens at" "Centre left")
+  $want = Expected $here "center-left"
+  $ok = $ok -and (WaitFor { Near (OvRect) $want } 10)
+  Check "Centre left in the settings: at the left edge, centred vertically" $ok "rect $((OvRect) -join ','), want $($want -join ',')"
+  $ok = $inSettings -and (Choose "Opens at" "Mid centre right")
+  $want = Expected $here "mid-center-right"
+  $ok = $ok -and (WaitFor { Near (OvRect) $want } 10)
+  Check "Mid centre right: its centre a third of the way across from the right, centred vertically" $ok "rect $((OvRect) -join ','), want $($want -join ',')"
+  $ok = $inSettings -and (Choose "Opens at" "Top left")
   $want = Expected $here "top-left"
   $ok = $ok -and (WaitFor { Near (OvRect) $want } 10)
   Check "a new corner in the settings moves the open overlay there" $ok "rect $((OvRect) -join ','), want $($want -join ',')"

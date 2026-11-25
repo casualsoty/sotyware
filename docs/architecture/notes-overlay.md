@@ -20,7 +20,7 @@ shows and edits them through commands.
 | --- | --- | --- |
 | `NotesOverlay` | `src-tauri/src/overlay/mod.rs` | Managed state: the notes' order and titles (never their text) and the settings in memory, the window's visibility, mode, collapse and tracked placement, the shortcuts and their dispatcher thread, the status and its subscribers, the 19 commands |
 | model | `overlay/model.rs` | Pure rules: `Note`, the display order (pinned first), moving, pinning, copies, next/previous, unique titles, title and text limits, which links may open, `OverlaySettings` and their validation, `OverlayAction` and the suggested chords, `OverlayState` |
-| placement | `overlay/placement.rs` | Pure geometry: a new overlay at a corner of the pointer's monitor, a remembered one restored (through `window_state::restore_placement`), the collapsed height |
+| placement | `overlay/placement.rs` | Pure geometry: a new overlay at its place on the pointer's monitor (a corner, the middle of an edge, a third of the way across, the centre), a remembered one restored (through `window_state::restore_placement`), the collapsed height |
 | host | `overlay/host.rs` | `TauriHost`, the `OverlayHost` of the app: creates, places, shows, hides and destroys the window, click-through and focusability, the keyboard taken and given back, collapse |
 | focus | `overlay/focus.rs` (Windows) | The foreground window: given back, raised to the top of the topmost windows without activation, the window below |
 | claims | `src-tauri/src/automation/claims.rs` | Which sotyware feature holds which global shortcut (the autoclicker, the overlay) |
@@ -141,9 +141,13 @@ feature stops, so with the feature off there is no overlay webview.
 
 - A **new** overlay (nothing remembered, remembering off, after a reset)
   opens at the settings' size (logical pixels, so a 150 % monitor shows it
-  as large as a 100 % one) at the chosen corner or the centre of the work
-  area of the monitor the pointer is on (else the primary), 24 logical
-  pixels in, never larger than that work area.
+  as large as a 100 % one) at the chosen place on the work area of the
+  monitor the pointer is on (else the primary), 24 logical pixels in,
+  never larger than that work area: a corner, the middle of the left or
+  right edge, the centre, or **mid centre left or right**: centred
+  vertically, its centre on the line a third of the way across from that
+  side, the two mirror images of each other (an overlay too wide to be
+  centred there stays 24 pixels in from its side).
 - A **remembered** one opens where it was, through the dashboard's rules
   (`window_state::restore_placement`, ADR-040): only where it overlaps a
   connected monitor's work area, moved fully inside it, resized for a
@@ -166,7 +170,7 @@ feature stops, so with the feature off there is no overlay webview.
   position, inner size, scale; only while visible), in memory, by the
   event loop's handler that takes only the tracking lock; saved in the
   state document when the overlay hides or loses the focus and at exit.
-  Changing the default size or corner in the settings moves an open
+  Changing the default size or place in the settings moves an open
   overlay there at once. Monitors added, removed or rescaled while it is
   shown: the system moves the window (Windows rescales it for the new
   monitor's DPI, tao handles `WM_DPICHANGED`); the next show checks again.
@@ -288,8 +292,10 @@ touched at all. Lock order: `window_ops`, then `inner`, then the store;
 `opacity` (20–100 %, default 88; the panel's background, the text stays
 opaque, with a text shadow below 75 %), `textSize` (small 13 px, medium
 14 px, large 16 px), `width` × `height` (default 360 × 440 logical
-pixels), `anchor` (top right, top left, bottom right, bottom left,
-centre), `rememberPlacement` (on), `defaultMode` (interactive),
+pixels), `anchor` (`top-right` by default; `top-left`, `bottom-left`,
+`bottom-right`, `center`, `center-left`, `center-right`,
+`mid-center-left`, `mid-center-right`; the page lists them as they lie on
+the screen), `rememberPlacement` (on), `defaultMode` (interactive),
 `showAtStartup` (off), `newNote` (empty, or a first checklist item),
 `openNote` (the last one shown, or the first pinned one), `shortcuts`
 (one `{ chord, enabled }` per action). The overlay's opacity control
@@ -343,8 +349,10 @@ asked for its settings: the dashboard opens Settings › Notes overlay),
 
 - **Model and placement** (`overlay/model.rs`, `placement.rs`): order,
   moves, pins, copies, stepping, titles, limits, links, settings
-  validation and shapes, state parsing, corners, logical sizes and
-  scaling, negative coordinates, restore and the pointer's monitor.
+  validation and shapes, state parsing, every place to open at (the
+  thirds the same from either side, a wide overlay kept inside the
+  margins), logical sizes and scaling, negative coordinates, restore and
+  the pointer's monitor.
 - **Service** (`overlay/tests.rs`): an in-memory store, a fake window
   that records every call, the autoclicker's mock backend (whose sink the
   tests press): notes and their persistence, conflicts, limits, an

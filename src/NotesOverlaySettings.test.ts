@@ -312,6 +312,33 @@ describe("the settings", () => {
     expect(saved().at(-1)?.["rememberPlacement"]).toBe(false);
   });
 
+  it("offers the places as they lie on the screen and saves each one", async () => {
+    await render();
+    const select = root.querySelector<HTMLSelectElement>("#overlay-anchor");
+    expect([...(select?.options ?? [])].map((o) => [o.value, o.textContent?.trim()])).toEqual([
+      ["top-left", "Top left"],
+      ["top-right", "Top right"],
+      ["center-left", "Centre left"],
+      ["mid-center-left", "Mid centre left"],
+      ["center", "Centre"],
+      ["mid-center-right", "Mid centre right"],
+      ["center-right", "Centre right"],
+      ["bottom-left", "Bottom left"],
+      ["bottom-right", "Bottom right"],
+    ]);
+    expect(select?.value).toBe("top-right");
+    for (const anchor of ["center-left", "mid-center-left", "mid-center-right", "center-right"]) {
+      choose("overlay-anchor", anchor);
+      await settle();
+      expect(saved().at(-1)).toEqual(settings({ anchor }));
+      // Rust's answer is read back as the page's settings: a name the
+      // page did not know would be refused and shown.
+      expect(model.config?.settings.anchor).toBe(anchor);
+      expect(root.querySelector('[role="alert"]')).toBeNull();
+      expect(select?.value).toBe(anchor);
+    }
+  });
+
   it("refuses a size outside the limits before asking Rust", async () => {
     await render();
     const width = root.querySelector<HTMLInputElement>("#overlay-width");

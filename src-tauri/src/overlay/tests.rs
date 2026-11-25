@@ -1310,6 +1310,12 @@ fn a_new_size_or_corner_moves_an_open_overlay_there() {
     };
     rig.overlay.save_settings(s.clone()).unwrap();
     assert_eq!(rig.host.calls(), ["place 24 24 300x200"]);
+    // A place of the middle row: centred vertically, here a third of the
+    // way across from the right (the overlay's centre at 1280 of 1920).
+    rig.host.clear();
+    s.anchor = Anchor::MidCenterRight;
+    rig.overlay.save_settings(s.clone()).unwrap();
+    assert_eq!(rig.host.calls(), ["place 1130 420 300x200"]);
     // Other settings leave it where the user put it.
     rig.host.clear();
     s.opacity = 70;

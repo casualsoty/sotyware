@@ -45,12 +45,18 @@
   let confirmReset = $state(false);
   let sizeError = $state<string | null>(null);
 
+  // As they lie on the screen: the top row, the middle row from left to
+  // right, the bottom row.
   const ANCHOR_LABELS: Record<Anchor, string> = {
-    "top-right": "Top right",
     "top-left": "Top left",
-    "bottom-right": "Bottom right",
-    "bottom-left": "Bottom left",
+    "top-right": "Top right",
+    "center-left": "Centre left",
+    "mid-center-left": "Mid centre left",
     center: "Centre",
+    "mid-center-right": "Mid centre right",
+    "center-right": "Centre right",
+    "bottom-left": "Bottom left",
+    "bottom-right": "Bottom right",
   };
 
   function message(e: unknown): string {
@@ -319,7 +325,8 @@
       {#if sizeError !== null}<p class="text-danger small-text" role="alert">{sizeError}</p>{/if}
       <p class="hint">
         In pixels at 100 % scaling, on the screen the pointer is on. Changing them moves an open overlay there now. You
-        can also drag and resize the overlay itself.
+        can also drag and resize the overlay itself. Mid centre left and right centre it a third of the way across from
+        that side.
       </p>
       <label class="check top">
         <input

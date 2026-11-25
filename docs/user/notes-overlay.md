@@ -128,12 +128,16 @@ your typing keeps working.
 
 Settings › Notes overlay also has: the **text size**, the **mode when it
 starts**, **Show the overlay when sotyware starts**, the **size** and the
-**corner** it opens at (changing them moves an open overlay there now),
-**Open where it was last**, what a **new note starts** with (empty or a
-first checklist item), which note it **shows when it starts** (the last
-one, or the first pinned one), and **Reset overlay settings…**, which puts
-all of these and the shortcuts back to their defaults and forgets where
-the overlay was. Reset keeps your notes.
+**place** it opens at (changing them moves an open overlay there now): a
+corner, the middle of the left or right edge (**Centre left**, **Centre
+right**), the centre, or between edge and centre, **Mid centre left** and
+**Mid centre right** (centred vertically, its middle a third of the way
+across the screen from that side); **Open where it was last**, what a
+**new note starts** with (empty or a first checklist item), which note it
+**shows when it starts** (the last one, or the first pinned one), and
+**Reset overlay settings…**, which puts all of these and the shortcuts
+back to their defaults and forgets where the overlay was. Reset keeps your
+notes.
 
 ## Where your notes are
 

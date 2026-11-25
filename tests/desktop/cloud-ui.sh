@@ -72,9 +72,10 @@
 #        others, frameless, at its corner, the shortcuts grabbed), a note
 #        typed and autosaved, a checkbox, Ctrl+Shift+F1 to F5 from the game,
 #        a click that stays on the overlay and, passive, reaches the game,
-#        collapse, a new corner, hiding by its button and the window
-#        manager, a restart, turned off (the window gone, the shortcuts
-#        released, the notes kept); no keyring, no server.
+#        collapse, three new places (Centre left, Mid centre right, Top
+#        left), hiding by its button and the window manager, a restart,
+#        turned off (the window gone, the shortcuts released, the notes
+#        kept); no keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),

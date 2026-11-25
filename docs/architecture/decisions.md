@@ -2960,7 +2960,9 @@ Status: Accepted (2026-11-19). Code: `engine::snapshot_time` and
 
 ## ADR-052: The gaming notes overlay is a second window created at runtime, with its notes in SQLite and its own native shortcuts, behind an opt-in feature
 
-Status: Accepted (2026-11-23). Code: `src-tauri/src/overlay/`,
+Status: Accepted (2026-11-23; amended 2026-11-25: four more places to
+open at, the middle of the left and right edges and mid centre left and
+right, a third of the way across). Code: `src-tauri/src/overlay/`,
 `src-tauri/src/storage/notes.rs`, `src-tauri/src/features/notes_overlay.rs`,
 `src-tauri/src/automation/claims.rs`, `src-tauri/capabilities/overlay.json`,
 `overlay.html`, `src/overlayMain.ts`, `src/NotesOverlay.svelte`,
@@ -3078,14 +3080,16 @@ Status: Accepted (2026-11-23). Code: `src-tauri/src/overlay/`,
   - **Placement** reuses the dashboard's rules (ADR-040,
     `window_state::restore_placement`): a remembered place is used where it
     still overlaps a connected monitor, moved inside it and rescaled for a
-    changed scaling; otherwise the overlay opens at the chosen corner (or
-    the centre) of the monitor the pointer is on, 24 logical pixels in, at
-    the default size in logical pixels. Collapsed, it is as high as its
-    title bar and remembers its expanded height. On X11, for 1.5 s after
-    each show, a position elsewhere than asked is never remembered and the
-    first is answered with a move back: openbox may place a window mapped
-    again anew, and the first position reported after a window is mapped
-    can be one it never had (both found by the Linux desktop test).
+    changed scaling; otherwise the overlay opens at the chosen place (a
+    corner, the middle of the left or right edge, a third of the way across
+    from either side, or the centre) of the monitor the pointer is on, 24
+    logical pixels in, at the default size in logical pixels. Collapsed, it
+    is as high as its title bar and remembers its expanded height. On X11,
+    for 1.5 s after each show, a position elsewhere than asked is never
+    remembered and the first is answered with a move back: openbox may place
+    a window mapped again anew, and the first position reported after a
+    window is mapped can be one it never had (both found by the Linux
+    desktop test).
   - **The built-in feature `notes-overlay` is off by default**: until the
     user turns it on, no shortcut is registered and no window exists.
     Turned on by the user, the overlay shows at once; at startup only if

@@ -316,6 +316,16 @@ pub enum Anchor {
     BottomLeft,
     BottomRight,
     Center,
+    /// At the left edge, centred vertically.
+    CenterLeft,
+    /// At the right edge, centred vertically.
+    CenterRight,
+    /// Centred on the line a third of the way across from the left, and
+    /// vertically.
+    MidCenterLeft,
+    /// Centred on the line a third of the way across from the right, and
+    /// vertically.
+    MidCenterRight,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -844,6 +854,35 @@ mod tests {
         assert!(serde_json::from_value::<OverlaySettings>(extra).is_err());
         let back: OverlaySettings = serde_json::from_value(json).unwrap();
         assert_eq!(back, OverlaySettings::default());
+    }
+
+    #[test]
+    fn the_places_have_these_names_on_the_page() {
+        // `ANCHORS` in src/notesOverlay.ts lists the same names.
+        let all = [
+            Anchor::TopLeft,
+            Anchor::TopRight,
+            Anchor::BottomLeft,
+            Anchor::BottomRight,
+            Anchor::Center,
+            Anchor::CenterLeft,
+            Anchor::CenterRight,
+            Anchor::MidCenterLeft,
+            Anchor::MidCenterRight,
+        ];
+        let names = serde_json::json!([
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+            "center",
+            "center-left",
+            "center-right",
+            "mid-center-left",
+            "mid-center-right",
+        ]);
+        assert_eq!(serde_json::to_value(all).unwrap(), names);
+        assert_eq!(serde_json::from_value::<[Anchor; 9]>(names).unwrap(), all);
     }
 
     #[test]

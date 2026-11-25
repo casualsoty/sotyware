@@ -24,9 +24,10 @@
 # Ctrl+Shift+F2 again makes it interactive with the keyboard; Ctrl+Shift+F3
 # creates a note and puts the cursor in its title; Ctrl+Shift+F5 and
 # Ctrl+Shift+F4 switch notes. Collapse leaves only the title bar, Expand
-# brings the note back; a new corner in the settings moves the open
-# overlay there; its close button, and the window manager's close (Alt+F4),
-# hide it without destroying anything; Show overlay brings it back. After a
+# brings the note back; Centre left, Mid centre right and Top left in the
+# settings each move the open overlay there (overlay::placement's numbers);
+# its close button, and the window manager's close (Alt+F4), hide it
+# without destroying anything; Show overlay brings it back. After a
 # restart the overlay stays hidden (it is not set to show at startup) but
 # its shortcuts work, and it opens where it was with its notes. Turning the
 # feature off destroys the window and releases every shortcut; the notes
@@ -347,9 +348,19 @@ def combo(label):
     return None
 
 
+def shown_option(node):
+    """The option the <select> `node` shows (its SELECTED menu item)."""
+    return next((i.get_name().strip() for i in find(node, Atspi.Role.MENU_ITEM)
+                 if i.get_state_set().contains(Atspi.StateType.SELECTED)), None)
+
+
 def choose(label, option):
-    """Chooses `option` in the <select> `label` with the keyboard: WebKitGTK
-    fires the change event for keyboard changes."""
+    """Chooses `option` in the <select> `label` with the keyboard, one Down
+    or Up at a time from the option shown: WebKitGTK fires the change event
+    for each key. The settings disable their controls while a change is
+    saved, and WebKitGTK then takes the keyboard focus from the select, so
+    each key goes to the select focused again and a key that changed
+    nothing (sent while it was disabled) is sent again."""
     node = wait_for(lambda: combo(label), 5)
     if node is None:
         print(f"  no select {label!r}: {[n for r, n, _, _ in nodes(pid) if r == Atspi.Role.COMBO_BOX]}", flush=True)
@@ -358,14 +369,25 @@ def choose(label, option):
     if option not in names:
         print(f"  select {label!r} has no option {option!r}: {names[:20]}", flush=True)
         return False
+
+    def focus():
+        # Asked again until it holds: a select being saved is disabled.
+        if not focused(node) and node.get_state_set().contains(Atspi.StateType.ENABLED):
+            Atspi.Component.grab_focus(node)
+            time.sleep(0.1)
+        return focused(node)
+
     focus_window(pid)
-    Atspi.Component.grab_focus(node)
-    if not wait_for(lambda: node.get_state_set().contains(Atspi.StateType.FOCUSED), 3):
-        print(f"  select {label!r}: could not focus", flush=True)
-        return False
-    key(keysym("Home"))
-    for _ in range(names.index(option)):
-        key(keysym("Down"))
+    misses = 0
+    while (shown := shown_option(node)) != option:
+        if shown not in names or misses == 3:
+            print(f"  select {label!r}: stuck at {shown!r} on the way to {option!r}", flush=True)
+            return False
+        if not wait_for(focus, 5):
+            print(f"  select {label!r}: could not focus", flush=True)
+            return False
+        key(keysym("Down" if names.index(shown) < names.index(option) else "Up"))
+        misses = 0 if wait_for(lambda: shown_option(node) != shown, 2) else misses + 1
     time.sleep(0.4)
     return True
 
@@ -545,7 +567,18 @@ ok = press(pid, "Collapse to the title bar") and wait_for(lambda: (geometry(over
 check("Collapse leaves only the title bar (38 px high)", bool(ok), str(geometry(overlay_window())))
 ok = press(pid, "Expand") and wait_for(lambda: near(geometry(overlay_window()), (*og[:2], 360, 440)), 5)
 check("Expand brings it back at its size", bool(ok), str(geometry(overlay_window())))
-ok = open_overlay_settings() and choose("Opens at", "Top left")
+# The middle row: centred vertically, at the left edge, or with its centre
+# a third of the way across from the right (overlay::placement).
+MIDDLE = (SCREEN[1] - 440) // 2
+THIRD = max(24, (2 * SCREEN[0] - 3 * 360) // 6)
+ok = open_overlay_settings() and choose("Opens at", "Centre left")
+ok = ok and wait_for(lambda: near(geometry(overlay_window()), (24, MIDDLE, 360, 440)), 10)
+check("Centre left in the settings: at the left edge, centred vertically", bool(ok), str(geometry(overlay_window())))
+ok = choose("Opens at", "Mid centre right")
+ok = ok and wait_for(lambda: near(geometry(overlay_window()), (SCREEN[0] - THIRD - 360, MIDDLE, 360, 440)), 10)
+check("Mid centre right: its centre a third of the way across from the right, centred vertically", bool(ok),
+      f"geometry {geometry(overlay_window())}, want {(SCREEN[0] - THIRD - 360, MIDDLE, 360, 440)}")
+ok = choose("Opens at", "Top left")
 ok = ok and wait_for(lambda: near(geometry(overlay_window()), (24, 24, 360, 440)), 10)
 check("a new corner in the settings moves the open overlay there", bool(ok), str(geometry(overlay_window())))
 ok = press(pid, "Hide the overlay (notes are kept)") and wait_for(lambda: overlay_shown() is None, 5)

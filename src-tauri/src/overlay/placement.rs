@@ -2,10 +2,12 @@
 //!
 //! - **A new overlay** (nothing remembered, remembering off, or after a
 //!   reset) opens at the size of the settings, in logical pixels (so it is
-//!   as big on a 150 % monitor as on a 100 % one), at the chosen corner or
-//!   centre of the work area of the monitor the pointer is on (else the
-//!   primary monitor), [`MARGIN`] away from its edges, never larger than
-//!   that work area.
+//!   as big on a 150 % monitor as on a 100 % one), at the chosen place on
+//!   the work area of the monitor the pointer is on (else the primary
+//!   monitor): a corner, the middle of the left or right edge, centred
+//!   vertically a third of the way across from the left or the right, or
+//!   the centre; [`MARGIN`] away from its edges, never larger than that
+//!   work area.
 //! - **A remembered overlay** opens where it was, through the dashboard's
 //!   own rules (`window_state::restore_placement`): only where it still
 //!   overlaps a connected monitor, moved fully inside that monitor's work
@@ -51,12 +53,26 @@ pub fn default_placement(screen: &Screen, size: (u32, u32), anchor: Anchor) -> P
     let bottom = i64::from(work.y) + i64::from(work.height) - i64::from(margin) - i64::from(height);
     let centre_x = i64::from(work.x) + (i64::from(work.width) - i64::from(width)) / 2;
     let centre_y = i64::from(work.y) + (i64::from(work.height) - i64::from(height)) / 2;
+    // Centred on the line a third of the way across: its near edge
+    // `work / 3 - width / 2` in from the work area's edge (the same from
+    // the right as from the left), never nearer than the margin, which
+    // also keeps a wide overlay inside the far margin.
+    let third = (2 * i64::from(work.width) - 3 * i64::from(width))
+        .div_euclid(6)
+        .max(i64::from(margin));
     let (x, y) = match anchor {
         Anchor::TopLeft => (left, top),
         Anchor::TopRight => (right, top),
         Anchor::BottomLeft => (left, bottom),
         Anchor::BottomRight => (right, bottom),
         Anchor::Center => (centre_x, centre_y),
+        Anchor::CenterLeft => (left, centre_y),
+        Anchor::CenterRight => (right, centre_y),
+        Anchor::MidCenterLeft => (i64::from(work.x) + third, centre_y),
+        Anchor::MidCenterRight => (
+            i64::from(work.x) + i64::from(work.width) - i64::from(width) - third,
+            centre_y,
+        ),
     };
     Placement {
         x: i32::try_from(x).unwrap_or(work.x),
@@ -166,6 +182,53 @@ mod tests {
             (780, 300, 360, 440)
         );
         assert!(!default_placement(&s, size, Anchor::Center).maximized);
+    }
+
+    #[test]
+    fn the_middle_places_are_centred_vertically() {
+        // 1920 × 1040 at 100 %: 300 px from the top; a third of the way
+        // across puts the overlay's centre at 640 or 1280.
+        let s = screen(0, 0, 1920, 1040, 1.0);
+        let size = (360, 440);
+        let place = |anchor| at(default_placement(&s, size, anchor));
+        assert_eq!(place(Anchor::CenterLeft), (24, 300, 360, 440));
+        assert_eq!(place(Anchor::MidCenterLeft), (640 - 180, 300, 360, 440));
+        assert_eq!(place(Anchor::Center), (960 - 180, 300, 360, 440));
+        assert_eq!(place(Anchor::MidCenterRight), (1280 - 180, 300, 360, 440));
+        assert_eq!(place(Anchor::CenterRight), (1920 - 24 - 360, 300, 360, 440));
+        // 150 %: 540 × 660 physical, the margin 36, the thirds at 1280 and
+        // 2560 of 3840.
+        let hi = screen(0, 0, 3840, 2100, 1.5);
+        let place = |anchor| at(default_placement(&hi, size, anchor));
+        assert_eq!(place(Anchor::CenterLeft), (36, 720, 540, 660));
+        assert_eq!(place(Anchor::MidCenterLeft), (1280 - 270, 720, 540, 660));
+        assert_eq!(place(Anchor::MidCenterRight), (2560 - 270, 720, 540, 660));
+        assert_eq!(place(Anchor::CenterRight), (3840 - 36 - 540, 720, 540, 660));
+    }
+
+    #[test]
+    fn a_third_across_is_the_same_from_either_side_and_inside_the_margins() {
+        // Left of the primary, 1280 wide: a third is 426.67, so either
+        // overlay's near edge is 246 px in from its side.
+        let left = screen(-1280, 0, 1280, 984, 1.0);
+        assert_eq!(
+            at(default_placement(&left, (360, 440), Anchor::MidCenterLeft)),
+            (-1280 + 246, 272, 360, 440)
+        );
+        assert_eq!(
+            at(default_placement(&left, (360, 440), Anchor::MidCenterRight)),
+            (-246 - 360, 272, 360, 440)
+        );
+        // Too wide to be centred there: at the margin of its own side.
+        let s = screen(0, 0, 1920, 1040, 1.0);
+        assert_eq!(
+            at(default_placement(&s, (1600, 440), Anchor::MidCenterLeft)),
+            (24, 300, 1600, 440)
+        );
+        assert_eq!(
+            at(default_placement(&s, (1600, 440), Anchor::MidCenterRight)),
+            (1920 - 24 - 1600, 300, 1600, 440)
+        );
     }
 
     #[test]

@@ -1390,6 +1390,21 @@ server only; no real provider was asked.
   language other than English or WebKitGTK in another language (the WSL2
   tried has no glibc locale but C and POSIX)
   ([status](status.md#numbers-and-dates-in-en-us-2026-11-24)).
+- **A setting changed with the keyboard loses the focus while it is
+  saved** (WebKitGTK 2.52.6 on the Linux desktop test's private display,
+  2026-11-25): Settings › Notes overlay saves each change at once and
+  disables its controls until the save is done, and WebKitGTK moves the
+  keyboard focus off a disabled control. A select changed with an arrow
+  key therefore moves one option, then loses the focus (within 0.3 s);
+  the next arrow key changes nothing until the select is focused again
+  (Tab or a click). The mouse is not affected: choosing an option from
+  the opened list saves once. The Autoclicker page's Settings tab
+  disables its shortcut fields, checkboxes and countdown select the same
+  way (not tried there). Found when the overlay's desktop test, pressing Home and
+  then Down to reach Centre left, stopped one or two options short
+  ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25));
+  the test now focuses the select again for each key. Not examined in
+  WebView2 or WKWebView.
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux

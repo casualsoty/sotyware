@@ -42,7 +42,17 @@ export const MODES = ["interactive", "passive"] as const;
 export type Mode = (typeof MODES)[number];
 export const TEXT_SIZES = ["small", "medium", "large"] as const;
 export type TextSize = (typeof TEXT_SIZES)[number];
-export const ANCHORS = ["top-left", "top-right", "bottom-left", "bottom-right", "center"] as const;
+export const ANCHORS = [
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+  "center",
+  "center-left",
+  "center-right",
+  "mid-center-left",
+  "mid-center-right",
+] as const;
 export type Anchor = (typeof ANCHORS)[number];
 export const NEW_NOTE_TEMPLATES = ["blank", "checklist"] as const;
 export type NewNoteTemplate = (typeof NEW_NOTE_TEMPLATES)[number];
