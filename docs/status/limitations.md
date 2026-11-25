@@ -1390,8 +1390,8 @@ server only; no real provider was asked.
   language other than English or WebKitGTK in another language (the WSL2
   tried has no glibc locale but C and POSIX)
   ([status](status.md#numbers-and-dates-in-en-us-2026-11-24)).
-- **In every release so far a setting changed with the keyboard loses
-  keys, and can lose the focus, while it is saved** (WebKitGTK 2.52.6 on
+- **In every release up to `v0.1.4` a setting changed with the keyboard
+  loses keys, and can lose the focus, while it is saved** (WebKitGTK 2.52.6 on
   the Linux desktop test's private display, 2026-11-25): Settings ›
   Features (every release: each feature's checkbox, all of them disabled
   while any switch ran), the bucket's Sync tab (`v0.1.2` to `v0.1.4`: its
@@ -1409,7 +1409,8 @@ server only; no real provider was asked.
   the overlay's desktop test, pressing Home and then Down to reach
   Centre left, stopped one or two options short
   ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25)).
-  **Fixed on 2026-11-25, after `v0.1.4`**: Settings › Notes overlay and
+  **Fixed on 2026-11-25, after `v0.1.4`, and released in `v0.1.5`**
+  ([status](status.md#release-015-2026-11-25)): Settings › Notes overlay and
   the Autoclicker's Settings tab by `c50219f`, on `main` the same day
   ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)),
   Settings › Features and the Sync tab's interval by `4eebc83`, on `main`
