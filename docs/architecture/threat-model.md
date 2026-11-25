@@ -1,10 +1,11 @@
 # Threat model
 
 What sotyware protects, against whom, how, and what remains. It covers the
-desktop app (Tauri process, dashboard webview, local databases, OS credential
-store), the cloud storage providers it talks to, the backup engine
-([backup.md](backup.md)), the sotyware account service and its end-to-end
-encrypted vault ([accounts.md](accounts.md)), and application updates
+desktop app (Tauri process, the dashboard's and the notes overlay's
+webviews, local databases, OS credential store), the cloud storage
+providers it talks to, the backup engine ([backup.md](backup.md)), the
+sotyware account service and its end-to-end encrypted vault
+([accounts.md](accounts.md)), and application updates
 ([updates.md](updates.md)). Each section names the assets at stake, the
 controls, and the residual risk. Controls that depend on external
 configuration (a signing key, a hosted service) say so. Written 2026-11-15
@@ -26,35 +27,57 @@ and the [journal](../status/journal.md), not here.
 | Local databases | App local data folder (`%LOCALAPPDATA%\com.sotyware.desktop`, `~/.local/share/com.sotyware.desktop`) | Configuration, favorites, journal, backup history; no secrets |
 | Recorded macros (ADR-050) | `automation.sqlite3` in the same folder; export files where the user saves them | Whatever the user typed while recording, in plain text (a password typed then is in the macro) |
 | Input automation (ADR-050) | The `autoclicker` feature's native backend, while it runs | Sends clicks and keys to any program the user's session can reach, and records the user's input while a recording runs |
+| Notes (ADR-052) | `notes.sqlite3` in the same folder | Whatever the user writes in the notes overlay, in plain text, kept nowhere else: not synced to the sotyware account (the vault carries storage accounts and backup jobs only), not in sotyware's backups (they copy buckets), never in a sync folder (folder sync refuses the data folder) |
 
 ## Trust boundaries
 
-1. **Webview ↔ Rust.** The page is treated as less trusted than Rust: it
-   reaches Rust only through the declared commands, each with its own
-   permission in `capabilities/default.json`; it never receives a credential,
-   a token or a key, never sends a local path (dialogs are opened by Rust),
-   and receives one kind of local path only: the folder the user chose for
-   folder sync, to show it (ADR-043; a compromised page learns where that
-   folder is, and still cannot name another). CSP allows no remote content.
-2. **sotyware ↔ storage provider.** HTTPS (rustls with ring and the OS root
+1. **Dashboard webview ↔ Rust.** The dashboard's page is treated as less
+   trusted than Rust: it reaches Rust only through the declared commands,
+   each with its own permission in `capabilities/default.json`; it never
+   receives a credential, a token or a key, never sends a local path
+   (dialogs are opened by Rust), and receives one kind of local path only:
+   the folder the user chose for folder sync, to show it (ADR-043; a
+   compromised page learns where that folder is, and still cannot name
+   another). CSP allows no remote content.
+2. **Overlay webview ↔ Rust (ADR-052).** The notes overlay's page
+   (`overlay.html`) runs in a second webview window, label `overlay`, that
+   Rust creates at runtime the first time the overlay is shown and
+   destroys when the `notes-overlay` feature stops (`overlay/host.rs`);
+   while the feature is off there is none. The same CSP applies, and the
+   page is treated like the dashboard's: it receives no credential, token,
+   key or path and sends no path. Its own capability, `notes-overlay`
+   (`capabilities/overlay.json`, window `overlay` only), grants its 16
+   commands (its status; showing, hiding, the mode, collapsing and the
+   opacity of its window; asking the dashboard for its settings; listing,
+   creating, saving, deleting, duplicating, pinning, moving and selecting
+   notes; `open_note_link`) and dragging and resizing its own window, and
+   nothing of the dashboard's: no storage account, backup, account,
+   update, sync, automation or feature command, no setting but its
+   opacity, no `dialog:`, `fs:` or `opener:` permission. The dashboard's
+   capability holds the 7 commands that watch, configure, reset, show,
+   hide and switch the overlay, none that reads a note; the capabilities
+   granted at runtime (`tray-mode`, `window-controls`) name only the
+   dashboard.
+3. **sotyware ↔ storage provider.** HTTPS (rustls with ring and the OS root
    store); SigV4 request signing; the provider is trusted to store bytes but
    its answers are verified (sizes, SHA-256, ETags where meaningful).
-3. **sotyware ↔ account service.** HTTPS only in release builds; the service
+4. **sotyware ↔ account service.** HTTPS only in release builds; the service
    is **not trusted with plaintext**: it stores ciphertext and wrapped keys
    only and cannot decrypt them.
-4. **sotyware ↔ update server (GitHub Releases, ADR-036).** Not trusted:
+5. **sotyware ↔ update server (GitHub Releases, ADR-036).** Not trusted:
    everything it serves is checked against signatures made with a key that
    neither GitHub nor the build jobs hold. A compromised GitHub account or
    token can publish a release, but not a validly signed one.
-5. **Process ↔ other local processes.** Same-user processes are outside
+6. **Process ↔ other local processes.** Same-user processes are outside
    sotyware's control (see "malicious local process").
 
 ## Threats and controls
 
 ### Stolen computer
 
-- *Exposure:* local databases (no secrets), OS credential store entries,
-  cached vault ciphertext.
+- *Exposure:* local databases (no credential, token or key; macros and
+  notes hold whatever the user typed or wrote, in plain text), OS
+  credential store entries, cached vault ciphertext.
 - *Controls:* credentials only in the OS credential store, which is
   protected by the user's login (Windows DPAPI-backed Credential Manager;
   Secret Service keyrings locked with the login password). No credential,
@@ -201,6 +224,81 @@ and the [journal](../status/journal.md), not here.
   key (the user's next press of it does); on Windows, input to programs
   running as administrator is blocked by the system, not by sotyware.
 
+### Hostile text in a note (ADR-052)
+
+- *Threats:* text pasted into a note (from a web page or a guide) carries
+  HTML or script that would run in the overlay's page, which can edit
+  every note; a link in a note opens a file, a program or another scheme
+  instead of a web page, or an address the note does not hold.
+- *Controls:* `noteMarkdown.ts` parses a note into a tree of headings,
+  paragraphs, lists, checklists, quotes, code and rules, with text,
+  emphasis, code and links inside, which `NoteView.svelte` renders with
+  Svelte's own elements, the note's text in text nodes. No `{@html}`,
+  `innerHTML` or other HTML sink exists in the frontend, so a `<script>`
+  or `<img>` in a note stays visible text; the subset has no images, and
+  the CSP would load nothing remote. A link's target is only ever an
+  `http` or `https` address (every link form the parser reads starts so),
+  and a click on one is cancelled in the page and handed to Rust.
+  `open_note_link(id, url)` opens only what `model::link_allowed`
+  accepts: an `http://` or `https://` address with a host, without
+  whitespace or control characters, at most 2,048 characters long,
+  contained in note `id`'s text as Rust reads it from `notes.sqlite3`.
+  Rust opens it in the default browser with `tauri-plugin-opener`'s
+  `open_url` (the plugin is not registered and the page has no `opener:`
+  permission), so nothing but a web address is ever opened, never a
+  `file:`, `javascript:` or other scheme; test-profile builds record the
+  address instead.
+- *Residual:* Rust checks the note's text, not what the page showed as a
+  link, and the overlay's page is the notes' editor: a page that ran a
+  script it should not (through a webview or Svelte defect; a note cannot
+  bring one) could rewrite or delete every note and open any web address
+  it first wrote into one, though only in the browser.
+
+### The notes overlay's shortcuts and passive mode (ADR-052)
+
+- *Threats:* the overlay's global shortcuts take keys away from the game
+  or another program, or read what the user types; the overlay takes the
+  game's keyboard, or stays click-through with no way back.
+- *Controls:* off by default; its shortcuts are registered only while the
+  `notes-overlay` feature runs, and stopping it unregisters them. They are
+  system shortcuts (`RegisterHotKey` on Windows, `XGrabKey` on X11)
+  through a second instance of the autoclicker's backend, of which the
+  overlay uses only registering, unregistering and naming keys: it
+  installs no input hook, opens no RECORD context (both exist only while
+  an autoclicker recording runs) and sends no input; it acts only on
+  presses of its own chords and stores nothing. The autoclicker's rules
+  apply (`Chord::problem`: a typing key needs Ctrl, Alt or the Windows
+  key; F12 alone, Alt+F4, Alt+Tab, Ctrl+Alt+Delete, Ctrl or Alt with Esc
+  and Win+L are refused), and `automation::claims` keeps the two features
+  from holding one chord: each refuses a chord the other holds, naming
+  it. Showing never takes the keyboard: on Windows the window is shown
+  with `SWP_NOACTIVATE`, and the keyboard is given straight back should
+  Windows activate it anyway; elsewhere it is unfocusable for the show.
+  Only the mode or new-note shortcut, or a click, gives it the keyboard
+  (on Windows `SetForegroundWindow`, never a synthesised key press).
+  Passive mode is the window system's (on Windows
+  `WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE`, on X11 an input
+  shape without the window and no input focus), so the page gets no click
+  and holds no keyboard. The mode is never stored, and the ways back never
+  depend on the overlay's page: the mode shortcut, the dashboard's Make
+  interactive and Hide overlay, turning the feature off, and a restart,
+  which begins in the default mode (interactive unless the user chose
+  passive). The passive badge names the shortcut, or says to switch back
+  from sotyware. The background is never below 20 % opacity and the text
+  stays opaque, so the overlay never takes clicks unseen.
+- *Residual:* while the feature runs, its chords no longer reach the
+  program in front. A chord the overlay holds is refused to the
+  autoclicker, the emergency stop's too: the autoclicker then shows its
+  stop as not registered and an endless run from the page needs
+  confirming, but a combination of the stop with other modifiers, which
+  the autoclicker adds while a session runs (ADR-050), stays the
+  overlay's without being shown; the fail-safe corners and Stop still
+  work. A game that reads the keyboard below Windows' shortcut handling,
+  or anti-cheat software, can keep the shortcuts from arriving; without
+  the mode shortcut (Wayland, macOS, a chord another program holds) only
+  sotyware's window switches the overlay back. On X11 the window manager
+  decides which window gets the keyboard back.
+
 ### Another user on the same computer
 
 - *Controls (2026-11-15):* the data folder is private to the user: on Linux
@@ -246,9 +344,12 @@ and the [journal](../status/journal.md), not here.
 
 - *Controls:* SQLite databases are integrity-checked at open; a damaged or
   newer database is never repaired or replaced automatically, the app runs
-  with defaults and shows the error. Losing local databases loses no user
-  data: objects stay at the provider, credentials in the OS store, the vault
-  on the server, backups describe themselves.
+  with defaults and shows the error. Losing local databases loses no data
+  kept elsewhere: objects stay at the provider, credentials in the OS store,
+  the vault on the server, backups describe themselves.
+- *Residual:* notes (ADR-052) and macros (ADR-050) are kept nowhere else
+  (macros at most in files the user exported): losing `notes.sqlite3` or
+  `automation.sqlite3` loses them.
 
 ### Provider outage / sotyware backend outage
 
@@ -278,6 +379,10 @@ and the [journal](../status/journal.md), not here.
 - The autoclicker (ADR-050) records input only during a recording the user
   started, keeps macros and profiles on this computer and sends nothing
   anywhere; macros leave the computer only in files the user exports.
+- The notes overlay (ADR-052) keeps its notes, settings and state on this
+  computer and sends nothing anywhere: notes are neither synced nor backed
+  up, and its shortcuts record no input. An address in a note reaches the
+  default browser only when the user opens the link.
 - An update check sends a plain GET with `User-Agent: sotyware/<version>`;
   GitHub (and its asset store) learns the IP address, the time and the
   version.
@@ -326,3 +431,6 @@ lock files of this commit:
 8. Recorded macros keep typed text in plain text on this computer, and a
    running macro acts on whatever program is in front unless it has a
    target program (ADR-050).
+9. Notes are kept in plain text on this computer only, outside sync and
+   backups, and a chord the overlay holds is unavailable to every other
+   program, the autoclicker's emergency stop included (ADR-052).

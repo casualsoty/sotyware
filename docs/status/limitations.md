@@ -1288,7 +1288,14 @@ server only; no real provider was asked.
   keyboard directly, or anti-cheat software, can keep them from reaching
   sotyware. A chord another program holds is not registered; one the
   autoclicker holds is refused with its name, and the two features cannot
-  share a chord.
+  share a chord. The autoclicker likewise refuses a chord the overlay
+  holds, its emergency stop included, and also a combination of the stop
+  with other modifiers, which it registers only while a session runs:
+  that refusal is not shown, and while a macro holds exactly those
+  modifiers the stop key runs the overlay's action instead (with the
+  suggested chords, only if the stop is moved to F1 to F5); the fail-safe
+  corners and Stop still work. Found by reading the code (2026-11-25),
+  not seen in a run.
 - **Linux**: on Wayland the compositor decides whether the overlay stays
   on top and where a window may be placed. On X11 without a compositor
   the see-through parts are drawn black and the panel is opaque (seen on
