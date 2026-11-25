@@ -61,6 +61,21 @@ impl Recorder {
             .collect()
     }
 
+    /// The summary of `batch`'s final event, once it came. Reads the events
+    /// in place: [`Setup::finished`] asks every 5 ms, and copying a batch's
+    /// thousands of events each time costs time quadratic in the batch,
+    /// under the lock the upload's `emit` takes.
+    fn finished(&self, batch: &str) -> Option<BatchSummary> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|e| match &e.body {
+                EventBody::Finished { summary } if e.batch == batch => Some(summary.clone()),
+                _ => None,
+            })
+    }
+
     /// The file events of `batch` for file `index`.
     fn file_events(&self, batch: &str, index: u32) -> Vec<(u64, UploadFile)> {
         self.of(batch)
@@ -196,8 +211,15 @@ impl Setup {
     /// keeps: the slot is free when it arrives, it comes once and last, seq
     /// counts 1, 2, 3, …, every file's progress only moves forward, files
     /// run one after another, every file is final, and nothing names a
-    /// local path.
+    /// local path. Fails if the batch has not finished after 30 s, which
+    /// only a hang should take.
     async fn finished(&self, batch: &str) -> BatchSummary {
+        self.finished_within(batch, Duration::from_secs(30)).await
+    }
+
+    /// [`Setup::finished`] with another limit, for a batch too large to
+    /// finish in 30 s on a slow runner.
+    async fn finished_within(&self, batch: &str, limit: Duration) -> BatchSummary {
         let started = Instant::now();
         let summary = loop {
             let found = self.of_finished(batch);
@@ -207,8 +229,8 @@ impl Setup {
                 break summary;
             }
             assert!(
-                started.elapsed() < Duration::from_secs(30),
-                "{batch} did not finish: {:?}",
+                started.elapsed() < limit,
+                "{batch} did not finish in {limit:?}: {:?}",
                 self.sink.of(batch)
             );
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -248,10 +270,7 @@ impl Setup {
     }
 
     fn of_finished(&self, batch: &str) -> Option<BatchSummary> {
-        self.sink.of(batch).into_iter().find_map(|e| match e.body {
-            EventBody::Finished { summary } => Some(summary),
-            _ => None,
-        })
+        self.sink.finished(batch)
     }
 
     fn assert_no_paths(&self, json: &str) {
@@ -1957,7 +1976,14 @@ async fn a_folder_with_more_files_than_the_old_limit_is_uploaded_whole() {
             .enumerate()
             .all(|(i, f)| f.index as usize == i && f.skip.is_none())
     );
-    let summary = s.finished(selection.batch.as_ref().unwrap()).await;
+    // 1,001 uploads one after another take about 9 s of CPU in this debug
+    // build on a fast machine, and more than 30 s on GitHub's Windows and
+    // Intel Mac runners beside the other tests: in release.yml run
+    // 45594587375 they had done 914 and 888 files at 30 s. The limit only
+    // guards against a hang.
+    let summary = s
+        .finished_within(selection.batch.as_ref().unwrap(), Duration::from_secs(300))
+        .await;
     assert_eq!(summary.state, BatchState::Completed, "{:?}", summary.error);
     assert_eq!(summary.completed, 1_001);
     assert_eq!(s.count_ops("PutObject"), 1_001);
