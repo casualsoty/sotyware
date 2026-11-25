@@ -1412,9 +1412,8 @@ server only; no real provider was asked.
   **Fixed on 2026-11-25, after `v0.1.4`**: Settings › Notes overlay and
   the Autoclicker's Settings tab by `c50219f`, on `main` the same day
   ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)),
-  Settings › Features and the Sync tab's interval on the branch
-  `fix/features-and-sync-keep-keyboard-focus`, built on it, not on `main`
-  yet
+  Settings › Features and the Sync tab's interval by `4eebc83`, on `main`
+  the same day
   ([status](status.md#settings--features-and-the-sync-tabs-interval-keep-the-keyboard-too-2026-11-25)).
   Every page keeps its controls enabled while a change is saved, queues
   the saves and shows the changes still waiting; the desktop tests'
