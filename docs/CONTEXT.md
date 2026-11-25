@@ -9,9 +9,11 @@ the details and win if anything here disagrees. Rules for agents:
 A desktop app that runs in the background, lives in the system tray and opens
 a dashboard window on demand. On Linux without a tray host it runs as a plain
 window (dashboard-only mode). Built with Tauri 2 (Rust) and Svelte 5 +
-TypeScript. Version 0.1.3, **released on 2026-11-19** as `v0.1.3`, with
-the autoclicker and macros
-([status](status/status.md#release-013-2026-11-19)), after `v0.1.2` on
+TypeScript. Version 0.1.4, **released on 2026-11-25** as `v0.1.4`, with
+the gaming notes overlay
+([status](status/status.md#release-014-2026-11-25)), after `v0.1.3` on
+2026-11-19, with the autoclicker and macros
+([status](status/status.md#release-013-2026-11-19)), `v0.1.2` on
 2026-11-17, the first release offering sotyware accounts
 ([status](status/status.md#release-012-2026-11-17)), `v0.1.1` on
 2026-11-16 ([status](status/status.md#release-011-2026-11-16)) and `v0.1.0`
@@ -33,7 +35,9 @@ built with `npm run build:release`, which keeps the build machine's paths out
 [notes-overlay.md](architecture/notes-overlay.md), [user guide](user/notes-overlay.md);
 [status](status/status.md#gaming-notes-overlay-2026-11-23); on `main`
 since 2026-11-24, merged as `fe816d1`,
-[hosted runs](status/status.md#hosted-runs-at-fe816d1-the-notes-overlay-and-en-us-numbers-on-main-2026-11-24)): a second window, created at runtime while the built-in
+[hosted runs](status/status.md#hosted-runs-at-fe816d1-the-notes-overlay-and-en-us-numbers-on-main-2026-11-24);
+**released in `v0.1.4`** on 2026-11-25,
+[status](status/status.md#release-014-2026-11-25)): a second window, created at runtime while the built-in
 feature `notes-overlay` runs (**off by default**): frameless, see-through
 (20 to 100 %), always on top, moved, resized and collapsed from its own
 title bar, remembering its place across monitors and scalings; several

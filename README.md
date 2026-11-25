@@ -99,8 +99,9 @@ anyone used, and not signed ([docs/development/macos.md](docs/development/macos.
 - **Signed updates from GitHub Releases** of this repository,
   installed only when you click "Update" and never during a transfer or
   backup. `v0.1.0` was published on 2026-11-15, `v0.1.1` on 2026-11-16,
-  `v0.1.2` on 2026-11-17 and `v0.1.3`, with the autoclicker, on
-  2026-11-19; the maintainer's own Windows 11
+  `v0.1.2` on 2026-11-17, `v0.1.3`, with the autoclicker, on
+  2026-11-19 and `v0.1.4`, with the notes overlay, on 2026-11-25; the
+  maintainer's own Windows 11
   installation updated itself from 0.1.0 to 0.1.1 this way.
 
 It does not search file contents, download as ZIP, keep a trash of its own in
