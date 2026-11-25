@@ -1409,12 +1409,12 @@ server only; no real provider was asked.
   the overlay's desktop test, pressing Home and then Down to reach
   Centre left, stopped one or two options short
   ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25)).
-  **Fixed on 2026-11-25, after `v0.1.4`**, on two branches, neither on
-  `main` yet: Settings › Notes overlay and the Autoclicker's Settings tab
-  on `fix/settings-keep-keyboard-focus`
+  **Fixed on 2026-11-25, after `v0.1.4`**: Settings › Notes overlay and
+  the Autoclicker's Settings tab by `c50219f`, on `main` the same day
   ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)),
-  Settings › Features and the Sync tab's interval on
-  `fix/features-and-sync-keep-keyboard-focus`, built on it
+  Settings › Features and the Sync tab's interval on the branch
+  `fix/features-and-sync-keep-keyboard-focus`, built on it, not on `main`
+  yet
   ([status](status.md#settings--features-and-the-sync-tabs-interval-keep-the-keyboard-too-2026-11-25)).
   Every page keeps its controls enabled while a change is saved, queues
   the saves and shows the changes still waiting; the desktop tests'
