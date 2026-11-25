@@ -919,18 +919,19 @@ async fn quitting_waits_for_an_installation_that_has_begun() {
     // shutdown_waiting blocks: off the runtime's worker.
     tokio::task::block_in_place(|| u.shutdown_waiting(Duration::from_secs(20)));
     let waited = started.elapsed();
-    let finished = u
-        .install
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .task
-        .inner()
-        .is_finished();
+    let finished = || {
+        u.install
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .task
+            .inner()
+            .is_finished()
+    };
     if cfg!(windows) {
         assert!(
-            waited < INSTALLING && !finished,
+            waited < INSTALLING && !finished(),
             "no wait on Windows: {waited:?}"
         );
     } else {
@@ -939,7 +940,15 @@ async fn quitting_waits_for_an_installation_that_has_begun() {
             "returned after {waited:?}, before the installation ended"
         );
         assert!(waited < Duration::from_secs(10), "waited {waited:?}");
-        assert!(finished);
+        // The sender behind `ended` is dropped as the task's body ends, a
+        // moment before tokio marks the task finished: a loaded runner can
+        // preempt the worker in between (an Intel Mac did), so the task
+        // gets that moment, bounded.
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while !finished() && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(finished(), "the task did not finish within 5 s of the wait");
     }
     // Before the commit point: cancelled at once, never waited for.
     *u.install.lock().unwrap() = Some(slot(false));
