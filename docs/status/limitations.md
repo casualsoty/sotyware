@@ -1404,13 +1404,12 @@ server only; no real provider was asked.
   when the overlay's desktop test, pressing Home and then Down to reach
   Centre left, stopped one or two options short
   ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25)).
-  **Fixed on 2026-11-25, after `v0.1.4`** (branch
-  `fix/settings-keep-keyboard-focus`, not on `main` yet): both pages keep
-  their controls enabled while a change is saved, queue the saves and
-  show the changes still waiting; the desktop tests' new checks of
-  several keys in a row on a select, focused once, pass with the fix
-  (overlay phase four runs, autoclicker phase three) and fail with the
-  old pages, in both phases
+  **Fixed on 2026-11-25, after `v0.1.4`** (`c50219f`, on `main` the same
+  day): both pages keep their controls enabled while a change is saved,
+  queue the saves and show the changes still waiting; the desktop tests'
+  new checks of several keys in a row on a select, focused once, pass
+  with the fix (overlay phase four runs, autoclicker phase three) and fail
+  with the old pages, in both phases
   ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)).
   Neither the defect nor the fix was examined in WebView2 or WKWebView.
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
