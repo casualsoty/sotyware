@@ -166,11 +166,22 @@ with `state` in kebab-case and `error` a string or `null`. A failing start is a
 rejection: the switch did happen. Both commands are declared in `build.rs` and
 granted to window `main` by the static capability `default`. There are no
 events: the page reads the list on mount and replaces a feature with the
-response of each switch. A change made elsewhere (only startup, today) is not
-pushed. `src/features.ts` validates every response and throws on a mismatch.
+response of each switch. A change made elsewhere (startup, the notes
+overlay's settings, the Autoclicker page) is not pushed: the page sees it
+the next time it reads the list. `src/features.ts` validates every response
+and throws on a mismatch.
 `src/Features.svelte` shows each feature's name, version, state, description and
-last error, with a checkbox to switch it. While a feature is busy or a request is
-in flight, the checkbox is disabled. A `storageError` is shown as an alert
+last error, with a checkbox to switch it. The checkboxes stay enabled while a
+switch runs ([frontend.md](frontend.md#interaction); until 2026-11-25 every
+checkbox was disabled meanwhile, and Space pressed again on one was lost).
+Switches are sent one after another, in the order asked, so the page still
+never asks for a second switch of a feature whose first is running; until
+each is answered the feature shows the state asked for, Starting… or
+Stopping…, and a refused switch goes back to what Rust said. A feature the
+list showed `initializing` or `stopping` (switched elsewhere a moment before)
+is read again before a switch of it is sent: the registry would refuse that
+switch, so while the feature still is, nothing is sent and the page says it
+is still starting or stopping. A `storageError` is shown as an alert
 ("Could not load the saved feature choices: …. Every feature uses its default,
 and changes are not saved."), and so is a `saveError` ("Could not save the
 choice for Scheduled backups: …. It stays disabled until sotyware quits; the next start

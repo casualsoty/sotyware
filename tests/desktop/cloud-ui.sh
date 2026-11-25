@@ -48,7 +48,8 @@
 #        same bucket and fails if a real version was ever deleted for good:
 #        the GTK folder dialog, both directions, rename, deletion into the
 #        sync trash, a conflict, a restart (the startup connection check of
-#        ADR-046) and turning sync off; contacts no provider.
+#        ADR-046), several keys in a row on the interval select focused
+#        once, and turning sync off; contacts no provider.
 # account: the feedback, bug report and privacy notice pages (ADR-049; a
 #        test-profile build records them instead of opening a browser) and
 #        sign-up, verification, sync set-up and deletion against a local
@@ -75,9 +76,10 @@
 #        a click that stays on the overlay and, passive, reaches the game,
 #        collapse, three new places (Centre left, Mid centre right, Top
 #        left), several Downs in a row on the place select focused once,
-#        hiding by its button and the window manager, a restart, turned
-#        off (the window gone, the shortcuts released, the notes kept); no
-#        keyring, no server.
+#        hiding by its button and the window manager, a restart, Spaces in
+#        a row on its checkbox in Settings › Features focused once, turned
+#        off by them (the window gone, the shortcuts released, the notes
+#        kept); no keyring, no server.
 # b2:    the real Backblaze B2 test bucket and key from the opt-in integration
 #        test's variables (SOTYWARE_IT_B2_BUCKET, SOTYWARE_IT_B2_REGION,
 #        SOTYWARE_CLOUD_IT_B2_ACCESS_KEY_ID, SOTYWARE_CLOUD_IT_B2_SECRET_ACCESS_KEY),

@@ -61,7 +61,8 @@
   let choosing = $state(false);
   let interval = $state<number>(DEFAULT_INTERVAL);
   let moveMode = $state<MoveMode>("move");
-  let busy = $state<string | null>(null);
+  /** The action of this tab that runs (one at a time: its buttons wait). */
+  let acting = $state<string | null>(null);
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let details = $state<SyncDetails | null>(null);
@@ -73,8 +74,28 @@
 
   const label = $derived(status === null ? null : stateLabel(status));
 
+  /** Interval changes waiting for their save, oldest first. The select
+   * stays enabled while they wait: a disabled control ignores the keys it
+   * gets, and WebKitGTK can take the keyboard focus from it, so the next
+   * arrow keys on the select changed nothing (until 2026-11-25). They are
+   * saved one after another, in the order chosen. */
+  let intervals = $state.raw<{ id: string; minutes: number }[]>([]);
+  let intervalSaves: Promise<void> = Promise.resolve();
+  /** What runs: an action, or interval changes being saved. The tab's
+   * buttons wait for either, as they did when the interval's save was one
+   * of the actions. */
+  const busy = $derived(acting ?? (intervals.length > 0 ? "interval" : null));
+  /** What the select shows: the interval chosen last while its save waits,
+   * else what Rust reports. Svelte sets the select whenever the value it is
+   * given changes, so a select changed again before an earlier change was
+   * saved would otherwise jump back when it is; and a change Rust refused
+   * goes back to the interval in use. */
+  const shownInterval = $derived(
+    intervals.filter((i) => i.id === status?.id).at(-1)?.minutes ?? status?.intervalMinutes ?? DEFAULT_INTERVAL,
+  );
+
   async function act(name: string, f: () => Promise<void>): Promise<void> {
-    busy = name;
+    acting = name;
     error = null;
     notice = null;
     try {
@@ -82,9 +103,29 @@
     } catch (e) {
       error = describeError(e);
     } finally {
-      busy = null;
+      acting = null;
       void live.refresh();
     }
+  }
+
+  function changeInterval(id: string, minutes: number): void {
+    const change = { id, minutes };
+    intervals = [...intervals, change];
+    error = null;
+    notice = null;
+    intervalSaves = intervalSaves.then(async () => {
+      try {
+        await setFolderSyncInterval(id, minutes);
+        error = null;
+      } catch (e) {
+        error = describeError(e);
+      }
+      // The status as now saved, before the select stops showing this
+      // change: else it would show the interval of before until the
+      // channel brings the new one.
+      await live.refresh();
+      intervals = intervals.filter((i) => i !== change);
+    });
   }
 
   async function choose(): Promise<void> {
@@ -569,12 +610,9 @@
       <label class="field">
         <span>Check the bucket for changes made elsewhere</span>
         <select
-          value={status.intervalMinutes}
-          disabled={busy !== null}
-          onchange={(e) => {
-            const minutes = Number(e.currentTarget.value);
-            void act("interval", () => setFolderSyncInterval(status.id, minutes));
-          }}
+          value={shownInterval}
+          disabled={acting !== null}
+          onchange={(e) => changeInterval(status.id, Number(e.currentTarget.value))}
         >
           {#each INTERVALS as m (m)}
             <option value={m}>Every {m} minutes</option>

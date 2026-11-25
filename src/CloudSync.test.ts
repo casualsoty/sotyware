@@ -20,6 +20,10 @@ let choice: Record<string, unknown> | null;
 let details: Record<string, unknown>;
 let channel: FakeChannel | null;
 let failNext: string | null;
+/** Commands whose answers wait in `held` until `answer()` answers them,
+ * oldest first; the others answer at once. */
+let holding: Set<string>;
+let held: ((error?: unknown) => void)[];
 let app: ReturnType<typeof mount> | undefined;
 
 const ACCOUNT: AccountInfo = {
@@ -114,6 +118,8 @@ beforeEach(() => {
   details = noDetails();
   channel = null;
   failNext = null;
+  holding = new Set();
+  held = [];
   mockWindows("main");
   mockIPC((cmd, payload) => {
     const p = (payload ?? {}) as Record<string, unknown>;
@@ -122,27 +128,45 @@ beforeEach(() => {
       failNext = null;
       throw { kind: "busy", message: "this sync is paused; resume it first" };
     }
-    switch (cmd) {
-      case "list_folder_syncs":
-        return overview;
-      case "watch_folder_syncs":
-        channel = p["onEvent"] as FakeChannel;
-        return 7;
-      case "choose_sync_folder":
-        return choice;
-      case "enable_folder_sync":
-        overview = withSync(status({ state: "starting", files: 0, bytes: 0, lastSyncedMs: null }));
-        return (overview["syncs"] as unknown[])[0];
-      case "folder_sync_details":
-        return details;
-      case "disable_folder_sync":
-        overview = withSync(null);
-        return { path: PATH, trashKept: true };
-      default:
-        return null;
+    if (holding.has(cmd)) {
+      return new Promise((resolve, reject) => {
+        held.push((error) => (error === undefined ? resolve(answerOf(cmd, p)) : reject(error)));
+      });
     }
+    return answerOf(cmd, p);
   });
 });
+
+/** Rust's answer to `cmd`; a change of the interval also changes the live
+ * status, as `FolderSyncs::set_interval` does before it answers. */
+function answerOf(cmd: string, p: Record<string, unknown>): unknown {
+  switch (cmd) {
+    case "set_folder_sync_interval": {
+      const syncs = (overview["syncs"] as Record<string, unknown>[]).map((s) =>
+        s["id"] === p["id"] ? { ...s, intervalMinutes: p["minutes"] } : s,
+      );
+      overview = { ...overview, seq: (overview["seq"] as number) + 1, syncs };
+      return null;
+    }
+    case "list_folder_syncs":
+      return overview;
+    case "watch_folder_syncs":
+      channel = p["onEvent"] as FakeChannel;
+      return 7;
+    case "choose_sync_folder":
+      return choice;
+    case "enable_folder_sync":
+      overview = withSync(status({ state: "starting", files: 0, bytes: 0, lastSyncedMs: null }));
+      return (overview["syncs"] as unknown[])[0];
+    case "folder_sync_details":
+      return details;
+    case "disable_folder_sync":
+      overview = withSync(null);
+      return { path: PATH, trashKept: true };
+    default:
+      return null;
+  }
+}
 
 afterEach(() => {
   if (app) {
@@ -183,6 +207,22 @@ function button(root: ParentNode, name: string): HTMLButtonElement {
 
 function sent(cmd: string): Record<string, unknown>[] {
   return calls.filter((c) => c.cmd === cmd).map((c) => c.payload);
+}
+
+/** Answers the oldest held command: done, or refused with `error`. */
+async function answer(error?: unknown): Promise<void> {
+  const next = held.shift();
+  if (next === undefined) {
+    throw new Error("nothing is waiting");
+  }
+  next(error);
+  await settle();
+}
+
+/** Picks `minutes` in the select the way a key or a click does. */
+function pick(select: HTMLSelectElement, minutes: string): void {
+  select.value = minutes;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /** Every payload the page sent, flattened: no local path may be in one
@@ -429,6 +469,73 @@ describe("the Sync tab with a sync", () => {
     select.dispatchEvent(new Event("change", { bubbles: true }));
     await settle();
     expect(sent("set_folder_sync_interval")).toEqual([{ id: "b2-photos-1a2b3c4d", minutes: 60 }]);
+  });
+
+  // WebKitGTK takes the keyboard focus from a control that becomes
+  // disabled: while the tab disabled the select for each save, the next
+  // arrow key on it changed nothing. It now stays enabled, and the changes
+  // are saved one after another.
+  it("keeps the interval select enabled and focused through two quick changes, saved one after another", async () => {
+    overview = withSync(status());
+    const root = await render();
+    holding.add("set_folder_sync_interval");
+    const select = root.querySelector<HTMLSelectElement>(".settings select")!;
+    select.focus();
+    pick(select, "30");
+    await settle();
+    expect(sent("set_folder_sync_interval")).toEqual([{ id: "b2-photos-1a2b3c4d", minutes: 30 }]);
+    expect(select.disabled).toBe(false);
+    expect(document.activeElement).toBe(select);
+    // The tab's other actions wait for the save, as they did.
+    const others = ["Sync now", "Pause sync", "Open folder", "Change folder…", "Turn sync off…"];
+    expect(others.filter((n) => !button(root, n).disabled)).toEqual([]);
+    // The next key, before the first change is saved: it waits for it.
+    pick(select, "60");
+    await settle();
+    expect(sent("set_folder_sync_interval")).toHaveLength(1);
+    await answer();
+    // The first answer does not put the select back on 30 minutes.
+    expect(select.value).toBe("60");
+    expect(select.disabled).toBe(false);
+    expect(sent("set_folder_sync_interval").map((s) => s["minutes"])).toEqual([30, 60]);
+    await answer();
+    expect(select.value).toBe("60");
+    expect(document.activeElement).toBe(select);
+    expect(text(root)).toContain("The bucket is checked for changes made elsewhere every 60 minutes");
+    expect(others.filter((n) => button(root, n).disabled)).toEqual([]);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("puts a refused interval back to the one in use once no later change waits, and says why", async () => {
+    overview = withSync(status());
+    const root = await render();
+    holding.add("set_folder_sync_interval");
+    const select = root.querySelector<HTMLSelectElement>(".settings select")!;
+    pick(select, "30");
+    pick(select, "60");
+    await settle();
+    const refusal = { kind: "storage", message: "the sync settings could not be saved: disk full" };
+    await answer(refusal);
+    // The later change still waits: the select stays on it.
+    expect(select.value).toBe("60");
+    expect(text(root.querySelector('[role="alert"]'))).toContain("disk full");
+    await answer(refusal);
+    expect(sent("set_folder_sync_interval").map((s) => s["minutes"])).toEqual([30, 60]);
+    expect(select.value).toBe("15");
+    expect(text(root.querySelector('[role="alert"]'))).toContain("disk full");
+    expect(button(root, "Turn sync off…").disabled).toBe(false);
+  });
+
+  it("does not change the interval while another action of the tab runs", async () => {
+    overview = withSync(status());
+    const root = await render();
+    holding.add("set_folder_sync_paused");
+    button(root, "Pause sync").click();
+    await settle();
+    const select = root.querySelector<HTMLSelectElement>(".settings select")!;
+    expect(select.disabled).toBe(true);
+    await answer();
+    expect(select.disabled).toBe(false);
   });
 
   it("asks before turning off, and says the files stay", async () => {

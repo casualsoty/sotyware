@@ -7,6 +7,13 @@
   // updated from each switch's response; there are no events from Rust.
   // Rust saves each switch; when it cannot, the page says so (storageError,
   // saveError) instead of pretending the choice will be remembered.
+  //
+  // The checkboxes stay enabled while a switch runs: a disabled control
+  // ignores the keys it gets, and WebKitGTK can take the keyboard focus from
+  // it, so Space pressed again on a checkbox changed nothing while, and
+  // after, its switch ran (until 2026-11-25). What disabling them protected
+  // is kept another way: switches are sent one after another, in the order
+  // asked, and none is sent for a feature still starting or stopping.
 
   const STATE_LABELS: Record<FeatureState, string> = {
     registered: "Not started yet",
@@ -26,45 +33,103 @@
     stopping: "info",
   };
 
+  /** Every feature as Rust last said: the list, then each switch's answer. */
   let features = $state<FeatureInfo[] | null>(null);
   let storageError = $state<string | null>(null);
   let error = $state<string | null>(null);
-  let pending = $state<string | null>(null);
 
-  async function load(): Promise<void> {
+  /** One feature switched on or off by the user. */
+  interface Switch {
+    id: string;
+    enabled: boolean;
+  }
+
+  /** Switches run one after another, in the order asked, as they did when
+   * the page disabled every checkbox while one ran. */
+  let queue: Promise<void> = Promise.resolve();
+  /** Switches waiting for Rust's answer, oldest first. */
+  let pending = $state.raw<Switch[]>([]);
+  /** What the list shows: what Rust said, with the waiting switches applied
+   * (Starting… or Stopping… until they are answered). Svelte sets a
+   * checkbox whenever the value it is given changes, so a feature switched
+   * again before an earlier switch was answered would otherwise jump back
+   * when it is; and a switch Rust refused goes back to what Rust said. */
+  const shown = $derived(
+    features?.map((f) => {
+      const last = pending.filter((s) => s.id === f.id).at(-1);
+      return last === undefined ? f : { ...f, enabled: last.enabled, state: last.enabled ? ("initializing" as const) : ("stopping" as const) };
+    }) ?? null,
+  );
+
+  /** Reads the list; false (and says why) if it cannot be read. */
+  async function load(): Promise<boolean> {
     try {
       const list = await listFeatures();
       features = list.features;
       storageError = list.storageError;
+      return true;
     } catch (e) {
       error = `Could not list features: ${String(e)}`;
+      return false;
     }
   }
 
-  function busy(feature: FeatureInfo): boolean {
-    return pending !== null || feature.state === "initializing" || feature.state === "stopping";
+  function transient(state: FeatureState): boolean {
+    return state === "initializing" || state === "stopping";
   }
 
-  async function toggle(feature: FeatureInfo, input: HTMLInputElement): Promise<void> {
-    const enabled = input.checked;
+  function toggle(feature: FeatureInfo, input: HTMLInputElement): void {
+    const s: Switch = { id: feature.id, enabled: input.checked };
     error = null;
-    pending = feature.id;
+    pending = [...pending, s];
+    queue = queue.then(async () => {
+      try {
+        await send(s);
+      } catch (e) {
+        // Never left rejected: the switches after it would not run.
+        error = String(e);
+      } finally {
+        pending = pending.filter((p) => p !== s);
+      }
+    });
+  }
+
+  async function send(s: Switch): Promise<void> {
+    let known = features?.find((f) => f.id === s.id);
+    if (known !== undefined && transient(known.state)) {
+      // Started or stopped elsewhere (the notes overlay's settings, the
+      // Autoclicker page) and still starting or stopping when the list was
+      // read: this page hears of the end only by reading the list again.
+      if (!(await load())) {
+        return;
+      }
+      known = features?.find((f) => f.id === s.id);
+    }
+    if (known === undefined || known.enabled === s.enabled) {
+      return;
+    }
+    const verb = s.enabled ? "enable" : "disable";
+    if (transient(known.state)) {
+      // Rust would refuse it: the registry switches a feature only between
+      // its transitions.
+      const doing = known.state === "initializing" ? "starting" : "stopping";
+      error = `Could not ${verb} ${known.name}: it is still ${doing}. Try again in a moment.`;
+      return;
+    }
     try {
-      const { feature: updated, saveError } = await setFeatureEnabled(feature.id, enabled);
+      const { feature: updated, saveError } = await setFeatureEnabled(s.id, s.enabled);
       features = (features ?? []).map((f) => (f.id === updated.id ? updated : f));
       if (saveError !== null) {
         // The switch happened; only remembering it failed.
         const now = updated.enabled ? "enabled" : "disabled";
         error =
-          `Could not save the choice for ${feature.name}: ${saveError}. ` +
+          `Could not save the choice for ${known.name}: ${saveError}. ` +
           `It stays ${now} until sotyware quits; the next start uses the last saved choice or the default.`;
       }
     } catch (e) {
-      // Nothing changed on the Rust side: put the checkbox back.
-      input.checked = feature.enabled;
-      error = `Could not ${enabled ? "enable" : "disable"} ${feature.name}: ${String(e)}`;
-    } finally {
-      pending = null;
+      // Nothing changed on the Rust side: the checkbox goes back once no
+      // later switch of this feature waits.
+      error = `Could not ${verb} ${known.name}: ${String(e)}`;
     }
   }
 
@@ -76,20 +141,15 @@
 <section aria-labelledby="features-heading">
   <h2 id="features-heading">Features</h2>
   <p class="muted small-text">Built-in parts of sotyware that run in the background. Your choice is remembered.</p>
-  {#if features}
-    {#if features.length === 0}
+  {#if shown}
+    {#if shown.length === 0}
       <p>No built-in features.</p>
     {/if}
     <ul>
-      {#each features as feature (feature.id)}
+      {#each shown as feature (feature.id)}
         <li data-feature={feature.id}>
           <label>
-            <input
-              type="checkbox"
-              checked={feature.enabled}
-              disabled={busy(feature)}
-              onchange={(e) => toggle(feature, e.currentTarget)}
-            />
+            <input type="checkbox" checked={feature.enabled} onchange={(e) => toggle(feature, e.currentTarget)} />
             {feature.name}
           </label>
           <span class="meta">{feature.version} · <span class="state badge {STATE_TONES[feature.state]}">{STATE_LABELS[feature.state]}</span></span>

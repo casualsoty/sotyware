@@ -321,6 +321,14 @@ computer apart from what the bucket stores.
 
 The page gets the status from `watch_folder_syncs` (a `Channel`; Rust sends
 at most four overviews a second) and the lists from `folder_sync_details`.
+The tab runs one action at a time, its buttons waiting meanwhile. The
+interval select saves each change at once and stays enabled while it is
+saved ([frontend.md](frontend.md#interaction); until 2026-11-25 it was
+disabled meanwhile, and the next arrow key was lost): the changes are saved
+one after another, the select shows the last one chosen until the status
+read after its save says it is in use, and the buttons wait for them; the
+select waits while another action runs, so the sync's stored configuration
+is never written by two of the tab's commands at once.
 
 ## Commands
 

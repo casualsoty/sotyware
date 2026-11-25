@@ -1390,29 +1390,38 @@ server only; no real provider was asked.
   language other than English or WebKitGTK in another language (the WSL2
   tried has no glibc locale but C and POSIX)
   ([status](status.md#numbers-and-dates-in-en-us-2026-11-24)).
-- **In `v0.1.3` and `v0.1.4` a setting changed with the keyboard loses
+- **In every release so far a setting changed with the keyboard loses
   keys, and can lose the focus, while it is saved** (WebKitGTK 2.52.6 on
-  the Linux desktop test's private display, 2026-11-25): Settings › Notes
-  overlay (`v0.1.4`) and the Autoclicker page's Settings tab (`v0.1.3`)
-  save each change at once and disable their controls until the save is
-  done. WebKitGTK ignores the keys a disabled control gets and can move
-  the keyboard focus off it: a select changed with an arrow key moves one
-  option, a key pressed during the save changes nothing, and when the
-  focus has gone (within 0.3 s, not every time) neither does the next
-  one, until the select is focused again (Tab or a click). The mouse is
-  not affected: choosing an option from the opened list saves once. Found
-  when the overlay's desktop test, pressing Home and then Down to reach
+  the Linux desktop test's private display, 2026-11-25): Settings ›
+  Features (every release: each feature's checkbox, all of them disabled
+  while any switch ran), the bucket's Sync tab (`v0.1.2` to `v0.1.4`: its
+  interval select), the Autoclicker page's Settings tab (`v0.1.3` and
+  `v0.1.4`) and Settings › Notes overlay (`v0.1.4`) save each change at
+  once and disable their controls until the save is done. WebKitGTK
+  ignores the keys a disabled control gets and can move the keyboard
+  focus off it: a select changed with an arrow key moves one option, a
+  key pressed during the save changes nothing, and when the focus has
+  gone (within 0.3 s, not every time) neither does the next one, until
+  the control is focused again (Tab or a click); a feature switched with
+  Space ignores a second Space pressed while its switch runs, and the
+  checkbox can lose the focus after it. The mouse is not affected on a
+  select: choosing an option from the opened list saves once. Found when
+  the overlay's desktop test, pressing Home and then Down to reach
   Centre left, stopped one or two options short
   ([status](status.md#more-places-for-the-notes-overlay-to-open-at-2026-11-25)).
-  **Fixed on 2026-11-25, after `v0.1.4`** (branch
-  `fix/settings-keep-keyboard-focus`, not on `main` yet): both pages keep
-  their controls enabled while a change is saved, queue the saves and
-  show the changes still waiting; the desktop tests' new checks of
-  several keys in a row on a select, focused once, pass with the fix
-  (overlay phase four runs, autoclicker phase three) and fail with the
-  old pages, in both phases
-  ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)).
-  Neither the defect nor the fix was examined in WebView2 or WKWebView.
+  **Fixed on 2026-11-25, after `v0.1.4`**, on two branches, neither on
+  `main` yet: Settings › Notes overlay and the Autoclicker's Settings tab
+  on `fix/settings-keep-keyboard-focus`
+  ([status](status.md#settings-keep-the-keyboard-while-a-change-is-saved-2026-11-25)),
+  Settings › Features and the Sync tab's interval on
+  `fix/features-and-sync-keep-keyboard-focus`, built on it
+  ([status](status.md#settings--features-and-the-sync-tabs-interval-keep-the-keyboard-too-2026-11-25)).
+  Every page keeps its controls enabled while a change is saved, queues
+  the saves and shows the changes still waiting; the desktop tests'
+  checks of several keys in a row on a control focused once pass with the
+  fix (overlay phase four runs, autoclicker phase three, sync phase three)
+  and fail with the old pages, in each of these phases. Neither the defect
+  nor the fix was examined in WebView2 or WKWebView.
 - **WebKitGTK and native controls:** checkboxes and radio buttons keep the
   GTK theme's look in dark mode on Linux.
 - **Seen only on WebKitGTK:** the redesign was looked at through the Linux

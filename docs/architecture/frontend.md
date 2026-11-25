@@ -231,17 +231,25 @@ followed it (the sizes, the autoclicker's counts, the details Rust writes):
   the header's Close), Tab stays inside, Escape and the backdrop close
   unless the dialog is locked while something runs, focus returns where it
   was. `side` makes a details sheet along the right edge.
-- **Controls that save as they change** (Settings › Notes overlay, the
-  Autoclicker's Settings tab) stay enabled while their change is saved: a
-  disabled control ignores the keys it gets, and WebKitGTK can take the
-  keyboard focus from it, so arrow keys on a select changed nothing while
-  and after its change was saved (until 2026-11-25). The saves wait in a
-  queue, each computed from what the one before saved, and the reset waits
-  there too; the controls show the saved settings with the waiting changes
-  applied, since Svelte sets a control's value whenever the value it is
-  given changes: a control changed again meanwhile does not jump back when
-  an earlier change is saved, and a refused change goes back to what is
-  saved, with Rust's reason above.
+- **Controls that save as they change** (Settings › Notes overlay,
+  Settings › Features, the Autoclicker's Settings tab, the Sync tab's
+  interval) stay enabled while their change is saved: a disabled control
+  ignores the keys it gets, and WebKitGTK can take the keyboard focus from
+  it, so arrow keys on a select, or Space on a checkbox, changed nothing
+  while and after its change was saved (until 2026-11-25). The saves wait
+  in a queue, each computed from what the one before saved, and the
+  overlay settings' reset waits there too; the controls show what is saved
+  with the waiting changes applied, since Svelte sets a control's value
+  whenever the value it is given changes: a control changed again
+  meanwhile does not jump back when an earlier change is saved, and a
+  refused change goes back to what is saved, with Rust's reason above.
+  What the disabling protected stays: the features' switches are sent one
+  at a time, in the order asked, each feature showing Starting… or
+  Stopping… until its switch is answered, and one the list showed starting
+  or stopping (switched elsewhere) is read again before a switch of it is
+  sent, nothing being sent while it still is
+  ([features.md](features.md#frontend)); the Sync tab's buttons wait for
+  the interval's saves, and the select for the tab's other actions.
 - **Motion:** short fades and slides (≤ 180 ms), none with reduced motion.
 - **Drag and drop, native dialogs:** unchanged: files dropped on the window
   and every file or folder dialog are handled in Rust (ADR-020, ADR-022,

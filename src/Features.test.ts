@@ -39,10 +39,14 @@ let features: FeatureInfo[];
 let storageError: string | null;
 let saveError: string | null;
 let respond: (cmd: string, payload: unknown) => unknown;
+/** When set, each switch waits here until `answer()` answers it, oldest
+ * first; otherwise the registry answers at once. */
+let held: ((error?: unknown) => void)[] | null;
 let app: ReturnType<typeof mount> | undefined;
 
 /** Answers like the registry: a switch returns the new state of that feature,
- * and `saveError` as the preference store's answer. */
+ * and `saveError` as the preference store's answer; a feature starting or
+ * stopping is not switched. */
 function backend(cmd: string, payload: unknown): unknown {
   if (cmd === LIST_FEATURES) {
     return { features, storageError };
@@ -52,6 +56,10 @@ function backend(cmd: string, payload: unknown): unknown {
     const current = features.find((f) => f.id === id);
     if (!current) {
       return Promise.reject(`unknown feature '${id}'`);
+    }
+    if (current.state === "initializing" || current.state === "stopping") {
+      const state = current.state === "initializing" ? "Initializing" : "Stopping";
+      return Promise.reject(`cannot ${enabled ? "enable" : "disable"} feature '${id}' while it is ${state}`);
     }
     const next = enabled
       ? feature({ ...current, state: "running", enabled: true, error: null })
@@ -71,9 +79,16 @@ beforeEach(() => {
   storageError = null;
   saveError = null;
   respond = backend;
+  held = null;
   mockWindows("main");
   mockIPC((cmd, payload) => {
     calls.push({ cmd, payload });
+    const waiting = held;
+    if (cmd === SET_FEATURE_ENABLED && waiting !== null) {
+      return new Promise((resolve, reject) => {
+        waiting.push((error) => (error === undefined ? resolve(respond(cmd, payload)) : reject(error)));
+      });
+    }
     return respond(cmd, payload);
   });
 });
@@ -132,6 +147,23 @@ function toggle(input: HTMLInputElement): void {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+/** Answers the oldest switch still waiting: made, or refused with `error`. */
+async function answer(error?: unknown): Promise<void> {
+  const next = held?.shift();
+  if (next === undefined) {
+    throw new Error("no switch is waiting");
+  }
+  next(error);
+  await settle();
+}
+
+/** The features whose checkbox is disabled. */
+function disabledBoxes(root: HTMLElement): string[] {
+  return [...root.querySelectorAll<HTMLInputElement>('li[data-feature] input[type="checkbox"]')]
+    .filter((input) => input.disabled)
+    .map((input) => input.closest("li")?.dataset["feature"] ?? "?");
+}
+
 describe("feature list", () => {
   it("asks for the list once on mount and changes nothing", async () => {
     await render();
@@ -162,16 +194,68 @@ describe("feature list", () => {
     expect(root.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("does not offer a switch while a feature is starting or stopping", async () => {
+  // A feature switched elsewhere (the notes overlay's settings, the
+  // Autoclicker page) can still be starting or stopping when the list is
+  // read. Its checkbox stays enabled (until 2026-11-25 it was disabled until
+  // the page was shown again), but no switch is sent while the registry
+  // would refuse it: the page reads the list again first.
+  it("reads the list again before switching a feature it saw starting or stopping, and sends nothing while it still is", async () => {
     features = [
-      feature({ id: "a", state: "initializing", enabled: true }),
-      feature({ id: "b", state: "stopping", enabled: false }),
-      feature({ id: "c", state: "registered", enabled: false }),
+      feature({ id: "a", name: "A", state: "initializing", enabled: true }),
+      feature({ id: "b", name: "B", state: "stopping", enabled: false }),
+      feature({ id: "c", name: "C", state: "registered", enabled: false }),
     ];
     const root = await render();
-    expect(checkbox(root, "a").disabled).toBe(true);
-    expect(checkbox(root, "b").disabled).toBe(true);
-    expect(checkbox(root, "c").disabled).toBe(false);
+    expect(disabledBoxes(root)).toEqual([]);
+    expect(stateText(root, "a")).toBe("Starting…");
+    expect(stateText(root, "b")).toBe("Stopping…");
+    toggle(checkbox(root, "a"));
+    await settle();
+    expect(calls.map((c) => c.cmd)).toEqual([LIST_FEATURES, LIST_FEATURES]);
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Could not disable A: it is still starting. Try again in a moment.");
+    expect(checkbox(root, "a").checked).toBe(true);
+    expect(stateText(root, "a")).toBe("Starting…");
+    // Both have finished meanwhile: the list read again says so, and the
+    // switch is sent.
+    features = features.map((f) =>
+      f.id === "a" ? { ...f, state: "running" } : f.id === "b" ? { ...f, state: "disabled" } : f,
+    );
+    toggle(checkbox(root, "a"));
+    toggle(checkbox(root, "b"));
+    await settle();
+    expect(switchCalls().map((c) => c.payload)).toEqual([
+      { id: "a", enabled: false },
+      { id: "b", enabled: true },
+    ]);
+    expect(calls.filter((c) => c.cmd === LIST_FEATURES)).toHaveLength(3);
+    expect([stateText(root, "a"), stateText(root, "b"), stateText(root, "c")]).toEqual(["Disabled", "Running", "Not started yet"]);
+    expect([checkbox(root, "a").checked, checkbox(root, "b").checked]).toEqual([false, true]);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("sends nothing for a feature it saw stopping that is now where the switch asks", async () => {
+    features = [feature({ id: "a", name: "A", state: "stopping", enabled: false })];
+    const root = await render();
+    toggle(checkbox(root, "a"));
+    // Switched on again elsewhere meanwhile.
+    features = [feature({ id: "a", name: "A", state: "running", enabled: true })];
+    await settle();
+    expect(switchCalls()).toEqual([]);
+    expect(stateText(root, "a")).toBe("Running");
+    expect(checkbox(root, "a").checked).toBe(true);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("says why and sends nothing when the list cannot be read again", async () => {
+    features = [feature({ id: "a", name: "A", state: "stopping", enabled: false })];
+    const root = await render();
+    respond = (cmd, payload): unknown => (cmd === LIST_FEATURES ? Promise.reject("list_features not allowed") : backend(cmd, payload));
+    toggle(checkbox(root, "a"));
+    await settle();
+    expect(switchCalls()).toEqual([]);
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Could not list features: list_features not allowed");
+    expect(checkbox(root, "a").checked).toBe(false);
+    expect(stateText(root, "a")).toBe("Stopping…");
   });
 
   it("says so when there are no features", async () => {
@@ -262,23 +346,73 @@ describe("switching a feature", () => {
     expect(stateText(root, "backup-scheduler")).toBe("Disabled");
   });
 
-  it("offers no switch while a request is in flight", async () => {
-    let finish: (value: unknown) => void = () => {};
-    respond = (cmd, payload): unknown =>
-      cmd === SET_FEATURE_ENABLED
-        ? new Promise((resolve) => {
-            finish = (): void => resolve(backend(cmd, payload));
-          })
-        : backend(cmd, payload);
+});
+
+describe("while a switch runs", () => {
+  // WebKitGTK takes the keyboard focus from a control that becomes
+  // disabled: while the page disabled every checkbox for each switch, Space
+  // pressed again changed nothing. They now stay enabled, and the switches
+  // are sent one after another, as before.
+  it("keeps the checkboxes enabled and focused through quick switches, sent one after another", async () => {
     const root = await render();
-    toggle(checkbox(root, "backup-scheduler"));
+    held = [];
+    const box = checkbox(root, "backup-scheduler");
+    box.focus();
+    toggle(box);
     await settle();
-    expect(checkbox(root, "backup-scheduler").disabled).toBe(true);
-    expect(checkbox(root, "other").disabled).toBe(true);
-    finish(null);
+    expect(switchCalls().map((c) => c.payload)).toEqual([{ id: "backup-scheduler", enabled: false }]);
+    expect(disabledBoxes(root)).toEqual([]);
+    expect(document.activeElement).toBe(box);
+    expect(stateText(root, "backup-scheduler")).toBe("Stopping…");
+    // Space again, and another feature, before the first switch is answered.
+    toggle(box);
+    toggle(checkbox(root, "other"));
     await settle();
-    expect(checkbox(root, "backup-scheduler").disabled).toBe(false);
     expect(switchCalls()).toHaveLength(1);
+    expect([box.checked, checkbox(root, "other").checked]).toEqual([true, true]);
+    expect([stateText(root, "backup-scheduler"), stateText(root, "other")]).toEqual(["Starting…", "Starting…"]);
+    await answer();
+    // The first answer (disabled) does not take the checkbox back off.
+    expect(box.checked).toBe(true);
+    expect(stateText(root, "backup-scheduler")).toBe("Starting…");
+    expect(disabledBoxes(root)).toEqual([]);
+    expect(switchCalls()).toHaveLength(2);
+    await answer();
+    await answer();
+    expect(switchCalls().map((c) => c.payload)).toEqual([
+      { id: "backup-scheduler", enabled: false },
+      { id: "backup-scheduler", enabled: true },
+      { id: "other", enabled: true },
+    ]);
+    expect([stateText(root, "backup-scheduler"), stateText(root, "other")]).toEqual(["Running", "Running"]);
+    expect([box.checked, checkbox(root, "other").checked]).toEqual([true, true]);
+    expect(document.activeElement).toBe(box);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("puts a refused switch back once no later switch of that feature waits, and says why", async () => {
+    const root = await render();
+    held = [];
+    const box = checkbox(root, "backup-scheduler");
+    toggle(box);
+    toggle(box);
+    await settle();
+    await answer("cannot save: the registry is busy");
+    // The later switch still waits: the checkbox stays on it.
+    expect(box.checked).toBe(true);
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe(
+      "Could not disable Scheduled backups: cannot save: the registry is busy",
+    );
+    // It asks for what is there already (running): nothing more is sent.
+    expect(switchCalls()).toHaveLength(1);
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
+    toggle(box);
+    await settle();
+    expect(box.checked).toBe(false);
+    await answer("cannot save: the registry is busy");
+    expect(box.checked).toBe(true);
+    expect(stateText(root, "backup-scheduler")).toBe("Running");
+    expect(switchCalls()).toHaveLength(2);
   });
 });
 

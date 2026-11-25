@@ -32,9 +32,14 @@
 # its close button, and the window manager's close (Alt+F4), hide it
 # without destroying anything; Show overlay brings it back. After a
 # restart the overlay stays hidden (it is not set to show at startup) but
-# its shortcuts work, and it opens where it was with its notes. Turning the
-# feature off destroys the window and releases every shortcut; the notes
-# stay.
+# its shortcuts work, and it opens where it was with its notes. In
+# Settings › Features, its checkbox focused once and never again, two
+# Spaces in one burst switch the feature off and on again in turn (a new
+# window, the shortcuts registered again, the choice saved), and three
+# Spaces half a second apart leave it off: the window destroyed, every
+# shortcut released, the notes kept.
+import re
+
 import test_profile as tp  # cloud_ui.py put this folder on sys.path
 
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cloud_ui_gtk.py"), encoding="utf-8").read())
@@ -655,13 +660,72 @@ page = "Prepare healing items" in text(pid) or (page_tab("Boss strategy") and wa
     lambda: "Prepare healing items" in text(pid), 5))
 check("and their text", bool(page))
 
-# ---- turned off ----
-ok = link(pid, "Settings") and page_tab("Features") and wait_for(
-    lambda: any(n == "Gaming notes overlay" for n, _ in by_role(pid, Atspi.Role.CHECK_BOX)), 10)
-box = next((node for n, node in by_role(pid, Atspi.Role.CHECK_BOX) if n == "Gaming notes overlay"), None)
-ok = ok and box is not None and Atspi.Action.do_action(box, 0)
-ok = ok and wait_for(lambda: overlay_window() is None, 10)
-check("turned off in Settings › Features: the overlay window is gone", bool(ok))
+# ---- switched with Spaces in a row in Settings › Features, then left off ----
+# The feature's checkbox is focused once and never again. Each Space
+# switches the feature, the switches run one after another, and the
+# checkbox keeps the keyboard (until 2026-11-25 the list disabled every
+# checkbox while a switch ran: a Space pressed meanwhile was lost, and
+# WebKitGTK could take the focus from the checkbox). Two Spaces in one
+# burst turn it off and on again, which destroys the window and shows a
+# new one; three half a second apart leave it off.
+PREFS_DB = PROFILE.db("preferences.sqlite3")
+
+
+def overlay_box():
+    return next((node for n, node in by_role(pid, Atspi.Role.CHECK_BOX) if n == "Gaming notes overlay"), None)
+
+
+def ticked(node):
+    return node is not None and node.get_state_set().contains(Atspi.StateType.CHECKED)
+
+
+def feature_state():
+    """The feature's state in the list: Running, Disabled, Starting…"""
+    m = re.search(r"Gaming notes overlay [0-9.]+ · (\S+)", text(pid))
+    return m.group(1) if m else None
+
+
+def saved_choice():
+    """The choice in preferences.sqlite3 (None before the first switch)."""
+    try:
+        with sqlite3.connect(f"file:{PREFS_DB}?mode=ro", uri=True) as db:
+            row = db.execute("SELECT enabled FROM feature_preferences WHERE feature_id = 'notes-overlay'").fetchone()
+    except sqlite3.Error:
+        return None
+    return None if row is None else bool(row[0])
+
+
+def spaces(count, gap):
+    """Presses Space `count` times on the focused checkbox, `gap` seconds apart."""
+    for i in range(count):
+        if i:
+            time.sleep(gap)
+        key(keysym("space"))
+
+
+def switched():
+    return (f"checkbox {'ticked' if ticked(box) else 'not ticked'}, focused {focused(box)}, "
+            f"state {feature_state()!r}, saved {saved_choice()}, overlay window {overlay_window()}")
+
+
+ok = link(pid, "Settings") and page_tab("Features") and wait_for(overlay_box, 10)
+box = overlay_box()
+first = overlay_window()
+focus_window(pid)
+ready = bool(ok) and ticked(box) and first is not None and Atspi.Component.grab_focus(box) and wait_for(
+    lambda: focused(box), 3)
+check("Settings › Features: the overlay's checkbox is ticked and takes the keyboard", bool(ready), switched())
+spaces(2, 0)
+ok = ready and wait_for(lambda: feature_state() == "Running" and ticked(box) and saved_choice() is True
+                        and overlay_window() not in (None, first), 20)
+check("two Spaces in one burst on it, focused once: off, then on again in turn (a new overlay window), saved, "
+      "the checkbox keeping the keyboard", bool(ok) and focused(box), switched())
+check("…its shortcuts registered again", wait_for(none_grabbable, 10))
+spaces(3, 0.5)
+ok = ready and wait_for(lambda: feature_state() == "Disabled" and not ticked(box) and saved_choice() is False
+                        and overlay_window() is None, 20)
+check("three Spaces half a second apart, still not focused again, leave it off: the overlay window is gone, saved",
+      bool(ok) and focused(box), switched())
 check("…and every shortcut is released (this driver can grab them all)", wait_for(all_grabbable, 10))
 check("the notes stay in notes.sqlite3", [r[0] for r in notes_rows()] == ["Boss strategy", "Route"], str(notes_rows()))
 check("sotyware is still running", p.poll() is None)

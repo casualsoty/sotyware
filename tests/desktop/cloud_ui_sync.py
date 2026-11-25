@@ -15,11 +15,14 @@
 # deleted elsewhere goes to the sync trash, a file changed on both sides
 # is kept twice, sotyware is quit and started again (the startup
 # connection check reaches the server with no click, ADR-046, and the
-# sync goes on), and turning sync off deletes nothing on either side. The
-# server fails at the end if a real version was ever deleted for good.
+# sync goes on), the interval select, focused once, follows several keys
+# in a row (a burst, then half a second apart), each change saved and in
+# use, and turning sync off deletes nothing on either side. The server
+# fails at the end if a real version was ever deleted for good.
 import glob
 import hashlib
 import json
+import re
 
 import test_profile as tp  # cloud_ui.py put this folder on sys.path
 
@@ -241,6 +244,81 @@ ok = press(pid, "Open bucket") and wait_for(lambda: any(n.strip() == "Sync" for 
                                                         by_role(pid, Atspi.Role.PAGE_TAB)), 30)
 ok = ok and open_sync_tab() and wait_for(lambda: "Turn sync off…" in [b.strip() for b in buttons(pid)], 20)
 check("the Sync tab shows the sync after the restart", bool(ok), text(pid)[-300:])
+
+# ---- several keys in a row on the interval select, focused once ----
+# Each change is saved at once, one after another, and the select keeps the
+# keyboard (until 2026-11-25 the tab disabled the select while a change was
+# saved: a key sent meanwhile was lost, and WebKitGTK could take the focus
+# from the select). Ends on 15 minutes, as it began.
+INTERVAL = "Check the bucket for changes made elsewhere"
+SYNC_DB = PROFILE.db("folder-sync.sqlite3")
+
+
+def combo(label):
+    for role, name, _, node in nodes(pid):
+        if role == Atspi.Role.COMBO_BOX and (name == label or name.startswith(label + " ")):
+            return node
+    return None
+
+
+def shown_option(node):
+    """The option the <select> `node` shows (its SELECTED menu item)."""
+    return next((i.get_name().strip() for i in find(node, Atspi.Role.MENU_ITEM)
+                 if i.get_state_set().contains(Atspi.StateType.SELECTED)), None)
+
+
+def focused(node):
+    return node is not None and node.get_state_set().contains(Atspi.StateType.FOCUSED)
+
+
+def saved_interval():
+    """The interval in the sync's configuration in folder-sync.sqlite3."""
+    try:
+        with sqlite3.connect(f"file:{SYNC_DB}?mode=ro", uri=True) as db:
+            rows = db.execute("SELECT data FROM syncs").fetchall()
+    except sqlite3.Error:
+        return None
+    return json.loads(rows[0][0]).get("intervalMinutes") if len(rows) == 1 else None
+
+
+def reported_interval():
+    """The interval in use, as the tab writes Rust's live status."""
+    m = re.search(r"checked for changes made elsewhere every (\d+) minutes", text(pid))
+    return int(m.group(1)) if m else None
+
+
+def interval_state():
+    shown = shown_option(interval) if interval is not None else None
+    return f"select shows {shown!r}, focused {focused(interval)}, saved {saved_interval()}, in use {reported_interval()}"
+
+
+def interval_at(minutes):
+    return wait_for(lambda: shown_option(interval) == f"Every {minutes} minutes" and saved_interval() == minutes
+                    and reported_interval() == minutes, 10)
+
+
+interval = wait_for(lambda: combo(INTERVAL), 10)
+focus_window(pid)
+ready = interval is not None and shown_option(interval) == "Every 15 minutes" and Atspi.Component.grab_focus(
+    interval) and wait_for(lambda: focused(interval), 3)
+check("the interval select shows Every 15 minutes and takes the keyboard", bool(ready), interval_state())
+for _ in range(2):
+    key(keysym("Down"))
+ok = ready and interval_at(60)
+check("two Downs in one burst on it, focused once: Every 60 minutes, saved and in use, the select keeping the keyboard",
+      bool(ok) and focused(interval), interval_state())
+for i in range(3):
+    if i:
+        time.sleep(0.5)
+    key(keysym("Up"))
+ok = ready and interval_at(5)
+check("three Ups half a second apart, still not focused again: Every 5 minutes, saved and in use",
+      bool(ok) and focused(interval), interval_state())
+key(keysym("Down"))
+ok = ready and interval_at(15)
+check("one more Down brings it back to Every 15 minutes, saved and in use", bool(ok) and focused(interval),
+      interval_state())
+
 local_before, remote_before = local_files(), remote_current()
 ok = press(pid, "Turn sync off…") and wait_for(lambda: "Turn sync off" in [b.strip() for b in buttons(pid)], 10)
 ok = ok and press(pid, "Turn sync off") and wait_for(lambda: "Choose folder…" in [b.strip() for b in buttons(pid)], 30)

@@ -269,8 +269,10 @@ function FeatureBox {
   if (-not $b -and (OpenFeatures)) { Start-Sleep -Milliseconds 300; $b = FindFeatureBox }
   $b
 }
-# The switched feature as shown: checkbox checked and enabled (not busy), and its
-# list item's text. $null until the list has loaded.
+# The switched feature as shown: checkbox checked and enabled, and its list
+# item's text, whose state reads Starting or Stopping until a switch is
+# answered (since 2026-11-25 the checkbox stays enabled meanwhile; before, it
+# was disabled, which Ready also waited out). $null until the list has loaded.
 function FeatureView {
   $b = FeatureBox; if (-not $b) { return $null }
   try {
