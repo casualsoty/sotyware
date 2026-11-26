@@ -3144,8 +3144,14 @@ Status: Accepted (2026-11-26). Code: `src/noteEmoji.ts`,
   Documentation License); `src/assets/emoji/gw2/README.md` names the
   source, licence and the authors the file pages name. The symbols are
   ArenaNet's trademarks; sotyware is not affiliated with ArenaNet. The
-  GFDL asks that a copy distributed carry the licence's text: the
-  installers do not yet, a gate before the next release
+  GFDL asks that a copy distributed carry the licence's text: since 0.1.6
+  (2026-11-26) every installer does, as Tauri resources
+  (`bundle.resources` in `tauri.conf.json`): `licenses/GFDL-1.2.txt`
+  (from `src-tauri/licenses/`, gnu.org's text unchanged) and the README
+  as `licenses/gw2-profession-icons.md`, so source, authors and licence
+  have one home in the repository and travel together. Not a licence page
+  in the installers' wizard: the icons' licence binds what is
+  distributed, not the person installing
   ([limitations](../status/limitations.md#gaming-notes-overlay-adr-052)).
 - **Consequences:** about 190 KB more in the overlay's page; no new
   dependency, command or permission. Notes with shortcodes read as

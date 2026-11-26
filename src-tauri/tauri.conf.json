@@ -51,6 +51,10 @@
         "uninstallerIcon": "icons/icon.ico"
       }
     },
+    "resources": {
+      "licenses/GFDL-1.2.txt": "licenses/GFDL-1.2.txt",
+      "../src/assets/emoji/gw2/README.md": "licenses/gw2-profession-icons.md"
+    },
     "category": "Utility",
     "shortDescription": "Cloud storage, backups and sync for your desktop",
     "macOS": {

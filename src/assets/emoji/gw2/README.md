@@ -11,8 +11,12 @@ icon, named after its shortcode (`guardian.png` is `:guardian:`).
   <https://wiki.guildwars2.com/wiki/File:Guardian_tango_icon_48px.png>),
   downloaded on 2026-11-26 and copied unchanged, only renamed.
 - **Licence:** every one of these files is tagged `{{GFDL image}}` on its
-  wiki page: the GNU Free Documentation License. Each file's page holds its
-  history and authors.
+  wiki page: the GNU Free Documentation License, version 1.2 (the
+  wiki's licence). Each file's page holds its history and authors. The
+  licence's text ships with sotyware: `licenses/GFDL-1.2.txt` next to
+  this notice, which is installed as `licenses/gw2-profession-icons.md`
+  (`bundle.resources` in `src-tauri/tauri.conf.json`; in the repository,
+  `src-tauri/licenses/GFDL-1.2.txt`).
 - **Authors named on the file pages:** the wiki's contributors; the
   Visions of Eternity icons (Amalgam, Antiquary, Conduit, Evoker, Galeshot,
   Luminary, Paragon, Ritualist, Troubadour) were drawn by the wiki user

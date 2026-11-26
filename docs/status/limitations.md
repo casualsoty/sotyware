@@ -1325,9 +1325,11 @@ server only; no real provider was asked.
   They are 48 px pictures, drawn one line high: at very large text sizes
   or scalings above 200 % they are slightly soft. A note with `:guardian:`
   read by sotyware 0.1.5 or older shows the shortcode as text. The icons
-  are GFDL: the installers do not yet carry the licence's text, which the
-  GFDL asks a copy distributed with them to include; to settle before the
-  next release.
+  are GFDL 1.2; since 0.1.6 the installers carry the licence's text and
+  the icons' notice (`licenses/`, ADR-053). That the wiki's version is 1.2
+  was taken from the wiki's sister site and search results: the GW2 wiki
+  refused the agent's requests, so no one has yet read it on its own
+  pages.
 - **Not implemented** although asked for "launch at startup": sotyware
   cannot start itself at login (no autostart, an app-wide change listed
   under the roadmap's ideas); the overlay can only be shown when sotyware
