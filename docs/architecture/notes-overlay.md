@@ -220,6 +220,24 @@ addresses (trailing punctuation left out). Only `http`/`https` become
 links. Text that only looks like Markdown (`5 * 3`, `snake_case`) stays
 as written.
 
+**Emojis** (`noteEmoji.ts`): a shortcode `:id:` not inside a word, whose
+picture is bundled, becomes an `<img>` one line of the note high (`1lh`,
+`1.45em` where the webview has no `lh`), with the profession's name as
+its text for screen readers, tab names and search; `\:id:` and unknown
+shortcodes stay text. The set is Guild Wars 2's nine professions and
+their 36 elite specializations in the GW2 wiki's tango style (GFDL,
+ADR-053; source and authors in `src/assets/emoji/gw2/README.md`), one
+48 px PNG per icon at `src/assets/emoji/gw2/<id>.png`, the id being the
+name in lowercase, collected by `import.meta.glob`: an icon without its
+file is neither offered nor read, and a checkout without any shows no
+emoji button. Vite bundles the files with the overlay's page (those under
+4 KiB inlined as `data:`), so the CSP (`img-src 'self' data:`) is
+unchanged and nothing is loaded from elsewhere. The editor's toolbar
+opens them as rows above it, one per profession, core first
+(the toolbar scrolls sideways and would clip a popover); a click types
+the shortcode at the caret through the browser's own typing, so Undo
+works.
+
 - **Editing**: the note shows rendered; a click opens a plain-text editor
   with the cursor at the end of the line clicked (Edit, or Enter in the
   title, at the end of the note); Escape or Done closes it. Enter continues
@@ -367,8 +385,8 @@ asked for its settings: the dashboard opens Settings › Notes overlay),
 - **Storage** (`storage/notes.rs`): reopen, exact text, the two
   documents, a newer or corrupt database refused and left alone, the
   schema.
-- **Frontend**: `src/noteMarkdown.test.ts` (parsing, editing keys,
-  search), `src/noteAutosave.test.ts` (timing, ordering, failures, on
+- **Frontend**: `src/noteMarkdown.test.ts` (parsing, emojis, editing
+  keys, search), `src/noteEmoji.test.ts` (the set, what the menu types), `src/noteAutosave.test.ts` (timing, ordering, failures, on
   fake timers), `src/NotesOverlay.test.ts` (the overlay's page),
   `src/NotesOverlaySettings.test.ts` (the settings tab), `src/App.test.ts`
   (the Overview's card, the settings request).

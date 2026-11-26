@@ -1,6 +1,6 @@
 // The notes overlay's Markdown subset and editing helpers (ADR-052):
 // what a note's text becomes, and what the editor's keys do to it.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   continueList,
   firstLine,
@@ -21,6 +21,16 @@ import {
   type Block,
   type Inline,
 } from "./noteMarkdown";
+
+// Two emojis, whatever pictures this checkout bundles (noteEmoji.ts).
+vi.mock("./noteEmoji", async (original) => {
+  const actual = await original<typeof import("./noteEmoji")>();
+  const emojis = [
+    { id: "guardian", name: "Guardian", src: "/guardian.png" },
+    { id: "thief", name: "Thief", src: "/thief.png" },
+  ];
+  return { ...actual, EMOJI_ROWS: [emojis], EMOJI_BY_ID: new Map(emojis.map((e) => [e.id, e])) };
+});
 
 const text = (v: string): Inline => ({ t: "text", v });
 
@@ -86,6 +96,28 @@ describe("inline formatting", () => {
 
   it("gives the plain text of formatted content", () => {
     expect(plainText(parseInline("**Phase 2** at [50%](https://w.example) `F5`"))).toBe("Phase 2 at 50% F5");
+  });
+});
+
+describe("emojis", () => {
+  const guardian = { t: "emoji", e: { id: "guardian", name: "Guardian", src: "/guardian.png" } } as const;
+  const thief = { t: "emoji", e: { id: "thief", name: "Thief", src: "/thief.png" } } as const;
+
+  it("reads a bundled emoji's shortcode, also next to another or in formatting", () => {
+    expect(parseInline("Tank: :guardian: then :thief:!")).toEqual([text("Tank: "), guardian, text(" then "), thief, text("!")]);
+    expect(parseInline(":guardian::thief:")).toEqual([guardian, thief]);
+    expect(parseInline("**:thief:**")).toEqual([{ t: "strong", c: [thief] }]);
+  });
+
+  it("leaves unknown shortcodes, shortcodes inside words and code as text", () => {
+    expect(parseInline(":ranger: a:thief: :Thief:")).toEqual([text(":ranger: a:thief: :Thief:")]);
+    expect(parseInline("`:thief:`")).toEqual([{ t: "code", v: ":thief:" }]);
+    expect(parseInline("\\:thief:")).toEqual([text(":thief:")]);
+  });
+
+  it("reads as the profession's name, which search finds", () => {
+    expect(plainText(parseInline("Party: :guardian: :thief:"))).toBe("Party: Guardian Thief");
+    expect(searchNotes([{ id: "a", title: "Party", body: "- :thief: stealth" }], "thief")).toHaveLength(1);
   });
 });
 

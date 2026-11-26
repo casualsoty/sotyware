@@ -45,7 +45,9 @@ feature `notes-overlay` runs (**off by default**): frameless, see-through
 (20 to 100 %), always on top, moved, resized and collapsed from its own
 title bar, remembering its place across monitors and scalings; several
 Markdown notes with checklists, tabs, search and pins, autosaved in
-`notes.sqlite3`; **interactive** or **passive** (clicks go through, never
+`notes.sqlite3`; Guild Wars 2 profession emojis from a menu, one line
+high (`:guardian:`, the GW2 wiki's GFDL tango icons, ADR-053,
+2026-11-26); **interactive** or **passive** (clicks go through, never
 takes the keyboard, never stuck: the mode shortcut, Make interactive, a
 restart); global shortcuts Ctrl+Shift+F1 to F5 (show/hide, mode, new
 note, previous/next) through a second instance of the autoclicker's

@@ -498,6 +498,29 @@ ok = box is not None and Atspi.Action.do_action(box, 0)
 ok = ok and wait_for(lambda: notes_rows() and notes_rows()[0][1].startswith("- [x] Prepare healing items"), 5)
 check("ticking a checkbox saves at once", bool(ok), str(notes_rows()))
 
+# ---- an emoji from the editor's menu, shown one line high ----
+ok = press(pid, "Edit the note") and wait_for(lambda: entry("Note text (Markdown)"), 5)
+ok = ok and press(pid, "Emojis") and wait_for(lambda: any(n.strip() == "Insert Guardian" for n, _ in by_role(pid, Atspi.Role.PUSH_BUTTON)), 5)
+ok = ok and press(pid, "Insert Guardian")
+ok = ok and wait_for(lambda: notes_rows() and notes_rows()[0][1].endswith("- [ ] Equip gear :guardian:"), 10)
+check("the Emojis menu types :guardian: at the end of the note, autosaved", bool(ok), str(notes_rows()))
+
+
+def emoji_and_line():
+    """The Guardian image's height and its line's (the item's paragraph,
+    one line), or None while it is not shown."""
+    img = next((node for n, node in by_role(pid, Atspi.Role.IMAGE) if n == "Guardian"), None)
+    if img is None:
+        return None
+    line = img.get_parent()
+    return extents(img)[3], extents(line)[3] if line is not None else 0
+
+
+ok = press(pid, "Done") and wait_for(emoji_and_line, 5)
+sizes = emoji_and_line()
+check("Done shows it as an image named Guardian, as high as its line",
+      bool(ok) and sizes is not None and sizes[0] >= 14 and abs(sizes[0] - sizes[1]) <= 2, str(sizes))
+
 # ---- the game below, and the shortcuts from it ----
 ov = overlay_window()
 og = geometry(ov)

@@ -74,7 +74,7 @@ rules. Start each task by reading [docs/CONTEXT.md](docs/CONTEXT.md).
   fixed the same day); and the gaming notes overlay (ADR-052: a second
   window, frameless, transparent, always on top, interactive or passive
   (click-through), with several Markdown notes and checklists in
-  `notes.sqlite3` and its own global shortcuts, while the built-in feature
+  `notes.sqlite3`, Guild Wars 2 profession emojis (ADR-053) and its own global shortcuts, while the built-in feature
   `notes-overlay` runs, which is off by default; on `main` since 2026-11-24
   (merge `fe816d1`); tested
   with real input on a private Xvfb and on the maintainer's Windows 11

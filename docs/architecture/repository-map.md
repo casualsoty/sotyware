@@ -68,6 +68,8 @@ Where things are. Generated and ignored paths are listed in
 │   ├── NotesOverlay.svelte   The notes overlay's page (docs/architecture/notes-overlay.md): title bar, tabs, search, the note rendered or edited, formatting bar, menus, passive and collapsed states (+ NotesOverlay.test.ts)
 │   ├── NoteView.svelte       A note's Markdown rendered with Svelte's own elements: checkboxes, links, click to edit at the line
 │   ├── noteMarkdown.ts       Pure: the Markdown subset parsed into blocks and inlines, checklist toggling, the editor's keys (lists, indent, wrap, line kinds, links), search (+ noteMarkdown.test.ts)
+│   ├── noteEmoji.ts          The notes overlay's emojis: Guild Wars 2 profession shortcodes, the pictures bundled from assets/emoji/gw2/ (+ noteEmoji.test.ts)
+│   ├── assets/emoji/gw2/     The 45 tango profession icons (48 px PNG, GFDL, ADR-053) and their README.md: source, licence, authors
 │   ├── noteAutosave.ts       The autosave: half a second after typing, at least every two seconds, one save at a time per note, recovery after failures (+ noteAutosave.test.ts)
 │   ├── notesOverlay.ts       Typed wrappers for the 19 overlay commands; validates every response; OverlayError
 │   ├── overlayModel.svelte.ts  The overlay's live status for the dashboard (one watch_overlay subscription), its configuration; opens Settings › Notes overlay when the overlay asks

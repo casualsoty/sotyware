@@ -9,8 +9,11 @@
 // bulleted (`-`, `*`, `+`) and numbered (`1.`, `1)`) lists nested by
 // indentation, checklists (`- [ ]`, `- [x]`), quotes (`>`), fenced code
 // (```), rules (`---`), and inline **bold**, *italic*, ~~struck~~,
-// `code`, [links](https://…) and bare https:// addresses. Anything else
-// stays plain text, so a note written without Markdown reads as written.
+// `code`, [links](https://…), bare https:// addresses and the bundled
+// emojis' shortcodes (`:guardian:`, noteEmoji.ts). Anything else stays
+// plain text, so a note written without Markdown reads as written.
+
+import { EMOJI_BY_ID, type Emoji } from "./noteEmoji";
 
 // --------------------------------------------------------------- types
 
@@ -21,6 +24,7 @@ export type Inline =
   | { t: "del"; c: Inline[] }
   | { t: "code"; v: string }
   | { t: "link"; href: string; c: Inline[] }
+  | { t: "emoji"; e: Emoji }
   | { t: "br" };
 
 export interface ListItem {
@@ -50,7 +54,7 @@ export interface Edit {
 
 // ------------------------------------------------------------- inlines
 
-const ESCAPABLE = new Set("\\`*_{}[]()#+-.!~>|".split(""));
+const ESCAPABLE = new Set("\\`*_{}[]()#+-.!~>|:".split(""));
 
 function isSpace(c: string | undefined): boolean {
   return c === undefined || /\s/.test(c);
@@ -195,6 +199,15 @@ export function parseInline(s: string, links = true): Inline[] {
         }
       }
     }
+    if (c === ":" && !isWordChar(s[i - 1])) {
+      const m = /^:([a-z]+):/.exec(s.slice(i));
+      const e = m ? EMOJI_BY_ID.get(m[1] ?? "") : undefined;
+      if (m && e !== undefined) {
+        out.push({ t: "emoji", e });
+        i += m[0].length;
+        continue;
+      }
+    }
     if (c === "*" || c === "_" || c === "~") {
       const run = runLength(s, i, c);
       const marker = c === "~" ? (run >= 2 ? "~~" : "") : run >= 2 ? c + c : c;
@@ -230,6 +243,8 @@ export function plainText(nodes: readonly Inline[]): string {
           return n.v;
         case "br":
           return " ";
+        case "emoji":
+          return n.e.name;
         default:
           return plainText(n.c);
       }

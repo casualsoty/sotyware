@@ -3108,3 +3108,45 @@ right, a third of the way across). Code: `src-tauri/src/overlay/`,
   shortcuts from arriving. Each is stated in
   [limitations.md](../status/limitations.md#gaming-notes-overlay-adr-052)
   and the [user guide](../user/notes-overlay.md).
+
+## ADR-053: The notes overlay's emojis are Guild Wars 2's tango profession icons, bundled with the page as GFDL files
+
+Status: Accepted (2026-11-26). Code: `src/noteEmoji.ts`,
+`src/noteMarkdown.ts`, `src/NoteView.svelte`, `src/NotesOverlay.svelte`,
+`src/assets/emoji/gw2/`. Details:
+[notes-overlay.md](notes-overlay.md#markdown).
+
+- **Context:** the maintainer asked for custom emojis in the notes
+  overlay, available from a menu: the tango profession icons of the Guild
+  Wars 2 Wiki
+  (<https://wiki.guildwars2.com/wiki/Guild_Wars_2_Wiki:Profession_icons>),
+  scaled to a line of the note. A note is Markdown text drawn by Svelte,
+  never as HTML, and the overlay's CSP loads images only from the page
+  itself (`img-src 'self' data:`).
+- **Decision:**
+  - **A shortcode in the text** (`:guardian:`), not a picture or a
+    private Unicode character: the note stays plain, searchable,
+    portable text, and the parser turns a known shortcode into an inline
+    node drawn as an `<img>` with the icon's name as its text. Unknown
+    shortcodes and `\:id:` stay text.
+  - **The icons are files in the repository**, bundled by Vite with the
+    overlay's page: never fetched from the wiki at run time (no network
+    from a note, CSP unchanged). The 48 px versions of all 45 icons (9
+    professions, 36 elite specializations up to Visions of Eternity),
+    downloaded on 2026-11-26 and copied unchanged; about 190 KB.
+  - **One line high**: `height: 1lh` (`1.45em`, the note's line height,
+    where the webview lacks `lh`), so an icon follows the text size and a
+    heading's taller line.
+  - **The set is data**: `PROFESSIONS` lists the names in the game's
+    order; `import.meta.glob` finds the files; an icon without its file is
+    neither offered nor read.
+- **Licence:** each file is tagged `{{GFDL image}}` on the wiki (GNU Free
+  Documentation License); `src/assets/emoji/gw2/README.md` names the
+  source, licence and the authors the file pages name. The symbols are
+  ArenaNet's trademarks; sotyware is not affiliated with ArenaNet. The
+  GFDL asks that a copy distributed carry the licence's text: the
+  installers do not yet, a gate before the next release
+  ([limitations](../status/limitations.md#gaming-notes-overlay-adr-052)).
+- **Consequences:** about 190 KB more in the overlay's page; no new
+  dependency, command or permission. Notes with shortcodes read as
+  shortcodes in older versions.

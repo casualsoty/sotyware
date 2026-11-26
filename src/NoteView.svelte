@@ -40,7 +40,7 @@
   }
 </script>
 
-{#snippet inline(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.t === "text"}{n.v}{:else if n.t === "strong"}<strong>{@render inline(n.c)}</strong>{:else if n.t === "em"}<em>{@render inline(n.c)}</em>{:else if n.t === "del"}<del>{@render inline(n.c)}</del>{:else if n.t === "code"}<code>{n.v}</code>{:else if n.t === "link"}<a href={n.href} title={n.href} tabindex={interactive ? 0 : -1} onclick={(e) => follow(e, n.href)}>{@render inline(n.c)}</a>{:else}<br />{/if}{/each}{/snippet}
+{#snippet inline(nodes: Inline[])}{#each nodes as n, i (i)}{#if n.t === "text"}{n.v}{:else if n.t === "strong"}<strong>{@render inline(n.c)}</strong>{:else if n.t === "em"}<em>{@render inline(n.c)}</em>{:else if n.t === "del"}<del>{@render inline(n.c)}</del>{:else if n.t === "code"}<code>{n.v}</code>{:else if n.t === "link"}<a href={n.href} title={n.href} tabindex={interactive ? 0 : -1} onclick={(e) => follow(e, n.href)}>{@render inline(n.c)}</a>{:else if n.t === "emoji"}<img class="emoji" src={n.e.src} alt={n.e.name} title={n.e.name} draggable="false" />{:else}<br />{/if}{/each}{/snippet}
 
 {#snippet block(b: Block)}
   {#if b.t === "heading"}
@@ -243,6 +243,17 @@
 
   del {
     color: var(--ov-subtle);
+  }
+
+  /* An emoji is one line of the note high, whatever the line's size (a
+     heading's line is taller); `em` where the browser has no `lh`. */
+  .emoji {
+    display: inline-block;
+    width: auto;
+    height: 1.45em;
+    height: 1lh;
+    vertical-align: top;
+    object-fit: contain;
   }
 
   .empty {

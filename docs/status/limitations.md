@@ -1311,7 +1311,8 @@ server only; no real provider was asked.
   not enable); no shortcuts.
 - **Notes**: up to 500 notes, a title of 120 characters, 50,000 characters
   of text; a Markdown subset (headings, lists, checklists, bold, italic,
-  strike, code, links, quotes, rules), no tables, images or HTML. Links
+  strike, code, links, quotes, rules, the 45 bundled Guild Wars 2
+  profession emojis), no tables, other images or HTML. Links
   open only `http` and `https` addresses written in the note. Saved in
   plain text in `notes.sqlite3` on this computer: not encrypted, not
   synced, not part of backups. A crash loses at most the last moment of
@@ -1319,6 +1320,14 @@ server only; no real provider was asked.
   behind).
 - **One overlay window**, of one note at a time; no per-game profiles, no
   images, no timers.
+- **Emojis** (ADR-053): only the bundled Guild Wars 2 profession icons;
+  no other game's, no Unicode emoji picker, no icons of the user's own.
+  They are 48 px pictures, drawn one line high: at very large text sizes
+  or scalings above 200 % they are slightly soft. A note with `:guardian:`
+  read by sotyware 0.1.5 or older shows the shortcode as text. The icons
+  are GFDL: the installers do not yet carry the licence's text, which the
+  GFDL asks a copy distributed with them to include; to settle before the
+  next release.
 - **Not implemented** although asked for "launch at startup": sotyware
   cannot start itself at login (no autostart, an app-wide change listed
   under the roadmap's ideas); the overlay can only be shown when sotyware

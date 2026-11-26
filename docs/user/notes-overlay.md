@@ -81,13 +81,19 @@ you type without it shows as you typed it, line breaks included.
 | `[wiki](https://example.com)` or `https://example.com` | A link (opens in your browser) |
 | `> tip` | A quote |
 | `---` | A line across |
+| `:guardian:`, `:firebrand:`, … | A Guild Wars 2 profession or elite specialization icon, one line high (`\:thief:` keeps the text) |
 
 While editing, **Enter** continues a list or checklist (Enter on an empty
 item ends it), **Tab** / **Shift+Tab** indent list items, **Ctrl+B**,
 **Ctrl+I**, **Ctrl+Shift+X** and **Ctrl+K** make bold, italic, struck
 and a link, **Ctrl+Enter** ticks the checkbox of the line you are on. The
 small bar under the editor does the same, plus headings and lists for the
-lines you selected.
+lines you selected. Its smiley button opens the **emojis**: the Guild
+Wars 2 professions and their elite specializations in the GW2 wiki's
+"tango" style, one row per profession; a click types the icon's
+shortcode, its name in lowercase (`:guardian:`, `:dragonhunter:`,
+`:luminary:`), at the cursor, and the menu stays open for the next one
+(Escape closes it). Hover an icon to see its name and shortcode.
 
 ## Interactive and passive
 

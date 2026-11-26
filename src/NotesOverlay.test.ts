@@ -9,6 +9,16 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import NotesOverlay from "./NotesOverlay.svelte";
 
+// Two emojis, whatever pictures this checkout bundles (noteEmoji.ts).
+vi.mock("./noteEmoji", async (original) => {
+  const actual = await original<typeof import("./noteEmoji")>();
+  const emojis = [
+    { id: "guardian", name: "Guardian", src: "/guardian.png" },
+    { id: "thief", name: "Thief", src: "/thief.png" },
+  ];
+  return { ...actual, EMOJI_ROWS: [emojis], EMOJI_BY_ID: new Map(emojis.map((e) => [e.id, e])) };
+});
+
 interface FakeChannel {
   onmessage: (message: unknown) => void;
 }
@@ -282,6 +292,29 @@ describe("the notes", () => {
     button("Bold (Ctrl+B)").click();
     flushSync();
     expect(editor.value).toContain("- [x] **Equip** gear");
+  });
+
+  it("inserts an emoji from its menu and shows it one line high in the note", async () => {
+    await render();
+    const editor = await edit();
+    const at = editor.value.indexOf(" gear");
+    editor.setSelectionRange(at, at);
+    expect(root.querySelector("[aria-label='Emojis'][role='group']")).toBeNull();
+    button("Emojis").click();
+    flushSync();
+    expect(button("Emojis").getAttribute("aria-expanded")).toBe("true");
+    button("Insert Thief").click();
+    flushSync();
+    expect(editor.value).toContain("- [x] Equip :thief: gear");
+    // Escape closes the menu first, then the editor.
+    key(editor, "Escape");
+    expect(root.querySelector("[aria-label='Emojis'][role='group']")).toBeNull();
+    expect(root.querySelector("textarea")).not.toBeNull();
+    key(editor, "Escape");
+    await settle();
+    const img = root.querySelector<HTMLImageElement>(".note-view img.emoji");
+    expect(img?.getAttribute("src")).toBe("/thief.png");
+    expect(img?.alt).toBe("Thief");
   });
 
   it("starts editing at the line clicked", async () => {

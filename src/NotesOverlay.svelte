@@ -4,6 +4,7 @@
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import NoteView from "./NoteView.svelte";
+  import { EMOJI_ROWS, emojiInsert, type Emoji } from "./noteEmoji";
   import { Autosave, type Recovery, type SaveState } from "./noteAutosave";
   import {
     continueList,
@@ -62,6 +63,8 @@
   let error = $state<string | null>(null);
   let dismissedNotice = $state<string | null>(null);
   let editing = $state(false);
+  /** The emoji menu above the formatting toolbar is open. */
+  let emojiOpen = $state(false);
   let searching = $state(false);
   let query = $state("");
   let menuFor = $state<string | null>(null);
@@ -407,6 +410,7 @@
       return;
     }
     editing = false;
+    emojiOpen = false;
     if (activeId !== null) {
       void autosave.flush(activeId);
     }
@@ -459,6 +463,19 @@
     );
   }
 
+  /** Types the emoji's shortcode over the selection; the menu stays open
+   * for the next one. */
+  function insertEmoji(emoji: Emoji): void {
+    const t = editor;
+    if (t === undefined) {
+      return;
+    }
+    const [s, e] = [t.selectionStart, t.selectionEnd];
+    const insert = emojiInsert(t.value, s, emoji.id);
+    const at = s + insert.length;
+    applyEdit({ value: t.value.slice(0, s) + insert + t.value.slice(e), start: at, end: at });
+  }
+
   function onEditorKey(e: KeyboardEvent): void {
     const t = editor;
     if (t === undefined) {
@@ -470,7 +487,11 @@
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      closeEditor(true);
+      if (emojiOpen) {
+        emojiOpen = false;
+      } else {
+        closeEditor(true);
+      }
       return;
     }
     if (e.key === "Enter" && mod) {
@@ -1057,6 +1078,26 @@
           {/if}
         </div>
         {#if editing && !passive}
+          {#if emojiOpen}
+            <!-- Above the toolbar, which scrolls sideways and would clip a
+                 popover. Its buttons keep the editor's focus too. -->
+            <div class="emojis" role="group" aria-label="Emojis">
+              {#each EMOJI_ROWS as row (row[0]?.id)}
+                <div class="emoji-row">
+                {#each row as emoji (emoji.id)}
+                <button
+                  type="button"
+                  class="ghost icon small"
+                  aria-label={`Insert ${emoji.name}`}
+                  title={`${emoji.name} (:${emoji.id}:)`}
+                  onmousedown={(e) => e.preventDefault()}
+                  onclick={() => insertEmoji(emoji)}><img src={emoji.src} alt="" draggable="false" /></button
+                >
+                {/each}
+                </div>
+              {/each}
+            </div>
+          {/if}
           <!-- Buttons keep the editor's focus and selection (mousedown). -->
           <div class="format" role="toolbar" aria-label="Formatting">
             {#each FORMATS as [kind, icon, label] (kind)}
@@ -1064,6 +1105,18 @@
                 ><Icon name={icon} size={14} /></button
               >
             {/each}
+            {#if EMOJI_ROWS.length > 0}
+              <button
+                type="button"
+                class="ghost icon small"
+                class:on={emojiOpen}
+                aria-label="Emojis"
+                aria-expanded={emojiOpen}
+                title="Emojis"
+                onmousedown={(e) => e.preventDefault()}
+                onclick={() => (emojiOpen = !emojiOpen)}><Icon name="emoji" size={14} /></button
+              >
+            {/if}
             <p class="save-state" role="status">{saving === "failed" ? "Not saved" : saving === "saved" ? "Saved" : "Saving…"}</p>
             <button type="button" class="small" onclick={() => closeEditor(true)}>Done</button>
           </div>
@@ -1496,6 +1549,35 @@
     border-top: 1px solid var(--ov-border);
     overflow-x: auto;
     scrollbar-width: none;
+  }
+
+  .format .on {
+    background: var(--ov-active);
+  }
+
+  /* One row per profession, the core first; scrolls when the overlay is
+     too short for nine rows. */
+  .emojis {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 40%;
+    padding: 2px var(--space-1);
+    overflow-y: auto;
+    border-top: 1px solid var(--ov-border);
+  }
+
+  .emoji-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+  }
+
+  .emojis img {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
   }
 
   .format .small:not(.icon) {
