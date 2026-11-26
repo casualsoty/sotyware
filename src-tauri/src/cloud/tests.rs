@@ -16,15 +16,20 @@ use super::test_server::{TempDir, TestServer};
 const MIB: usize = 1024 * 1024;
 const BUCKET: &str = "sotyware-test";
 
-/// Fast failure for tests: no retries, short timeouts.
+/// Fast failure for tests: no retries, a short connect timeout. The read and
+/// stall timeouts are generous because no test using them as they are checks
+/// either (the tests that do set their own): s3s-fs assembles and hashes a
+/// 12 MiB object while it answers `CompleteMultipartUpload`, which took more
+/// than 2 s on a slow Intel Mac runner (macos.yml run 45779559440) and failed
+/// `a_large_file_is_uploaded_in_parts_and_verified`.
 fn test_options() -> ClientOptions {
     ClientOptions {
         connect_timeout: Duration::from_secs(2),
-        read_timeout: Duration::from_secs(2),
+        read_timeout: Duration::from_secs(30),
         max_attempts: 1,
         multipart_threshold: 6 * MIB as u64,
         part_size: 5 * MIB as u64,
-        stall_timeout: Duration::from_secs(2),
+        stall_timeout: Duration::from_secs(30),
         abort_timeout: Duration::from_secs(2),
         part_settle_timeout: Duration::from_secs(5),
     }
@@ -355,20 +360,17 @@ async fn a_missing_local_file_is_a_local_error() {
     assert!(matches!(e, StorageError::Io(_)), "{e:?}");
 }
 
-/// Accounts for the tests of several accounts at once. None of them checks
-/// stall or read timeouts, so they get generous ones: two transfers sharing
-/// a busy runner's CPU went 2 s without progress on Windows CI (61d8f45)
-/// and failed `several_accounts_work_at_the_same_time_and_stay_separate`.
+/// Accounts for the tests of several accounts at once. They need
+/// `test_options()`'s generous stall and read timeouts: two transfers
+/// sharing a busy runner's CPU went 2 s without progress on Windows CI
+/// (61d8f45) and failed
+/// `several_accounts_work_at_the_same_time_and_stay_separate`.
 fn accounts_for(servers: &[(&str, &TestServer)]) -> (Accounts, Arc<MemoryCredentialStore>) {
     let keys = Arc::new(MemoryCredentialStore::default());
     let accounts = Accounts::load(
         Box::<MemoryAccountStore>::default(),
         Arc::clone(&keys) as Arc<dyn CredentialStore>,
-        ClientOptions {
-            read_timeout: Duration::from_secs(30),
-            stall_timeout: Duration::from_secs(30),
-            ..test_options()
-        },
+        test_options(),
     )
     .unwrap();
     for (id, server) in servers {
